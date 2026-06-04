@@ -232,7 +232,7 @@ JIMENG_LOGIN_SESSION = {
 }
 
 PROVIDER_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{2,40}$")
-SUPPORTED_PROVIDER_PROTOCOLS = {"openai", "apimart", "gemini", "volcengine", "runninghub", "jimeng"}
+SUPPORTED_PROVIDER_PROTOCOLS = {"openai", "apimart", "gemini", "volcengine", "runninghub", "jimeng", "omnilojo"}
 RUNNINGHUB_DEFAULT_BASE_URL = "https://www.runninghub.cn"
 JIMENG_DEFAULT_IMAGE_MODELS = [
     "5.0",
@@ -2779,6 +2779,11 @@ def is_runninghub_provider(provider):
 
 def is_jimeng_provider(provider):
     return provider_protocol(provider) == "jimeng" or str((provider or {}).get("id") or "").strip().lower() == "jimeng"
+
+def is_omnilojo_provider(provider):
+    # Omnilojo 通过 OpenAI v1/chat/completions 协议返回图片（图片内嵌在聊天回复里）。
+    base_url = str((provider or {}).get("base_url") or "").lower()
+    return provider_protocol(provider) == "omnilojo" or "omnilojo" in base_url
 
 def is_yuli_provider(provider):
     # 玉玉API（yuli.host）的视频接口走自有格式（/v1/video/create + /v1/video/query），
@@ -6150,6 +6155,69 @@ async def generate_runninghub_provider_image(prompt, size, model, reference_imag
         result = await wait_for_runninghub_image_task(client, provider, task_id)
         return runninghub_extract_image(result), result
 
+def omnilojo_image_from_value(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.startswith("data:image/") and ";base64," in text:
+        header, encoded = text.split(";base64,", 1)
+        mime_type = header.replace("data:", "", 1) or "image/png"
+        return {"type": "b64", "value": encoded, "mime_type": mime_type}
+    if text.startswith(("http://", "https://")):
+        return {"type": "url", "value": text}
+    return None
+
+def extract_image_from_chat_response(data):
+    """从 OpenAI v1/chat/completions 响应里抽取图片。
+    支持：message.images[]、多模态 content 里的 image_url、以及正文里的 data URL / markdown 图片链接。"""
+    data = unwrap_apimart_response(data) if isinstance(data, dict) else data
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message") if isinstance(choices[0], dict) else {}
+        message = message or {}
+        for img in (message.get("images") or []):
+            if isinstance(img, dict):
+                url = img.get("image_url", {}).get("url") if isinstance(img.get("image_url"), dict) else img.get("url")
+                result = omnilojo_image_from_value(url)
+                if result:
+                    return result
+        content = message.get("content", "")
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                image_url = part.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                result = omnilojo_image_from_value(url)
+                if result:
+                    return result
+        text = text_from_chat_response(data)
+        for match in re.findall(r"!\[[^\]]*\]\(([^)]+)\)|(data:image/[^\s)\"']+)|(https?://[^\s)\"']+\.(?:png|jpe?g|webp|gif))", text or "", re.I):
+            for candidate in match:
+                result = omnilojo_image_from_value(candidate)
+                if result:
+                    return result
+    raise HTTPException(status_code=502, detail="Omnilojo 聊天接口没有返回可识别的图片")
+
+async def generate_omnilojo_provider_image(prompt, size, model, reference_images=None, provider=None):
+    base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
+    chat_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/chat/completions")
+    content = [{"type": "text", "text": str(prompt or "").strip()}]
+    for ref in (reference_images or [])[:16]:
+        ref_url = reference_to_data_url(ref, max_size=1536) if ref.get("url") else ""
+        if ref_url:
+            content.append({"type": "image_url", "image_url": {"url": ref_url}})
+    body = {"model": model, "messages": [{"role": "user", "content": content}]}
+    cfg = gemini_image_config(size)
+    body["extra_body"] = {"google": {"image_config": {"aspect_ratio": cfg["aspectRatio"], "image_size": cfg["imageSize"]}}}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0)) as client:
+        response = await client.post(chat_url, headers=api_headers(provider=provider, model=model), json=body)
+        response.raise_for_status()
+        raw = response.json()
+        return extract_image_from_chat_response(raw), raw
+
 async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly"):
     provider = get_api_provider(provider_id)
     if provider["id"] == "modelscope":
@@ -6158,6 +6226,8 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
         return await generate_jimeng_provider_image(prompt, size, model, reference_images, provider)
     if is_runninghub_provider(provider):
         return await generate_runninghub_provider_image(prompt, size, model, reference_images, provider)
+    if is_omnilojo_provider(provider):
+        return await generate_omnilojo_provider_image(prompt, size, model, reference_images, provider)
     if effective_protocol(provider, model) == "gemini":
         return await generate_gemini_provider_image(prompt, size, model, reference_images, provider)
     if is_volcengine_provider(provider):
