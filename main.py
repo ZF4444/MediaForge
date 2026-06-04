@@ -5610,10 +5610,18 @@ def runninghub_local_asset_path(url):
 def runninghub_output_ext(remote, content_type=""):
     tail = str(remote or "").split("?", 1)[0].split("#", 1)[0]
     ext = os.path.splitext(tail)[1].lower().strip(".")
-    allowed = {"png","jpg","jpeg","webp","gif","bmp","mp4","webm","mov","m4v","mkv","mp3","wav","ogg","m4a","flac","aac"}
+    allowed = {"png","jpg","jpeg","webp","gif","bmp","mp4","webm","mov","m4v","mkv","mp3","wav","ogg","m4a","flac","aac","zip","gz","tar","rar","7z"}
     if ext in allowed:
         return ext
     ct = str(content_type or "").lower()
+    if "zip" in ct:
+        return "zip"
+    if "x-tar" in ct or "tar" in ct:
+        return "tar"
+    if "x-rar" in ct or "rar" in ct:
+        return "rar"
+    if "7z" in ct:
+        return "7z"
     if "mp4" in ct:
         return "mp4"
     if "webm" in ct:
