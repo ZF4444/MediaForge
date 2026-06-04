@@ -2836,8 +2836,17 @@ function promptTemplateSearchText(template){
         template?.negative
     ].join(' ').toLowerCase();
 }
+function activePromptTemplateGroups(){
+    const lib = activePromptLibrary();
+    if(!lib || lib.id === 'system') return promptTemplateGroups;
+    return Array.isArray(lib.categories) ? lib.categories.filter(c => c?.id && c?.name) : [];
+}
 function promptTemplateCategoryLabel(category){
     if(category === 'all') return tr('smart.tplAll');
+    const lib = activePromptLibrary();
+    if(lib && lib.id !== 'system'){
+        return activePromptTemplateGroups().find(g => g.id === category)?.name || category;
+    }
     const builtin = {
         view:tr('smart.tplCatView'),
         storyboard:tr('smart.tplCatStoryboard'),
@@ -2972,7 +2981,8 @@ function renderPromptTemplatePanel(options={}){
     const scrollSnapshot = options.preserveScroll === false ? null : promptTemplateScrollSnapshot();
     const query = String(promptTemplateSearch?.value || '').trim().toLowerCase();
     const allTemplates = promptTemplateItems();
-    const categories = [{id:'all', name:tr('smart.tplAll')}, ...promptTemplateGroups.map(group => ({...group, name:promptTemplateCategoryLabel(group.id)}))];
+    const activeGroups = activePromptTemplateGroups();
+    const categories = [{id:'all', name:tr('smart.tplAll')}, ...activeGroups.map(group => ({...group, name:promptTemplateCategoryLabel(group.id)}))];
     const groupCounts = allTemplates.reduce((map, item) => {
         map[item.category || 'mine'] = (map[item.category || 'mine'] || 0) + 1;
         return map;
@@ -2990,7 +3000,7 @@ function renderPromptTemplatePanel(options={}){
                 </div>
             </div>
             <div class="prompt-template-group-list">
-                ${promptTemplateGroups.map(group => `
+                ${activeGroups.map(group => `
                     <div class="prompt-template-group-row ${['view','storyboard','character','product','lighting','mine'].includes(group.id) ? '' : 'has-delete'}">
                         <button type="button" class="group-name ${group.id === promptTemplateCategory ? 'active' : ''}" data-template-cat="${escapeHtml(group.id)}">
                             <span>${escapeHtml(promptTemplateCategoryLabel(group.id))}</span>
@@ -3065,7 +3075,7 @@ function renderPromptTemplatePanel(options={}){
                     <input data-template-edit-name value="${escapeAttr(selectedPreset.name || '')}" placeholder="${escapeAttr(tr('smart.tplName'))}">
                     <label>${escapeHtml(tr('smart.tplGroup'))}</label>
                     <select data-template-edit-category>
-                        ${promptTemplateGroups.map(group => `<option value="${escapeAttr(group.id)}" ${group.id === (selectedPreset.category || selected?.category || 'mine') ? 'selected' : ''}>${escapeHtml(promptTemplateCategoryLabel(group.id))}</option>`).join('')}
+                        ${activeGroups.map(group => `<option value="${escapeAttr(group.id)}" ${group.id === (selectedPreset.category || selected?.category || 'mine') ? 'selected' : ''}>${escapeHtml(promptTemplateCategoryLabel(group.id))}</option>`).join('')}
                     </select>
                     <label>${escapeHtml(tr('smart.tplContent'))}</label>
                     <textarea data-template-edit-text placeholder="${escapeAttr(tr('smart.tplContent'))}">${escapeHtml(selectedPreset.text || '')}</textarea>
@@ -3278,25 +3288,62 @@ async function deletePromptTemplate(){
     render();
     scheduleSave();
 }
-function createPromptTemplateGroup(){
+async function createPromptTemplateGroup(){
     const name = window.prompt(tr('smart.tplNewGroupPrompt'), tr('smart.tplNewGroupDefault'));
     if(!String(name || '').trim()) return;
+    const lib = activePromptLibrary();
+    if(lib && lib.id !== 'system'){
+        try {
+            const data = await fetch('/api/prompt-libraries/categories', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({name:String(name).trim().slice(0, 24), library_id:lib.id})
+            }).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '新增分组失败'); return r.json(); });
+            promptLibraries = data.library?.libraries || promptLibraries;
+            promptTemplateCategory = data.category?.id || promptTemplateCategory;
+            renderPromptTemplatePanel({preserveScroll:false});
+        } catch(err){ if(typeof setStatus === 'function') setStatus(err.message || '新增分组失败'); }
+        return;
+    }
     const group = {id:uid('tpl_group'), name:String(name).trim().slice(0, 24)};
     promptTemplateGroups.push(group);
     savePromptTemplateGroups();
     promptTemplateCategory = group.id;
     renderPromptTemplatePanel({preserveScroll:false});
 }
-function renamePromptTemplateGroup(groupId){
-    const group = promptTemplateGroups.find(g => g.id === groupId);
+async function renamePromptTemplateGroup(groupId){
+    const lib = activePromptLibrary();
+    const group = activePromptTemplateGroups().find(g => g.id === groupId);
     if(!group) return;
     const name = window.prompt(tr('smart.tplGroupNamePrompt'), group.name || '');
     if(!String(name || '').trim()) return;
+    if(lib && lib.id !== 'system'){
+        try {
+            const data = await fetch(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, {
+                method:'PATCH', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({name:String(name).trim().slice(0, 24), library_id:lib.id})
+            }).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '重命名失败'); return r.json(); });
+            promptLibraries = data.library?.libraries || promptLibraries;
+            renderPromptTemplatePanel();
+        } catch(err){ if(typeof setStatus === 'function') setStatus(err.message || '重命名失败'); }
+        return;
+    }
     group.name = String(name).trim().slice(0, 24);
     savePromptTemplateGroups();
     renderPromptTemplatePanel();
 }
-function deletePromptTemplateGroup(groupId){
+async function deletePromptTemplateGroup(groupId){
+    const lib = activePromptLibrary();
+    if(lib && lib.id !== 'system'){
+        if(!window.confirm(tr('smart.tplDeleteGroupConfirm'))) return;
+        try {
+            const data = await fetch(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, {method:'DELETE'})
+                .then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '删除失败'); return r.json(); });
+            promptLibraries = data.library?.libraries || promptLibraries;
+            if(promptTemplateCategory === groupId) promptTemplateCategory = 'all';
+            renderPromptTemplatePanel({preserveScroll:false});
+        } catch(err){ if(typeof setStatus === 'function') setStatus(err.message || '删除失败'); }
+        return;
+    }
     if(['view','storyboard','character','product','lighting','mine'].includes(groupId)){
         renamePromptTemplateGroup(groupId);
         return;

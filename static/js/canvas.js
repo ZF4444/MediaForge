@@ -163,6 +163,8 @@ let trashMode = false;
 let pendingDeleteCanvasId = null;
 let pendingPurgeCanvasId = null;
 let emojiPickerCanvasId = null;
+let canvasSortMode = (() => { try { return localStorage.getItem('canvasSortMode') || 'recent'; } catch(e){ return 'recent'; } })();
+const CANVAS_COLOR_OPTIONS = ['red','orange','amber','green','teal','blue','violet','pink','slate'];
 let localCanvasDirty = false;
 let savingCanvasNow = false;
 let saveCanvasAgain = false;
@@ -790,6 +792,13 @@ function refreshGateViewControls(){
         const suffix = tr('canvas.countSuffix');
         countPill.textContent = suffix ? `${items.length} ${suffix}` : String(items.length);
     }
+    const sortSwitch = document.getElementById('gateSortSwitch');
+    if(sortSwitch){
+        sortSwitch.classList.toggle('hidden', trashMode);
+        sortSwitch.querySelectorAll('[data-sort]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.sort === canvasSortMode);
+        });
+    }
 }
 function setCanvasMode(open){
     shell.classList.toggle('no-canvas', !open);
@@ -1096,6 +1105,7 @@ async function loadCanvasList(openFirst=true){
         if(!res.ok) throw new Error(tr('canvas.canvasListFailed'));
         const data = await res.json();
         canvases = data.canvases || [];
+        sortCanvasListByUpdated();
         refreshGateViewControls();
         renderCanvasList();
         refreshTrashCount();
@@ -1148,8 +1158,66 @@ async function setTrashMode(active){
 function renderCanvasList(){
     renderCanvasListInto(gateCanvasList);
 }
+function compareCanvasRecords(a, b){
+    // 置顶始终排在最前；其余按当前排序模式（最近编辑 / 名称）。
+    const ap = a.pinned ? 1 : 0, bp = b.pinned ? 1 : 0;
+    if(ap !== bp) return bp - ap;
+    if(canvasSortMode === 'name'){
+        const cmp = String(a.title || '').localeCompare(String(b.title || ''), 'zh-Hans-CN', {numeric:true, sensitivity:'base'});
+        if(cmp !== 0) return cmp;
+    }
+    return Number(b.updated_at || b.created_at || 0) - Number(a.updated_at || a.created_at || 0);
+}
 function sortCanvasListByUpdated(){
-    canvases.sort((a, b) => Number(b.updated_at || b.created_at || 0) - Number(a.updated_at || a.created_at || 0));
+    canvases.sort(compareCanvasRecords);
+}
+function setCanvasSortMode(mode){
+    const next = mode === 'name' ? 'name' : 'recent';
+    if(next === canvasSortMode) { refreshGateViewControls(); return; }
+    canvasSortMode = next;
+    try { localStorage.setItem('canvasSortMode', canvasSortMode); } catch(e){}
+    sortCanvasListByUpdated();
+    renderCanvasList();
+    refreshGateViewControls();
+}
+async function patchCanvasMeta(id, patch){
+    const item = canvases.find(c => c.id === id);
+    if(item) Object.assign(item, patch);
+    if(canvas?.id === id) Object.assign(canvas, patch);
+    sortCanvasListByUpdated();
+    renderCanvasList();
+    try {
+        const res = await fetch(`/api/canvases/${encodeURIComponent(id)}/meta`, {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(patch)
+        });
+        if(!res.ok) throw new Error('meta save failed');
+        const data = await res.json();
+        if(data.canvas) updateCanvasListRecord(data.canvas);
+    } catch(e){
+        setStatus(tr('canvas.metaSaveFailed') || '保存失败');
+        console.error(e);
+        await loadCanvasList(false);
+    }
+}
+function togglePinCanvas(id, event){
+    event?.preventDefault();
+    event?.stopPropagation();
+    const item = canvases.find(c => c.id === id);
+    emojiPickerCanvasId = null;
+    patchCanvasMeta(id, {pinned: !(item && item.pinned)});
+}
+function setCanvasColorValue(id, color, event){
+    event?.preventDefault();
+    event?.stopPropagation();
+    patchCanvasMeta(id, {color: color || ''});
+}
+function commitCanvasOwner(id, value){
+    const owner = String(value || '').trim().slice(0, 40);
+    const item = canvases.find(c => c.id === id);
+    if((item?.owner || '') === owner) return;
+    patchCanvasMeta(id, {owner});
 }
 function updateCanvasListRecord(record){
     if(!record?.id) return;
@@ -1190,14 +1258,22 @@ function renderCanvasListInto(list){
     items.forEach(item => {
         const row = document.createElement('div');
         const isSmartCanvas = (item.kind || 'classic') === 'smart';
-        row.className = `canvas-item ${isSmartCanvas ? 'smart-canvas' : ''} ${canvas?.id === item.id ? 'active' : ''}`;
+        const color = String(item.color || '').trim();
+        const owner = String(item.owner || '').trim();
+        const pinned = !!item.pinned && !trashMode;
+        row.className = `canvas-item ${isSmartCanvas ? 'smart-canvas' : ''} ${canvas?.id === item.id ? 'active' : ''} ${pinned ? 'pinned' : ''} ${color ? 'has-color' : ''}`;
+        const ownerChip = owner
+            ? `<span class="canvas-owner-chip" role="button" tabindex="0" title="${escapeAttr(owner)}"><i data-lucide="user-round" class="w-3 h-3"></i><span class="canvas-owner-text">${escapeHtml(owner)}</span></span>`
+            : '';
         row.innerHTML = `
+            ${color ? `<span class="canvas-color-bar cc-${escapeAttr(color)}"></span>` : ''}
             <div class="canvas-open" role="button" tabindex="${trashMode ? '-1' : '0'}">
                 <div class="canvas-card-icon-row">
-                    <span class="canvas-preview-mark" role="button" tabindex="0" title="${trashMode ? tr('canvas.deletedCanvas') : tr('canvas.changeIcon')}">${renderCanvasIcon(isSmartCanvas && /[^\x00-\x7F]/.test(item.icon || '') ? 'sparkles' : item.icon, 16)}</span>
+                    <span class="canvas-preview-mark" role="button" tabindex="0" title="${trashMode ? tr('canvas.deletedCanvas') : (tr('canvas.editMeta') || '编辑图标 / 颜色 / 负责人')}">${renderCanvasIcon(isSmartCanvas && /[^\x00-\x7F]/.test(item.icon || '') ? 'sparkles' : item.icon, 16)}</span>
                     ${isSmartCanvas ? `<span class="canvas-kind-chip">${tr('canvas.smartCanvasShort')}</span>` : ''}
                 </div>
                 <div class="canvas-card-title">${escapeHtml(item.title)}</div>
+                ${ownerChip}
                 <div class="canvas-card-meta">
                     <span class="canvas-card-meta-dot"></span>
                     <div class="canvas-card-time">${trashMode ? `${tr('canvas.deletedAt')} ${formatCanvasTime(item.deleted_at)}` : formatCanvasTime(item.updated_at || item.created_at)}</div>
@@ -1231,6 +1307,9 @@ function renderCanvasListInto(list){
                     </div>
                 </div>
             ` : `
+                <button class="canvas-pin-btn ${pinned ? 'active' : ''}" type="button" title="${pinned ? (tr('canvas.unpin') || '取消置顶') : (tr('canvas.pin') || '置顶')}" aria-label="${pinned ? (tr('canvas.unpin') || '取消置顶') : (tr('canvas.pin') || '置顶')}">
+                    <i data-lucide="pin" class="w-3.5 h-3.5"></i>
+                </button>
                 <button class="canvas-card-edit" type="button" title="${tr('canvas.rename')}" aria-label="${tr('canvas.rename')} ${escapeHtml(item.title)}">
                     <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
                 </button>
@@ -1239,8 +1318,24 @@ function renderCanvasListInto(list){
                 </button>
             `)}
             ${!trashMode && emojiPickerCanvasId === item.id ? `
-                <div class="emoji-picker">
-                    ${CANVAS_EMOJIS.map(icon => `<button class="emoji-option" type="button" data-icon="${escapeHtml(icon)}">${renderCanvasIcon(icon, 14)}</button>`).join('')}
+                <div class="canvas-meta-pop">
+                    <div class="canvas-meta-section">
+                        <div class="canvas-meta-label">${tr('canvas.ownerLabel') || '负责人 / 项目'}</div>
+                        <input class="canvas-owner-input" type="text" maxlength="40" value="${escapeAttr(owner)}" placeholder="${escapeAttr(tr('canvas.ownerPlaceholder') || '如：张三 / 双十一项目')}">
+                    </div>
+                    <div class="canvas-meta-section">
+                        <div class="canvas-meta-label">${tr('canvas.colorLabel') || '颜色标记'}</div>
+                        <div class="canvas-color-row">
+                            <button class="canvas-color-swatch cc-none ${!color ? 'active' : ''}" type="button" data-color="" title="${tr('canvas.colorNone') || '无'}"><i data-lucide="ban" class="w-3 h-3"></i></button>
+                            ${CANVAS_COLOR_OPTIONS.map(c => `<button class="canvas-color-swatch cc-${c} ${color === c ? 'active' : ''}" type="button" data-color="${c}" aria-label="${c}"></button>`).join('')}
+                        </div>
+                    </div>
+                    <div class="canvas-meta-section">
+                        <div class="canvas-meta-label">${tr('canvas.changeIcon')}</div>
+                        <div class="emoji-picker-grid">
+                            ${CANVAS_EMOJIS.map(icon => `<button class="emoji-option" type="button" data-icon="${escapeHtml(icon)}">${renderCanvasIcon(icon, 14)}</button>`).join('')}
+                        </div>
+                    </div>
                 </div>
             ` : ''}
         `;
@@ -1261,6 +1356,31 @@ function renderCanvasListInto(list){
         row.querySelectorAll('.emoji-option').forEach(btn => {
             btn.onclick = e => setCanvasIcon(item.id, btn.dataset.icon, e);
         });
+        const pinBtn = row.querySelector('.canvas-pin-btn');
+        if(pinBtn){
+            pinBtn.onmousedown = e => e.stopPropagation();
+            pinBtn.onclick = e => togglePinCanvas(item.id, e);
+        }
+        const ownerChipEl = row.querySelector('.canvas-owner-chip');
+        if(ownerChipEl && !trashMode){
+            ownerChipEl.onmousedown = e => e.stopPropagation();
+            ownerChipEl.onclick = e => { e.stopPropagation(); toggleEmojiPicker(item.id, e); };
+        }
+        row.querySelectorAll('.canvas-color-swatch').forEach(btn => {
+            btn.onmousedown = e => e.stopPropagation();
+            btn.onclick = e => setCanvasColorValue(item.id, btn.dataset.color || '', e);
+        });
+        const ownerInput = row.querySelector('.canvas-owner-input');
+        if(ownerInput){
+            ownerInput.onmousedown = e => e.stopPropagation();
+            ownerInput.onclick = e => e.stopPropagation();
+            ownerInput.onkeydown = e => {
+                e.stopPropagation();
+                if(e.key === 'Enter'){ e.preventDefault(); ownerInput.blur(); }
+                if(e.key === 'Escape'){ e.preventDefault(); emojiPickerCanvasId = null; renderCanvasList(); }
+            };
+            ownerInput.onblur = () => commitCanvasOwner(item.id, ownerInput.value);
+        }
         const deleteBtn = row.querySelector('.canvas-delete');
         if(deleteBtn) deleteBtn.onclick = e => requestDeleteCanvas(item.id, e);
         const confirmBtn = row.querySelector('.canvas-confirm-btn');
@@ -1715,6 +1835,10 @@ gateCreateSmartBtn?.addEventListener('click', createSmartCanvas);
 gateBackBtn.addEventListener('click', () => setTrashMode(false));
 gateTrashBtn.addEventListener('click', () => setTrashMode(true));
 gateRefreshBtn.addEventListener('click', () => trashMode ? loadTrashList() : loadCanvasList(false));
+document.getElementById('gateSortSwitch')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-sort]');
+    if(btn) setCanvasSortMode(btn.dataset.sort);
+});
 gateConfirmBtn.addEventListener('click', createCanvas);
 gateCancelBtn.addEventListener('click', () => setCreateMode(false));
 gateTitleInput.addEventListener('keydown', e => {
@@ -1723,7 +1847,7 @@ gateTitleInput.addEventListener('keydown', e => {
 });
 document.addEventListener('mousedown', e => {
     if(emojiPickerCanvasId === null) return;
-    if(e.target.closest('.emoji-picker') || e.target.closest('.canvas-preview-mark')) return;
+    if(e.target.closest('.canvas-meta-pop') || e.target.closest('.canvas-preview-mark') || e.target.closest('.canvas-owner-chip')) return;
     emojiPickerCanvasId = null;
     renderCanvasList();
 });
@@ -3861,8 +3985,10 @@ function setImageEditMode(mode, userTouched=false){
     if(userTouched) imageEditModeTouched = true;
     const prevImageEditMode = imageEditMode;
     if(mode !== 'brush') removeEditTextInlineEditor(true);
-    imageEditMode = ['crop','outpaint','mask','brush','grid'].includes(mode) ? mode : 'crop';
+    imageEditMode = ['preview','crop','outpaint','mask','brush','grid'].includes(mode) ? mode : 'crop';
+    const isPreview = imageEditMode === 'preview';
     const cropCanvasEl = document.getElementById('cropCanvas');
+    cropCanvasEl.classList.toggle('preview-mode', isPreview);
     cropCanvasEl.classList.toggle('mask-mode', imageEditMode === 'mask');
     cropCanvasEl.classList.toggle('brush-mode', imageEditMode === 'brush');
     cropCanvasEl.classList.toggle('grid-mode', imageEditMode === 'grid');
@@ -3876,15 +4002,23 @@ function setImageEditMode(mode, userTouched=false){
     const title = document.getElementById('imageEditTitle');
     const sub = document.getElementById('imageEditSub');
     const apply = document.getElementById('imageEditApplyBtn');
-    const icon = imageEditMode === 'crop' ? 'crop' : imageEditMode === 'outpaint' ? 'expand' : imageEditMode === 'mask' ? 'brush' : imageEditMode === 'brush' ? 'paintbrush' : 'grid-3x3';
-    const labelKey = imageEditMode === 'crop' ? 'canvas.applyCrop' : imageEditMode === 'outpaint' ? 'canvas.applyOutpaint' : imageEditMode === 'mask' ? 'canvas.applyMask' : imageEditMode === 'brush' ? 'canvas.applyBrush' : 'canvas.applyGrid';
-    const titleKey = imageEditMode === 'crop' ? 'canvas.cropImage' : imageEditMode === 'outpaint' ? 'canvas.outpaintImage' : imageEditMode === 'mask' ? 'canvas.maskEdit' : imageEditMode === 'brush' ? 'canvas.brushEdit' : 'canvas.modeGrid';
-    const subKey = imageEditMode === 'crop' ? 'canvas.cropHint' : imageEditMode === 'outpaint' ? 'canvas.outpaintHint' : imageEditMode === 'mask' ? 'canvas.maskHint2' : imageEditMode === 'brush' ? 'canvas.brushHint' : 'canvas.gridHint';
-    title.textContent = tr(titleKey);
-    sub.textContent = tr(subKey);
-    apply.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4"></i><span>${tr(labelKey)}</span>`;
+    if(isPreview){
+        apply.style.display = 'none';
+        title.textContent = tr('canvas.previewImage');
+        sub.textContent = tr('canvas.previewHint');
+    } else {
+        apply.style.display = '';
+        const icon = imageEditMode === 'crop' ? 'crop' : imageEditMode === 'outpaint' ? 'expand' : imageEditMode === 'mask' ? 'brush' : imageEditMode === 'brush' ? 'paintbrush' : 'grid-3x3';
+        const labelKey = imageEditMode === 'crop' ? 'canvas.applyCrop' : imageEditMode === 'outpaint' ? 'canvas.applyOutpaint' : imageEditMode === 'mask' ? 'canvas.applyMask' : imageEditMode === 'brush' ? 'canvas.applyBrush' : 'canvas.applyGrid';
+        const titleKey = imageEditMode === 'crop' ? 'canvas.cropImage' : imageEditMode === 'outpaint' ? 'canvas.outpaintImage' : imageEditMode === 'mask' ? 'canvas.maskEdit' : imageEditMode === 'brush' ? 'canvas.brushEdit' : 'canvas.modeGrid';
+        const subKey = imageEditMode === 'crop' ? 'canvas.cropHint' : imageEditMode === 'outpaint' ? 'canvas.outpaintHint' : imageEditMode === 'mask' ? 'canvas.maskHint2' : imageEditMode === 'brush' ? 'canvas.brushHint' : 'canvas.gridHint';
+        title.textContent = tr(titleKey);
+        sub.textContent = tr(subKey);
+        apply.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4"></i><span>${tr(labelKey)}</span>`;
+    }
     resizeEditDrawCanvas();
-    if(imageEditMode === 'grid') refreshGridSplitPreview();
+    if(isPreview) clearEditDrawing(true);
+    else if(imageEditMode === 'grid') refreshGridSplitPreview();
     else if(imageEditMode === 'outpaint') resetOutpaintBox();
     else if(imageEditMode === 'crop') clearEditDrawing(true);
     else if(prevImageEditMode === 'grid') clearEditDrawing(true); // 离开 grid 时主动清掉画布上残留的分割线预览
@@ -4546,10 +4680,11 @@ function resetCropBox(){
     cropState.h = Math.round(h * 0.84);
     renderCropBox();
 }
-function openImageEditor(nodeId){
+function openImageEditor(nodeId, initialMode='crop'){
     const node = nodes.find(n => n.id === nodeId);
     if(!node?.url) return;
     if(mediaKindForNode(node) !== 'image') return;
+    if(!['preview','crop','outpaint','mask','brush','grid'].includes(initialMode)) initialMode = 'crop';
     cropState = {nodeId, x:0, y:0, w:0, h:0};
     // 重置自定义宫格状态
     gridCustomMode = false;
@@ -4592,13 +4727,13 @@ function openImageEditor(nodeId){
         resetEditDrawingHistory();
         clearEditDrawing(true);
         resetCropBox();
-        if(!imageEditModeTouched) setImageEditMode('crop');
+        if(!imageEditModeTouched) setImageEditMode(initialMode);
         syncImageEditOverflow();
         refreshIcons();
     };
     img.crossOrigin = 'anonymous';
     img.src = node.url;
-    setImageEditMode('crop');
+    setImageEditMode(initialMode);
     refreshIcons();
 }
 function closeImageEditor(){
@@ -5143,7 +5278,7 @@ function renderNode(node){
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
-                if((e.shiftKey || e.altKey) && isEditableImage) openImageEditor(node.id);
+                if(isEditableImage) openImageEditor(node.id, (e.shiftKey || e.altKey) ? 'crop' : 'preview');
                 else openImageNodePreview(node.id);
             };
             body.onmousedown = e => {
@@ -6043,8 +6178,17 @@ function renderCanvasPromptLibrarySelect(){
     if(!promptTemplateLibrarySelect) return;
     promptTemplateLibrarySelect.innerHTML = canvasPromptLibraries.map(lib => `<option value="${escapeAttr(lib.id)}" ${lib.id === activePromptLibraryId ? 'selected' : ''}>${escapeHtml(lib.name || '提示词库')}</option>`).join('');
 }
+function activeCanvasPromptTemplateGroups(){
+    const lib = activeCanvasPromptLibrary();
+    if(!lib || lib.id === 'system') return promptTemplateGroups;
+    return Array.isArray(lib.categories) ? lib.categories.filter(c => c?.id && c?.name) : [];
+}
 function canvasPromptTemplateCategoryLabel(category){
     if(category === 'all') return tr('smart.tplAll');
+    const lib = activeCanvasPromptLibrary();
+    if(lib && lib.id !== 'system'){
+        return activeCanvasPromptTemplateGroups().find(g => g.id === category)?.name || category || '';
+    }
     const builtin = {
         view:tr('smart.tplCatView'),
         storyboard:tr('smart.tplCatStoryboard'),
@@ -6256,25 +6400,65 @@ function restorePromptTemplateScroll(snapshot){
         if(detail) detail.scrollTop = snapshot.detailTop || 0;
     });
 }
-function createCanvasPromptTemplateGroup(){
+async function createCanvasPromptTemplateGroup(){
     const name = window.prompt(tr('smart.tplNewGroupPrompt'), tr('smart.tplNewGroupDefault'));
     if(!String(name || '').trim()) return;
+    const lib = activeCanvasPromptLibrary();
+    if(lib && lib.id !== 'system'){
+        try {
+            const data = await fetch('/api/prompt-libraries/categories', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({name:String(name).trim().slice(0, 24), library_id:lib.id})
+            }).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '新增分组失败'); return r.json(); });
+            canvasPromptLibraries = data.library?.libraries || canvasPromptLibraries;
+            promptTemplateCategory = data.category?.id || promptTemplateCategory;
+            refreshCanvasPromptTemplatesFromLibraries();
+            renderPromptTemplateModal();
+        } catch(err){ setStatus(err.message || '新增分组失败'); }
+        return;
+    }
     const group = {id:uid('tpl_group'), name:String(name).trim().slice(0, 24)};
     promptTemplateGroups.push(group);
     saveCanvasPromptTemplateGroups();
     promptTemplateCategory = group.id;
     renderPromptTemplateModal();
 }
-function renameCanvasPromptTemplateGroup(groupId){
-    const group = promptTemplateGroups.find(g => g.id === groupId);
+async function renameCanvasPromptTemplateGroup(groupId){
+    const lib = activeCanvasPromptLibrary();
+    const group = activeCanvasPromptTemplateGroups().find(g => g.id === groupId);
     if(!group) return;
     const name = window.prompt(tr('smart.tplGroupNamePrompt'), group.name || '');
     if(!String(name || '').trim()) return;
+    if(lib && lib.id !== 'system'){
+        try {
+            const data = await fetch(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, {
+                method:'PATCH', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({name:String(name).trim().slice(0, 24), library_id:lib.id})
+            }).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '重命名失败'); return r.json(); });
+            canvasPromptLibraries = data.library?.libraries || canvasPromptLibraries;
+            refreshCanvasPromptTemplatesFromLibraries();
+            renderPromptTemplateModal();
+        } catch(err){ setStatus(err.message || '重命名失败'); }
+        return;
+    }
     group.name = String(name).trim().slice(0, 24);
     saveCanvasPromptTemplateGroups();
     renderPromptTemplateModal();
 }
-function deleteCanvasPromptTemplateGroup(groupId){
+async function deleteCanvasPromptTemplateGroup(groupId){
+    const lib = activeCanvasPromptLibrary();
+    if(lib && lib.id !== 'system'){
+        if(!window.confirm(tr('smart.tplDeleteGroupConfirm'))) return;
+        try {
+            const data = await fetch(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, {method:'DELETE'})
+                .then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '删除失败'); return r.json(); });
+            canvasPromptLibraries = data.library?.libraries || canvasPromptLibraries;
+            if(promptTemplateCategory === groupId) promptTemplateCategory = 'all';
+            refreshCanvasPromptTemplatesFromLibraries();
+            renderPromptTemplateModal();
+        } catch(err){ setStatus(err.message || '删除失败'); }
+        return;
+    }
     if(['view','storyboard','character','product','lighting','mine'].includes(groupId)){
         renameCanvasPromptTemplateGroup(groupId);
         return;
@@ -6299,7 +6483,8 @@ function renderPromptTemplateModal(){
     canvasPromptTemplates = activeCanvasPromptLibraryItems();
     renderCanvasPromptLibrarySelect();
     const scrollSnapshot = promptTemplateScrollSnapshot();
-    const categories = [{id:'all', name:tr('smart.tplAll')}, ...promptTemplateGroups.map(group => ({...group, name:canvasPromptTemplateCategoryLabel(group.id)}))];
+    const activeGroups = activeCanvasPromptTemplateGroups();
+    const categories = [{id:'all', name:tr('smart.tplAll')}, ...activeGroups.map(group => ({...group, name:canvasPromptTemplateCategoryLabel(group.id)}))];
     const counts = canvasPromptTemplates.reduce((map, item) => {
         const category = item.category || 'mine';
         map[category] = (map[category] || 0) + 1;
@@ -6319,7 +6504,7 @@ function renderPromptTemplateModal(){
                 </div>
             </div>
             <div class="prompt-template-group-list">
-                ${promptTemplateGroups.map(group => `
+                ${activeGroups.map(group => `
                     <div class="prompt-template-group-row ${['view','storyboard','character','product','lighting','mine'].includes(group.id) ? '' : 'has-delete'}">
                         <button type="button" class="group-name ${group.id === promptTemplateCategory ? 'active' : ''}" data-template-cat="${escapeAttr(group.id)}">
                             <span>${escapeHtml(canvasPromptTemplateCategoryLabel(group.id))}</span>
@@ -8927,7 +9112,12 @@ async function runGenerator(genId, opts={}){
     if(quality) payload.quality = quality;
     let pendingIds = [];
     const startedAt = nowMs();
-    if(!opts.cascade){ gen.running = true; }
+    if(!opts.cascade){
+        gen.running = true;
+        refreshRunNodes(gen, out);
+        // API 支持并发：2s 后即可再次点击，任务仍由 pending 卡片继续追踪
+        setTimeout(() => { gen.running = false; refreshRunNodes(gen, out); }, 2000);
+    }
     try {
         const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId})));
         if(!out){

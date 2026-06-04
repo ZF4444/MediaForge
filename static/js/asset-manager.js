@@ -95,9 +95,14 @@ function assetCountForLibrary(lib){
     return (lib?.categories || []).reduce((sum, cat) => sum + ((cat.items || []).length), 0);
 }
 function promptLibraries(){
-    const libs = Array.isArray(promptLibrary.libraries) ? promptLibrary.libraries : [];
-    const system = libs.find(lib => lib?.id === 'system');
-    return system ? [system] : libs;
+    const libs = Array.isArray(promptLibrary.libraries) ? promptLibrary.libraries.filter(Boolean) : [];
+    if(!libs.length) return [{id:'system', name:'系统提示词库', system:true, items:[], categories:[]}];
+    const system = libs.filter(lib => lib.id === 'system');
+    const others = libs.filter(lib => lib.id !== 'system');
+    return [...system, ...others];
+}
+function isSystemPromptLibrary(lib){
+    return !lib || lib.id === 'system';
 }
 function activePromptLibrary(){
     const libs = promptLibraries();
@@ -107,19 +112,21 @@ function activePromptCategories(){
     const lib = activePromptLibrary();
     const fromLib = Array.isArray(lib?.categories) ? lib.categories : [];
     if(fromLib.length) return fromLib;
+    if(!isSystemPromptLibrary(lib)) return [];
     return [
         {id:'view', name:'视角'},
         {id:'storyboard', name:'分镜'},
         {id:'character', name:'角色'},
         {id:'product', name:'产品'},
         {id:'lighting', name:'光影'},
-        {id:'custom', name:'自定义'}
+        {id:'custom', name:'我的'}
     ];
 }
+const PROMPT_BUILTIN_CATEGORY_IDS = new Set(['view','storyboard','character','product','lighting','custom']);
 function promptCategoryLabel(category='custom'){
     const found = activePromptCategories().find(cat => cat.id === category);
     if(found?.name) return found.name;
-    const map = {view:'视角', storyboard:'分镜', character:'角色', product:'产品', lighting:'光影', mine:'自定义', custom:'自定义'};
+    const map = {view:'视角', storyboard:'分镜', character:'角色', product:'产品', lighting:'光影', mine:'我的', custom:'我的'};
     return map[category] || category || '自定义';
 }
 function promptCountForCategory(category, lib=activePromptLibrary()){
@@ -556,7 +563,10 @@ function renderPromptManager(){
     root.innerHTML = `
         <aside class="asset-panel asset-nav">
             <div class="panel-head">
-                <div class="panel-title"><strong>提示词库</strong><span>系统库统一管理</span></div>
+                <div class="panel-title"><strong>提示词库</strong><span>可创建多个词库</span></div>
+                <div class="panel-actions compact-actions">
+                    <button class="asset-icon-btn" type="button" data-prompt-lib-new title="新建提示词库"><i data-lucide="plus"></i></button>
+                </div>
             </div>
             <div class="nav-scroll">
                 <div class="nav-tree">
@@ -605,6 +615,7 @@ function renderPromptTreeBranch(lib){
             <span class="tree-row-name">${escapeHtml(lib.name || '提示词库')}</span>
             <span class="tree-row-count">${(lib.items || []).length}</span>
         </button>
+        ${showLibActions ? renderPromptTreeActionBar('library') : ''}
         <div class="tree-children">
             <button class="tree-row tree-child ${isActiveLib && activePromptCategory === 'all' && promptTreeFocus === 'category' ? 'active' : ''}" type="button" data-prompt-cat="all" data-prompt-cat-lib="${libId}">
                 <span class="tree-elbow"></span>
@@ -612,21 +623,43 @@ function renderPromptTreeBranch(lib){
                 <span class="tree-row-name">全部提示词</span>
                 <span class="tree-row-count">${promptCountForCategory('all', lib)}</span>
             </button>
-            ${cats.map(cat => `<button class="tree-row tree-child ${isActiveLib && cat.id === activePromptCategory && promptTreeFocus === 'category' ? 'active' : ''}" type="button" data-prompt-cat="${escapeAttr(cat.id)}" data-prompt-cat-lib="${libId}">
+            ${cats.map(cat => {
+                const active = isActiveLib && cat.id === activePromptCategory && promptTreeFocus === 'category';
+                return `<button class="tree-row tree-child ${active ? 'active' : ''}" type="button" data-prompt-cat="${escapeAttr(cat.id)}" data-prompt-cat-lib="${libId}">
                 <span class="tree-elbow"></span>
                 <span class="tree-row-icon"><i data-lucide="tag"></i></span>
                 <span class="tree-row-name">${escapeHtml(cat.name || promptCategoryLabel(cat.id))}</span>
                 <span class="tree-row-count">${promptCountForCategory(cat.id, lib)}</span>
-            </button>`).join('')}
+            </button>${active ? renderPromptTreeActionBar('category') : ''}`;
+            }).join('')}
         </div>
     </div>`;
 }
-function renderPromptTreeActionBar(kind, readonly=false){
-    return '';
+function renderPromptTreeActionBar(kind){
+    const editHtml = renderPromptTreeInlineEdit(kind);
+    if(editHtml) return editHtml;
+    if(kind === 'library'){
+        const lib = activePromptLibrary();
+        const isSystem = isSystemPromptLibrary(lib);
+        const deleteKey = `prompt-lib:${lib?.id || ''}`;
+        return `<div class="tree-action-bar library-actions">
+            <button type="button" data-prompt-cat-new><i data-lucide="folder-plus"></i><span>新分组</span></button>
+            <button type="button" data-prompt-lib-rename><i data-lucide="pencil"></i><span>重命名</span></button>
+            ${isSystem ? '' : `<button type="button" class="danger ${pendingTreeDelete === deleteKey ? 'detail-confirm' : ''}" data-prompt-lib-delete><i data-lucide="trash-2"></i><span>${pendingTreeDelete === deleteKey ? '确认删除' : '删除库'}</span></button>`}
+        </div>`;
+    }
+    if(activePromptCategory === 'all' || PROMPT_BUILTIN_CATEGORY_IDS.has(activePromptCategory)){
+        return `<div class="tree-action-bar child-actions muted-actions"><span><i data-lucide="lock"></i>内置分组不可编辑</span></div>`;
+    }
+    const deleteKey = `prompt-cat:${activePromptCategory}`;
+    return `<div class="tree-action-bar child-actions">
+        <button type="button" data-prompt-cat-rename><i data-lucide="pencil"></i><span>重命名</span></button>
+        <button type="button" class="danger ${pendingTreeDelete === deleteKey ? 'detail-confirm' : ''}" data-prompt-cat-delete><i data-lucide="trash-2"></i><span>${pendingTreeDelete === deleteKey ? '确认删除' : '删除'}</span></button>
+    </div>`;
 }
 function renderPromptTreeInlineEdit(kind){
     if(!promptTreeEdit) return '';
-    const expectedKinds = kind === 'library' ? ['library-new', 'library-rename'] : [];
+    const expectedKinds = kind === 'library' ? ['library-new', 'library-rename', 'category-new'] : ['category-new', 'category-rename'];
     if(!expectedKinds.includes(promptTreeEdit.kind)) return '';
     const label = promptTreeEdit.label || '名称';
     return `<div class="tree-inline-edit ${kind === 'category' ? 'child-actions' : 'library-actions'}">
@@ -854,6 +887,22 @@ async function handleClick(event){
         promptCreateMode = true; promptEditMode = false; pendingDeletePromptId = ''; render(); return;
     }
     if(target.closest?.('[data-prompt-lib-new]')){ promptTreeFocus = 'library'; promptTreeEdit = {kind:'library-new', value:'新提示词库', label:'提示词库名称'}; render(); return; }
+    if(target.closest?.('[data-prompt-cat-new]')){
+        const libRow = target.closest('[data-prompt-lib]');
+        if(libRow) activePromptLibraryId = libRow.dataset.promptLib || activePromptLibraryId;
+        promptTreeFocus = 'library';
+        promptTreeEdit = {kind:'category-new', value:'新分组', label:'分组名称'};
+        pendingTreeDelete = '';
+        render(); return;
+    }
+    if(target.closest?.('[data-prompt-cat-rename]')){
+        promptTreeFocus = 'category';
+        const cat = activePromptCategories().find(c => c.id === activePromptCategory);
+        promptTreeEdit = {kind:'category-rename', value:cat?.name || '', label:'分组名称'};
+        pendingTreeDelete = '';
+        render(); return;
+    }
+    if(target.closest?.('[data-prompt-cat-delete]')){ await deletePromptCategory(); return; }
     const promptLibRenameBtn = target.closest?.('[data-prompt-lib-rename]');
     if(promptLibRenameBtn){
         const libRow = target.closest('[data-prompt-lib]');
@@ -1288,10 +1337,41 @@ async function savePromptTreeEdit(){
         data = await apiJson(`/api/prompt-libraries/${encodeURIComponent(lib.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
         promptLibrary = data.library || promptLibrary;
         promptTreeFocus = 'library';
+    } else if(promptTreeEdit.kind === 'category-new'){
+        const lib = activePromptLibrary();
+        data = await apiJson('/api/prompt-libraries/categories', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib?.id || 'system', name})});
+        promptLibrary = data.library || promptLibrary;
+        activePromptCategory = data.category?.id || activePromptCategory;
+        promptTreeFocus = 'category';
+    } else if(promptTreeEdit.kind === 'category-rename'){
+        data = await apiJson(`/api/prompt-libraries/categories/${encodeURIComponent(activePromptCategory)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
+        promptLibrary = data.library || promptLibrary;
+        promptTreeFocus = 'category';
     }
     promptTreeEdit = null;
+    pendingTreeDelete = '';
     render();
     setStatus('已保存');
+}
+async function deletePromptCategory(){
+    if(activePromptCategory === 'all' || PROMPT_BUILTIN_CATEGORY_IDS.has(activePromptCategory)){
+        setStatus('内置分组不能删除');
+        return;
+    }
+    const key = `prompt-cat:${activePromptCategory}`;
+    if(pendingTreeDelete !== key){
+        pendingTreeDelete = key;
+        promptTreeEdit = null;
+        render();
+        setStatus('再次点击确认删除分组');
+        return;
+    }
+    const data = await apiJson(`/api/prompt-libraries/categories/${encodeURIComponent(activePromptCategory)}`, {method:'DELETE'});
+    promptLibrary = data.library || promptLibrary;
+    activePromptCategory = 'all';
+    pendingTreeDelete = '';
+    render();
+    setStatus('分组已删除');
 }
 async function renamePromptLibrary(){
     const lib = activePromptLibrary();
@@ -1303,14 +1383,25 @@ async function renamePromptLibrary(){
 }
 async function deletePromptLibrary(){
     const lib = activePromptLibrary();
-    if(!lib || !window.confirm(`删除提示词库「${lib.name || '提示词库'}」？`)) return;
+    if(!lib) return;
+    if(isSystemPromptLibrary(lib)){ setStatus('系统提示词库不能删除'); return; }
+    const key = `prompt-lib:${lib.id}`;
+    if(pendingTreeDelete !== key){
+        pendingTreeDelete = key;
+        promptTreeEdit = null;
+        render();
+        setStatus('再次点击确认删除提示词库');
+        return;
+    }
     const data = await apiJson(`/api/prompt-libraries/${encodeURIComponent(lib.id)}`, {method:'DELETE'});
     promptLibrary = data.library || promptLibrary;
-    activePromptLibraryId = promptLibrary.active_library_id || promptLibraries()[0]?.id || '';
+    activePromptLibraryId = promptLibrary.active_library_id || promptLibraries()[0]?.id || 'system';
     activePromptCategory = 'all';
     selectedPromptId = '';
     selectedPromptIds.clear();
+    pendingTreeDelete = '';
     render();
+    setStatus('提示词库已删除');
 }
 async function createPromptItem(){
     const lib = activePromptLibrary();
