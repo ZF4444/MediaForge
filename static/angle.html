@@ -185,6 +185,93 @@
             height: 10px;
             animation: b-loading 1s infinite var(--easing);
         }
+
+        /* 复合切换组件样式 - 来自 zimage */
+        .mode-switcher {
+            position: relative;
+            background: #f1f1f1;
+            padding: 4px;
+            border-radius: 14px;
+            display: flex;
+            width: 100%;
+        }
+
+        .mode-btn {
+            position: relative;
+            z-index: 10;
+            flex: 1;
+            padding: 8px 0;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: #999;
+            transition: color 0.3s ease;
+            cursor: pointer;
+        }
+
+        .mode-btn.active {
+            color: #000;
+        }
+
+        .mode-glider {
+            position: absolute;
+            height: calc(100% - 8px);
+            width: calc(50% - 4px);
+            background: #fff;
+            border-radius: 11px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            transition: transform 0.3s var(--easing);
+            z-index: 1;
+
+            /* 角度控制滑块：明/暗模式都保持清晰的轨道与滑块 */
+            #rotate-h, #rotate-v, #distance {
+                -webkit-appearance: none;
+                appearance: none;
+                background: #e5e7eb !important;
+                border-radius: 9999px;
+                outline: none;
+            }
+            #rotate-h::-webkit-slider-thumb,
+            #rotate-v::-webkit-slider-thumb,
+            #distance::-webkit-slider-thumb {
+                -webkit-appearance: none;
+                appearance: none;
+                width: 14px;
+                height: 14px;
+                border-radius: 50%;
+                background: #111827;
+                border: 2px solid #fff;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+                cursor: pointer;
+            }
+            #rotate-h::-moz-range-thumb,
+            #rotate-v::-moz-range-thumb,
+            #distance::-moz-range-thumb {
+                width: 14px;
+                height: 14px;
+                border-radius: 50%;
+                background: #111827;
+                border: 2px solid #fff;
+                cursor: pointer;
+            }
+            html.studio-theme-dark #rotate-h,
+            html.studio-theme-dark #rotate-v,
+            html.studio-theme-dark #distance {
+                background: #2a3444 !important;
+            }
+            html.studio-theme-dark #rotate-h::-webkit-slider-thumb,
+            html.studio-theme-dark #rotate-v::-webkit-slider-thumb,
+            html.studio-theme-dark #distance::-webkit-slider-thumb {
+                background: #d8dee9;
+                border-color: #0f141d;
+            }
+            html.studio-theme-dark #rotate-h::-moz-range-thumb,
+            html.studio-theme-dark #rotate-v::-moz-range-thumb,
+            html.studio-theme-dark #distance::-moz-range-thumb {
+                background: #d8dee9;
+                border-color: #0f141d;
+        }
     </style>
     <link rel="stylesheet" href="/static/css/theme.css">
 </head>

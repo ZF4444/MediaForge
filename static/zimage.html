@@ -382,13 +382,18 @@
 
         // 4. ModelScope 云端逻辑
         async function runCloudTask(prompt) {
-            let apiKey = localStorage.getItem(MS_TOKEN_KEY);
-            if (!apiKey) {
-                try {
-                    const res = await fetch('/api/config/token');
-                    const data = await res.json();
-                    if (data.token) apiKey = data.token;
-                } catch (e) { }
+            // 优先用 API 设置里集中管理的 Token（服务端）；localStorage 仅作旧版兜底
+            let apiKey = '';
+            try {
+                const res = await fetch('/api/config/token');
+                const data = await res.json();
+                if (data.token) apiKey = data.token;
+            } catch (e) { }
+            if (apiKey) {
+                // 自愈：清掉可能过期的旧版本地 Token，避免覆盖服务端有效 Token
+                try { localStorage.removeItem(MS_TOKEN_KEY); } catch (e) { }
+            } else {
+                apiKey = localStorage.getItem(MS_TOKEN_KEY) || '';
             }
             if (!apiKey) return alert(tr('studio.modelscopeTokenRequired'));
 

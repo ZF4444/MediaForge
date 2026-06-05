@@ -13,6 +13,7 @@ import random
 import sys
 import subprocess
 import time
+import traceback
 import shutil
 import asyncio
 import logging
@@ -24,7 +25,7 @@ import math
 import shlex
 import functools
 from typing import List, Dict, Any, Optional, Tuple
-from threading import Lock
+from threading import Lock, Thread
 import httpx
 from PIL import Image
 from io import BytesIO
@@ -194,6 +195,7 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
 OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
 ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
+LOCAL_UPLOAD_DIR = os.path.join(ASSETS_DIR, "uploads")
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 API_ENV_FILE = os.path.join(BASE_DIR, "API", ".env")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -203,6 +205,7 @@ ASSET_LIBRARY_PATH = os.path.join(DATA_DIR, "asset_library.json")
 PROMPT_LIBRARY_PATH = os.path.join(DATA_DIR, "prompt_libraries.json")
 API_PROVIDERS_FILE = os.path.join(DATA_DIR, "api_providers.json")
 RUNNINGHUB_WORKFLOW_STORE_FILE = os.path.join(DATA_DIR, "runninghub_workflows.json")
+SHARED_FOLDERS_FILE = os.path.join(DATA_DIR, "shared_folders.json")
 GLOBAL_CONFIG_FILE = os.path.join(BASE_DIR, "global_config.json")
 CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 LOCAL_IMAGE_IMPORT_MAX_BYTES = int(os.getenv("LOCAL_IMAGE_IMPORT_MAX_BYTES", str(50 * 1024 * 1024)))
@@ -906,6 +909,28 @@ def apply_runninghub_system_thumbnails(entries, kind):
         result.append(entry)
     return result
 
+def merge_runninghub_entry_overlay(system_entry, user_entry):
+    # 用户条目优先，但当它把 fields/workflowJson 留空（例如配置前生成的空壳）时，
+    # 继承系统模板里的完整配置，否则模板里的必选/可选等设置会被空壳覆盖丢失。
+    if not isinstance(system_entry, dict):
+        return user_entry
+    if not isinstance(user_entry, dict):
+        return system_entry
+    merged = dict(user_entry)
+    user_fields = user_entry.get("fields")
+    sys_fields = system_entry.get("fields")
+    if not (isinstance(user_fields, list) and user_fields) and isinstance(sys_fields, list) and sys_fields:
+        merged["fields"] = sys_fields
+    user_wj = user_entry.get("workflowJson")
+    sys_wj = system_entry.get("workflowJson")
+    if not (isinstance(user_wj, dict) and user_wj) and isinstance(sys_wj, dict) and sys_wj:
+        merged["workflowJson"] = sys_wj
+    if not user_entry.get("optionalImageMode") and system_entry.get("optionalImageMode"):
+        merged["optionalImageMode"] = system_entry["optionalImageMode"]
+    if not (isinstance(user_entry.get("raw"), dict) and user_entry.get("raw")) and isinstance(system_entry.get("raw"), dict) and system_entry.get("raw"):
+        merged["raw"] = system_entry["raw"]
+    return merged
+
 def merge_runninghub_system_entries(system_entries, user_entries, kind):
     merged = []
     index = {}
@@ -927,7 +952,7 @@ def merge_runninghub_system_entries(system_entries, user_entries, kind):
                 index = {runninghub_entry_id(item, kind): idx for idx, item in enumerate(merged)}
             continue
         if entry_id in index:
-            merged[index[entry_id]] = entry
+            merged[index[entry_id]] = merge_runninghub_entry_overlay(merged[index[entry_id]], entry)
         else:
             index[entry_id] = len(merged)
             merged.append(entry)
@@ -1210,6 +1235,7 @@ os.makedirs(ASSETS_DIR, exist_ok=True)
 os.makedirs(OUTPUT_INPUT_DIR, exist_ok=True)
 os.makedirs(OUTPUT_OUTPUT_DIR, exist_ok=True)
 os.makedirs(ASSET_LIBRARY_DIR, exist_ok=True)
+os.makedirs(LOCAL_UPLOAD_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(WORKFLOW_DIR, exist_ok=True)
 os.makedirs(CONVERSATION_DIR, exist_ok=True)
@@ -1640,6 +1666,16 @@ class AssetLibraryBatchAddRequest(BaseModel):
     category_id: str = ""
     library_id: str = ""
     items: List[AssetLibraryAddRequest] = []
+
+class SharedFolderRegister(BaseModel):
+    path: str = ""
+    name: str = ""
+
+class SharedFolderImport(BaseModel):
+    library_id: str = ""
+    category_id: str = ""
+    folder_id: str = ""
+    paths: List[str] = []
 
 class AssetLibraryRenameRequest(BaseModel):
     name: str = ""
@@ -3492,6 +3528,126 @@ def find_asset_category_with_library(lib, category_id, library_id=""):
                 return library, cat
     return None, None
 
+# ---------------- 共享文件夹（局域网只读浏览/引用） ----------------
+SHARED_MEDIA_EXTS = {
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+    ".mp4", ".webm", ".mov", ".m4v", ".mkv",
+    ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",
+}
+SHARED_SCAN_MAX_ENTRIES = 8000
+SHARED_FOLDERS_LOCK = Lock()
+
+def shared_folders_load():
+    try:
+        with open(SHARED_FOLDERS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    folders = data.get("folders")
+    if not isinstance(folders, list):
+        folders = []
+    return {"folders": [f for f in folders if isinstance(f, dict)]}
+
+def shared_folders_save(data):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(SHARED_FOLDERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def shared_folder_by_id(folder_id):
+    for entry in shared_folders_load().get("folders", []):
+        if entry.get("id") == folder_id:
+            return entry
+    return None
+
+def shared_folder_abs(entry):
+    rel = (entry or {}).get("rel") or ""
+    return os.path.normpath(os.path.join(BASE_DIR, rel))
+
+def shared_resolve_register(path):
+    """校验 path 必须位于项目目录内、是一个存在的子目录（非项目根）。返回 (abs, rel)。"""
+    raw = (path or "").strip().strip('"').strip("'")
+    if not raw:
+        raise HTTPException(status_code=400, detail="请提供文件夹路径")
+    candidate = raw if os.path.isabs(raw) else os.path.join(BASE_DIR, raw)
+    abs_path = os.path.normpath(os.path.abspath(candidate))
+    base = os.path.normpath(os.path.abspath(BASE_DIR))
+    try:
+        common = os.path.commonpath([abs_path, base])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="只允许登记项目目录内的文件夹")
+    if common != base:
+        raise HTTPException(status_code=400, detail="只允许登记项目目录内的文件夹")
+    if abs_path == base:
+        raise HTTPException(status_code=400, detail="不能直接登记项目根目录，请选择子文件夹")
+    if not os.path.isdir(abs_path):
+        raise HTTPException(status_code=400, detail="文件夹不存在")
+    rel = os.path.relpath(abs_path, base)
+    return abs_path, rel
+
+def shared_child_abs(folder_abs, rel):
+    """把相对 folder_abs 的子路径解析为绝对路径，并防止越界访问。"""
+    rel = (rel or "").replace("\\", "/").lstrip("/")
+    abs_path = os.path.normpath(os.path.join(folder_abs, rel))
+    base = os.path.normpath(os.path.abspath(folder_abs))
+    try:
+        common = os.path.commonpath([os.path.abspath(abs_path), base])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="非法路径")
+    if common != base:
+        raise HTTPException(status_code=400, detail="非法路径")
+    return abs_path
+
+def scan_shared_tree(folder_id, folder_abs, rel_prefix="", display="", counter=None):
+    """递归扫描共享文件夹，返回 {id,name,path,items,children}。"""
+    if counter is None:
+        counter = {"n": 0}
+    node = {
+        "id": f"{folder_id}:{rel_prefix or '__root__'}",
+        "name": display or os.path.basename(folder_abs) or folder_abs,
+        "path": rel_prefix,
+        "items": [],
+        "children": [],
+    }
+    try:
+        entries = sorted(os.scandir(folder_abs), key=lambda e: (not e.is_dir(), e.name.lower()))
+    except OSError:
+        return node
+    for ent in entries:
+        if counter["n"] >= SHARED_SCAN_MAX_ENTRIES:
+            break
+        if ent.name.startswith(".") or ent.name.startswith("._"):
+            continue
+        child_rel = f"{rel_prefix}/{ent.name}".lstrip("/")
+        if ent.is_dir():
+            child = scan_shared_tree(folder_id, ent.path, child_rel, ent.name, counter)
+            if child["items"] or child["children"]:
+                node["children"].append(child)
+        elif ent.is_file():
+            ext = os.path.splitext(ent.name)[1].lower()
+            if ext not in SHARED_MEDIA_EXTS:
+                continue
+            counter["n"] += 1
+            try:
+                st = ent.stat()
+                size = st.st_size
+                mtime = int(st.st_mtime * 1000)
+            except OSError:
+                size = 0
+                mtime = 0
+            node["items"].append({
+                "id": f"{folder_id}:{child_rel}",
+                "name": ent.name,
+                "url": f"/api/shared-folders/{folder_id}/file?path={urllib.parse.quote(child_rel)}",
+                "kind": asset_library_media_kind(ent.name),
+                "size": size,
+                "lastModified": mtime,
+                "relativePath": child_rel,
+                "folderId": folder_id,
+            })
+    return node
+
 def builtin_prompt_templates():
     try:
         template_path = prompt_template_markdown_path()
@@ -3822,7 +3978,7 @@ def looks_like_image_media_url(value: str) -> bool:
     path = urllib.parse.urlparse(text).path or text
     return bool(re.search(r"\.(png|jpe?g|webp|gif|bmp|tiff)$", path))
 
-def volcengine_content_role(role: str, kind: str = "image") -> str:
+def volcengine_content_role(role: str, kind: str = "image") -> Optional[str]:
     value = str(role or "").strip().lower()
     allowed = {
         "first_frame", "last_frame", "reference_image",
@@ -3836,7 +3992,9 @@ def volcengine_content_role(role: str, kind: str = "image") -> str:
         return "reference_audio"
     if kind == "video":
         return "reference_video"
-    return "reference_image"
+    # 修复：未显式指定 role 的纯生图请求不应兜底为 reference_image，
+    # 否则火山后端会误判为 r2v(参考图生视频)，导致 seedance/seedream 等生图模型失败。
+    return None
 
 def volcengine_video_duration(duration) -> int:
     try:
@@ -6067,6 +6225,107 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
             f.write(content)
         uploaded.append({"url": output_url_for(filename, "input"), "name": file.filename or filename, "kind": kind})
     return {"files": uploaded}
+
+def _local_upload_kind_ext(filename, content_type):
+    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    video_exts = {".mp4", ".webm", ".mov", ".m4v"}
+    audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+    ext = os.path.splitext(filename or "")[1].lower()
+    ct = (content_type or "").lower()
+    if ext in video_exts or ct.startswith("video/"):
+        if ext not in video_exts:
+            ext = ".webm" if "webm" in ct else ".mov" if "quicktime" in ct else ".mp4"
+        return "video", ext
+    if ext in audio_exts or ct.startswith("audio/"):
+        if ext not in audio_exts:
+            ext = ".wav" if "wav" in ct else ".ogg" if "ogg" in ct else ".m4a" if "mp4" in ct else ".mp3"
+        return "audio", ext
+    if ext in image_exts or ct.startswith("image/"):
+        if ext not in image_exts:
+            ext = ".jpg" if "jpeg" in ct else ".webp" if "webp" in ct else ".gif" if "gif" in ct else ".png"
+        return "image", ext
+    return None, ext
+
+def _local_upload_display_name(filename):
+    # 文件名形如 up_<hex>_<原始名>；去掉前缀还原展示名
+    m = re.match(r"^up_[0-9a-f]{12}_(.+)$", filename)
+    return m.group(1) if m else filename
+
+def _local_upload_item(filename):
+    path = os.path.join(LOCAL_UPLOAD_DIR, filename)
+    try:
+        stat = os.stat(path)
+        size = stat.st_size
+        created_at = stat.st_mtime
+    except OSError:
+        size = 0
+        created_at = 0
+    kind, _ = _local_upload_kind_ext(filename, "")
+    return {
+        "id": filename,
+        "file": filename,
+        "name": _local_upload_display_name(filename),
+        "url": f"/assets/uploads/{filename}",
+        "kind": kind or "image",
+        "size": size,
+        "created_at": created_at,
+    }
+
+@app.post("/api/local-assets/upload")
+async def upload_local_assets(files: List[UploadFile] = File(...)):
+    uploaded = []
+    for file in files:
+        content = await file.read()
+        if not content:
+            continue
+        kind, ext = _local_upload_kind_ext(file.filename, file.content_type)
+        if kind is None:
+            continue
+        base = os.path.splitext(os.path.basename(file.filename or "file"))[0]
+        base = re.sub(r"[^0-9A-Za-z一-鿿._-]+", "_", base).strip("_") or "file"
+        base = base[:60]
+        filename = f"up_{uuid.uuid4().hex[:12]}_{base}{ext}"
+        path = os.path.join(LOCAL_UPLOAD_DIR, filename)
+        with open(path, "wb") as f:
+            f.write(content)
+        uploaded.append(_local_upload_item(filename))
+    return {"files": uploaded}
+
+@app.get("/api/local-assets")
+async def list_local_assets():
+    try:
+        names = os.listdir(LOCAL_UPLOAD_DIR)
+    except OSError:
+        names = []
+    items = []
+    for name in names:
+        if name.startswith("."):
+            continue
+        if not os.path.isfile(os.path.join(LOCAL_UPLOAD_DIR, name)):
+            continue
+        items.append(_local_upload_item(name))
+    items.sort(key=lambda it: it.get("created_at") or 0, reverse=True)
+    return {"items": items}
+
+@app.post("/api/local-assets/delete")
+async def delete_local_assets(payload: dict, request: Request):
+    ensure_same_origin_request(request)
+    names = payload.get("names") if isinstance(payload, dict) else None
+    if not isinstance(names, list):
+        names = []
+    deleted = []
+    for name in names:
+        name = os.path.basename(str(name or "").strip())
+        if not name:
+            continue
+        path = os.path.join(LOCAL_UPLOAD_DIR, name)
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+                deleted.append(name)
+            except OSError:
+                pass
+    return {"deleted": deleted}
 
 @app.post("/api/temp-sh/upload")
 async def temp_sh_upload(payload: TempShUploadRequest, request: Request):
@@ -8558,6 +8817,105 @@ async def batch_add_asset_library_items(payload: AssetLibraryBatchAddRequest):
         if not src:
             continue
         _, item = make_asset_library_item(src, entry.name or os.path.basename(src))
+        cat.setdefault("items", []).append(item)
+        added.append(item)
+    save_asset_library(lib)
+    return {"library": lib, "items": added}
+
+@app.get("/api/shared-folders")
+async def list_shared_folders():
+    data = shared_folders_load()
+    folders = []
+    for entry in data.get("folders", []):
+        abs_path = shared_folder_abs(entry)
+        folders.append({
+            "id": entry.get("id"),
+            "name": entry.get("name") or os.path.basename(abs_path) or abs_path,
+            "rel": entry.get("rel") or "",
+            "path": abs_path,
+            "exists": os.path.isdir(abs_path),
+            "created_at": entry.get("created_at"),
+        })
+    return {"folders": folders}
+
+@app.post("/api/shared-folders")
+async def register_shared_folder(payload: SharedFolderRegister):
+    abs_path, rel = shared_resolve_register(payload.path)
+    name = sanitize_asset_name(payload.name or os.path.basename(abs_path), "共享文件夹")
+    with SHARED_FOLDERS_LOCK:
+        data = shared_folders_load()
+        for entry in data.get("folders", []):
+            if os.path.normpath(shared_folder_abs(entry)) == os.path.normpath(abs_path):
+                entry["name"] = name
+                shared_folders_save(data)
+                return {"folder": {**entry, "path": abs_path, "exists": True}}
+        entry = {
+            "id": f"shared_{uuid.uuid4().hex[:12]}",
+            "name": name,
+            "rel": rel,
+            "created_at": now_ms(),
+        }
+        data.setdefault("folders", []).append(entry)
+        shared_folders_save(data)
+    return {"folder": {**entry, "path": abs_path, "exists": True}}
+
+@app.delete("/api/shared-folders/{folder_id}")
+async def unregister_shared_folder(folder_id: str):
+    with SHARED_FOLDERS_LOCK:
+        data = shared_folders_load()
+        before = len(data.get("folders", []))
+        data["folders"] = [f for f in data.get("folders", []) if f.get("id") != folder_id]
+        if len(data["folders"]) == before:
+            raise HTTPException(status_code=404, detail="共享文件夹不存在")
+        shared_folders_save(data)
+    return {"ok": True}
+
+@app.get("/api/shared-folders/{folder_id}/tree")
+async def get_shared_folder_tree(folder_id: str):
+    entry = shared_folder_by_id(folder_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="共享文件夹不存在")
+    abs_path = shared_folder_abs(entry)
+    if not os.path.isdir(abs_path):
+        raise HTTPException(status_code=404, detail="文件夹已不存在")
+    tree = scan_shared_tree(folder_id, abs_path, "", entry.get("name") or os.path.basename(abs_path))
+    return {"folder": {"id": folder_id, "name": entry.get("name"), "path": abs_path}, "tree": tree}
+
+@app.get("/api/shared-folders/{folder_id}/file")
+async def get_shared_folder_file(folder_id: str, path: str = ""):
+    entry = shared_folder_by_id(folder_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="共享文件夹不存在")
+    folder_abs = shared_folder_abs(entry)
+    abs_path = shared_child_abs(folder_abs, path)
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    ext = os.path.splitext(abs_path)[1].lower()
+    if ext not in SHARED_MEDIA_EXTS:
+        raise HTTPException(status_code=400, detail="不支持的文件类型")
+    return FileResponse(abs_path, media_type=content_type_for_path(abs_path))
+
+@app.post("/api/shared-folders/import")
+async def import_shared_folder_files(payload: SharedFolderImport):
+    entry = shared_folder_by_id(payload.folder_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="共享文件夹不存在")
+    folder_abs = shared_folder_abs(entry)
+    lib = load_asset_library()
+    cat = find_asset_category_in_library(lib, payload.category_id, payload.library_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    if cat.get("type") != "image":
+        raise HTTPException(status_code=400, detail="该分类暂不支持添加媒体")
+    added = []
+    for rel in (payload.paths or [])[:200]:
+        abs_path = shared_child_abs(folder_abs, rel)
+        if not os.path.isfile(abs_path):
+            continue
+        ext = os.path.splitext(abs_path)[1].lower()
+        if ext not in SHARED_MEDIA_EXTS:
+            continue
+        _, item = make_asset_library_item(abs_path, os.path.basename(abs_path))
         cat.setdefault("items", []).append(item)
         added.append(item)
     save_asset_library(lib)

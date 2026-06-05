@@ -35,6 +35,27 @@ let assetTreeEdit = null;
 let promptTreeEdit = null;
 let pendingTreeDelete = '';
 let marqueeState = null;
+let sharedFolders = [];
+let activeSharedFolderId = '';
+let activeSharedFolderName = '';
+let localFolders = [];
+let localFolderMap = new Map();
+let localItemMap = new Map();
+let activeLocalFolderId = '';
+let selectedLocalId = '';
+let selectedLocalIds = new Set();
+let localQuery = '';
+let localManageMode = false;
+let localClipboard = null;
+let localAssets = [];
+let localAssetsLoaded = false;
+let selectedLocalUploadId = '';
+let selectedLocalUploadIds = new Set();
+let localUploadQuery = '';
+let localUploadManageMode = false;
+let lightboxPanState = null;
+
+const LOCAL_MEDIA_EXTS = /\.(png|jpe?g|webp|gif|bmp|avif|svg|mp4|webm|mov|m4v|mp3|wav|flac|ogg|m4a|aac)(\?|#|$)/i;
 
 function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
 function setStatus(text='准备就绪'){ if(statusEl) statusEl.textContent = text || '准备就绪'; }
@@ -74,6 +95,13 @@ function formatDate(value){
     if(!num) return '未知';
     try { return new Date(num).toLocaleString('zh-CN', {hour12:false}); }
     catch(e) { return '未知'; }
+}
+function formatFileSize(bytes=0){
+    const size = Number(bytes || 0);
+    if(!size) return '0 B';
+    const units = ['B','KB','MB','GB','TB'];
+    const idx = Math.min(units.length - 1, Math.floor(Math.log(size) / Math.log(1024)));
+    return `${(size / Math.pow(1024, idx)).toFixed(idx ? 1 : 0)} ${units[idx]}`;
 }
 function assetLibraries(){
     return Array.isArray(assetLibrary.libraries) && assetLibrary.libraries.length
@@ -152,6 +180,150 @@ function assetThumb(item){
     if(kind === 'video') return `<video src="${escapeAttr(item.url)}" muted preload="metadata" playsinline></video>`;
     if(kind === 'audio') return `<div class="asset-file-icon"><i data-lucide="file-audio"></i><span>音频</span></div>`;
     return `<img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.name || 'asset')}" loading="lazy">`;
+}
+function isLocalMediaFile(file){
+    if(!file) return false;
+    const type = String(file.type || '').toLowerCase();
+    if(type.startsWith('image/') || type.startsWith('video/') || type.startsWith('audio/')) return true;
+    return LOCAL_MEDIA_EXTS.test(file.name || '');
+}
+function localItemKind(item){
+    // 共享文件夹的 item 已带 kind；兜底按名称判断
+    if(item && item.kind) return item.kind;
+    const name = String(item?.name || '').toLowerCase();
+    if(/\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(name)) return 'video';
+    if(/\.(mp3|wav|flac|ogg|m4a|aac)(\?|#|$)/i.test(name)) return 'audio';
+    return 'image';
+}
+function localObjectUrl(item){
+    // 共享文件夹素材直接走后端 URL（局域网也可访问），不再用 createObjectURL
+    return item?.url || '';
+}
+function localAssetThumb(item){
+    return assetThumb({url:localObjectUrl(item), name:item?.name || 'local', kind:item?.kind || localItemKind(item)});
+}
+function activeLocalFolder(){
+    return localFolderMap.get(activeLocalFolderId) || localFolders[0] || null;
+}
+function localItemsForFolder(folderId=activeLocalFolderId){
+    const query = localQuery.trim().toLowerCase();
+    const folder = localFolderMap.get(folderId) || activeLocalFolder();
+    const items = folder?.items || [];
+    return items.filter(item => {
+        if(!query) return true;
+        return [item.name, item.relativePath, assetKindLabel(item)].join(' ').toLowerCase().includes(query);
+    });
+}
+function findLocalItem(id){
+    return localItemMap.get(id) || null;
+}
+function normalizeLocalState(){
+    if(!activeLocalFolderId || !localFolderMap.has(activeLocalFolderId)) activeLocalFolderId = localFolders[0]?.id || '';
+    const items = localItemsForFolder();
+    if(selectedLocalId && !localItemMap.has(selectedLocalId)) selectedLocalId = '';
+    if(!selectedLocalId && items.length) selectedLocalId = items[0].id;
+    selectedLocalIds = new Set([...selectedLocalIds].filter(id => localItemMap.has(id)));
+}
+function localFolderTotal(folder){
+    if(!folder) return 0;
+    return (folder.items || []).length + (folder.children || []).reduce((sum, child) => sum + localFolderTotal(child), 0);
+}
+function localFolderId(path=''){
+    return path || '__root__';
+}
+function localChildPath(parentPath='', name=''){
+    return parentPath ? `${parentPath}/${name}` : name;
+}
+// ---------------- 共享文件夹（服务端登记 + 只读浏览/引用，局域网可用） ----------------
+async function loadSharedFolders(){
+    try {
+        const data = await apiJson('/api/shared-folders');
+        sharedFolders = Array.isArray(data.folders) ? data.folders : [];
+    } catch(err) {
+        sharedFolders = [];
+    }
+    return sharedFolders;
+}
+async function loadLocalAssets(){
+    try {
+        const data = await apiJson('/api/local-assets');
+        localAssets = Array.isArray(data.items) ? data.items : [];
+    } catch(err) {
+        localAssets = [];
+    }
+    localAssetsLoaded = true;
+    return localAssets;
+}
+async function registerSharedFolder(){
+    const tip = '请输入要登记的共享文件夹路径（必须位于项目目录内，例如 assets\\library 或 output）：';
+    const path = window.prompt(tip, '');
+    if(!String(path || '').trim()) return;
+    try {
+        setStatus('正在登记共享文件夹...');
+        const data = await apiJson('/api/shared-folders', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({path})
+        });
+        await loadSharedFolders();
+        const folder = data.folder;
+        if(folder?.id) await openSharedFolder(folder.id);
+        else render();
+        setStatus(`已登记「${folder?.name || '共享文件夹'}」`);
+    } catch(err) {
+        setStatus(err.message || '登记共享文件夹失败');
+    }
+}
+async function unregisterSharedFolder(folderId){
+    if(!folderId) return;
+    try {
+        await apiJson(`/api/shared-folders/${encodeURIComponent(folderId)}`, {method:'DELETE'});
+        if(activeSharedFolderId === folderId){
+            activeSharedFolderId = '';
+            activeSharedFolderName = '';
+            localFolders = [];
+            localFolderMap = new Map();
+            localItemMap = new Map();
+            activeLocalFolderId = '';
+            selectedLocalId = '';
+            selectedLocalIds.clear();
+            localClipboard = null;
+        }
+        await loadSharedFolders();
+        render();
+        setStatus('已移除共享文件夹登记（不会删除磁盘文件）');
+    } catch(err) {
+        setStatus(err.message || '移除共享文件夹失败');
+    }
+}
+function indexSharedTree(node){
+    if(!node) return;
+    localFolderMap.set(node.id, node);
+    (node.items || []).forEach(item => localItemMap.set(item.id, item));
+    (node.children || []).forEach(child => indexSharedTree(child));
+}
+async function openSharedFolder(folderId){
+    if(!folderId) return;
+    try {
+        setStatus('正在读取共享文件夹...');
+        const data = await apiJson(`/api/shared-folders/${encodeURIComponent(folderId)}/tree`);
+        const tree = data.tree;
+        localFolders = tree ? [tree] : [];
+        localFolderMap = new Map();
+        localItemMap = new Map();
+        if(tree) indexSharedTree(tree);
+        activeSharedFolderId = folderId;
+        activeSharedFolderName = data.folder?.name || tree?.name || '共享文件夹';
+        activeLocalFolderId = tree?.id || '';
+        selectedLocalId = '';
+        selectedLocalIds.clear();
+        localClipboard = null;
+        normalizeLocalState();
+        render();
+        setStatus(`已读取「${activeSharedFolderName}」`);
+    } catch(err) {
+        setStatus(err.message || '读取共享文件夹失败');
+    }
 }
 function currentAssetItems(){
     const query = assetQuery.trim().toLowerCase();
@@ -268,7 +440,9 @@ async function loadAll(){
     const [assetData, promptData, providerData] = await Promise.all([
         apiJson('/api/asset-library'),
         apiJson('/api/prompt-libraries'),
-        apiJson('/api/providers').catch(() => ({providers:[]}))
+        apiJson('/api/providers').catch(() => ({providers:[]})),
+        loadSharedFolders(),
+        loadLocalAssets()
     ]);
     assetLibrary = assetData.library || {libraries:[], categories:[]};
     promptLibrary = promptData.library || {libraries:[]};
@@ -286,8 +460,201 @@ async function loadAll(){
 function render(){
     document.querySelectorAll('[data-tab]').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === activeTab));
     if(activeTab === 'prompts') renderPromptManager();
+    else if(activeTab === 'local') renderLocalManager();
+    else if(activeTab === 'canvas-assets') renderCanvasAssetsManager();
     else renderAssetManager();
     refreshIcons();
+}
+function renderCanvasAssetsManager(){
+    root.innerHTML = `
+        <aside class="asset-panel asset-nav">
+            <div class="panel-head"><div class="panel-title"><strong>画布资产</strong><span>画布内保存的素材集合</span></div></div>
+            <div class="nav-scroll"><div class="nav-empty">画布资产功能待完善</div></div>
+        </aside>
+        <section class="asset-panel asset-content">
+            <div class="content-toolbar">
+                <div class="content-heading"><strong>画布资产</strong><span>后续会按画布、节点和输出记录整理</span></div>
+            </div>
+            <div class="content-scroll"><div class="empty-state">这里先预留给画布资产。当前请继续使用「图片资产」和「本地素材」。</div></div>
+        </section>
+        <aside class="asset-panel asset-detail">
+            <div class="panel-head"><div class="panel-title"><strong>资产预览</strong><span>选择画布资产查看详情</span></div></div>
+            <div class="detail-scroll"><div class="detail-empty"><i data-lucide="layout-dashboard"></i><span>暂无可预览资产</span></div></div>
+        </aside>
+    `;
+}
+function localUploadItems(){
+    const q = String(localUploadQuery || '').trim().toLowerCase();
+    let list = Array.isArray(localAssets) ? localAssets.slice() : [];
+    if(q) list = list.filter(it => String(it.name || '').toLowerCase().includes(q));
+    return list;
+}
+function findLocalUpload(id){
+    return (localAssets || []).find(it => it.id === id) || null;
+}
+function renderLocalManager(){
+    const items = localUploadItems();
+    if(selectedLocalUploadId && !findLocalUpload(selectedLocalUploadId)) selectedLocalUploadId = '';
+    if(!selectedLocalUploadId && items.length) selectedLocalUploadId = items[0].id;
+    const detail = findLocalUpload(selectedLocalUploadId);
+    const total = (localAssets || []).length;
+    root.innerHTML = `
+        <aside class="asset-panel asset-nav">
+            <div class="panel-head">
+                <div class="panel-title"><strong>本地上传</strong><span>批量上传到 assets/uploads</span></div>
+            </div>
+            <div class="nav-scroll">
+                <div class="nav-tree">
+                    <button class="tree-row tree-parent active" type="button">
+                        <span class="tree-row-icon"><i data-lucide="upload-cloud"></i></span>
+                        <span class="tree-row-name">全部上传</span>
+                        <span class="tree-row-count">${total}</span>
+                    </button>
+                </div>
+                <div class="nav-hint" style="padding:10px 12px;font-size:12px;opacity:.7;">选择图片/视频/音频文件即可上传，文件保存在项目 assets/uploads 目录。</div>
+            </div>
+        </aside>
+        <section class="asset-panel asset-content ${localUploadManageMode ? 'manage-on' : ''}">
+            <div class="content-toolbar">
+                <div class="content-heading">
+                    <strong>本地上传</strong>
+                    <span>${total} 个素材</span>
+                </div>
+                <div class="asset-tools">
+                    <label class="asset-search-wrap"><i data-lucide="search"></i><input id="localUploadSearch" class="asset-search" type="search" value="${escapeAttr(localUploadQuery)}" placeholder="搜索本地上传"></label>
+                    <button class="asset-btn primary" type="button" data-localup-upload><i data-lucide="upload"></i><span>上传文件</span></button>
+                    <button class="asset-btn ${localUploadManageMode ? 'primary' : ''}" type="button" data-localup-manage ${total ? '' : 'disabled'}><i data-lucide="list-checks"></i><span>${localUploadManageMode ? '完成管理' : '批量管理'}</span></button>
+                </div>
+            </div>
+            <div class="manage-tools">
+                <span>已选择 ${selectedLocalUploadIds.size} 个素材。</span>
+                <div class="asset-tools">
+                    <button class="asset-btn" type="button" data-localup-select-all ${items.length ? '' : 'disabled'}><i data-lucide="check-square"></i><span>全选</span></button>
+                    <button class="asset-btn" type="button" data-localup-clear ${selectedLocalUploadIds.size ? '' : 'disabled'}><i data-lucide="square"></i><span>清空</span></button>
+                    <button class="asset-btn danger" type="button" data-localup-delete-selected ${selectedLocalUploadIds.size ? '' : 'disabled'}><i data-lucide="trash-2"></i><span>删除</span></button>
+                </div>
+            </div>
+            <div class="content-scroll">
+                <div class="asset-grid">
+                    ${renderLocalUploadAddCard()}
+                    ${items.map(item => renderLocalUploadCard(item)).join('')}
+                </div>
+            </div>
+        </section>
+        <aside class="asset-panel asset-detail">
+            ${renderLocalUploadDetail(detail)}
+        </aside>
+    `;
+}
+function renderLocalUploadAddCard(){
+    return `<button id="localUploadDrop" class="upload-grid-card" type="button" data-localup-upload>
+        <span class="upload-thumb"><i data-lucide="upload-cloud"></i></span>
+        <span class="upload-body">
+            <strong>上传本地素材</strong>
+            <small>拖入文件或点击上传</small>
+        </span>
+    </button>`;
+}
+function renderLocalUploadCard(item){
+    return `<article class="asset-card ${item.id === selectedLocalUploadId ? 'active' : ''}" data-localup-card="${escapeAttr(item.id)}">
+        <input class="asset-card-check" type="checkbox" data-localup-check="${escapeAttr(item.id)}" ${selectedLocalUploadIds.has(item.id) ? 'checked' : ''}>
+        <div class="asset-thumb">${assetThumb(item)}</div>
+        <div class="asset-card-body">
+            <div class="asset-card-name" title="${escapeAttr(item.name || '')}">${escapeHtml(item.name || '本地素材')}</div>
+            <div class="asset-card-meta">${escapeHtml(assetKindLabel(item))} · ${escapeHtml(formatFileSize(item.size))}</div>
+        </div>
+    </article>`;
+}
+function renderLocalUploadDetail(item){
+    if(!item) return `<div class="panel-head"><div class="panel-title"><strong>素材预览</strong><span>选择一个素材查看详情</span></div></div><div class="detail-scroll"><div class="detail-empty"><i data-lucide="image"></i><span>暂无可预览素材</span></div></div>`;
+    return `
+        <div class="panel-head">
+            <div class="panel-title"><strong>素材预览</strong><span>${escapeHtml(assetKindLabel(item))}</span></div>
+            <div class="panel-actions">
+                <button class="asset-icon-btn" type="button" data-localup-open="${escapeAttr(item.id)}" title="新窗口打开"><i data-lucide="external-link"></i></button>
+                <button class="asset-icon-btn" type="button" data-localup-copy="${escapeAttr(item.id)}" title="复制链接"><i data-lucide="link"></i></button>
+                <button class="asset-icon-btn danger" type="button" data-localup-delete-one="${escapeAttr(item.id)}" title="删除"><i data-lucide="trash-2"></i></button>
+            </div>
+        </div>
+        <div class="detail-scroll">
+            <div class="detail-media"><button class="detail-media-frame detail-media-zoomable" type="button" data-localup-preview="${escapeAttr(item.id)}" title="点击放大预览">${assetThumb(item)}</button></div>
+            <div class="detail-body">
+                <div class="detail-name">${escapeHtml(item.name || '本地素材')}</div>
+                <div class="detail-meta-grid">
+                    <div class="detail-meta"><span>类型</span><strong>${escapeHtml(assetKindLabel(item))}</strong></div>
+                    <div class="detail-meta"><span>大小</span><strong>${escapeHtml(formatFileSize(item.size))}</strong></div>
+                    <div class="detail-meta"><span>上传时间</span><strong>${escapeHtml(formatDate((item.created_at||0)*1000))}</strong></div>
+                    <div class="detail-meta"><span>来源</span><strong>本地上传</strong></div>
+                </div>
+                <div class="detail-url">${escapeHtml(item.url || '')}</div>
+            </div>
+        </div>
+    `;
+}
+function renderLocalFolderBranch(folder, depth=0){
+    const active = folder.id === activeLocalFolderId;
+    const contains = !active && (folder.children || []).some(child => child.id === activeLocalFolderId || folderContainsLocalActive(child));
+    return `<div class="tree-branch">
+        <button class="tree-row ${depth ? 'tree-child' : 'tree-parent'} ${active ? 'active' : ''} ${contains ? 'contains-active' : ''}" type="button" data-local-folder="${escapeAttr(folder.id)}">
+            ${depth ? '<span class="tree-elbow"></span>' : ''}
+            <span class="tree-row-icon"><i data-lucide="${active ? 'folder-open' : 'folder'}"></i></span>
+            <span class="tree-row-name">${escapeHtml(folder.name || '文件夹')}</span>
+            <span class="tree-row-count">${localFolderTotal(folder)}</span>
+        </button>
+        ${(folder.children || []).length ? `<div class="tree-children">${folder.children.map(child => renderLocalFolderBranch(child, depth + 1)).join('')}</div>` : ''}
+    </div>`;
+}
+function folderContainsLocalActive(folder){
+    if(!folder) return false;
+    if(folder.id === activeLocalFolderId) return true;
+    return (folder.children || []).some(child => folderContainsLocalActive(child));
+}
+function renderLocalCard(item){
+    return `<article class="asset-card ${item.id === selectedLocalId ? 'active' : ''}" data-local-card="${escapeAttr(item.id)}">
+        <input class="asset-card-check" type="checkbox" data-local-check="${escapeAttr(item.id)}" ${selectedLocalIds.has(item.id) ? 'checked' : ''}>
+        <div class="asset-thumb">${localAssetThumb(item)}</div>
+        <div class="asset-card-body">
+            <div class="asset-card-name" title="${escapeAttr(item.relativePath || item.name || '')}">${escapeHtml(item.name || 'local')}</div>
+            <div class="asset-card-meta">${escapeHtml(assetKindLabel(item))} · ${escapeHtml(formatFileSize(item.size))}</div>
+        </div>
+    </article>`;
+}
+function renderLocalClipboardBar(){
+    if(!localClipboard?.items?.length) return '';
+    const modeLabel = localClipboard.mode === 'cut' ? '剪切' : '复制';
+    const target = activeAssetCategory();
+    return `<div class="asset-clipboard-bar">
+        <div class="asset-clipboard-info"><i data-lucide="clipboard"></i><span>${escapeHtml(modeLabel)}了 ${localClipboard.items.length} 个本地素材，目标：${escapeHtml(activeAssetLibrary()?.name || '图片资产')} / ${escapeHtml(target?.name || '未选择分组')}</span></div>
+        <div class="asset-tools">
+            <button class="asset-btn primary" type="button" data-local-import-clipboard ${target ? '' : 'disabled'}><i data-lucide="clipboard-paste"></i><span>导入到图片资产</span></button>
+            <button class="asset-icon-btn" type="button" data-local-clear-clipboard title="清空本地剪贴板"><i data-lucide="x"></i></button>
+        </div>
+    </div>`;
+}
+function renderLocalDetail(item){
+    if(!item) return `<div class="panel-head"><div class="panel-title"><strong>本地预览</strong><span>选择一个本地素材查看详情</span></div></div><div class="detail-scroll"><div class="detail-empty"><i data-lucide="folder-open"></i><span>暂无可预览素材</span></div></div>`;
+    return `
+        <div class="panel-head">
+            <div class="panel-title"><strong>本地预览</strong><span>${escapeHtml(assetKindLabel(item))}</span></div>
+            <div class="panel-actions">
+                <button class="asset-icon-btn" type="button" data-local-open="${escapeAttr(item.id)}" title="打开预览"><i data-lucide="external-link"></i></button>
+                <button class="asset-btn primary" type="button" data-local-import-one="${escapeAttr(item.id)}"><i data-lucide="download"></i><span>导入</span></button>
+            </div>
+        </div>
+        <div class="detail-scroll">
+            <div class="detail-media"><button class="detail-media-frame detail-media-zoomable" type="button" data-local-preview="${escapeAttr(item.id)}" title="点击放大预览">${localAssetThumb(item)}</button></div>
+            <div class="detail-body">
+                <div class="detail-name">${escapeHtml(item.name || '本地素材')}</div>
+                <div class="detail-meta-grid">
+                    <div class="detail-meta"><span>类型</span><strong>${escapeHtml(assetKindLabel(item))}</strong></div>
+                    <div class="detail-meta"><span>大小</span><strong>${escapeHtml(formatFileSize(item.size))}</strong></div>
+                    <div class="detail-meta"><span>修改时间</span><strong>${escapeHtml(formatDate(item.lastModified))}</strong></div>
+                    <div class="detail-meta"><span>来源</span><strong>${escapeHtml(activeSharedFolderName || '共享文件夹')}</strong></div>
+                </div>
+                <div class="detail-url">${escapeHtml(item.relativePath || item.name || '')}</div>
+            </div>
+        </div>
+    `;
 }
 function renderAssetManager(){
     normalizeAssetState();
@@ -323,6 +690,7 @@ function renderAssetManager(){
                 </div>
             </div>
             ${renderAssetClipboardBar()}
+            ${renderLocalClipboardBar()}
             <div class="manage-tools">
                 <span>已选择 ${selectedAssetIds.size} 个素材，支持拖拽框选或逐个勾选。</span>
                 <div class="asset-tools">
@@ -330,7 +698,6 @@ function renderAssetManager(){
                     <button class="asset-btn" type="button" data-asset-clear-selection ${selectedAssetIds.size ? '' : 'disabled'}><i data-lucide="square"></i><span>清空</span></button>
                     <button class="asset-btn" type="button" data-asset-cut-selected ${selectedAssetIds.size ? '' : 'disabled'}><i data-lucide="scissors"></i><span>剪切</span></button>
                     <button class="asset-btn" type="button" data-asset-copy-selected ${selectedAssetIds.size ? '' : 'disabled'}><i data-lucide="copy"></i><span>复制</span></button>
-                    <button class="asset-btn" type="button" data-asset-crop-selected ${selectedAssetIds.size ? '' : 'disabled'}><i data-lucide="crop"></i><span>裁剪</span></button>
                     <button class="asset-btn danger" type="button" data-asset-delete-selected ${selectedAssetIds.size ? '' : 'disabled'}><i data-lucide="trash-2"></i><span>删除所选</span></button>
                 </div>
             </div>
@@ -358,7 +725,7 @@ function renderUploadCard(cat){
 }
 function renderAssetClipboardBar(){
     if(!assetClipboard?.ids?.length) return '';
-    const modeLabel = assetClipboard.mode === 'cut' ? '剪切' : (assetClipboard.mode === 'crop' ? '裁剪' : '复制');
+    const modeLabel = assetClipboard.mode === 'cut' ? '剪切' : '复制';
     const sameTarget = assetClipboard.sourceLibraryId === activeAssetLibraryId && assetClipboard.sourceCategoryId === activeAssetCategoryId;
     const pasteText = sameTarget && assetClipboard.mode === 'cut' ? '选择其他分组后粘贴' : '粘贴到当前分组';
     return `<div class="asset-clipboard-bar">
@@ -512,7 +879,7 @@ function renderAssetDetail(item){
                 </div>
             </div>
             <div class="detail-scroll">
-                <div class="detail-media"><div class="detail-media-frame">${assetThumb(item)}</div></div>
+                <div class="detail-media"><button class="detail-media-frame detail-media-zoomable" type="button" data-asset-preview="${escapeAttr(item.id)}" title="点击放大预览">${assetThumb(item)}</button></div>
                 <div class="inline-edit-form">
                     <label class="inline-edit-field"><span>素材名称</span><input id="assetEditName" type="text" value="${escapeAttr(item.name || '')}" placeholder="素材名称"></label>
                     <div class="detail-meta-grid">
@@ -534,7 +901,7 @@ function renderAssetDetail(item){
             </div>
         </div>
         <div class="detail-scroll">
-            <div class="detail-media"><div class="detail-media-frame">${assetThumb(item)}</div></div>
+            <div class="detail-media"><button class="detail-media-frame detail-media-zoomable" type="button" data-asset-preview="${escapeAttr(item.id)}" title="点击放大预览">${assetThumb(item)}</button></div>
             <div class="detail-body">
                 <input class="detail-name-input" data-asset-inline-name="${escapeAttr(item.id)}" type="text" value="${escapeAttr(item.name || 'asset')}" title="直接修改名称">
                 <div class="detail-meta-grid">
@@ -764,15 +1131,117 @@ async function uploadFiles(files){
     });
     assetLibrary = data.library || assetLibrary;
     selectedAssetIds.clear();
-    selectedAssetId = items[0]?.id || selectedAssetId;
+    selectedAssetId = data.items?.[0]?.id || selectedAssetId;
     render();
     setStatus(`已上传 ${items.length} 个素材`);
+    return {count:items.length, items:data.items || []};
+}
+async function uploadLocalAssets(files){
+    const list = [...files].filter(f => isLocalMediaFile(f));
+    if(!list.length){ setStatus('没有可上传的图片/视频/音频文件'); return; }
+    const form = new FormData();
+    list.forEach(file => form.append('files', file));
+    setStatus('正在上传...');
+    try {
+        const data = await apiJson('/api/local-assets/upload', {method:'POST', body:form});
+        const uploaded = Array.isArray(data.files) ? data.files : [];
+        await loadLocalAssets();
+        selectedLocalUploadId = uploaded[0]?.id || selectedLocalUploadId;
+        render();
+        setStatus(`已上传 ${uploaded.length} 个素材`);
+    } catch(err) {
+        setStatus(err.message || '上传失败');
+    }
+}
+async function deleteLocalAssets(ids){
+    const names = (ids || []).map(id => findLocalUpload(id)?.file).filter(Boolean);
+    if(!names.length) return;
+    setStatus('正在删除...');
+    try {
+        await apiJson('/api/local-assets/delete', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({names})
+        });
+        await loadLocalAssets();
+        selectedLocalUploadIds.clear();
+        if(selectedLocalUploadId && !findLocalUpload(selectedLocalUploadId)) selectedLocalUploadId = '';
+        render();
+        setStatus(`已删除 ${names.length} 个素材`);
+    } catch(err) {
+        setStatus(err.message || '删除失败');
+    }
 }
 async function handleClick(event){
     const target = event.target;
     const tabBtn = target.closest?.('[data-tab]');
-    if(tabBtn){ activeTab = tabBtn.dataset.tab || 'assets'; selectedAssetIds.clear(); selectedPromptIds.clear(); render(); return; }
+    if(tabBtn){ activeTab = tabBtn.dataset.tab || 'assets'; selectedAssetIds.clear(); selectedPromptIds.clear(); selectedLocalIds.clear(); selectedLocalUploadIds.clear(); render(); return; }
     if(target.closest?.('#refreshBtn')){ await loadAll(); return; }
+    const assetPreview = target.closest?.('[data-asset-preview]');
+    if(assetPreview){ showDetailPreview('asset', assetPreview.dataset.assetPreview || ''); return; }
+    const localPreview = target.closest?.('[data-local-preview]');
+    if(localPreview){ showDetailPreview('local', localPreview.dataset.localPreview || ''); return; }
+    const localUpPreview = target.closest?.('[data-localup-preview]');
+    if(localUpPreview){ showDetailPreview('localup', localUpPreview.dataset.localupPreview || ''); return; }
+    if(target.closest?.('[data-localup-upload]')){ uploadInput?.click(); return; }
+    if(target.closest?.('[data-localup-manage]')){
+        localUploadManageMode = !localUploadManageMode;
+        if(!localUploadManageMode) selectedLocalUploadIds.clear();
+        render();
+        return;
+    }
+    if(target.closest?.('[data-localup-select-all]')){ localUploadItems().forEach(item => selectedLocalUploadIds.add(item.id)); render(); return; }
+    if(target.closest?.('[data-localup-clear]')){ selectedLocalUploadIds.clear(); render(); return; }
+    if(target.closest?.('[data-localup-delete-selected]')){ await deleteLocalAssets([...selectedLocalUploadIds]); return; }
+    const localUpDeleteOne = target.closest?.('[data-localup-delete-one]');
+    if(localUpDeleteOne){ await deleteLocalAssets([localUpDeleteOne.dataset.localupDeleteOne || '']); return; }
+    const localUpCheck = target.closest?.('[data-localup-check]');
+    if(localUpCheck){
+        const id = localUpCheck.dataset.localupCheck || '';
+        if(selectedLocalUploadIds.has(id)) selectedLocalUploadIds.delete(id); else selectedLocalUploadIds.add(id);
+        render();
+        return;
+    }
+    const localUpOpen = target.closest?.('[data-localup-open]');
+    if(localUpOpen){ const it = findLocalUpload(localUpOpen.dataset.localupOpen || ''); if(it?.url) window.open(it.url, '_blank'); return; }
+    const localUpCopy = target.closest?.('[data-localup-copy]');
+    if(localUpCopy){ const it = findLocalUpload(localUpCopy.dataset.localupCopy || ''); const ok = await copyTextToClipboard(it?.url || ''); setStatus(ok ? '已复制链接' : '复制失败'); return; }
+    const localUpCard = target.closest?.('[data-localup-card]');
+    if(localUpCard){
+        if(localUploadManageMode){
+            const id = localUpCard.dataset.localupCard || '';
+            if(selectedLocalUploadIds.has(id)) selectedLocalUploadIds.delete(id); else selectedLocalUploadIds.add(id);
+        } else {
+            selectedLocalUploadId = localUpCard.dataset.localupCard || '';
+        }
+        render();
+        return;
+    }
+    if(target.closest?.('[data-local-pick-folder]')){ await registerSharedFolder(); return; }
+    const sharedRemove = target.closest?.('[data-shared-remove]');
+    if(sharedRemove){ event.stopPropagation(); await unregisterSharedFolder(sharedRemove.dataset.sharedRemove || ''); return; }
+    const sharedOpen = target.closest?.('[data-shared-open]');
+    if(sharedOpen){ await openSharedFolder(sharedOpen.dataset.sharedOpen || ''); return; }
+    if(target.closest?.('[data-local-manage]')){
+        localManageMode = !localManageMode;
+        pendingBatchDelete = '';
+        if(!localManageMode) selectedLocalIds.clear();
+        render();
+        return;
+    }
+    if(target.closest?.('[data-local-select-all]')){ localItemsForFolder().forEach(item => selectedLocalIds.add(item.id)); pendingBatchDelete = ''; render(); return; }
+    if(target.closest?.('[data-local-clear-selection]')){ selectedLocalIds.clear(); pendingBatchDelete = ''; render(); return; }
+    if(target.closest?.('[data-local-copy-selected]')){ setLocalClipboard('copy'); return; }
+    if(target.closest?.('[data-local-import-clipboard]')){ await pasteLocalClipboardToAssets(); return; }
+    if(target.closest?.('[data-local-clear-clipboard]')){ localClipboard = null; render(); return; }
+    const localImportOne = target.closest?.('[data-local-import-one]');
+    if(localImportOne){ setLocalClipboard('copy', [localImportOne.dataset.localImportOne || '']); await pasteLocalClipboardToAssets(); return; }
+    const localOpen = target.closest?.('[data-local-open]');
+    if(localOpen){ openLocalItem(localOpen.dataset.localOpen || ''); return; }
+    const localFolder = target.closest?.('[data-local-folder]');
+    if(localFolder){ activeLocalFolderId = localFolder.dataset.localFolder || ''; selectedLocalId = ''; selectedLocalIds.clear(); pendingBatchDelete = ''; render(); return; }
+    const localCard = target.closest?.('[data-local-card]');
+    if(localCard){ selectedLocalId = localCard.dataset.localCard || ''; render(); return; }
     if(target.closest?.('[data-asset-tree-edit-save]')){ await saveAssetTreeEdit(); return; }
     if(target.closest?.('[data-asset-tree-edit-cancel]')){ assetTreeEdit = null; render(); return; }
     if(target.closest?.('[data-prompt-tree-edit-save]')){ await savePromptTreeEdit(); return; }
@@ -793,7 +1262,6 @@ async function handleClick(event){
     if(target.closest?.('[data-asset-clear-selection]')){ selectedAssetIds.clear(); pendingBatchDelete = ''; render(); return; }
     if(target.closest?.('[data-asset-cut-selected]')){ setAssetClipboard('cut'); return; }
     if(target.closest?.('[data-asset-copy-selected]')){ setAssetClipboard('copy'); return; }
-    if(target.closest?.('[data-asset-crop-selected]')){ setAssetClipboard('crop'); return; }
     if(target.closest?.('[data-asset-paste-clipboard]')){ await pasteAssetClipboard(); return; }
     if(target.closest?.('[data-asset-clear-clipboard]')){ assetClipboard = null; render(); return; }
     const assetRename = target.closest?.('[data-asset-rename]');
@@ -928,12 +1396,104 @@ function openAssetItem(id){
     const item = findAssetItem(id);
     if(item?.url) window.open(item.url, '_blank', 'noopener');
 }
+function showDetailPreview(source, id){
+    const item = source === 'local' ? findLocalItem(id) : source === 'localup' ? findLocalUpload(id) : findAssetItem(id);
+    if(!item) return;
+    const kind = source === 'local' ? (item.kind || localItemKind(item)) : assetKind(item);
+    if(kind !== 'image'){
+        setStatus('仅图片支持放大预览');
+        return;
+    }
+    const url = source === 'local' ? localObjectUrl(item) : item.url;
+    if(!url) return;
+    document.querySelector('.asset-lightbox')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'asset-lightbox';
+    overlay.dataset.scale = '1';
+    overlay.dataset.x = '0';
+    overlay.dataset.y = '0';
+    overlay.innerHTML = `
+        <div class="asset-lightbox-inner" role="dialog" aria-modal="true" aria-label="图片预览">
+            <img class="asset-lightbox-image" src="${escapeAttr(url)}" alt="${escapeAttr(item.name || 'preview')}" draggable="false">
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    document.body.classList.add('asset-lightbox-open');
+}
+function closeDetailPreview(){
+    document.querySelector('.asset-lightbox')?.remove();
+    document.body.classList.remove('asset-lightbox-open');
+    lightboxPanState = null;
+}
+function applyLightboxTransform(overlay){
+    const image = overlay?.querySelector?.('.asset-lightbox-image');
+    if(!image) return;
+    const scale = Number(overlay.dataset.scale || 1);
+    const x = Number(overlay.dataset.x || 0);
+    const y = Number(overlay.dataset.y || 0);
+    image.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    overlay.classList.toggle('zoomed', scale > 1.01);
+}
+function zoomDetailPreview(event){
+    const overlay = event.target.closest?.('.asset-lightbox');
+    const image = event.target.closest?.('.asset-lightbox-image');
+    if(!overlay || !image) return;
+    event.preventDefault();
+    const current = Number(overlay.dataset.scale || 1);
+    const next = Math.max(0.25, Math.min(8, current * (event.deltaY < 0 ? 1.15 : 0.87)));
+    const rect = overlay.getBoundingClientRect();
+    const anchorX = event.clientX - (rect.left + rect.width / 2);
+    const anchorY = event.clientY - (rect.top + rect.height / 2);
+    const currentX = Number(overlay.dataset.x || 0);
+    const currentY = Number(overlay.dataset.y || 0);
+    const ratio = next / current;
+    overlay.dataset.scale = String(next);
+    if(next <= 1.01){
+        overlay.dataset.x = '0';
+        overlay.dataset.y = '0';
+    } else {
+        overlay.dataset.x = String(anchorX - ratio * (anchorX - currentX));
+        overlay.dataset.y = String(anchorY - ratio * (anchorY - currentY));
+    }
+    applyLightboxTransform(overlay);
+}
+function beginLightboxPan(event){
+    const image = event.target.closest?.('.asset-lightbox-image');
+    const overlay = event.target.closest?.('.asset-lightbox');
+    if(!image || !overlay) return;
+    const scale = Number(overlay.dataset.scale || 1);
+    if(scale <= 1.01) return;
+    event.preventDefault();
+    lightboxPanState = {
+        overlay,
+        pointerId:event.pointerId,
+        startX:event.clientX,
+        startY:event.clientY,
+        originX:Number(overlay.dataset.x || 0),
+        originY:Number(overlay.dataset.y || 0)
+    };
+    image.setPointerCapture?.(event.pointerId);
+    overlay.classList.add('dragging');
+}
+function updateLightboxPan(event){
+    if(!lightboxPanState || event.pointerId !== lightboxPanState.pointerId) return;
+    const {overlay, startX, startY, originX, originY} = lightboxPanState;
+    overlay.dataset.x = String(originX + event.clientX - startX);
+    overlay.dataset.y = String(originY + event.clientY - startY);
+    applyLightboxTransform(overlay);
+}
+function endLightboxPan(event){
+    if(!lightboxPanState || event.pointerId !== lightboxPanState.pointerId) return;
+    lightboxPanState.overlay?.classList.remove('dragging');
+    lightboxPanState = null;
+}
 function rectsIntersect(a, b){
     return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 function marqueeTargetSelector(){
     if(activeTab === 'assets' && assetManageMode) return '[data-asset-card]';
     if(activeTab === 'prompts' && promptManageMode) return '[data-prompt-row]';
+    if(activeTab === 'local' && localManageMode) return '[data-local-card]';
     return '';
 }
 function beginMarqueeSelection(event){
@@ -954,7 +1514,8 @@ function beginMarqueeSelection(event){
         box,
         selector,
         baseAsset:new Set(selectedAssetIds),
-        basePrompt:new Set(selectedPromptIds)
+        basePrompt:new Set(selectedPromptIds),
+        baseLocal:new Set(selectedLocalIds)
     };
     updateMarqueeSelection(event);
 }
@@ -979,14 +1540,20 @@ function updateMarqueeSelection(event){
         document.querySelectorAll(marqueeState.selector).forEach(el => {
             if(rectsIntersect(rect, el.getBoundingClientRect())) selectedAssetIds.add(el.dataset.assetCard);
         });
-    } else {
+    } else if(activeTab === 'prompts') {
         selectedPromptIds = new Set(marqueeState.basePrompt);
         document.querySelectorAll(marqueeState.selector).forEach(el => {
             if(rectsIntersect(rect, el.getBoundingClientRect())) selectedPromptIds.add(el.dataset.promptRow);
         });
+    } else if(activeTab === 'local') {
+        selectedLocalIds = new Set(marqueeState.baseLocal);
+        document.querySelectorAll(marqueeState.selector).forEach(el => {
+            if(rectsIntersect(rect, el.getBoundingClientRect())) selectedLocalIds.add(el.dataset.localCard);
+        });
     }
     document.querySelectorAll('[data-asset-check]').forEach(input => { input.checked = selectedAssetIds.has(input.dataset.assetCheck); });
     document.querySelectorAll('[data-prompt-check]').forEach(input => { input.checked = selectedPromptIds.has(input.dataset.promptCheck); });
+    document.querySelectorAll('[data-local-check]').forEach(input => { input.checked = selectedLocalIds.has(input.dataset.localCheck); });
 }
 function endMarqueeSelection(){
     if(!marqueeState) return;
@@ -1242,7 +1809,7 @@ function setAssetClipboard(mode){
     selectedAssetIds.clear();
     pendingBatchDelete = '';
     render();
-    const label = mode === 'cut' ? '剪切' : (mode === 'crop' ? '裁剪' : '复制');
+    const label = mode === 'cut' ? '剪切' : '复制';
     setStatus(`${label}了 ${assetClipboard.ids.length} 个素材，切换分组后粘贴`);
 }
 async function pasteAssetClipboard(){
@@ -1256,14 +1823,6 @@ async function pasteAssetClipboard(){
         });
         assetLibrary = data.library || assetLibrary;
         setStatus(`已移动 ${data.moved || 0} 个素材`);
-    } else if(assetClipboard.mode === 'crop'){
-        const data = await apiJson('/api/asset-library/items/crop', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({library_id:assetClipboard.sourceLibraryId, target_library_id:activeAssetLibraryId, target_category_id:activeAssetCategoryId, ids:assetClipboard.ids, mode:'square'})
-        });
-        assetLibrary = data.library || assetLibrary;
-        setStatus(`已裁剪并粘贴 ${data.added || 0} 个素材`);
     } else {
         const items = (assetClipboard.items || []).map(item => ({url:item.url, name:item.name || 'asset'})).filter(item => item.url);
         const data = await apiJson('/api/asset-library/items/batch', {
@@ -1278,6 +1837,60 @@ async function pasteAssetClipboard(){
     selectedAssetIds.clear();
     selectedAssetId = '';
     render();
+}
+function setLocalClipboard(mode, ids=null){
+    // 共享文件夹只读，仅支持「复制」（引用导入），不支持剪切删除源文件
+    const sourceIds = Array.isArray(ids) ? ids.filter(Boolean) : [...selectedLocalIds];
+    if(!sourceIds.length) return;
+    const items = sourceIds.map(id => findLocalItem(id)).filter(Boolean);
+    if(!items.length) return;
+    localClipboard = {
+        mode:'copy',
+        ids:items.map(item => item.id),
+        items,
+        sourceRootName:activeSharedFolderName || '共享文件夹'
+    };
+    selectedLocalIds.clear();
+    pendingBatchDelete = '';
+    render();
+    setStatus(`复制了 ${items.length} 个共享素材，导入后会拷贝到图片资产分组（共享文件夹原文件保留）`);
+}
+async function pasteLocalClipboardToAssets(){
+    if(!localClipboard?.items?.length) return;
+    if(!activeAssetCategory()){
+        setStatus('请先在图片资产中创建或选择分组');
+        return;
+    }
+    const clip = localClipboard;
+    // 按所属共享文件夹分组，调用后端按路径导入（复制到素材库，无需走浏览器文件对象）
+    const groups = new Map();
+    clip.items.forEach(item => {
+        if(!item || !item.folderId || !item.relativePath) return;
+        if(!groups.has(item.folderId)) groups.set(item.folderId, []);
+        groups.get(item.folderId).push(item.relativePath);
+    });
+    if(!groups.size) return;
+    setStatus('正在导入共享素材...');
+    let imported = 0;
+    try {
+        for(const [folderId, paths] of groups){
+            const data = await apiJson('/api/shared-folders/import', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({library_id:activeAssetLibraryId, category_id:activeAssetCategoryId, folder_id:folderId, paths})
+            });
+            assetLibrary = data.library || assetLibrary;
+            imported += (data.items?.length || 0);
+        }
+    } catch(err) {
+        setStatus(err.message || '导入共享素材失败');
+        return;
+    }
+    localClipboard = null;
+    selectedLocalIds.clear();
+    selectedLocalId = '';
+    render();
+    setStatus(`已导入 ${imported} 个素材到图片资产`);
 }
 async function moveSelectedAssets(){
     if(!selectedAssetIds.size || !assetMoveTarget) return;
@@ -1295,17 +1908,11 @@ async function moveSelectedAssets(){
     render();
     setStatus(`已移动 ${data.moved || 0} 个素材`);
 }
-async function cropSelectedAssets(){
-    if(!selectedAssetIds.size) return;
-    const data = await apiJson('/api/asset-library/items/crop', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({library_id:activeAssetLibraryId, ids:[...selectedAssetIds], mode:'square'})
-    });
-    assetLibrary = data.library || assetLibrary;
-    selectedAssetIds.clear();
-    render();
-    setStatus(`已生成 ${data.added || 0} 个裁剪副本`);
+function openLocalItem(id){
+    const item = findLocalItem(id);
+    if(!item) return;
+    const url = localObjectUrl(item);
+    if(url) window.open(url, '_blank', 'noopener');
 }
 async function createPromptLibrary(){
     const name = window.prompt('提示词库名称', '新提示词库');
@@ -1501,6 +2108,17 @@ async function deleteSelectedPrompts(){
 root.addEventListener('click', event => {
     handleClick(event).catch(err => setStatus(err.message || '操作失败'));
 });
+document.addEventListener('click', event => {
+    if(event.target.closest?.('.asset-lightbox') && !event.target.closest?.('.asset-lightbox-image')) closeDetailPreview();
+});
+document.addEventListener('keydown', event => {
+    if(event.key === 'Escape') closeDetailPreview();
+});
+document.addEventListener('wheel', zoomDetailPreview, {passive:false});
+document.addEventListener('pointerdown', beginLightboxPan);
+document.addEventListener('pointermove', updateLightboxPan);
+document.addEventListener('pointerup', endLightboxPan);
+document.addEventListener('pointercancel', endLightboxPan);
 root.addEventListener('pointerdown', beginMarqueeSelection);
 document.addEventListener('pointermove', event => updateMarqueeSelection(event));
 document.addEventListener('pointerup', endMarqueeSelection);
@@ -1523,6 +2141,28 @@ root.addEventListener('input', event => {
         render();
         requestAnimationFrame(() => {
             const input = document.getElementById('promptSearch');
+            input?.focus();
+            input?.setSelectionRange?.(pos, pos);
+        });
+    }
+    if(event.target?.id === 'localSearch'){
+        const pos = event.target.selectionStart || 0;
+        localQuery = event.target.value || '';
+        selectedLocalId = '';
+        render();
+        requestAnimationFrame(() => {
+            const input = document.getElementById('localSearch');
+            input?.focus();
+            input?.setSelectionRange?.(pos, pos);
+        });
+    }
+    if(event.target?.id === 'localUploadSearch'){
+        const pos = event.target.selectionStart || 0;
+        localUploadQuery = event.target.value || '';
+        selectedLocalUploadId = '';
+        render();
+        requestAnimationFrame(() => {
+            const input = document.getElementById('localUploadSearch');
             input?.focus();
             input?.setSelectionRange?.(pos, pos);
         });
@@ -1552,6 +2192,15 @@ root.addEventListener('change', event => {
         } else selectedPromptIds.delete(promptCheck.dataset.promptCheck);
         render();
     }
+    const localCheck = event.target.closest?.('[data-local-check]');
+    if(localCheck){
+        if(!localManageMode) return;
+        if(localCheck.checked) {
+            selectedLocalIds.add(localCheck.dataset.localCheck);
+            selectedLocalId = localCheck.dataset.localCheck;
+        } else selectedLocalIds.delete(localCheck.dataset.localCheck);
+        render();
+    }
     if(event.target?.id === 'assetMoveTarget'){
         assetMoveTarget = event.target.value || '';
         pendingBatchDelete = '';
@@ -1564,24 +2213,28 @@ root.addEventListener('change', event => {
     }
 });
 root.addEventListener('dragover', event => {
-    const drop = event.target.closest?.('#assetDrop');
+    const drop = event.target.closest?.('#assetDrop, #localUploadDrop');
     if(!drop) return;
     event.preventDefault();
     drop.classList.add('drag-over');
 });
 root.addEventListener('dragleave', event => {
-    event.target.closest?.('#assetDrop')?.classList.remove('drag-over');
+    event.target.closest?.('#assetDrop, #localUploadDrop')?.classList.remove('drag-over');
 });
 root.addEventListener('drop', event => {
-    const drop = event.target.closest?.('#assetDrop');
+    const drop = event.target.closest?.('#assetDrop, #localUploadDrop');
     if(!drop) return;
     event.preventDefault();
     drop.classList.remove('drag-over');
-    uploadFiles(event.dataTransfer.files).catch(err => setStatus(err.message || '上传失败'));
+    if(drop.id === 'localUploadDrop') uploadLocalAssets(event.dataTransfer.files);
+    else uploadFiles(event.dataTransfer.files).catch(err => setStatus(err.message || '上传失败'));
 });
 uploadInput?.addEventListener('change', event => {
     const files = event.target.files;
-    if(files?.length) uploadFiles(files).catch(err => setStatus(err.message || '上传失败'));
+    if(files?.length){
+        if(activeTab === 'local') uploadLocalAssets(files);
+        else uploadFiles(files).catch(err => setStatus(err.message || '上传失败'));
+    }
     event.target.value = '';
 });
 document.querySelectorAll('[data-tab]').forEach(btn => {
@@ -1589,6 +2242,8 @@ document.querySelectorAll('[data-tab]').forEach(btn => {
         activeTab = btn.dataset.tab || 'assets';
         selectedAssetIds.clear();
         selectedPromptIds.clear();
+        selectedLocalIds.clear();
+        selectedLocalUploadIds.clear();
         render();
     });
 });

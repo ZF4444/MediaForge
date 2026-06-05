@@ -107,6 +107,16 @@ let recommendInlineOpen = false;
 let providerDragId = '';
 const RECOMMENDED_APIS = [
     {
+        name:'APIMART',
+        base_url:'https://api.apimart.ai',
+        protocol:'apimart',
+        register_url:'https://apimart.ai/zh/register?aff=1uyAbb',
+        tagKeys:['api.tagImageModels','api.tagVideoModels','api.tagLlmModels'],
+        icons:['IMG','VID','LLM'],
+        summaryKey:'api.recommendApimartSummary',
+        advantages:['模型类型覆盖广', '适合多节点混合工作流', '异步协议适合长任务']
+    },
+    {
         name:'玉玉API',
         base_url:'https://yuli.host',
         protocol:'openai',
@@ -121,16 +131,6 @@ const RECOMMENDED_APIS = [
         chat_models:['gpt-5.5'],
         video_models:['veo3.1-fast'],
         model_protocols:{'gemini-3.1-flash-image-preview':'gemini', 'gemini-3-pro-image-preview':'gemini'}
-    },
-    {
-        name:'APIMART',
-        base_url:'https://api.apimart.ai',
-        protocol:'apimart',
-        register_url:'https://apimart.ai/zh/register?aff=1uyAbb',
-        tagKeys:['api.tagImageModels','api.tagVideoModels','api.tagLlmModels'],
-        icons:['IMG','VID','LLM'],
-        summaryKey:'api.recommendApimartSummary',
-        advantages:['模型类型覆盖广', '适合多节点混合工作流', '异步协议适合长任务']
     },
     {
         name:'FHL',
@@ -773,6 +773,8 @@ function closeRhWorkflowEditor(){
 }
 function renderRhWorkflowEditorLoading(text){
     if(rhWorkflowEditorTitle) rhWorkflowEditorTitle.textContent = rhWorkflowEditorState.entry?.title || (rhEditorMode === 'app' ? 'RunningHub AI 应用' : 'RunningHub 工作流');
+    if(rhWorkflowEditName) rhWorkflowEditName.value = rhWorkflowEditorState.entry?.title || '';
+    if(rhWorkflowEditNote) rhWorkflowEditNote.value = rhWorkflowEditorState.entry?.note || '';
     if(rhWorkflowEditorSub) rhWorkflowEditorSub.textContent = rhEditorMode === 'app'
         ? `/run/ai-app/${rhWorkflowEditorState.entry?.appId || rhWorkflowEditorState.entry?.id || ''}`
         : `/run/workflow/${rhWorkflowEditorState.entry?.workflowId || rhWorkflowEditorState.entry?.id || ''}`;

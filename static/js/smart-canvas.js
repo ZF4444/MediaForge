@@ -7863,12 +7863,68 @@ function renderInputThumbsRow(node){
 }
 function bindInputThumbsDrag(node, items){
     if(!inputThumbsRow) return;
+    let thumbDragIndex = -1;
     inputThumbsRow.querySelectorAll('.input-thumb').forEach(el => {
+        const index = Number(el.dataset.thumbIndex || -1);
+        const canReorder = items.length > 1 && Boolean(items[index]?.nodeId);
+        el.draggable = canReorder;
         el.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
         });
+        if(!canReorder) return;
+        el.addEventListener('dragstart', e => {
+            e.stopPropagation();
+            thumbDragIndex = index;
+            el.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('application/x-smart-input-thumb', String(index));
+        });
+        el.addEventListener('dragend', e => {
+            e.stopPropagation();
+            thumbDragIndex = -1;
+            clearInputThumbDropMarkers();
+            el.classList.remove('dragging');
+        });
+        el.addEventListener('dragover', e => {
+            const rawFrom = e.dataTransfer.getData('application/x-smart-input-thumb');
+            const from = rawFrom === '' ? thumbDragIndex : Number(rawFrom);
+            if(!Number.isFinite(from) || from < 0 || from === index || !items[index]?.nodeId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+            clearInputThumbDropMarkers();
+            const placement = inputThumbDropPlacement(el, e);
+            el.dataset.dropPlacement = placement;
+            el.classList.add(placement === 'before' ? 'drop-before' : 'drop-after');
+        });
+        el.addEventListener('dragleave', e => {
+            if(el.contains(e.relatedTarget)) return;
+            delete el.dataset.dropPlacement;
+            el.classList.remove('drop-before', 'drop-after');
+        });
+        el.addEventListener('drop', e => {
+            const rawFrom = e.dataTransfer.getData('application/x-smart-input-thumb');
+            const from = rawFrom === '' ? thumbDragIndex : Number(rawFrom);
+            if(!Number.isFinite(from) || from < 0 || from === index || !items[index]?.nodeId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const placement = inputThumbDropPlacement(el, e);
+            clearInputThumbDropMarkers();
+            reorderInputThumb(node, items, from, index, placement);
+        });
     });
+}
+function inputThumbDropPlacement(el, event){
+    const rect = el.getBoundingClientRect();
+    return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+}
+function clearInputThumbDropMarkers(){
+    inputThumbsRow?.querySelectorAll('.input-thumb.drop-before,.input-thumb.drop-after,.input-thumb.dragging')
+        .forEach(el => {
+            delete el.dataset.dropPlacement;
+            el.classList.remove('drop-before', 'drop-after', 'dragging');
+        });
 }
 function bindInputThumbVideoActions(){
     inputThumbsRow?.querySelectorAll('[data-manual-video-url]').forEach(btn => {
@@ -7894,10 +7950,59 @@ function bindInputThumbVideoActions(){
         };
     });
 }
-function reorderInputThumb(currentNode, items, from, to){
+function movedBeforeAfterIds(ids, movedId, targetId, placement='before'){
+    const list = (ids || []).filter(Boolean);
+    const from = list.indexOf(movedId);
+    const target = list.indexOf(targetId);
+    if(from < 0 || target < 0 || movedId === targetId) return list;
+    const [moved] = list.splice(from, 1);
+    let insertAt = list.indexOf(targetId);
+    if(insertAt < 0) return ids || [];
+    if(placement === 'after') insertAt += 1;
+    list.splice(insertAt, 0, moved);
+    return list;
+}
+function sameOrderedIds(a, b){
+    if((a || []).length !== (b || []).length) return false;
+    return (a || []).every((id, index) => id === b[index]);
+}
+function reorderInputSourceNodes(currentNode, movedId, targetId, placement='before'){
+    if(!currentNode || !movedId || !targetId || movedId === targetId) return false;
+    const sourceNodes = smartImageUsesWorkflowInput(currentNode, smartLoopContext)
+        ? workflowInputNodesFor(currentNode)
+        : inputNodesFor(currentNode);
+    const sourceIds = sourceNodes.map(n => n.id).filter(Boolean);
+    if(!sourceIds.includes(movedId) || !sourceIds.includes(targetId)) return false;
+    const nextIds = movedBeforeAfterIds(sourceIds, movedId, targetId, placement);
+    if(sameOrderedIds(sourceIds, nextIds)) return false;
+    const oldExplicitIds = Array.isArray(currentNode.inputNodeIds) ? currentNode.inputNodeIds.filter(Boolean) : [];
+    currentNode.inputNodeIds = [
+        ...nextIds.filter(id => oldExplicitIds.includes(id)),
+        ...oldExplicitIds.filter(id => !nextIds.includes(id))
+    ];
+    if(canvas && Array.isArray(canvas.connections)){
+        const order = new Map(nextIds.map((id, index) => [id, index]));
+        const relevantSlots = new Set();
+        const relevant = [];
+        canvas.connections.forEach((conn, index) => {
+            const kind = conn?.kind || 'flow';
+            if(conn?.to === currentNode.id && ['input', 'flow'].includes(kind) && order.has(conn.from)){
+                relevantSlots.add(index);
+                relevant.push({conn, index});
+            }
+        });
+        if(relevant.length){
+            relevant.sort((a, b) => (order.get(a.conn.from) - order.get(b.conn.from)) || (a.index - b.index));
+            let cursor = 0;
+            canvas.connections = canvas.connections.map((conn, index) => relevantSlots.has(index) ? relevant[cursor++].conn : conn);
+        }
+    }
+    return true;
+}
+function reorderInputThumb(currentNode, items, from, to, placement='before'){
     // items are already sourced from inputImagesFor → multiple source nodes possible.
-    // We reorder by repositioning the X coordinates of source nodes if they're separate,
-    // OR by swapping within a single source node's images.
+    // Reorder within a source group's images first; separate input nodes use the
+    // current node's input order, with a visual-position swap as a final fallback.
     if(from < 0 || to < 0 || from >= items.length || to >= items.length) return;
     const fromImg = items[from];
     const toImg = items[to];
@@ -7910,18 +8015,26 @@ function reorderInputThumb(currentNode, items, from, to){
         const ti = Number(toImg.imageIndex);
         if(Number.isFinite(fi) && Number.isFinite(ti) && (src.images || [])[fi]){
             const arr = src.images;
+            let insertAt = Math.max(0, Math.min(arr.length, ti + (placement === 'after' ? 1 : 0)));
             const item = arr.splice(fi, 1)[0];
-            arr.splice(ti, 0, item);
+            if(fi < insertAt) insertAt -= 1;
+            arr.splice(Math.max(0, Math.min(arr.length, insertAt)), 0, item);
         }
         render();
         scheduleSave();
         return;
     }
-    // Cross-node reorder: swap X positions of source nodes
+    const canReorderSources = currentNode && fromImg.nodeId && toImg.nodeId;
     const a = nodes.find(n => n.id === fromImg.nodeId);
     const b = nodes.find(n => n.id === toImg.nodeId);
-    if(!a || !b) return;
+    if(!canReorderSources || !a || !b) return;
     pushUndo();
+    if(reorderInputSourceNodes(currentNode, fromImg.nodeId, toImg.nodeId, placement)){
+        render();
+        scheduleSave();
+        return;
+    }
+    // Cross-node fallback: swap X positions of source nodes
     const ax = a.x, ay = a.y;
     a.x = b.x; a.y = b.y;
     b.x = ax; b.y = ay;
