@@ -189,3 +189,107 @@
     });
     window.addEventListener('resize', scheduleAutoScaleRefresh);
 })();
+
+/* --- 当前用户 + 登出 小组件（随 theme.js 注入到所有页面）--- */
+(function(){
+    // 只在顶层窗口渲染，避免 iframe 子页面重复出现。
+    try { if(window.self !== window.top) return; } catch(e) { return; }
+    if(window.__studioUserWidgetLoaded) return;
+    window.__studioUserWidgetLoaded = true;
+
+    function injectStyle(){
+        if(document.getElementById('studio-user-widget-style')) return;
+        const style = document.createElement('style');
+        style.id = 'studio-user-widget-style';
+        style.textContent = `
+            #studio-user-widget {
+                position: fixed;
+                left: 14px;
+                bottom: 14px;
+                z-index: 99999;
+                display: none;
+                align-items: center;
+                gap: 8px;
+                padding: 6px 8px 6px 12px;
+                background: var(--monitor-bg, rgba(255,255,255,0.85));
+                border: 1px solid var(--monitor-border, rgba(0,0,0,0.08));
+                border-radius: 999px;
+                box-shadow: 0 4px 14px var(--monitor-shadow, rgba(0,0,0,0.06));
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+                font-size: 12.5px;
+                color: var(--text, #121212);
+                backdrop-filter: blur(8px);
+                user-select: none;
+            }
+            #studio-user-widget .suw-dot {
+                width: 7px; height: 7px; border-radius: 50%;
+                background: #30a46c; flex-shrink: 0;
+            }
+            #studio-user-widget .suw-name {
+                font-weight: 600; max-width: 160px;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            }
+            #studio-user-widget .suw-logout {
+                cursor: pointer;
+                border: none;
+                background: transparent;
+                color: var(--muted, #999);
+                font-size: 12px;
+                font-weight: 600;
+                padding: 4px 8px;
+                border-radius: 999px;
+                transition: background 0.15s, color 0.15s;
+                font-family: inherit;
+            }
+            #studio-user-widget .suw-logout:hover {
+                background: var(--nav-hover-bg, #fafafa);
+                color: var(--text, #121212);
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    async function logout(){
+        try {
+            await fetch('/auth/logout', { method: 'POST' });
+        } catch(e) {}
+        window.location.href = '/login';
+    }
+
+    function render(username){
+        injectStyle();
+        let el = document.getElementById('studio-user-widget');
+        if(!el){
+            el = document.createElement('div');
+            el.id = 'studio-user-widget';
+            el.innerHTML = `
+                <span class="suw-dot"></span>
+                <span class="suw-name" id="suw-name"></span>
+                <button class="suw-logout" id="suw-logout" title="退出登录">登出</button>
+            `;
+            document.body.appendChild(el);
+            el.querySelector('#suw-logout').addEventListener('click', logout);
+        }
+        const nameEl = el.querySelector('#suw-name');
+        nameEl.textContent = username;
+        nameEl.title = username;
+        el.style.display = 'flex';
+    }
+
+    async function init(){
+        try {
+            const resp = await fetch('/auth/me', { headers: { 'Accept': 'application/json' } });
+            if(!resp.ok) return;  // 未登录则不显示（页面本身会被后端重定向到登录页）
+            const data = await resp.json();
+            if(data && data.authenticated){
+                render(data.username || data.user_id || '用户');
+            }
+        } catch(e) {}
+    }
+
+    if(document.body){
+        init();
+    } else {
+        document.addEventListener('DOMContentLoaded', init);
+    }
+})();

@@ -32,7 +32,7 @@ from io import BytesIO
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -71,6 +71,48 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- 认证中间件 ---
+# 放行（无需登录）的精确路径与前缀。
+AUTH_PUBLIC_PATHS = {
+    "/login",
+    "/auth/login",
+    "/auth/logout",
+    "/favicon.ico",
+}
+AUTH_PUBLIC_PREFIXES = (
+    "/static/",   # css/js/字体/图片等前端静态资源
+    "/auth/",     # 认证相关接口
+)
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # 放行静态资源与登录相关路径
+    is_public = path in AUTH_PUBLIC_PATHS or any(path.startswith(p) for p in AUTH_PUBLIC_PREFIXES)
+    token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    sess = get_session(token) if token else None
+
+    if sess:
+        # 已登录：注入当前用户到 ContextVar，供数据路径解析器使用。
+        ctx_token = current_user_var.set(sess.get("user_id") or "anonymous")
+        try:
+            return await call_next(request)
+        finally:
+            current_user_var.reset(ctx_token)
+
+    if is_public:
+        return await call_next(request)
+
+    # 未登录且访问受保护资源：
+    # - API 请求返回 401（前端据此跳登录）
+    # - 页面请求 302 重定向到登录页
+    accept = request.headers.get("accept", "")
+    if path.startswith("/api/") or "application/json" in accept:
+        return JSONResponse({"detail": "未登录", "login_required": True}, status_code=401)
+    return RedirectResponse(url="/login", status_code=302)
+
 
 # --- WebSocket 状态管理器 ---
 class ConnectionManager:
@@ -196,13 +238,16 @@ OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
 OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
 ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
 LOCAL_UPLOAD_DIR = os.path.join(ASSETS_DIR, "uploads")
-HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
+HISTORY_FILE = os.path.join(BASE_DIR, "history.json")  # 旧的全局历史文件（仅遗留，已改为每用户 history_file()）
 API_ENV_FILE = os.path.join(BASE_DIR, "API", ".env")
 DATA_DIR = os.path.join(BASE_DIR, "data")
-CONVERSATION_DIR = os.path.join(DATA_DIR, "conversations")
-CANVAS_DIR = os.path.join(DATA_DIR, "canvases")
-ASSET_LIBRARY_PATH = os.path.join(DATA_DIR, "asset_library.json")
-PROMPT_LIBRARY_PATH = os.path.join(DATA_DIR, "prompt_libraries.json")
+# 每个登录用户的私有数据根目录：data/users/<user_id>/
+USERS_DIR = os.path.join(DATA_DIR, "users")
+SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
+USERS_REGISTRY_FILE = os.path.join(DATA_DIR, "users_registry.json")
+# 兼容旧的全局路径（仅用于历史遗留/默认回退，不再直接读写用户数据）。
+LEGACY_CONVERSATION_DIR = os.path.join(DATA_DIR, "conversations")
+LEGACY_CANVAS_DIR = os.path.join(DATA_DIR, "canvases")
 API_PROVIDERS_FILE = os.path.join(DATA_DIR, "api_providers.json")
 RUNNINGHUB_WORKFLOW_STORE_FILE = os.path.join(DATA_DIR, "runninghub_workflows.json")
 SHARED_FOLDERS_FILE = os.path.join(DATA_DIR, "shared_folders.json")
@@ -220,6 +265,166 @@ CONVERSATION_LOCK = Lock()
 CANVAS_LOCK = Lock()
 LOAD_LOCK = Lock()
 RUNNINGHUB_WORKFLOW_LOCK = Lock()
+
+# --- 认证 / 会话 / 用户数据隔离 ---
+import contextvars
+import secrets as _secrets
+
+SESSION_LOCK = Lock()
+SESSION_COOKIE_NAME = "sid"
+SESSION_MAX_AGE = 365 * 24 * 60 * 60  # 1 年：同一台电脑不用反复登录
+# 当前请求的登录用户（由认证中间件设置），数据路径解析器据此隔离。
+current_user_var: "contextvars.ContextVar[str]" = contextvars.ContextVar("current_user", default="")
+# token -> {user_id, username, created_at, last_seen}
+SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+# 用户注册表（无密码，仅记录已注册的用户名）。user_id -> {username, created_at}
+USERS_LOCK = Lock()
+USERS: Dict[str, Dict[str, Any]] = {}
+
+
+def clean_user_id(raw: str) -> str:
+    """把用户输入的用户名清洗成安全的目录名/用户标识。"""
+    candidate = (raw or "").strip()
+    candidate = re.sub(r"[^a-zA-Z0-9_.\u4e00-\u9fff-]", "-", candidate)[:60].strip(".-")
+    return candidate
+
+
+def load_users_registry():
+    global USERS
+    with USERS_LOCK:
+        if os.path.exists(USERS_REGISTRY_FILE):
+            try:
+                with open(USERS_REGISTRY_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    USERS = data
+            except Exception:
+                USERS = {}
+        else:
+            USERS = {}
+
+
+def _persist_users_unlocked():
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = USERS_REGISTRY_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(USERS, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, USERS_REGISTRY_FILE)
+    except Exception as e:
+        print(f"[auth] persist users failed: {e}")
+
+
+def user_exists(user_id: str) -> bool:
+    with USERS_LOCK:
+        return user_id in USERS
+
+
+def register_user(user_id: str, username: str) -> bool:
+    """注册新用户名；若已被占用返回 False。"""
+    with USERS_LOCK:
+        if user_id in USERS:
+            return False
+        USERS[user_id] = {"username": username, "created_at": now_ms()}
+        _persist_users_unlocked()
+    return True
+
+
+def load_sessions():
+    global SESSIONS
+    with SESSION_LOCK:
+        if os.path.exists(SESSIONS_FILE):
+            try:
+                with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    SESSIONS = data
+            except Exception:
+                SESSIONS = {}
+        else:
+            SESSIONS = {}
+
+
+def _persist_sessions_unlocked():
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = SESSIONS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(SESSIONS, f, ensure_ascii=False)
+        os.replace(tmp, SESSIONS_FILE)
+    except Exception as e:
+        print(f"[auth] persist sessions failed: {e}")
+
+
+def create_session(user_id: str, username: str) -> str:
+    token = _secrets.token_urlsafe(32)
+    now = now_ms()
+    with SESSION_LOCK:
+        SESSIONS[token] = {
+            "user_id": user_id,
+            "username": username,
+            "created_at": now,
+            "last_seen": now,
+        }
+        _persist_sessions_unlocked()
+    return token
+
+
+def get_session(token: str):
+    if not token:
+        return None
+    with SESSION_LOCK:
+        sess = SESSIONS.get(token)
+        if sess:
+            sess["last_seen"] = now_ms()
+        return dict(sess) if sess else None
+
+
+def destroy_session(token: str):
+    if not token:
+        return
+    with SESSION_LOCK:
+        if token in SESSIONS:
+            del SESSIONS[token]
+            _persist_sessions_unlocked()
+
+
+def current_user_id() -> str:
+    """返回当前请求的用户 id；未登录上下文回退到 'anonymous'（仅防御性兜底）。"""
+    return current_user_var.get() or "anonymous"
+
+
+def user_data_dir() -> str:
+    path = os.path.join(USERS_DIR, current_user_id())
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+# 以下解析器替代原来的全局路径常量，实现按用户隔离（方案 A）。
+def canvas_dir() -> str:
+    path = os.path.join(user_data_dir(), "canvases")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def conversation_base_dir() -> str:
+    path = os.path.join(user_data_dir(), "conversations")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def history_file() -> str:
+    return os.path.join(user_data_dir(), "history.json")
+
+
+def asset_library_path() -> str:
+    return os.path.join(user_data_dir(), "asset_library.json")
+
+
+def prompt_library_path() -> str:
+    return os.path.join(user_data_dir(), "prompt_libraries.json")
+
 NEXT_TASK_ID = 1
 JIMENG_LOGIN_SESSION = {
     "proc": None,
@@ -1238,8 +1443,9 @@ os.makedirs(ASSET_LIBRARY_DIR, exist_ok=True)
 os.makedirs(LOCAL_UPLOAD_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(WORKFLOW_DIR, exist_ok=True)
-os.makedirs(CONVERSATION_DIR, exist_ok=True)
-os.makedirs(CANVAS_DIR, exist_ok=True)
+os.makedirs(USERS_DIR, exist_ok=True)
+load_sessions()
+load_users_registry()
 
 # 注意：此路由必须在 app.mount("/static", ...) 之前注册，
 # 否则 StaticFiles 挂载会先匹配 /static/*.html，导致无法动态注入版本号。
@@ -1944,16 +2150,17 @@ def collect_comfy_file_items(node_output):
 
 def save_to_history(record):
     with HISTORY_LOCK:
+        hist_path = history_file()
         history = []
-        if os.path.exists(HISTORY_FILE):
+        if os.path.exists(hist_path):
             try:
-                with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                with open(hist_path, 'r', encoding='utf-8') as f:
                     history = json.load(f)
             except: pass
         if "timestamp" not in record:
             record["timestamp"] = time.time()
         history.insert(0, record)
-        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        with open(hist_path, 'w', encoding='utf-8') as f:
             json.dump(history[:5000], f, ensure_ascii=False, indent=4)
 
 def get_comfy_history(comfy_address, prompt_id):
@@ -1964,16 +2171,20 @@ def get_comfy_history(comfy_address, prompt_id):
         return {}
 
 def safe_user_id(user_id, request: Request):
+    # 安全：始终使用认证中间件注入的当前登录用户，忽略前端传来的 X-User-Id（防伪造）。
+    authed = current_user_var.get()
+    if authed:
+        return authed
+    # 兜底（理论上中间件已拦截未登录请求，不应到达此处）。
     candidate = (user_id or "").strip()
-    if not candidate and request.client:
+    if not candidate and request and request.client:
         candidate = f"ip-{request.client.host}"
-    if not candidate:
-        candidate = "anonymous"
     candidate = re.sub(r"[^a-zA-Z0-9_.-]", "-", candidate)[:80].strip(".-")
     return candidate or "anonymous"
 
 def user_dir(user_id):
-    path = os.path.join(CONVERSATION_DIR, user_id)
+    # 对话目录改到每用户私有根目录下：data/users/<user_id>/conversations
+    path = os.path.join(USERS_DIR, user_id, "conversations")
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -2037,7 +2248,7 @@ def canvas_path(canvas_id):
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", canvas_id or "")
     if not cleaned:
         raise HTTPException(status_code=400, detail="无效的画布 ID")
-    return os.path.join(CANVAS_DIR, f"{cleaned}.json")
+    return os.path.join(canvas_dir(), f"{cleaned}.json")
 
 def save_canvas(canvas):
     canvas["updated_at"] = now_ms()
@@ -2108,11 +2319,12 @@ def canvas_record(data):
 
 def cleanup_expired_canvas_trash():
     cutoff = now_ms() - CANVAS_TRASH_RETENTION_MS
+    cdir = canvas_dir()
     with CANVAS_LOCK:
-        for filename in os.listdir(CANVAS_DIR):
+        for filename in os.listdir(cdir):
             if not filename.endswith(".json"):
                 continue
-            path = os.path.join(CANVAS_DIR, filename)
+            path = os.path.join(cdir, filename)
             try:
                 with open(path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -2124,12 +2336,13 @@ def cleanup_expired_canvas_trash():
 
 def iter_canvas_records(include_deleted=False):
     cleanup_expired_canvas_trash()
+    cdir = canvas_dir()
     records = []
-    for filename in os.listdir(CANVAS_DIR):
+    for filename in os.listdir(cdir):
         if not filename.endswith(".json"):
             continue
         try:
-            with open(os.path.join(CANVAS_DIR, filename), 'r', encoding='utf-8') as f:
+            with open(os.path.join(cdir, filename), 'r', encoding='utf-8') as f:
                 data = json.load(f)
         except Exception:
             continue
@@ -3421,12 +3634,13 @@ def migrate_asset_item_registrations(item):
         item.pop(key, None)
 
 def load_asset_library():
-    if not os.path.exists(ASSET_LIBRARY_PATH):
+    lib_path = asset_library_path()
+    if not os.path.exists(lib_path):
         lib = default_asset_library()
         save_asset_library(lib)
         return lib
     try:
-        with open(ASSET_LIBRARY_PATH, "r", encoding="utf-8") as f:
+        with open(lib_path, "r", encoding="utf-8") as f:
             lib = json.load(f)
     except Exception:
         lib = default_asset_library()
@@ -3494,8 +3708,8 @@ def save_asset_library(lib):
     lib = normalize_asset_library(lib)
     sort_asset_library_items(lib)
     lib["updated_at"] = now_ms()
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(ASSET_LIBRARY_PATH, "w", encoding="utf-8") as f:
+    os.makedirs(user_data_dir(), exist_ok=True)
+    with open(asset_library_path(), "w", encoding="utf-8") as f:
         json.dump(lib, f, ensure_ascii=False, indent=2)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_asset_library_updated(int(lib["updated_at"])), GLOBAL_LOOP)
@@ -3783,11 +3997,12 @@ def normalize_prompt_libraries(data):
     return {"active_library_id": active, "libraries": libraries, "updated_at": int(data.get("updated_at") or now_ms())}
 
 def load_prompt_libraries():
-    if not os.path.exists(PROMPT_LIBRARY_PATH):
+    lib_path = prompt_library_path()
+    if not os.path.exists(lib_path):
         data = default_prompt_libraries()
         return save_prompt_libraries(data)
     try:
-        with open(PROMPT_LIBRARY_PATH, "r", encoding="utf-8") as f:
+        with open(lib_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception:
         data = default_prompt_libraries()
@@ -3801,8 +4016,8 @@ def load_prompt_libraries():
 def save_prompt_libraries(data):
     data = normalize_prompt_libraries(data)
     data["updated_at"] = now_ms()
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(PROMPT_LIBRARY_PATH, "w", encoding="utf-8") as f:
+    os.makedirs(user_data_dir(), exist_ok=True)
+    with open(prompt_library_path(), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return data
 
@@ -6121,6 +6336,81 @@ def upstream_message_from_record(item):
 @app.get("/")
 async def index():
     return static_html_response("index.html")
+
+
+# --- 认证：用户名登录（无密码）+ 持久化会话 ---
+class LoginRequest(BaseModel):
+    username: str = ""
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    # 已登录则直接回首页
+    token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if token and get_session(token):
+        return RedirectResponse(url="/", status_code=302)
+    return static_html_response("login.html")
+
+
+def _issue_session_response(user_id: str, username: str):
+    token = create_session(user_id, username)
+    resp = JSONResponse({"ok": True, "user_id": user_id, "username": username})
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return resp
+
+
+@app.post("/auth/register")
+async def auth_register(payload: LoginRequest):
+    user_id = clean_user_id(payload.username)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
+    if len(user_id) < 5:
+        raise HTTPException(status_code=400, detail="用户名至少需要 5 位。")
+    username = payload.username.strip()[:60]
+    if not register_user(user_id, username):
+        raise HTTPException(status_code=409, detail="该用户名已被占用，请换一个或直接登录。")
+    return _issue_session_response(user_id, username)
+
+
+@app.post("/auth/login")
+async def auth_login(payload: LoginRequest):
+    user_id = clean_user_id(payload.username)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
+    if not user_exists(user_id):
+        raise HTTPException(status_code=404, detail="该用户名尚未注册，请先注册。")
+    username = payload.username.strip()[:60]
+    return _issue_session_response(user_id, username)
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    destroy_session(token)
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return resp
+
+
+@app.get("/auth/me")
+async def auth_me(request: Request):
+    token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    sess = get_session(token) if token else None
+    if not sess:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    return {
+        "authenticated": True,
+        "user_id": sess.get("user_id"),
+        "username": sess.get("username") or sess.get("user_id"),
+    }
+
 
 @app.get("/api/view")
 def view_image(filename: str, type: str = "input", subfolder: str = ""):
@@ -9393,9 +9683,10 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
 
 @app.get("/api/history")
 async def get_history_api(type: str = None):
-    if os.path.exists(HISTORY_FILE):
+    hist_path = history_file()
+    if os.path.exists(hist_path):
         try:
-            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+            with open(hist_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if type:
                     data = [item for item in data if item.get("type", "zimage") == type]
@@ -9439,11 +9730,12 @@ async def get_queue_status(client_id: str):
 
 @app.post("/api/history/delete")
 async def delete_history(req: DeleteHistoryRequest):
-    if not os.path.exists(HISTORY_FILE):
+    hist_path = history_file()
+    if not os.path.exists(hist_path):
         return {"success": False, "message": "History file not found"}
     try:
         with HISTORY_LOCK:
-            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+            with open(hist_path, 'r', encoding='utf-8') as f:
                 history = json.load(f)
             target_record = None
             new_history = []
@@ -9460,7 +9752,7 @@ async def delete_history(req: DeleteHistoryRequest):
                 else:
                     new_history.append(item)
             if target_record:
-                with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+                with open(hist_path, 'w', encoding='utf-8') as f:
                     json.dump(new_history, f, ensure_ascii=False, indent=4)
 
         if target_record:

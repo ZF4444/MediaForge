@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/static/images/logo.png" type="image/png">
+    <title>AI Studio</title>
+    <script>
+        (function () {
+            try {
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                if (theme === 'dark') {
+                    document.documentElement.classList.add('studio-theme-dark');
+                    document.documentElement.classList.add('theme-dark');
+                }
+            } catch (e) {}
+        })();
+    </script>
+    <style>
+        @import url('/static/vendor/css/fonts.css');
+
+        :root {
+            --accent: #000000;
+            --bg: #ffffff;
+            --card-bg: #ffffff;
+            --stage-bg: #fcfcfc;
+            --border: #f2f2f2;
+            --input-border: #e2e2e2;
+            --text: #121212;
+            --muted: #999;
+            --tab-bg: #f6f6f6;
+            --tab-active-bg: #ffffff;
+            --hover-bg: #fafafa;
+            --fluid-ease: cubic-bezier(0.3, 0, 0, 1);
+        }
+
+        html.theme-dark,
+        body.theme-dark {
+            --accent: #e5e9f0;
+            --bg: #0f141d;
+            --card-bg: #131a25;
+            --stage-bg: #111722;
+            --border: #242d3b;
+            --input-border: #2a3444;
+            --text: #e5e9f0;
+            --muted: #8f9aab;
+            --tab-bg: #171d29;
+            --tab-active-bg: #1d2533;
+            --hover-bg: #171d29;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--stage-bg);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .card {
+            width: 380px;
+            max-width: calc(100vw - 32px);
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 36px 30px 30px;
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.08);
+        }
+
+        html.theme-dark .card { box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); }
+
+        .brand {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 26px;
+        }
+        .brand img { width: 46px; height: 46px; border-radius: 12px; display: block; }
+        .brand .name { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+        .brand .sub { font-size: 12.5px; color: var(--muted); text-align: center; line-height: 1.5; }
+
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 22px;
+            background: var(--tab-bg);
+            padding: 4px;
+            border-radius: 12px;
+        }
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 9px 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--muted);
+            border-radius: 9px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.18s var(--fluid-ease), color 0.18s var(--fluid-ease);
+        }
+        .tab.active {
+            background: var(--tab-active-bg);
+            color: var(--text);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+        }
+
+        label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+
+        input {
+            width: 100%;
+            padding: 12px 14px;
+            font-size: 15px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--input-border);
+            border-radius: 11px;
+            outline: none;
+            transition: border-color 0.18s var(--fluid-ease), box-shadow 0.18s var(--fluid-ease);
+        }
+        input::placeholder { color: var(--muted); opacity: 0.7; }
+        input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+        }
+
+        button {
+            width: 100%;
+            margin-top: 18px;
+            padding: 12px 14px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--bg);
+            background: var(--accent);
+            border: none;
+            border-radius: 11px;
+            cursor: pointer;
+            transition: opacity 0.18s var(--fluid-ease), transform 0.05s;
+        }
+        button:hover { opacity: 0.88; }
+        button:active { transform: translateY(1px); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .msg { margin-top: 14px; font-size: 13px; min-height: 18px; text-align: center; }
+        .msg.error { color: #e5484d; }
+        .msg.ok { color: #30a46c; }
+
+        .hint { margin-top: 16px; font-size: 12px; color: var(--muted); line-height: 1.55; text-align: center; }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="brand">
+            <img src="/static/images/logo.png" alt="AI Studio">
+            <div class="name">AI Studio</div>
+            <div class="sub">你的画布、历史、素材库将与用户名绑定并独立隔离。</div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" id="tabLogin" data-mode="login">登录</div>
+            <div class="tab" id="tabRegister" data-mode="register">注册</div>
+        </div>
+
+        <form id="authForm" autocomplete="on">
+            <label for="username">用户名</label>
+            <input id="username" name="username" type="text" placeholder="例如：zhangsan" maxlength="60" autofocus autocomplete="username">
+            <button id="submitBtn" type="submit">登录</button>
+        </form>
+        <div class="msg" id="msg"></div>
+        <div class="hint" id="hint">登录已注册的用户名。无需密码，同一台电脑下次访问会自动保持登录。</div>
+    </div>
+
+    <script>
+        const form = document.getElementById('authForm');
+        const input = document.getElementById('username');
+        const msgEl = document.getElementById('msg');
+        const hintEl = document.getElementById('hint');
+        const btn = document.getElementById('submitBtn');
+        const tabLogin = document.getElementById('tabLogin');
+        const tabRegister = document.getElementById('tabRegister');
+        let mode = 'login';
+
+        function setMode(next) {
+            mode = next;
+            tabLogin.classList.toggle('active', mode === 'login');
+            tabRegister.classList.toggle('active', mode === 'register');
+            btn.textContent = mode === 'login' ? '登录' : '注册并进入';
+            hintEl.textContent = mode === 'login'
+                ? '登录已注册的用户名。无需密码，同一台电脑下次访问会自动保持登录。'
+                : '注册一个新用户名（至少 5 位），系统会检查是否已被占用，可用则创建并进入。';
+            msgEl.textContent = '';
+            msgEl.className = 'msg';
+            input.focus();
+        }
+
+        tabLogin.addEventListener('click', () => setMode('login'));
+        tabRegister.addEventListener('click', () => setMode('register'));
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = input.value.trim();
+            msgEl.textContent = '';
+            msgEl.className = 'msg';
+            if (!username) {
+                msgEl.textContent = '请输入用户名。';
+                msgEl.className = 'msg error';
+                input.focus();
+                return;
+            }
+            if (mode === 'register' && username.length < 5) {
+                msgEl.textContent = '用户名至少需要 5 位。';
+                msgEl.className = 'msg error';
+                input.focus();
+                return;
+            }
+            const url = mode === 'login' ? '/auth/login' : '/auth/register';
+            btn.disabled = true;
+            btn.textContent = mode === 'login' ? '登录中…' : '注册中…';
+            try {
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username }),
+                });
+                if (resp.ok) {
+                    window.location.href = '/';
+                    return;
+                }
+                let detail = (mode === 'login' ? '登录失败' : '注册失败') + '，请重试。';
+                try { detail = (await resp.json()).detail || detail; } catch (_) {}
+                msgEl.textContent = detail;
+                msgEl.className = 'msg error';
+                if (mode === 'login' && resp.status === 404) {
+                    setTimeout(() => { setMode('register'); msgEl.textContent = '该用户名尚未注册，已切换到注册。'; msgEl.className = 'msg'; }, 600);
+                }
+            } catch (err) {
+                msgEl.textContent = '网络错误：' + (err && err.message ? err.message : err);
+                msgEl.className = 'msg error';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = mode === 'login' ? '登录' : '注册并进入';
+            }
+        });
+    </script>
+</body>
+
+</html>
