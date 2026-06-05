@@ -1319,6 +1319,16 @@
                         </svg>
                         <span class="nav-text" data-i18n="nav.angle">角度控制</span>
                     </div>
+                    <div class="nav-item" onclick="switchUI(this, 'gaussian')">
+                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <circle cx="6" cy="7" r="1.5"></circle>
+                            <circle cx="18" cy="8" r="2"></circle>
+                            <circle cx="7" cy="17" r="2"></circle>
+                            <circle cx="17" cy="16" r="1.5"></circle>
+                        </svg>
+                        <span class="nav-text" data-i18n="nav.gaussian">高斯修复</span>
+                    </div>
                 </div>
 
                 <!-- 分隔线 -->
@@ -1470,6 +1480,7 @@
             <iframe id="frame-enhance" data-src="/static/enhance.html?v=2026.06.03" scrolling="yes"></iframe>
             <iframe id="frame-klein" data-src="/static/klein.html?v=2026.06.03" scrolling="yes"></iframe>
             <iframe id="frame-angle" data-src="/static/angle.html?v=2026.06.03" scrolling="yes"></iframe>
+            <iframe id="frame-gaussian" data-src="/static/gaussian.html?v=2026.06.03" scrolling="yes"></iframe>
             <iframe id="frame-online" data-src="/static/online.html?v=2026.06.03" scrolling="yes"></iframe>
             <iframe id="frame-gpt-chat" data-src="/static/gpt-chat.html?v=2026.06.03" scrolling="yes"></iframe>
             <iframe id="frame-canvas" data-src="/static/canvas.html?v=2026.06.03" scrolling="yes"></iframe>
@@ -1556,8 +1567,8 @@
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_PINNED_KEY = 'studio_sidebar_pinned';
         const DEFAULT_PAGE_ID = 'zimage';
-        const PAGE_IDS = ['zimage','enhance','klein','angle','online','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings'];
-        const LOCAL_PAGE_IDS = ['zimage','enhance','klein','angle'];
+        const PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','online','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings'];
+        const LOCAL_PAGE_IDS = ['zimage','enhance','klein','angle','gaussian'];
         const PROJECT_URL = 'https://github.com/hero8152/Infinite-Canvas';
         let appInfo = { version:'', repo_url:PROJECT_URL, version_url:'https://raw.githubusercontent.com/hero8152/Infinite-Canvas/main/VERSION' };
         let updateConnectivityResult = null;
@@ -1621,9 +1632,34 @@
             } catch(e) {}
         }
 
+        // 声明了"离开需确认"的页面集合（由子页面通过 page-guard 消息维护）
+        window.__pageLeaveGuards = window.__pageLeaveGuards || {};
+
         function switchUI(el, id, options = {}) {
             resetStudioRootScroll();
             if(!PAGE_IDS.includes(id)) id = DEFAULT_PAGE_ID;
+
+            // 离开前确认：若当前激活页声明了守卫且非强制切换，则先询问该页能否离开
+            try {
+                const prevFrame = document.querySelector('.stage iframe.active');
+                if (!options.force && prevFrame && prevFrame.id !== ('frame-' + id) && prevFrame.contentWindow) {
+                    const prevId = prevFrame.id.replace('frame-', '');
+                    if (window.__pageLeaveGuards[prevId]) {
+                        // 交给子页面弹确认框；用户确认后会回传 page-leave-allow，再由宿主 force 切换
+                        prevFrame.contentWindow.postMessage({ type: 'page-leave-check', from: prevId, target: id }, '*');
+                        return; // 暂不切换，等待子页面回复
+                    }
+                }
+            } catch(e) {}
+
+            // 通知被切走的当前激活页面（用于自重置等）
+            try {
+                const prevFrame = document.querySelector('.stage iframe.active');
+                if (prevFrame && prevFrame.id !== ('frame-' + id) && prevFrame.contentWindow) {
+                    const prevId = prevFrame.id.replace('frame-', '');
+                    prevFrame.contentWindow.postMessage({ type: 'page-hidden', page: prevId }, '*');
+                }
+            } catch(e) {}
             document.querySelectorAll('.nav-item,.side-pill').forEach(n => n.classList.remove('active'));
             if(el) el.classList.add('active');
             document.querySelectorAll('iframe').forEach(f => f.classList.remove('active'));
@@ -1657,6 +1693,19 @@
 
         window.addEventListener('message', event => {
             if (event.origin && event.origin !== location.origin) return;
+            const d = event.data || {};
+            // 子页面声明/取消"离开需确认"守卫
+            if (d.type === 'page-guard' && d.page) {
+                window.__pageLeaveGuards[d.page] = !!d.active;
+                return;
+            }
+            // 子页面确认离开后，宿主强制切换到目标页
+            if (d.type === 'page-leave-allow' && d.target) {
+                window.__pageLeaveGuards[d.from] = false; // 放行后解除守卫，避免再次拦截
+                const trigger = document.querySelector(`[onclick*="'${d.target}'"],[onclick*='"${d.target}"']`);
+                switchUI(trigger, d.target, { force: true });
+                return;
+            }
             forwardStudioApiChange(event.data);
         });
 

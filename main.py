@@ -1825,6 +1825,12 @@ class GenerateRequest(BaseModel):
 class DeleteHistoryRequest(BaseModel):
     timestamp: float
 
+class SaveHistoryRequest(BaseModel):
+    images: List[str]
+    type: str = "zimage"
+    prompt: str = ""
+    is_cloud: bool = False
+
 class TokenRequest(BaseModel):
     token: str
 
@@ -5610,7 +5616,7 @@ def runninghub_local_asset_path(url):
 def runninghub_output_ext(remote, content_type=""):
     tail = str(remote or "").split("?", 1)[0].split("#", 1)[0]
     ext = os.path.splitext(tail)[1].lower().strip(".")
-    allowed = {"png","jpg","jpeg","webp","gif","bmp","mp4","webm","mov","m4v","mkv","mp3","wav","ogg","m4a","flac","aac","zip","gz","tar","rar","7z"}
+    allowed = {"png","jpg","jpeg","webp","gif","bmp","mp4","webm","mov","m4v","mkv","mp3","wav","ogg","m4a","flac","aac","zip","gz","tar","rar","7z","ply","splat"}
     if ext in allowed:
         return ext
     ct = str(content_type or "").lower()
@@ -9478,6 +9484,21 @@ async def get_history_api(type: str = None):
             print(f"读取历史文件失败: {e}")
             return []
     return []
+
+@app.post("/api/history/save")
+async def save_history_api(req: SaveHistoryRequest):
+    images = [u for u in (req.images or []) if u]
+    if not images:
+        return {"success": False, "message": "no images"}
+    record = {
+        "timestamp": time.time(),
+        "prompt": req.prompt or "",
+        "images": images,
+        "type": req.type or "zimage",
+        "is_cloud": bool(req.is_cloud),
+    }
+    save_to_history(record)
+    return {"success": True, "record": record}
 
 @app.get("/api/queue_status")
 async def get_queue_status(client_id: str):

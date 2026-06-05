@@ -1,1782 +1,389 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
+
 <head>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>高斯泼溅查看器 · Gaussian Splat Viewer</title>
+    <link rel="icon" href="/static/images/logo.png" type="image/png">
+    <title>Gaussian Repair | 高斯泼溅修复</title>
+    <script>
+        (function(){
+            try {
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                if(theme === 'dark') {
+                    document.documentElement.classList.add('studio-theme-dark');
+                    document.documentElement.classList.add('theme-dark');
+                }
+            } catch(e) {}
+        })();
+    </script>
+    <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.06.03.1"></script>
+    <script src="/static/vendor/js/lucide.js?v=2026.06.03.1"></script>
+    <script src="/static/js/theme.js?v=2026.06.03.1"></script>
+    <script src="/static/js/i18n.js?v=2026.06.03.1"></script>
+    <script src="/static/js/image-preview.js?v=2026.06.03.1"></script>
+    <script src="/static/js/history-bulk-manager.js?v=2026.06.03.1"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        @import url('/static/vendor/css/fonts.css?v=2026.06.03.1');
 
         :root {
-            --ui-scale: 1.0;
+            --accent: #111827;
+            --bg: #f9fafb;
+            --card: #ffffff;
+            --easing: cubic-bezier(0.4, 0, 0.2, 1);
         }
+
+        *::-webkit-scrollbar { width: 10px !important; height: 10px !important; background: transparent !important; }
+        *::-webkit-scrollbar-track { background: transparent !important; border: none !important; }
+        *::-webkit-scrollbar-thumb {
+            background-color: #d8d8d8 !important;
+            border: 3px solid transparent !important;
+            border-right-width: 5px !important;
+            background-clip: padding-box !important;
+            border-radius: 10px !important;
+        }
+        *::-webkit-scrollbar-thumb:hover { background-color: #c0c0c0 !important; }
+        *::-webkit-scrollbar-corner { background: transparent !important; }
+        * { scrollbar-width: thin !important; scrollbar-color: #d8d8d8 transparent !important; }
 
         body {
-            background: #1a1a1a;
-            overflow: hidden;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            color: #ddd;
+            background-color: var(--bg);
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--accent);
+            -webkit-font-smoothing: antialiased;
         }
 
-        /* 左右两栏布局：左=上传图像，右=高斯查看器 */
-        #mainSplit {
-            flex: 1;
-            min-height: 0;
-            display: flex;
-            flex-direction: row;
-        }
-        #leftPanel {
-            width: 320px;
-            flex-shrink: 0;
-            background: #1d1d1d;
-            border-right: 1px solid #333;
-            display: flex;
-            flex-direction: column;
-            padding: 12px;
-            gap: 10px;
-            overflow: auto;
-        }
-        #leftPanel .panel-title {
-            font-size: 13px;
-            font-weight: 700;
-            color: #eee;
-        }
-        #leftPanel .img-upload-btn {
-            background: #3a64d8;
-            border: none;
-            color: #fff;
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-            text-align: center;
-        }
-        #leftPanel .img-upload-btn:hover { background: #4f74e0; }
-        #imgDropZone {
-            flex: 1;
-            min-height: 160px;
-            border: 1.5px dashed #444;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-            overflow: hidden;
-            background: #161616;
-            color: #666;
-            font-size: 12px;
-            text-align: center;
-            padding: 8px;
-        }
-        #imgDropZone.dragover { border-color: #4f74e0; background: rgba(58,100,216,0.12); color: #cfe0ff; }
-        #imgPreview {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            display: none;
-        }
-        #imgDropHint { pointer-events: none; }
-        #imgInfo {
-            font-size: 11px;
-            font-family: monospace;
-            color: #9ad;
-            line-height: 1.5;
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
-        #rightViewer {
-            flex: 1;
-            min-width: 0;
-            display: flex;
-            flex-direction: column;
-        }
-        @media (max-width: 720px) {
-            #mainSplit { flex-direction: column; }
-            #leftPanel { width: auto; border-right: none; border-bottom: 1px solid #333; max-height: 40vh; }
-        }
+        .container-box { max-width: 1280px; margin: 0 auto; padding: 0 40px; margin-top: 50px; }
 
-        /* 顶部工具栏（独立页新增：加载入口） */
-        #topBar {
-            align-items: center;
-            gap: 10px;
-            background: #202020;
-            border-bottom: 1px solid #333;
-            padding: 8px 12px;
-            flex-shrink: 0;
-            flex-wrap: wrap;
-            z-index: 120;
-        }
+        .glass-btn { background: #111827; transition: all 0.3s var(--easing); }
+        .glass-btn:hover { background: #000; transform: translateY(-1px); box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1); }
+        .glass-btn:active { transform: scale(0.98); }
 
-        #topBar .title {
-            font-size: 13px;
-            font-weight: 700;
-            color: #eee;
-            margin-right: 6px;
-        }
+        .upload-item { background: var(--card); border: 1px dashed #e2e8f0; transition: all 0.4s var(--easing); }
+        .upload-item:hover { border-color: #000; background: #fff; transform: translateY(-2px); }
 
-        #topBar button,
-        #topBar .file-btn {
-            background: #3a64d8;
-            border: none;
-            color: #fff;
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-            white-space: nowrap;
-        }
+        .result-frame { background: #ffffff; border-radius: 32px; border: 1px solid #f1f5f9; box-shadow: 0 2px 15px rgba(0, 0, 0, 0.02); }
 
-        #topBar button:hover,
-        #topBar .file-btn:hover {
-            background: #4f74e0;
+        .masonry-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem; }
+        @media (min-width: 768px) { .masonry-grid { grid-template-columns: repeat(4, 1fr); } }
+        .masonry-item {
+            aspect-ratio: 1 / 1; background: #fff; border: 1px solid #f1f5f9; border-radius: 24px;
+            overflow: hidden; transition: all 0.5s var(--easing); position: relative;
         }
+        .masonry-item:hover { transform: translateY(-6px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08); }
 
-        #topBar button.secondary {
-            background: #444;
-        }
+        .nano-input { background: #ffffff; border-radius: 16px; transition: all 0.3s ease; border: 1px solid #e5e7eb; }
+        .nano-input:focus { background: #ffffff; box-shadow: 0 0 0 2px #000; border-color: transparent; }
 
-        #topBar button.secondary:hover {
-            background: #555;
+        @keyframes b-loading {
+            0% { transform: scale(1); background: #000; }
+            50% { transform: scale(1.15); background: #444; }
+            100% { transform: scale(1); background: #000; }
         }
+        .loading-box { width: 10px; height: 10px; animation: b-loading 1s infinite var(--easing); }
 
-        #topBar input[type="text"] {
-            background: #333;
-            border: 1px solid #555;
-            color: #fff;
-            font-size: 12px;
-            padding: 6px 8px;
-            border-radius: 6px;
-            min-width: 240px;
-            flex: 1 1 200px;
-            max-width: 420px;
-        }
-
-        #fileName {
-            color: #9ad;
-            font-size: 12px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 280px;
-        }
-
-        #viewerContainer {
-            position: relative;
-            flex: 1;
-            min-height: 0;
-        }
-
-        #canvasWrapper {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        canvas {
-            display: block;
-        }
-
-        /* 拖拽提示遮罩 */
-        #dropHint {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-            gap: 12px;
-            color: #888;
-            text-align: center;
-            pointer-events: none;
-            z-index: 30;
-        }
-        #dropHint .big {
-            font-size: 16px;
-            color: #aaa;
-        }
-        #dropHint .sub {
-            font-size: 12px;
-            color: #666;
-        }
-        #dropHint.hidden { display: none; }
-
-        #viewerContainer.dragover::after {
-            content: "松开以加载 PLY 文件";
-            position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(58, 100, 216, 0.18);
-            border: 2px dashed #4f74e0;
-            color: #cfe0ff;
-            font-size: 16px;
-            z-index: 60;
-        }
-
-        .error {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-            color: #ff6b6b;
-            padding: 20px;
-            max-width: 80%;
-            z-index: 70;
-        }
-
-        .error.hidden {
-            display: none;
-        }
-
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #9ad;
-            font-size: 14px;
-            z-index: 70;
-        }
-        #loading.hidden { display: none; }
-
-        #controlsBar {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: flex-start;
-            align-items: center;
-            gap: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
-            background: #252525;
-            padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
-            border-top: 1px solid #333;
-            flex-shrink: 0;
-            width: 100%;
-            z-index: 100;
-        }
-
-        .control-group {
-            display: flex;
-            align-items: center;
-            gap: calc(4px * var(--ui-scale));
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid #3a3a3a;
-            border-radius: calc(6px * var(--ui-scale));
-            padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale));
-            min-height: calc(30px * var(--ui-scale));
-        }
-
-        .control-group.preset-group {
-            margin-left: auto;
-        }
-
-        .group-label {
-            color: #a9a9a9;
-            font-size: calc(10px * var(--ui-scale));
-            font-weight: 600;
-            letter-spacing: 0.2px;
-            margin-right: calc(2px * var(--ui-scale));
-            white-space: nowrap;
-        }
-
-        @media (max-width: 900px) {
-            .control-group.preset-group {
-                margin-left: 0;
-            }
-        }
-
-        #controlsBar button {
-            background: #444;
-            border: none;
-            color: #fff;
-            padding: calc(4px * var(--ui-scale)) calc(8px * var(--ui-scale));
-            border-radius: calc(3px * var(--ui-scale));
-            cursor: pointer;
-            font-size: calc(10px * var(--ui-scale));
-            white-space: nowrap;
-        }
-
-        #controlsBar button:hover {
-            background: #555;
-        }
-
-        .scale-control {
-            display: flex;
-            align-items: center;
-            gap: calc(4px * var(--ui-scale));
-            flex-shrink: 0;
-        }
-
-        .scale-control span {
-            color: #888;
-            font-size: calc(10px * var(--ui-scale));
-            white-space: nowrap;
-        }
-
-        .scale-control input[type="number"] {
-            width: calc(50px * var(--ui-scale));
-            background: #333;
-            border: 1px solid #555;
-            color: #fff;
-            font-size: calc(10px * var(--ui-scale));
-            padding: calc(3px * var(--ui-scale)) calc(5px * var(--ui-scale));
-            border-radius: calc(3px * var(--ui-scale));
-        }
-
-        .scale-control input[type="range"] {
-            width: calc(60px * var(--ui-scale));
-            margin: 0;
-            vertical-align: middle;
-        }
-
-        #gaussianScaleValue {
-            width: calc(80px * var(--ui-scale));
-        }
-        #gaussianScaleDisplay {
-            color: #fff;
-            font-size: calc(10px * var(--ui-scale));
-            min-width: 16px;
-            text-align: center;
-        }
-
-        .preset-control {
-            display: flex;
-            align-items: center;
-            gap: calc(4px * var(--ui-scale));
-            flex-shrink: 0;
-        }
-
-        .preset-control span {
-            color: #888;
-            font-size: calc(10px * var(--ui-scale));
-            white-space: nowrap;
-        }
-
-        .preset-control input,
-        .preset-control select {
-            background: #333;
-            border: 1px solid #555;
-            color: #fff;
-            font-size: calc(10px * var(--ui-scale));
-            padding: calc(3px * var(--ui-scale)) calc(5px * var(--ui-scale));
-            border-radius: calc(3px * var(--ui-scale));
-        }
-
-        #presetName {
-            width: calc(120px * var(--ui-scale));
-        }
-
-        #presetSelect {
-            min-width: calc(140px * var(--ui-scale));
-            max-width: calc(220px * var(--ui-scale));
-        }
-
-        #presetStatus {
-            color: #9ad;
-            font-size: calc(10px * var(--ui-scale));
-            min-width: calc(80px * var(--ui-scale));
-        }
-
-        #overlayControl {
-            display: none;
-        }
-
-        .info-panel {
-            position: absolute;
-            top: 8px;
-            left: 8px;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 12px;
-            border-radius: 4px;
-            color: #aaa;
-            font-size: 11px;
-            font-family: monospace;
-            z-index: 50;
-        }
-
-        .info-panel.hidden {
-            display: none;
-        }
-
-        #cropFrame {
-            position: absolute;
-            border: 2px solid rgba(255, 80, 80, 0.85);
-            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.15);
-            pointer-events: none;
-            z-index: 40;
-        }
-
-        .ratio-panel {
-            position: absolute;
-            left: 8px;
-            bottom: 8px;
-            background: rgba(0, 0, 0, 0.6);
-            border: 1px solid #333;
-            border-radius: 6px;
-            padding: 8px;
-            display: grid;
-            grid-template-columns: auto;
-            gap: 6px;
-            z-index: 45;
-        }
-
-        .ratio-panel .label {
-            color: #cfcfcf;
-            font-size: 11px;
-        }
-
-        .ratio-select {
-            background: #222;
-            color: #ddd;
-            border: 1px solid #444;
-            border-radius: 4px;
-            padding: 4px 6px;
-            font-size: 11px;
-            min-width: 110px;
-        }
-
-        /* 页面内确认对话框（替代 ComfyUI 父窗口确认） */
-        #confirmOverlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.55);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 100000;
-        }
-        #confirmOverlay.show { display: flex; }
-        #confirmPanel {
-            width: min(420px, calc(100vw - 32px));
-            background: #1f1f1f;
-            border: 1px solid #3d3d3d;
-            border-radius: 10px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.45);
-            padding: 16px;
-            color: #ddd;
-        }
-        #confirmTitle { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
-        #confirmMessage { font-size: 12px; color: #bdbdbd; line-height: 1.45; white-space: pre-wrap; }
-        #confirmActions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
-        #confirmActions button { padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
-        #confirmCancel { border: 1px solid #555; background: #2d2d2d; color: #ddd; }
-        #confirmOk { border: 1px solid #4f6bd6; background: #4f6bd6; color: #fff; }
+        /* 查看器 iframe：填满 02 控制窗口 */
+        #viewerFrame { width: 100%; height: 100%; border: none; display: block; background: #1a1a1a; }
     </style>
+    <link rel="stylesheet" href="/static/css/theme.css?v=2026.06.03.1">
 </head>
-<body>
-    <!-- 顶部加载工具栏（独立页专属） -->
-    <div id="topBar">
-        <span class="title">高斯泼溅查看器</span>
-        <label class="file-btn" for="plyFileInput">打开 PLY 文件</label>
-        <input id="plyFileInput" type="file" accept=".ply" style="display:none;">
-        <input id="plyUrlInput" type="text" placeholder="或粘贴 PLY 文件 URL …">
-        <button id="loadUrlBtn" class="secondary" type="button">从 URL 加载</button>
-        <span id="fileName"></span>
-        <button id="repairBtn" type="button" title="将渲染图(GaussianImage)与上传图(SourceImage)送入修复工作流" style="margin-left:auto; background:#1f9d55;">开始修复</button>
-        <button id="exportBtn" class="secondary" type="button" title="按当前视角导出 PNG">导出图片</button>
+
+<body class="selection:bg-black selection:text-white">
+
+    <div class="container-box">
+        <header class="flex flex-col md:flex-row justify-between items-end mb-16 gap-6">
+            <div class="space-y-1">
+                <h1 class="text-4xl font-extrabold tracking-[-0.05em] flex items-center">
+                    GAUSSIAN REPAIR<span class="text-base mt-3 ml-1">®</span>
+                </h1>
+                <p class="text-[10px] font-bold uppercase tracking-[0.5em] text-gray-400">3D Gaussian Splatting Repair</p>
+            </div>
+            <nav class="flex gap-8 text-[11px] font-bold uppercase tracking-widest text-gray-500">
+                <span class="text-black border-b-2 border-black pb-1">Gaussian</span>
+            </nav>
+        </header>
+
+        <main class="space-y-12">
+            <!-- Row 1: 输入图 + 高斯渲染查看器 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-10 items-start">
+                <section class="group w-full">
+                    <h3 class="text-[9px] font-black uppercase tracking-[0.3em] mb-5 text-gray-400">01. <span>Input Source</span></h3>
+                    <div id="dropzone"
+                        class="upload-item relative overflow-hidden rounded-2xl aspect-[4/3] flex flex-col items-center justify-center cursor-pointer">
+                        <input type="file" id="fileInput" class="hidden" accept="image/*">
+                        <div id="uploadContent" class="text-center space-y-4">
+                            <div class="w-14 h-14 rounded-full border border-gray-200 bg-white flex items-center justify-center mx-auto group-hover:bg-black group-hover:text-white group-hover:border-black transition-all duration-500">
+                                <i data-lucide="arrow-up" class="w-5 h-5"></i>
+                            </div>
+                            <p class="text-[11px] font-bold uppercase tracking-tight">Drop image here</p>
+                        </div>
+                        <img id="previewImg" class="hidden absolute inset-0 w-full h-full object-cover">
+                        <div id="changeOverlay"
+                            class="hidden absolute inset-0 bg-black/10 backdrop-blur-sm items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                            <span class="bg-white px-5 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest shadow-2xl">Change</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="space-y-6 w-full">
+                    <h3 class="text-[9px] font-black uppercase tracking-[0.3em] text-gray-400">02. <span>Actions</span></h3>
+
+                    <div class="w-full aspect-[4/3] bg-white rounded-2xl border border-gray-100 shadow-sm p-8 flex flex-col justify-center gap-6 overflow-y-auto">
+                        <!-- 生成状态 -->
+                        <div id="genState" class="text-center space-y-3 text-gray-400">
+                            <i data-lucide="box" class="w-10 h-10 mx-auto stroke-[1px]"></i>
+                            <p class="text-[10px] font-bold uppercase tracking-[0.3em]">上传参考图后，点击生成 3D 高斯</p>
+                        </div>
+
+                        <!-- 3D 高斯生成（上） -->
+                        <button id="genGaussianBtn" onclick="handleGenerate()"
+                            class="glass-btn w-full py-5 text-white rounded-xl font-bold text-[11px] uppercase tracking-[0.4em] flex items-center justify-center gap-3 shadow-xl shadow-black/10 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <i data-lucide="sparkles" class="w-4 h-4 text-yellow-400"></i>
+                            <span id="genBtnText">3D 高斯生成</span>
+                        </button>
+
+                        <!-- 生成进度 -->
+                        <div id="gen-progress-container" class="hidden w-full">
+                            <div class="flex justify-between text-[9px] font-bold text-gray-400 mb-1 uppercase tracking-widest">
+                                <span id="gen-status-text">Pending...</span>
+                                <span id="gen-percent">0%</span>
+                            </div>
+                            <div class="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                                <div id="gen-progress-bar" class="bg-black h-full rounded-full transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                            <i data-lucide="cloud" class="w-3 h-3"></i>
+                            <span>RunningHub</span>
+                        </div>
+
+                        <!-- 开始修复（下） -->
+                        <button id="genBtn" onclick="handleRepair()" disabled
+                            class="glass-btn w-full py-5 text-white rounded-xl font-bold text-[11px] uppercase tracking-[0.4em] flex items-center justify-center gap-3 shadow-xl shadow-black/10 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <i data-lucide="zap" id="btnIcon" class="w-4 h-4 text-yellow-400"></i>
+                            <span id="btnText">开始修复</span>
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Row 2: 查看器 + 结果预览 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-10 items-stretch">
+                <section class="flex flex-col space-y-6">
+                    <h3 class="text-[9px] font-black uppercase tracking-[0.3em] text-gray-400">03. <span>Gaussian Viewer</span></h3>
+                    <div class="flex-1 w-full aspect-[4/3] bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                        <iframe id="viewerFrame" src="/static/gaussian-viewer.html?embed=1" title="Gaussian Viewer"></iframe>
+                    </div>
+                </section>
+
+                <section class="space-y-6 flex flex-col">
+                    <h3 class="text-[9px] font-black uppercase tracking-[0.3em] text-gray-400">04. <span>Result Preview</span></h3>
+                    <div id="resultBox"
+                        class="result-frame relative aspect-[4/3] w-full flex items-center justify-center overflow-hidden group">
+                        <div id="emptyState" class="text-center space-y-4 opacity-20">
+                            <i data-lucide="camera" class="w-12 h-12 mx-auto stroke-[1px]"></i>
+                            <p class="text-[10px] font-black tracking-[0.5em] uppercase">Canvas Ready</p>
+                        </div>
+
+                        <div id="loadingState" class="hidden flex flex-col items-center gap-5 w-full max-w-[80%]">
+                            <div class="loading-box"></div>
+                            <p class="text-[10px] font-bold uppercase tracking-[0.4em] animate-pulse">Processing...</p>
+                            <div id="cloud-progress-container" class="hidden w-full mt-4">
+                                <div class="flex justify-between text-[9px] font-bold text-gray-400 mb-1 uppercase tracking-widest">
+                                    <span id="cloud-status-text">Pending...</span>
+                                    <span id="cloud-percent">0%</span>
+                                </div>
+                                <div class="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                                    <div id="cloud-progress-bar" class="bg-black h-full rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <img id="outputImg"
+                            class="hidden w-full h-full object-contain p-8 cursor-zoom-in transition-all duration-700 hover:scale-[1.02]"
+                            onclick="zoomImage()">
+
+                        <a id="downloadBtn" href="#" download
+                            class="hidden absolute bottom-8 right-8 w-14 h-14 bg-white shadow-2xl rounded-2xl flex items-center justify-center hover:bg-black hover:text-white transition-all duration-500 border border-gray-100">
+                            <i data-lucide="download" class="w-5 h-5"></i>
+                        </a>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <section class="mt-32">
+            <div class="flex items-center gap-6 mb-10">
+                <h2 class="text-[11px] font-black uppercase tracking-[0.5em]">Archive</h2>
+                <div class="h-px flex-1 bg-black/5"></div>
+            </div>
+            <div id="masonry" class="masonry-grid"></div>
+            <div id="loadMoreTrigger" class="py-16 text-center opacity-20 text-[10px] font-bold uppercase tracking-widest">
+                End of Archive
+            </div>
+        </section>
     </div>
 
-    <div id="mainSplit">
-        <!-- 左栏：上传图像，用于按其宽高 + FOV(50°) 计算 intrinsics -->
-        <div id="leftPanel">
-            <div class="panel-title">参考图像 / 相机内参</div>
-            <label class="img-upload-btn" for="imgFileInput">上传图像</label>
-            <input id="imgFileInput" type="file" accept="image/*" style="display:none;">
-            <div id="imgDropZone">
-                <img id="imgPreview" alt="">
-                <div id="imgDropHint">点击「上传图像」或拖拽图片到此<br>将按其宽高 + FOV 50° 计算内参</div>
-            </div>
-            <div id="imgInfo">未上传图像，使用默认内参（816×816，FOV 50°）。</div>
-
-            <!-- 修复进度与结果 -->
-            <div id="repairStatus" style="font-size:12px;color:#9ad;min-height:16px;"></div>
-            <div id="repairProgressWrap" style="display:none;height:6px;background:#2a2a2a;border-radius:3px;overflow:hidden;">
-                <div id="repairProgressBar" style="height:100%;width:0%;background:#1f9d55;transition:width .3s;"></div>
-            </div>
-            <div id="repairResultZone" style="display:none;flex-direction:column;gap:6px;">
-                <div class="panel-title" style="font-size:12px;">修复结果</div>
-                <a id="repairResultLink" href="#" target="_blank" rel="noopener" style="display:block;">
-                    <img id="repairResultImg" alt="修复结果" style="max-width:100%;border:1px solid #333;border-radius:6px;display:block;">
-                </a>
-                <a id="repairDownloadBtn" href="#" download style="background:#444;color:#fff;text-align:center;padding:6px 10px;border-radius:6px;font-size:12px;text-decoration:none;">下载修复结果</a>
-            </div>
-        </div>
-
-        <!-- 右栏：高斯查看器 -->
-        <div id="rightViewer">
-    <div id="viewerContainer">
-        <div id="canvasWrapper">
-            <canvas id="canvas"></canvas>
-            <img id="overlayImage" style="position: absolute; pointer-events: none; opacity: 0.5; display: none; z-index: 35;">
-            <div id="cropFrame" aria-hidden="true"></div>
-        </div>
-
-        <div id="dropHint">
-            <div class="big">将 .ply 高斯泼溅文件拖入此处</div>
-            <div class="sub">或点击左上角「打开 PLY 文件」</div>
-        </div>
-
-        <div id="loading" class="hidden">正在加载模型…</div>
-        <div id="error" class="error hidden"></div>
-
-        <div id="infoPanel" class="info-panel hidden">
-            <div id="infoContent"></div>
-        </div>
-
-        <div id="ratioPanel" class="ratio-panel" aria-label="Aspect ratio presets">
-            <div class="label">Image Ratio</div>
-            <select id="ratioSelect" class="ratio-select">
-                <option value="source">Source</option>
-                <option value="1:1">1:1</option>
-                <option value="1:2">1:2</option>
-                <option value="4:3">4:3</option>
-                <option value="3:4">3:4</option>
-                <option value="16:9">16:9</option>
-                <option value="9:16">9:16</option>
-            </select>
-        </div>
-
-        <div id="cameraInfo" class="info-panel" style="left: auto; right: 8px; font-size: 9px; line-height: 1.2;">
-            <div id="cameraInfoContent"></div>
-        </div>
-
-        <div id="helpPanel" class="info-panel hidden" style="left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 100; min-width: 250px;">
-            <div style="font-weight: bold; border-bottom: 1px solid #444; margin-bottom: 8px; padding-bottom: 4px; color: #fff;">键盘快捷键</div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 16px;">
-                <span style="color: #6cc;">WASD / 方向键</span> <span>移动 / 平移</span>
-                <span style="color: #6cc;">Q / E</span> <span>偏航 (左/右)</span>
-                <span style="color: #6cc;">R / F</span> <span>俯仰 (上/下)</span>
-                <span style="color: #6cc;">Z / C</span> <span>翻滚</span>
-                <span style="color: #6cc;">Shift</span> <span>精确模式 (0.1x)</span>
-                <span style="color: #6cc;">左键</span> <span>环绕旋转</span>
-                <span style="color: #6cc;">右键</span> <span>平移</span>
-                <span style="color: #6cc;">滚轮</span> <span>缩放</span>
-            </div>
-            <button id="closeHelp" style="margin-top: 12px; width: 100%; background: #444; border: none; color: #fff; padding: 6px; cursor: pointer; border-radius: 3px;">关闭</button>
-        </div>
-    </div>
-
-    <div id="controlsBar">
-        <div class="control-group view-group">
-            <span class="group-label">View</span>
-            <button id="resetCamera" title="重置相机视角">Reset View</button>
-            <button id="toggleHelp" title="显示键盘快捷键">?</button>
-        </div>
-
-        <div class="control-group camera-group">
-            <span class="group-label">Camera</span>
-            <div class="scale-control">
-                <span>Focal:</span>
-                <input type="range" id="focalScale" min="0.2" max="3.0" step="0.01" value="1.0" title="焦距缩放">
-                <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.0" title="焦距缩放值">
-            </div>
-            <button id="setCamera" title="保存当前相机视角（本地存储）">Set Camera</button>
-        </div>
-
-        <div class="control-group display-group">
-            <span class="group-label">Display</span>
-            <div class="scale-control">
-                <span>Scale:</span>
-                <input type="range" id="gaussianScaleValue" min="1" max="30" step="1" value="11" title="高斯点尺寸倍数">
-                <span id="gaussianScaleDisplay">11</span>
-                <button id="autoScaleBtn" title="恢复自动缩放 (11)">Auto</button>
-                <label style="display: flex; align-items: center; gap: 4px; color: #ccc; font-size: calc(10px * var(--ui-scale)); margin-left: calc(8px * var(--ui-scale)); cursor: pointer;" title="根据相机距离与 FOV 动态调整尺寸">
-                    <input type="checkbox" id="dynamicScaleToggle" style="margin: 0; cursor: pointer;" checked>
-                    Dynamic
-                </label>
-            </div>
-            <div id="overlayControl" class="scale-control">
-                <span>Overlay:</span>
-                <input type="range" id="overlayAlpha" min="0" max="1" step="0.01" value="0.5" title="叠加图透明度">
-                <input type="number" id="overlayAlphaValue" min="0" max="1" step="0.01" value="0.5" title="叠加图透明度值">
-            </div>
-        </div>
-
-        <div class="control-group preset-group">
-            <span class="group-label">Presets</span>
-            <div class="preset-control">
-                <span>Preset:</span>
-                <select id="presetScope" title="预设范围">
-                    <option value="global">Global</option>
-                    <option value="mesh">Current Mesh</option>
-                </select>
-                <input type="text" id="presetName" placeholder="preset name" title="预设名称">
-                <button id="savePreset" title="保存当前相机为预设">Save</button>
-                <select id="presetSelect" title="选择预设">
-                    <option value="">(No Preset)</option>
-                </select>
-                <button id="applyPreset" title="应用所选预设">Apply</button>
-                <button id="deletePreset" title="删除所选预设">Delete</button>
-                <span id="presetStatus"></span>
-            </div>
-        </div>
-    </div>
-        </div><!-- /#rightViewer -->
-    </div><!-- /#mainSplit -->
-
-    <!-- 页面内确认对话框 -->
-    <div id="confirmOverlay">
-        <div id="confirmPanel">
-            <div id="confirmTitle">确认</div>
-            <div id="confirmMessage"></div>
-            <div id="confirmActions">
-                <button id="confirmCancel">取消</button>
-                <button id="confirmOk">确认</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 加载打包后的 gsplat.js -->
-    <script src="./gaussian/js/gsplat-bundle.js"></script>
-    <script src="./gaussian/js/precise_orbit_controls.js"></script>
-
-    <script type="module">
-        // 使用全局导出的 GSPLAT
-        const SPLAT = window.GSPLAT;
-
-        // DOM 元素
-        const canvas = document.getElementById('canvas');
-        const errorEl = document.getElementById('error');
-        const loadingEl = document.getElementById('loading');
-        const dropHint = document.getElementById('dropHint');
-        const infoPanel = document.getElementById('infoPanel');
-        const infoContent = document.getElementById('infoContent');
-        const cropFrame = document.getElementById('cropFrame');
-        const fileNameEl = document.getElementById('fileName');
-
-        // gsplat.js 组件
-        let scene = null;
-        let camera = null;
-        let renderer = null;
-        let controls = null;
-        let animationId = null;
-        let currentSplat = null;
-        let originalScales = null;
-        let cachedSplatData = null;
-        let baseFocalLength = null;
-        let baseFocalY = null;
-        let nativeAspect = null;
-        let nativeImageWidth = null;
-        let nativeImageHeight = null;
-        let lastCameraTarget = null;
-        let lastSceneCenter = null;
-        let lastSceneSize = null;
-
-        let baseDistance = null;
-        let isDynamicScaleEnabled = true;
-
-        function updateBaseDistance() {
-            if (!camera || !lastSceneCenter) return;
-            const pos = initialCameraData ? initialCameraData.position : camera.position;
-            const dx = pos.x - lastSceneCenter.x;
-            const dy = pos.y - lastSceneCenter.y;
-            const dz = pos.z - lastSceneCenter.z;
-            baseDistance = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1.0;
-        }
-
-        const DEFAULT_FOCAL_LENGTH = 30;
-        const SCALE_DENSITY_BOOST = 3.0;
-
-        // 独立页默认相机内外参：本地/拖拽/URL 加载时未提供参数则用这组，
-        // 与 ComfyUI GaussianViewer 节点的默认输入对齐，避免画面过小。
-        const DEFAULT_EXTRINSICS = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
-        const DEFAULT_INTRINSICS = [[874.9588235678999,0,408],[0,874.9588235678999,408],[0,0,1]];
-
-        // 固定视场角（度）：由上传图像的宽高 + 该 FOV 计算 intrinsics
-        const DEFAULT_FOV_DEG = 50;
-        // 当前使用的内参：上传图像后会按其宽高重新计算；未上传时用默认值
-        let currentIntrinsics = DEFAULT_INTRINSICS;
-
-        // 由图像宽高 + FOV 计算 3x3 内参矩阵
-        function computeIntrinsicsFromImage(width, height, fovDeg = DEFAULT_FOV_DEG) {
-            const cx = width / 2;
-            const cy = height / 2;
-            // 以较短边对应给定 FOV，保证横竖图都不会过度拉伸
-            const halfFov = (fovDeg * Math.PI / 180) / 2;
-            const f = (Math.min(width, height) / 2) / Math.tan(halfFov);
-            return [[f, 0, cx], [0, f, cy], [0, 0, 1]];
-        }
-
-        const computeScaleCompensation = (imageWidth, containerWidth) => {
-            if (!imageWidth || !containerWidth) return 1.0;
-            const ratio = imageWidth / containerWidth;
-            return ratio * SCALE_DENSITY_BOOST;
-        };
-
-        function initViewer() {
-            try {
-                scene = new SPLAT.Scene();
-                camera = new SPLAT.Camera();
-                renderer = new SPLAT.WebGLRenderer(canvas);
-                controls = new window.PreciseOrbitControls(camera, canvas);
-
-                controls.minZoom = 0.001;
-                controls.maxZoom = 100;
-
-                camera.data.fx = DEFAULT_FOCAL_LENGTH;
-                camera.data.fy = DEFAULT_FOCAL_LENGTH;
-                baseFocalLength = camera.data.fx;
-                baseFocalY = camera.data.fy;
-
-                const resize = () => {
-                    if (!isResolutionLocked) {
-                        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-                        nativeAspect = (canvas.clientWidth || 1) / (canvas.clientHeight || 1);
-                    }
-                    scheduleFrameLayoutUpdate();
-                };
-                window.addEventListener('resize', resize);
-                resize();
-                scheduleFrameLayoutUpdate();
-
-                let lastIdealScale = -1;
-
-                const frame = () => {
-                    controls.update();
-                    updateCameraInfoDisplay();
-                    renderer.render(scene, camera);
-                    animationId = requestAnimationFrame(frame);
-
-                    if (isDynamicScaleEnabled && camera && lastSceneCenter && baseDistance) {
-                        const currentFocal = camera.data.fx || baseFocalLength;
-                        const dx = camera.position.x - lastSceneCenter.x;
-                        const dy = camera.position.y - lastSceneCenter.y;
-                        const dz = camera.position.z - lastSceneCenter.z;
-                        const currentDistance = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1.0;
-                        const distRatio = currentDistance / baseDistance;
-                        const focalRatio = baseFocalLength / currentFocal;
-                        const scaleFactor = Math.pow(distRatio * focalRatio, 0.85);
-                        let idealScale = Math.round(11.0 * scaleFactor);
-                        idealScale = Math.max(1, Math.min(30, idealScale));
-                        if (idealScale !== lastIdealScale) {
-                            lastIdealScale = idealScale;
-                            if (idealScale !== currentScale) {
-                                updateGaussianScale(idealScale);
-                            }
-                        }
-                    }
-                };
-                frame();
-
-                canvas.addEventListener('wheel', (event) => {
-                    const target = getCameraTarget();
-                    let distance = null;
-                    if (camera && target) {
-                        const dx = camera.position.x - target.x;
-                        const dy = camera.position.y - target.y;
-                        const dz = camera.position.z - target.z;
-                        distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                    }
-                    if (event.deltaY < 0 && camera && target && distance !== null) {
-                        const minZoom = controls?.minZoom ?? 0;
-                        const dollyThreshold = minZoom + 0.5;
-                        if (distance <= dollyThreshold) {
-                            const dx = target.x - camera.position.x;
-                            const dy = target.y - camera.position.y;
-                            const dz = target.z - camera.position.z;
-                            const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-                            const stepBase = lastSceneSize ? Math.max(lastSceneSize.z, lastSceneSize.x, lastSceneSize.y) : 1;
-                            const step = Math.max(0.05, stepBase * 0.01);
-                            const dirX = dx / len;
-                            const dirY = dy / len;
-                            const dirZ = dz / len;
-                            camera.position.x += dirX * step;
-                            camera.position.y += dirY * step;
-                            camera.position.z += dirZ * step;
-                            const nextTarget = new SPLAT.Vector3(
-                                target.x + dirX * step,
-                                target.y + dirY * step,
-                                target.z + dirZ * step
-                            );
-                            if (controls?.setCameraTarget) {
-                                controls.setCameraTarget(nextTarget);
-                            }
-                        }
-                    }
-                }, { passive: true });
-
-            } catch (err) {
-                console.error('[GaussianViewer] Init error:', err);
-                showError('初始化 WebGL 查看器失败: ' + err.message);
-            }
-        }
-
-        function showError(message) {
-            errorEl.textContent = message;
-            errorEl.classList.remove('hidden');
-        }
-        function clearError() {
-            errorEl.classList.add('hidden');
-        }
-
-        let initialCameraData = null;
-        let lastMeshSignature = null;
-        let isResolutionLocked = false;
-        let gaussianScaleCompensation = 1.0;
-        let outputSettings = {
-            resolution: 2048,
-            aspectRatio: "source"
-        };
-
-        const CAMERA_PRESET_STORAGE_KEY = 'geompack_camera_presets_v1';
-        const CAMERA_SAVED_STATE_KEY = 'gaussian_saved_camera_v1';
-        let currentMeshKey = null;
-        let presetOptionMap = new Map();
-
-        // 页面内确认对话框（替代原 window.parent.postMessage PRESET_CONFIRM_REQUEST）
-        const confirmOverlay = document.getElementById('confirmOverlay');
-        const confirmTitle = document.getElementById('confirmTitle');
-        const confirmMessage = document.getElementById('confirmMessage');
-        const confirmOkBtn = document.getElementById('confirmOk');
-        const confirmCancelBtn = document.getElementById('confirmCancel');
-        let confirmResolver = null;
-
-        function closeConfirm(value) {
-            confirmOverlay.classList.remove('show');
-            const fn = confirmResolver;
-            confirmResolver = null;
-            if (fn) fn(!!value);
-        }
-        confirmOkBtn.addEventListener('click', () => closeConfirm(true));
-        confirmCancelBtn.addEventListener('click', () => closeConfirm(false));
-        confirmOverlay.addEventListener('click', (e) => { if (e.target === confirmOverlay) closeConfirm(false); });
-
-        function requestPresetConfirm(options = {}) {
-            confirmTitle.textContent = options.title || '确认';
-            confirmMessage.textContent = options.message || '请确认此操作。';
-            confirmOkBtn.textContent = options.confirmText || '确认';
-            confirmCancelBtn.textContent = options.cancelText || '取消';
-            if (options.level === 'danger') {
-                confirmOkBtn.style.background = '#c74646';
-                confirmOkBtn.style.borderColor = '#c74646';
-            } else if (options.level === 'warning') {
-                confirmOkBtn.style.background = '#b87922';
-                confirmOkBtn.style.borderColor = '#b87922';
-            } else {
-                confirmOkBtn.style.background = '#4f6bd6';
-                confirmOkBtn.style.borderColor = '#4f6bd6';
-            }
-            confirmOverlay.classList.add('show');
-            return new Promise((resolve) => { confirmResolver = resolve; });
-        }
-
-        function resumeAnimationLoop() {
-            const frame = () => {
-                controls.update();
-                updateCameraInfoDisplay();
-                renderer.render(scene, camera);
-                animationId = requestAnimationFrame(frame);
-            };
-            frame();
-        }
-
-        function setCameraFromExtrinsics(extrinsics, intrinsics, splat) {
-            if (!camera || !controls) return;
-            let camPosX = 0, camPosY = 0, camPosZ = 0;
-            if (extrinsics && Array.isArray(extrinsics) && extrinsics.length === 4) {
-                const R = [
-                    [extrinsics[0][0], extrinsics[0][1], extrinsics[0][2]],
-                    [extrinsics[1][0], extrinsics[1][1], extrinsics[1][2]],
-                    [extrinsics[2][0], extrinsics[2][1], extrinsics[2][2]]
-                ];
-                const t = [extrinsics[0][3], extrinsics[1][3], extrinsics[2][3]];
-                camPosX = -(R[0][0] * t[0] + R[1][0] * t[1] + R[2][0] * t[2]);
-                camPosY = -(R[0][1] * t[0] + R[1][1] * t[1] + R[2][1] * t[2]);
-                camPosZ = -(R[0][2] * t[0] + R[1][2] * t[1] + R[2][2] * t[2]);
-            }
-
-            let targetZ = 2;
-            if (intrinsics && Array.isArray(intrinsics) && intrinsics.length >= 2) {
-                const fx = intrinsics[0][0];
-                const fy = intrinsics[1][1];
-                const cx = intrinsics[0][2];
-                const cy = intrinsics[1][2];
-                const imageWidth = cx * 2;
-                const imageHeight = cy * 2;
-                isResolutionLocked = true;
-                const containerWidth = canvas.clientWidth || 512;
-                renderer.setSize(imageWidth, imageHeight);
-                nativeAspect = imageWidth / imageHeight;
-                updateCanvasDisplaySize();
-                camera.data.fx = fx;
-                camera.data.fy = fy;
-                baseFocalLength = fx;
-                baseFocalY = fy;
-                gaussianScaleCompensation = computeScaleCompensation(imageWidth, containerWidth);
-                targetZ = Math.max(1, fy / imageHeight * 2);
-            }
-
-            let targetX = 0, targetY = 0;
-            let orbitZ = targetZ;
-            if (splat && splat.bounds) {
-                const center = splat.bounds.center();
-                const size = splat.bounds.size();
-                targetZ = center.z;
-                const minZ = center.z - size.z / 2;
-                orbitZ = minZ * 1.5;
-                lastSceneCenter = center;
-                lastSceneSize = size;
-            }
-
-            camPosY = -camPosY;
-            const camPos = new SPLAT.Vector3(camPosX, camPosY, camPosZ);
-            const targetPos = new SPLAT.Vector3(targetX, targetY, orbitZ);
-            initialCameraData = {
-                position: camPos,
-                target: targetPos,
-                fx: camera.data.fx,
-                fy: camera.data.fy
-            };
-            camera.position.x = camPosX;
-            camera.position.y = camPosY;
-            camera.position.z = camPosZ;
-            controls.setCameraTarget(targetPos);
-        }
-
-        function buildMeshSignature(filename, intrinsics) {
-            const intrinsicKey = intrinsics ? JSON.stringify(intrinsics) : "none";
-            return `${filename || "unknown"}::${intrinsicKey}`;
-        }
-
-        async function loadPLYFromData(arrayBuffer, filename, extrinsics, intrinsics) {
-            clearError();
-            loadingEl.classList.remove('hidden');
-            dropHint.classList.add('hidden');
-            try {
-                const meshSignature = buildMeshSignature(filename, intrinsics);
-                const isNewMesh = meshSignature !== lastMeshSignature;
-                if (isNewMesh) {
-                    initialCameraData = null;
-                    baseFocalLength = null;
-                    baseFocalY = null;
-                    nativeImageWidth = null;
-                    nativeImageHeight = null;
-                    cachedSplatData = null;
-                    lastMeshSignature = meshSignature;
-                    currentScale = 11.0;
-                    lastScaleValue = 11.0;
-                    if (scaleInput) scaleInput.value = 11;
-                    if (scaleDisplay) scaleDisplay.textContent = '11';
-                }
-
-                const hasIntrinsics = Array.isArray(intrinsics) && intrinsics.length >= 2;
-                if (!hasIntrinsics) {
-                    isResolutionLocked = false;
-                } else {
-                    const cx = intrinsics[0][2];
-                    const cy = intrinsics[1][2];
-                    nativeImageWidth = cx * 2;
-                    nativeImageHeight = cy * 2;
-                    isResolutionLocked = true;
-                    renderer.setSize(nativeImageWidth, nativeImageHeight);
-                    nativeAspect = nativeImageWidth / nativeImageHeight;
-                    updateCanvasDisplaySize();
-                }
-
-                if (scene.objects && scene.objects.length > 0) {
-                    while (scene.objects.length > 0) {
-                        scene.removeObject(scene.objects[0]);
-                    }
-                }
-                currentSplat = null;
-
-                gaussianScaleCompensation = 1.0;
-                if (intrinsics && Array.isArray(intrinsics) && intrinsics.length >= 2) {
-                    const cx = intrinsics[0][2];
-                    const imageWidth = cx * 2;
-                    const containerWidth = canvas.clientWidth || 512;
-                    gaussianScaleCompensation = computeScaleCompensation(imageWidth, containerWidth);
-                }
-
-                const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
-                const blobUrl = URL.createObjectURL(blob);
-                try {
-                    await SPLAT.PLYLoader.LoadAsync(blobUrl, scene);
-                } finally {
-                    setTimeout(() => { URL.revokeObjectURL(blobUrl); }, 30000);
-                }
-
-                if (scene.objects && scene.objects.length > 0) {
-                    currentSplat = scene.objects[scene.objects.length - 1];
-
-                    if (currentSplat.data && currentSplat.data.positions && currentSplat.data.rotations && currentSplat.data.colors && currentSplat.data.selection) {
-                        cachedSplatData = {
-                            positions: new Float32Array(currentSplat.data.positions),
-                            rotations: new Float32Array(currentSplat.data.rotations),
-                            colors: new Uint8Array(currentSplat.data.colors),
-                            selection: new Uint8Array(currentSplat.data.selection)
-                        };
-                    } else {
-                        cachedSplatData = null;
-                    }
-
-                    if (currentSplat.data && currentSplat.data.scales) {
-                        const scales = currentSplat.data.scales;
-                        originalScales = new Float32Array(scales.length);
-                        for (let i = 0; i < scales.length; i++) {
-                            originalScales[i] = scales[i] * gaussianScaleCompensation;
-                        }
-                        for (let i = 0; i < scales.length; i++) {
-                            scales[i] = originalScales[i] * currentScale;
-                        }
-                        currentSplat.data.changed = true;
-                    } else {
-                        originalScales = null;
-                    }
-                }
-
-                if ((extrinsics || intrinsics) && !initialCameraData) {
-                    setCameraFromExtrinsics(extrinsics, intrinsics, currentSplat);
-                    if (controls) controls.update();
-                } else if (!intrinsics && !extrinsics && !initialCameraData) {
-                    camera.data.fx = DEFAULT_FOCAL_LENGTH;
-                    camera.data.fy = DEFAULT_FOCAL_LENGTH;
-                    baseFocalLength = camera.data.fx;
-                    baseFocalY = camera.data.fy;
-                    // 没有外参时，根据点云包围盒自动取一个合适的初始视角
-                    if (currentSplat && currentSplat.bounds) {
-                        const center = currentSplat.bounds.center();
-                        const size = currentSplat.bounds.size();
-                        lastSceneCenter = center;
-                        lastSceneSize = size;
-                        const radius = Math.max(size.x, size.y, size.z) || 2;
-                        const camPos = new SPLAT.Vector3(center.x, center.y, center.z - radius * 2.2);
-                        const targetPos = new SPLAT.Vector3(center.x, center.y, center.z);
-                        initialCameraData = { position: camPos, target: targetPos, fx: camera.data.fx, fy: camera.data.fy };
-                        camera.position.x = camPos.x;
-                        camera.position.y = camPos.y;
-                        camera.position.z = camPos.z;
-                        controls.setCameraTarget(targetPos);
-                        controls.update();
-                    }
-                }
-
-                infoPanel.classList.remove('hidden');
-                infoContent.innerHTML = `<span style="color:#6cc;">Gaussian Splat 已加载</span><br><span style="color:#888;">${filename}</span>`;
-                fileNameEl.textContent = filename;
-
-                updateBaseDistance();
-                loadingEl.classList.add('hidden');
-            } catch (err) {
-                console.error('[GaussianViewer] Load error:', err);
-                loadingEl.classList.add('hidden');
-                showError('加载 PLY 失败: ' + err.message);
-            }
-        }
-
-        function resetCamera() {
-            if (camera && controls) {
-                if (initialCameraData) {
-                    const pos = initialCameraData.position;
-                    camera.position.x = pos.x;
-                    camera.position.y = pos.y;
-                    camera.position.z = pos.z;
-                    if (initialCameraData.fx) { camera.data.fx = initialCameraData.fx; baseFocalLength = initialCameraData.fx; }
-                    if (initialCameraData.fy) { camera.data.fy = initialCameraData.fy; baseFocalY = initialCameraData.fy; }
-                    if (initialCameraData.target) { controls.setCameraTarget(initialCameraData.target); }
-                    if (controls.resetRoll) { controls.resetRoll(); }
-                } else {
-                    camera.position.x = 0;
-                    camera.position.y = 0;
-                    camera.position.z = 5;
-                    if (controls.resetRoll) { controls.resetRoll(); }
-                }
-                controls.update();
-                focalScaleInput.value = 1.0;
-                focalScaleValue.value = 1.0;
-                applyFocalScale(1.0);
-                if (isDynamicScaleEnabled) { updateBaseDistance(); }
-                scheduleFrameLayoutUpdate();
-            }
-        }
-
-        function getCanvasWithBlackBackground(sourceCanvas) {
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = sourceCanvas.width;
-            tempCanvas.height = sourceCanvas.height;
-            const ctx = tempCanvas.getContext('2d');
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-            ctx.drawImage(sourceCanvas, 0, 0);
-            return tempCanvas;
-        }
-
-        function updateOutputSettings(resolution, aspectRatio) {
-            if (resolution) { outputSettings.resolution = resolution; }
-            if (aspectRatio && aspectRatio !== "source") { outputSettings.aspectRatio = aspectRatio; }
-            updateCropFrame();
-        }
-
-        // 独立页：导出当前视角为 PNG 下载（替代原 RENDER_RESULT postMessage）
-        function exportCurrentView() {
-            if (!renderer || !renderer.canvas) { showError('渲染器未就绪'); return; }
-            if (!currentSplat) { showError('请先加载 PLY 文件'); return; }
-            try {
-                if (animationId) cancelAnimationFrame(animationId);
-                if (scene && camera) { controls.update(); renderer.render(scene, camera); }
-                const outputCanvas = createOutputCanvas() || getCanvasWithBlackBackground(renderer.canvas);
-                const dataUrl = outputCanvas.toDataURL('image/png');
-                const a = document.createElement('a');
-                const base = (fileNameEl.textContent || 'gaussian').replace(/\.[^.]+$/, '');
-                const ts = new Date().toISOString().replace(/[:.]/g, '-');
-                a.href = dataUrl;
-                a.download = `gaussian-${base}-${ts}.png`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                resumeAnimationLoop();
-            } catch (err) {
-                console.error('[GaussianViewer] Export error:', err);
-                showError('导出失败: ' + err.message);
-                resumeAnimationLoop();
-            }
-        }
-
-        function parseAspectRatio(value, fallbackWidth, fallbackHeight) {
-            if (!value || value === "source") {
-                return fallbackWidth > 0 && fallbackHeight > 0 ? fallbackWidth / fallbackHeight : 1.0;
-            }
-            if (value.includes(":")) {
-                const parts = value.split(":");
-                const w = parseFloat(parts[0]);
-                const h = parseFloat(parts[1]);
-                if (w > 0 && h > 0) { return w / h; }
-            }
-            return 1.0;
-        }
-
-        function updateCropFrame() {
-            const wrapper = document.getElementById('canvasWrapper');
-            const wrapperRect = wrapper.getBoundingClientRect();
-            const canvasRect = canvas.getBoundingClientRect();
-            const rect = {
-                width: canvasRect.width,
-                height: canvasRect.height,
-                left: canvasRect.left - wrapperRect.left,
-                top: canvasRect.top - wrapperRect.top
-            };
-            const aspect = parseAspectRatio(outputSettings.aspectRatio, rect.width, rect.height);
-            if (!aspect || rect.width <= 0 || rect.height <= 0) { cropFrame.style.display = 'none'; return; }
-            if (outputSettings.aspectRatio === "source") { cropFrame.style.display = 'none'; return; }
-
-            let frameWidth = rect.width;
-            let frameHeight = rect.width / aspect;
-            if (frameHeight > rect.height) { frameHeight = rect.height; frameWidth = rect.height * aspect; }
-            const left = (rect.width - frameWidth) / 2;
-            const top = (rect.height - frameHeight) / 2;
-            cropFrame.style.display = 'block';
-            cropFrame.style.left = `${rect.left + left}px`;
-            cropFrame.style.top = `${rect.top + top}px`;
-            cropFrame.style.width = `${frameWidth}px`;
-            cropFrame.style.height = `${frameHeight}px`;
-        }
-
-        function updateCanvasDisplaySize() {
-            const container = document.getElementById('viewerContainer');
-            const rect = container.getBoundingClientRect();
-            const aspect = nativeAspect || ((renderer?.canvas?.width || 1) / (renderer?.canvas?.height || 1));
-            if (!aspect || rect.width <= 0 || rect.height <= 0) { return; }
-            let displayWidth = rect.width;
-            let displayHeight = rect.width / aspect;
-            if (displayHeight > rect.height) { displayHeight = rect.height; displayWidth = rect.height * aspect; }
-            canvas.style.width = `${displayWidth}px`;
-            canvas.style.height = `${displayHeight}px`;
-            const overlayImage = document.getElementById('overlayImage');
-            if (overlayImage) {
-                overlayImage.style.width = canvas.style.width;
-                overlayImage.style.height = canvas.style.height;
-            }
-        }
-
-        function scheduleFrameLayoutUpdate() {
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    updateCanvasDisplaySize();
-                    updateCropFrame();
-                });
-            });
-        }
-
-        function getOutputDimensions() {
-            const c = renderer?.canvas;
-            const fallbackWidth = c?.width || 1;
-            const fallbackHeight = c?.height || 1;
-            const aspect = parseAspectRatio(outputSettings.aspectRatio, fallbackWidth, fallbackHeight);
-            const resolution = Math.max(1, parseInt(outputSettings.resolution, 10) || fallbackWidth);
-            let width, height;
-            if (aspect >= 1.0) {
-                width = resolution;
-                height = Math.max(1, Math.round(resolution / aspect));
-            } else {
-                height = resolution;
-                width = Math.max(1, Math.round(resolution * aspect));
-            }
-            return { width, height, aspect };
-        }
-
-        function createOutputCanvas() {
-            const c = renderer?.canvas;
-            if (!c) return null;
-            const sourceCanvas = getCanvasWithBlackBackground(c);
-            const { width: targetWidth, height: targetHeight, aspect: targetAspect } = getOutputDimensions();
-            const outputCanvas = document.createElement('canvas');
-            outputCanvas.width = targetWidth;
-            outputCanvas.height = targetHeight;
-            const ctx = outputCanvas.getContext('2d');
-            const sourceWidth = sourceCanvas.width;
-            const sourceHeight = sourceCanvas.height;
-            const sourceAspect = sourceWidth / sourceHeight;
-            let sx = 0, sy = 0, sWidth = sourceWidth, sHeight = sourceHeight;
-            if (Math.abs(sourceAspect - targetAspect) > 1e-4) {
-                if (sourceAspect > targetAspect) {
-                    sWidth = Math.round(sourceHeight * targetAspect);
-                    sx = Math.round((sourceWidth - sWidth) / 2);
-                } else {
-                    sHeight = Math.round(sourceWidth / targetAspect);
-                    sy = Math.round((sourceHeight - sHeight) / 2);
-                }
-            }
-            ctx.drawImage(sourceCanvas, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
-            return outputCanvas;
-        }
-
-        function getCameraTarget() {
-            if (!controls) return null;
-            if (typeof controls.getCameraTarget === 'function') { return controls.getCameraTarget(); }
-            return lastCameraTarget || controls.target || controls._target || controls.cameraTarget || null;
-        }
-
-        function toSplatVector3(v, fallback = null) {
-            if (!v || typeof v !== 'object') return fallback;
-            const x = Number(v.x);
-            const y = Number(v.y);
-            const z = Number(v.z);
-            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) { return fallback; }
-            return new SPLAT.Vector3(x, y, z);
-        }
-
-        function showPresetStatus(text, isError = false) {
-            if (!presetStatusEl) return;
-            presetStatusEl.textContent = text || '';
-            presetStatusEl.style.color = isError ? '#ff8a8a' : '#9ad';
-            if (showPresetStatus._timer) { clearTimeout(showPresetStatus._timer); }
-            if (text) {
-                showPresetStatus._timer = setTimeout(() => { presetStatusEl.textContent = ''; }, 2200);
-            }
-        }
-
-        function loadPresetStore() {
-            try {
-                const raw = localStorage.getItem(CAMERA_PRESET_STORAGE_KEY);
-                if (!raw) { return { version: 1, global: [], by_mesh: {} }; }
-                const parsed = JSON.parse(raw);
-                return {
-                    version: 1,
-                    global: Array.isArray(parsed.global) ? parsed.global : [],
-                    by_mesh: parsed.by_mesh && typeof parsed.by_mesh === 'object' ? parsed.by_mesh : {}
-                };
-            } catch (err) {
-                console.warn('[GaussianViewer] Failed to parse preset store:', err);
-                return { version: 1, global: [], by_mesh: {} };
-            }
-        }
-
-        function savePresetStore(store) {
-            localStorage.setItem(CAMERA_PRESET_STORAGE_KEY, JSON.stringify(store));
-        }
-
-        function getPresetBucket(store, scope, createIfMissing = false) {
-            if (scope === 'mesh') {
-                if (!currentMeshKey) return null;
-                if (!Array.isArray(store.by_mesh[currentMeshKey])) {
-                    if (!createIfMissing) return null;
-                    store.by_mesh[currentMeshKey] = [];
-                }
-                return store.by_mesh[currentMeshKey];
-            }
-            if (!Array.isArray(store.global)) { store.global = []; }
-            return store.global;
-        }
-
-        function getCurrentCameraStateSnapshot() {
-            if (!camera || !controls) return null;
-            const target = getCameraTarget();
-            const canvasRef = renderer?.canvas;
-            return {
-                position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-                target: target ? { x: target.x, y: target.y, z: target.z } : null,
-                fx: camera.data?.fx || null,
-                fy: camera.data?.fy || null,
-                roll: Number.isFinite(controls.currentRoll) ? controls.currentRoll : 0,
-                image_width: nativeImageWidth || canvasRef?.width || null,
-                image_height: nativeImageHeight || canvasRef?.height || null,
-                scale: currentScale || 11.0,
-                scale_compensation: gaussianScaleCompensation || null
-            };
-        }
-
-        function refreshPresetOptions(preferredValue = null) {
-            if (!presetSelectEl) return;
-            const store = loadPresetStore();
-            const globalPresets = Array.isArray(store.global) ? store.global : [];
-            const meshPresets = currentMeshKey && Array.isArray(store.by_mesh[currentMeshKey])
-                ? store.by_mesh[currentMeshKey] : [];
-            presetOptionMap = new Map();
-            presetSelectEl.innerHTML = '';
-            const empty = document.createElement('option');
-            empty.value = '';
-            empty.textContent = '(No Preset)';
-            presetSelectEl.appendChild(empty);
-            let i = 1;
-            for (const p of globalPresets) {
-                const value = `g:${i++}`;
-                const opt = document.createElement('option');
-                opt.value = value;
-                opt.textContent = `[Global] ${p.name || 'unnamed'}`;
-                presetOptionMap.set(value, { scope: 'global', preset: p });
-                presetSelectEl.appendChild(opt);
-            }
-            for (const p of meshPresets) {
-                const value = `m:${i++}`;
-                const opt = document.createElement('option');
-                opt.value = value;
-                opt.textContent = `[Mesh] ${p.name || 'unnamed'}`;
-                presetOptionMap.set(value, { scope: 'mesh', preset: p });
-                presetSelectEl.appendChild(opt);
-            }
-            if (preferredValue && presetOptionMap.has(preferredValue)) {
-                presetSelectEl.value = preferredValue;
-            } else {
-                presetSelectEl.value = '';
-            }
-        }
-
-        async function saveCurrentPreset() {
-            const presetName = (presetNameEl?.value || '').trim();
-            const scope = presetScopeEl?.value || 'global';
-            if (!presetName) { showPresetStatus('请输入预设名称', true); return; }
-            if (scope === 'mesh' && !currentMeshKey) { showPresetStatus('请先加载模型', true); return; }
-            const cameraState = getCurrentCameraStateSnapshot();
-            if (!cameraState) { showPresetStatus('相机未就绪', true); return; }
-            const store = loadPresetStore();
-            const bucket = getPresetBucket(store, scope, true);
-            if (!bucket) { showPresetStatus('预设容器不可用', true); return; }
-            const existingIndex = bucket.findIndex(p => p?.name === presetName);
-            const now = Date.now();
-            const preset = {
-                name: presetName,
-                scope,
-                meshKey: scope === 'mesh' ? currentMeshKey : null,
-                camera_state: cameraState,
-                created_at: existingIndex >= 0 ? (bucket[existingIndex].created_at || now) : now,
-                updated_at: now
-            };
-            if (existingIndex >= 0) {
-                const ok = await requestPresetConfirm({
-                    title: '覆盖预设',
-                    message: `预设 "${presetName}" 已存在，是否覆盖？`,
-                    confirmText: '覆盖',
-                    cancelText: '取消',
-                    level: 'warning'
-                });
-                if (!ok) { showPresetStatus('已取消'); return; }
-                bucket[existingIndex] = preset;
-            } else {
-                bucket.push(preset);
-            }
-            savePresetStore(store);
-            refreshPresetOptions();
-            const selected = [...presetOptionMap.entries()].find(([, v]) => v.preset.name === presetName && v.scope === scope);
-            if (selected) { presetSelectEl.value = selected[0]; }
-            showPresetStatus('预设已保存');
-        }
-
-        function applySelectedPreset() {
-            const selectedKey = presetSelectEl?.value;
-            if (!selectedKey || !presetOptionMap.has(selectedKey)) { showPresetStatus('请先选择预设', true); return; }
-            const selected = presetOptionMap.get(selectedKey);
-            const cameraState = selected?.preset?.camera_state;
-            if (!cameraState) { showPresetStatus('预设相机数据无效', true); return; }
-            applyCameraState(JSON.parse(JSON.stringify(cameraState)));
-            if (presetNameEl) { presetNameEl.value = selected.preset.name || ''; }
-            showPresetStatus('预设已应用');
-        }
-
-        async function deleteSelectedPreset() {
-            const selectedKey = presetSelectEl?.value;
-            if (!selectedKey || !presetOptionMap.has(selectedKey)) { showPresetStatus('请先选择预设', true); return; }
-            const selected = presetOptionMap.get(selectedKey);
-            const presetName = selected?.preset?.name || 'unnamed';
-            const ok = await requestPresetConfirm({
-                title: '删除预设',
-                message: `确定删除预设 "${presetName}"？此操作不可撤销。`,
-                confirmText: '删除',
-                cancelText: '取消',
-                level: 'danger'
-            });
-            if (!ok) return;
-            const store = loadPresetStore();
-            const bucket = getPresetBucket(store, selected.scope, false);
-            if (!bucket) { showPresetStatus('预设容器丢失', true); return; }
-            const idx = bucket.findIndex(p => p?.name === presetName);
-            if (idx < 0) { showPresetStatus('未找到预设', true); return; }
-            bucket.splice(idx, 1);
-            savePresetStore(store);
-            refreshPresetOptions();
-            showPresetStatus('预设已删除');
-        }
-
-        function applyCameraState(cameraState) {
-            if (!camera || !controls || !cameraState) return;
-            const position = toSplatVector3(cameraState.position, null);
-            const target = toSplatVector3(cameraState.target, null);
-            const fx = cameraState.fx;
-            const fy = cameraState.fy;
-            const roll = Number(cameraState.roll);
-            const scale = cameraState.scale;
-            if (fx) { camera.data.fx = fx; baseFocalLength = fx; }
-            if (fy) { camera.data.fy = fy; baseFocalY = fy; }
-            if (position) { camera.position.x = position.x; camera.position.y = position.y; camera.position.z = position.z; }
-            if (target && controls.setCameraTarget) { controls.setCameraTarget(target); }
-            if (Number.isFinite(roll)) { controls.currentRoll = roll; controls.targetRoll = roll; }
-            if (dynamicScaleToggle && dynamicScaleToggle.checked) { dynamicScaleToggle.checked = false; isDynamicScaleEnabled = false; }
-            if (scale) { updateGaussianScale(scale); }
-            if (focalScaleInput) focalScaleInput.value = 1.0;
-            if (focalScaleValue) focalScaleValue.value = 1.0;
-            controls.update();
-            scheduleFrameLayoutUpdate();
-        }
-
-        // 独立页：Set Camera 保存到 localStorage（替代原 SET_CAMERA_PARAMS postMessage）
-        function setCameraParams() {
-            if (!renderer || !camera || !controls) return;
-            const cameraState = getCurrentCameraStateSnapshot();
-            if (!cameraState) return;
-            try {
-                const all = JSON.parse(localStorage.getItem(CAMERA_SAVED_STATE_KEY) || '{}');
-                all[currentMeshKey || '__default__'] = { camera_state: cameraState, updated_at: Date.now() };
-                localStorage.setItem(CAMERA_SAVED_STATE_KEY, JSON.stringify(all));
-                showPresetStatus('相机已保存');
-            } catch (e) {
-                showPresetStatus('保存失败', true);
-            }
-            scheduleFrameLayoutUpdate();
-        }
-
-        // --- 实时高斯尺寸控制 ---
-        const scaleInput = document.getElementById('gaussianScaleValue');
-        const scaleDisplay = document.getElementById('gaussianScaleDisplay');
-        const autoScaleBtn = document.getElementById('autoScaleBtn');
-        let currentScale = 11.0;
-        let lastScaleValue = -1;
-
-        function updateGaussianScale(newScale) {
-            newScale = Math.max(1, Math.min(30, Math.round(parseFloat(newScale) || 11)));
-            if (newScale === lastScaleValue) return;
-            currentScale = newScale;
-            lastScaleValue = newScale;
-            if (scaleInput) scaleInput.value = newScale;
-            if (scaleDisplay) scaleDisplay.textContent = newScale;
-            if (currentSplat && currentSplat.data && currentSplat.data.scales && originalScales) {
-                const data = currentSplat.data;
-                let scales = data.scales;
-                const detached = data.detached || !scales || scales.buffer.byteLength === 0;
-                if (detached) {
-                    if (!cachedSplatData) return;
-                    const newScales = new Float32Array(originalScales.length);
-                    for (let i = 0; i < newScales.length; i++) { newScales[i] = originalScales[i] * newScale; }
-                    const positions = new Float32Array(cachedSplatData.positions);
-                    const rotations = new Float32Array(cachedSplatData.rotations);
-                    const colors = new Uint8Array(cachedSplatData.colors);
-                    const selection = new Uint8Array(cachedSplatData.selection);
-                    data.reattach(positions.buffer, rotations.buffer, newScales.buffer, colors.buffer, selection.buffer);
-                    scales = data.scales;
-                } else {
-                    for (let i = 0; i < scales.length; i++) { scales[i] = originalScales[i] * newScale; }
-                }
-                data.changed = true;
-                data.detached = false;
-                const renderData = renderer._renderData || renderer.renderData;
-                if (renderData && renderData.markDirty) { renderData.markDirty(currentSplat); renderData.dataChanged = true; }
-                if (currentSplat.dispatchEvent && currentSplat._changeEvent) { currentSplat.dispatchEvent(currentSplat._changeEvent); }
-            }
-        }
-
-        const dynamicScaleToggle = document.getElementById('dynamicScaleToggle');
-        if (dynamicScaleToggle) {
-            dynamicScaleToggle.addEventListener('change', (e) => {
-                isDynamicScaleEnabled = e.target.checked;
-                if (isDynamicScaleEnabled) { updateBaseDistance(); }
-            });
-        }
-
-        if (scaleInput) {
-            scaleInput.addEventListener('input', (e) => {
-                if (dynamicScaleToggle && dynamicScaleToggle.checked) { dynamicScaleToggle.checked = false; isDynamicScaleEnabled = false; }
-                updateGaussianScale(e.target.value);
-            });
-        }
-
-        const setAutoScale = () => {
-            if (dynamicScaleToggle) { dynamicScaleToggle.checked = true; isDynamicScaleEnabled = true; updateBaseDistance(); }
-            updateGaussianScale(11);
-        };
-        if (autoScaleBtn) autoScaleBtn.addEventListener('click', setAutoScale);
-
-        const focalScaleInput = document.getElementById('focalScale');
-        const focalScaleValue = document.getElementById('focalScaleValue');
-
-        function applyFocalScale(value) {
-            const scale = Math.max(0.2, Math.min(3.0, parseFloat(value) || 1.0));
-            focalScaleInput.value = scale;
-            focalScaleValue.value = scale;
-            const baseFx = baseFocalLength || camera?.data?.fx || DEFAULT_FOCAL_LENGTH;
-            const baseFy = baseFocalY || camera?.data?.fy || DEFAULT_FOCAL_LENGTH;
-            if (camera?.data) { camera.data.fx = baseFx * scale; camera.data.fy = baseFy * scale; }
-        }
-
-        focalScaleInput.addEventListener('input', (e) => applyFocalScale(e.target.value));
-        focalScaleValue.addEventListener('change', (e) => applyFocalScale(e.target.value));
-
-        const ratioSelect = document.getElementById('ratioSelect');
-        const presetScopeEl = document.getElementById('presetScope');
-        const presetNameEl = document.getElementById('presetName');
-        const presetSelectEl = document.getElementById('presetSelect');
-        const savePresetBtn = document.getElementById('savePreset');
-        const applyPresetBtn = document.getElementById('applyPreset');
-        const deletePresetBtn = document.getElementById('deletePreset');
-        const presetStatusEl = document.getElementById('presetStatus');
-
-        function setAspectRatio(value) {
-            outputSettings.aspectRatio = value || "source";
-            if (ratioSelect) { ratioSelect.value = outputSettings.aspectRatio; }
-            scheduleFrameLayoutUpdate();
-        }
-
-        function updateCameraInfoDisplay() {
-            const cameraInfoContent = document.getElementById('cameraInfoContent');
-            if (!cameraInfoContent || !camera || !controls) return;
-            const pos = camera.position;
-            const toDeg = (rad) => (rad * 180 / Math.PI).toFixed(2);
-            let pitch = 0, yaw = 0, roll = 0;
-            if (controls.currentAlpha !== undefined) {
-                pitch = -controls.currentBeta;
-                yaw = -controls.currentAlpha;
-                roll = controls.currentRoll;
-            }
-            cameraInfoContent.innerHTML = `
-                <div style="color: #6cc; margin-bottom: 2px; font-weight: bold;">Camera State</div>
-                <div style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;">
-                    <span style="color: #888;">Pos:</span>
-                    <span>${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}</span>
-                    <span style="color: #888;">Rot:</span>
-                    <span>P:${toDeg(pitch)}° Y:${toDeg(yaw)}° R:${toDeg(roll)}°</span>
+    <div id="lightbox" onclick="handleOutsideClick(event)"
+        class="hidden fixed inset-0 z-50 bg-white/95 backdrop-blur-3xl flex items-center justify-center p-8">
+        <button onclick="closeLightbox()" class="absolute top-10 right-10 p-2 hover:rotate-90 transition-transform duration-500">
+            <i data-lucide="x" class="w-8 h-8"></i>
+        </button>
+        <div class="w-full h-full flex flex-col items-center justify-center" style="max-width:min(1280px, 92vw)">
+            <div id="lightboxFrame" class="studio-preview-frame hidden">
+                <img id="lightboxImg" src="" class="studio-preview-img" alt="preview">
+                <div id="lightboxRes" data-no-pan
+                    class="absolute top-4 left-4 bg-black/30 backdrop-blur-md border border-white/20 text-white px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wider opacity-0 transition-opacity duration-300 pointer-events-none z-10">
                 </div>
-            `;
-        }
+            </div>
+            <div class="mt-8">
+                <button onclick="downloadLightboxImage()"
+                    class="px-10 py-4 bg-black text-white rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-3 shadow-xl">
+                    <i data-lucide="save" class="w-4 h-4"></i> Save Master
+                </button>
+            </div>
+        </div>
+    </div>
 
-        if (ratioSelect) { ratioSelect.addEventListener('change', (e) => { setAspectRatio(e.target.value); }); }
-        if (savePresetBtn) savePresetBtn.addEventListener('click', saveCurrentPreset);
-        if (applyPresetBtn) applyPresetBtn.addEventListener('click', applySelectedPreset);
-        if (deletePresetBtn) deletePresetBtn.addEventListener('click', deleteSelectedPreset);
-        if (presetSelectEl) {
-            presetSelectEl.addEventListener('change', () => {
-                const selected = presetOptionMap.get(presetSelectEl.value);
-                if (selected && presetNameEl) { presetNameEl.value = selected.preset.name || ''; }
-            });
-        }
+    <script>
+        // ===== RunningHub「3D高斯泼溅修复」配置 =====
+        const RH_WEBAPP_ID = "2062741736430063617";
+        const RH_NODE_GAUSSIAN = "38";   // GaussianImage（查看器渲染图）
+        const RH_NODE_SOURCE = "40";     // SourceImage（输入图）
 
-        refreshPresetOptions();
+        // 3D高斯泼溅生成 AI 应用
+        const GEN_WEBAPP_ID = "2062753529172938753";
+        const GEN_NODE_IMAGE = "18";     // 输入图
 
-        document.getElementById('resetCamera').addEventListener('click', resetCamera);
-        document.getElementById('setCamera').addEventListener('click', setCameraParams);
+        const fileInput = document.getElementById('fileInput');
+        const dropzone = document.getElementById('dropzone');
+        const previewImg = document.getElementById('previewImg');
+        const viewerFrame = document.getElementById('viewerFrame');
 
-        const helpPanel = document.getElementById('helpPanel');
-        const toggleHelpBtn = document.getElementById('toggleHelp');
-        const closeHelpBtn = document.getElementById('closeHelp');
-        if (toggleHelpBtn && helpPanel) toggleHelpBtn.addEventListener('click', () => helpPanel.classList.toggle('hidden'));
-        if (closeHelpBtn && helpPanel) closeHelpBtn.addEventListener('click', () => helpPanel.classList.add('hidden'));
+        let uploadedFile = null;     // 输入源图(File)
+        let uploadedPath = null;     // 源图上传后的本地 url
+        let viewerReady = false;
+        let currentResult = null;
+        let plyLoaded = false;       // 查看器是否已成功加载生成的 PLY（门控开始修复）
 
-        const overlayAlphaInput = document.getElementById('overlayAlpha');
-        const overlayAlphaValue = document.getElementById('overlayAlphaValue');
-        function applyOverlayAlpha(value) {
-            const alpha = Math.max(0, Math.min(1, parseFloat(value) || 0));
-            if (overlayAlphaInput) overlayAlphaInput.value = alpha;
-            if (overlayAlphaValue) overlayAlphaValue.value = alpha;
-            const overlayImage = document.getElementById('overlayImage');
-            if (overlayImage) { overlayImage.style.opacity = alpha; }
-        }
-        if (overlayAlphaInput) overlayAlphaInput.addEventListener('input', (e) => applyOverlayAlpha(e.target.value));
-        if (overlayAlphaValue) overlayAlphaValue.addEventListener('change', (e) => applyOverlayAlpha(e.target.value));
-
-        // ===== 独立页：本地文件 / 拖拽 / URL 加载（替代 ComfyUI LOAD_MESH_DATA postMessage）=====
-        async function handlePLYFile(file) {
-            if (!file) return;
-            const name = file.name || 'gaussian.ply';
-            if (!/\.ply$/i.test(name)) { showError('请选择 .ply 文件'); return; }
-            currentMeshKey = name;
-            refreshPresetOptions();
-            const arrayBuffer = await file.arrayBuffer();
-            lastPlyBuffer = arrayBuffer.slice(0);
-            lastPlyName = name;
-            await loadPLYFromData(arrayBuffer, name, DEFAULT_EXTRINSICS, currentIntrinsics);
-            applyFocalScale(focalScaleInput.value);
-            scheduleFrameLayoutUpdate();
-            setTimeout(() => { setAutoScale(); }, 500);
-        }
-
-        async function loadFromUrl(url) {
-            if (!url) return;
-            clearError();
-            loadingEl.classList.remove('hidden');
-            try {
-                const resp = await fetch(url);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const arrayBuffer = await resp.arrayBuffer();
-                const name = (url.split('/').pop() || 'gaussian.ply').split('?')[0];
-                lastPlyBuffer = arrayBuffer.slice(0);
-                lastPlyName = name;
-                currentMeshKey = name;
-                refreshPresetOptions();
-                await loadPLYFromData(arrayBuffer, name, DEFAULT_EXTRINSICS, currentIntrinsics);
-                applyFocalScale(focalScaleInput.value);
-                scheduleFrameLayoutUpdate();
-                setTimeout(() => { setAutoScale(); }, 500);
-            } catch (err) {
-                loadingEl.classList.add('hidden');
-                showError('从 URL 加载失败: ' + err.message);
+        // 生成进度条
+        function updateGenProgress(data) {
+            const container = document.getElementById('gen-progress-container');
+            const statusText = document.getElementById('gen-status-text');
+            const bar = document.getElementById('gen-progress-bar');
+            const pct = document.getElementById('gen-percent');
+            if (!container) return;
+            container.classList.remove('hidden');
+            if (data.status) statusText.innerText = data.status;
+            if (typeof data.progress !== 'undefined') {
+                const p = Math.min(100, Math.round(data.progress));
+                bar.style.width = `${p}%`;
+                pct.innerText = `${p}%`;
             }
         }
 
-        const plyFileInput = document.getElementById('plyFileInput');
-        const plyUrlInput = document.getElementById('plyUrlInput');
-        const loadUrlBtn = document.getElementById('loadUrlBtn');
-        const exportBtn = document.getElementById('exportBtn');
+        // 进度条
+        function updateCloudProgress(data) {
+            const container = document.getElementById('cloud-progress-container');
+            const statusText = document.getElementById('cloud-status-text');
+            const progressBar = document.getElementById('cloud-progress-bar');
+            const percentText = document.getElementById('cloud-percent');
+            if (!container) return;
+            container.classList.remove('hidden');
+            if (data.status) statusText.innerText = data.status;
+            if (typeof data.progress !== 'undefined') {
+                const percent = Math.min(100, Math.round(data.progress));
+                progressBar.style.width = `${percent}%`;
+                percentText.innerText = `${percent}%`;
+            }
+        }
 
-        plyFileInput.addEventListener('change', (e) => {
-            const file = e.target.files && e.target.files[0];
-            if (file) handlePLYFile(file);
+        // ===== 输入图上传（与角度控制一致）=====
+        dropzone.addEventListener('click', () => fileInput.click());
+        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('border-black'); });
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-black'));
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault(); dropzone.classList.remove('border-black');
+            const f = e.dataTransfer.files && e.dataTransfer.files[0];
+            if (f) handleFile(f);
         });
-        loadUrlBtn.addEventListener('click', () => loadFromUrl(plyUrlInput.value.trim()));
-        plyUrlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadFromUrl(plyUrlInput.value.trim()); });
-        exportBtn.addEventListener('click', exportCurrentView);
+        fileInput.addEventListener('change', (e) => {
+            const f = e.target.files && e.target.files[0];
+            if (f) handleFile(f);
+        });
 
-        // ===== 接入 RunningHub「3D高斯泼溅修复」AI 应用工作流 =====
-        const RH_WEBAPP_ID = "2062741736430063617";  // AI 应用 ID
-        const RH_NODE_GAUSSIAN = "38";   // GaussianImage（渲染图）
-        const RH_NODE_SOURCE = "40";     // SourceImage（左栏上传图）
+        async function handleFile(file) {
+            if (!file || !/^image\//.test(file.type)) return;
+            uploadedFile = file;
+            uploadedPath = null;
+            refreshLeaveGuard();
 
-        const repairBtn = document.getElementById('repairBtn');
-        const repairStatusEl = document.getElementById('repairStatus');
-        const repairProgressWrap = document.getElementById('repairProgressWrap');
-        const repairProgressBar = document.getElementById('repairProgressBar');
-        const repairResultZone = document.getElementById('repairResultZone');
-        const repairResultImg = document.getElementById('repairResultImg');
-        const repairResultLink = document.getElementById('repairResultLink');
-        const repairDownloadBtn = document.getElementById('repairDownloadBtn');
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImg.src = e.target.result;
+                previewImg.classList.remove('hidden');
+                document.getElementById('uploadContent').classList.add('opacity-0');
+                document.getElementById('changeOverlay').classList.replace('hidden', 'flex');
+                // 读取宽高 -> 通知查看器按其宽高 + FOV 计算 intrinsics
+                const probe = new Image();
+                probe.onload = () => {
+                    if (viewerFrame.contentWindow) {
+                        viewerFrame.contentWindow.postMessage({
+                            type: 'SET_SOURCE_INTRINSICS', width: probe.naturalWidth, height: probe.naturalHeight
+                        }, '*');
+                    }
+                };
+                probe.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
 
-        function setRepairStatus(text, isError = false) {
-            repairStatusEl.textContent = text || '';
-            repairStatusEl.style.color = isError ? '#ff8a8a' : '#9ad';
-        }
-        function setRepairProgress(pct) {
-            if (pct == null) { repairProgressWrap.style.display = 'none'; return; }
-            repairProgressWrap.style.display = 'block';
-            repairProgressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-        }
-
-        // 把当前视角渲染为 PNG Blob（GaussianImage）
-        function renderViewToBlob() {
-            return new Promise((resolve, reject) => {
-                if (!renderer || !renderer.canvas) { reject(new Error('渲染器未就绪')); return; }
-                if (!currentSplat) { reject(new Error('请先加载 PLY 文件')); return; }
-                try {
-                    if (animationId) cancelAnimationFrame(animationId);
-                    if (scene && camera) { controls.update(); renderer.render(scene, camera); }
-                    const outputCanvas = createOutputCanvas() || getCanvasWithBlackBackground(renderer.canvas);
-                    resumeAnimationLoop();
-                    outputCanvas.toBlob((blob) => {
-                        if (blob) resolve(blob); else reject(new Error('渲染图生成失败'));
-                    }, 'image/png');
-                } catch (err) {
-                    resumeAnimationLoop();
-                    reject(err);
-                }
-            });
+            // 上传到本地，便于后续作为 SourceImage 推送到 RunningHub
+            const formData = new FormData();
+            formData.append('files', file);
+            try {
+                const res = await fetch('/api/ai/upload', { method: 'POST', body: formData });
+                const data = await res.json();
+                uploadedPath = data.files[0].url;
+            } catch (err) {
+                console.error('上传失败', err);
+            }
         }
 
-        // 上传一个 Blob/File 到本地，得到 /assets/input/... 的 url
-        async function uploadLocal(fileOrBlob, name) {
-            const fd = new FormData();
-            fd.append('files', fileOrBlob, name);
-            const r = await fetch('/api/ai/upload', { method: 'POST', body: fd });
-            const j = await r.json();
-            if (!r.ok || !j.files || !j.files[0]) throw new Error('本地上传失败');
-            return j.files[0].url;
-        }
-
-        // 把本地 url 上传到 RunningHub，得到 fileName
-        async function uploadToRunningHub(localUrl) {
-            const r = await fetch('/api/runninghub/upload-asset', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: localUrl })
-            });
-            const j = await r.json();
-            if (!r.ok || j.success === false) throw new Error(j.detail || 'RunningHub 上传失败');
-            const fileName = (j.data || j).fileName;
-            if (!fileName) throw new Error('RunningHub 上传未返回 fileName');
-            return fileName;
-        }
-
-        async function startRepair() {
-            if (!currentSplat) { setRepairStatus('请先加载 PLY 文件', true); return; }
-            if (!sourceImageFile) { setRepairStatus('请先在左栏上传参考图像（SourceImage）', true); return; }
-
-            repairBtn.disabled = true;
-            const originalText = repairBtn.textContent;
-            repairBtn.textContent = '修复中…';
-            repairResultZone.style.display = 'none';
-            clearError();
+        // ===== 3D 高斯生成：输入图 -> 工作流 -> PLY URL -> 自动喂给查看器 =====
+        window.handleGenerate = async function handleGenerate() {
+            if (!uploadedFile) {
+                dropzone.style.transition = '0.2s';
+                dropzone.style.borderColor = '#ef4444';
+                setTimeout(() => { dropzone.style.borderColor = ''; }, 300);
+                return;
+            }
+            const btn = document.getElementById('genGaussianBtn');
+            const btnText = document.getElementById('genBtnText');
+            btn.disabled = true;
+            const original = btnText.innerText;
+            btnText.innerText = 'Generating';
+            // 生成新模型期间，先禁用开始修复
+            plyLoaded = false;
+            setRepairEnabled(false);
+            document.getElementById('gen-progress-container').classList.add('hidden');
+            document.getElementById('gen-progress-bar').style.width = '0%';
+            document.getElementById('gen-percent').innerText = '0%';
 
             try {
-                // 1. 渲染当前视角 -> 上传得到 GaussianImage 的 RunningHub fileName
-                setRepairStatus('正在渲染当前视角…');
-                setRepairProgress(10);
-                const gaussianBlob = await renderViewToBlob();
-                const gaussianLocalUrl = await uploadLocal(gaussianBlob, 'gaussian_render.png');
-                setRepairStatus('上传渲染图到 RunningHub…');
-                setRepairProgress(25);
-                const gaussianFileName = await uploadToRunningHub(gaussianLocalUrl);
-
-                // 2. 上传左栏源图 -> SourceImage 的 RunningHub fileName（复用已上传的本地 url）
-                setRepairStatus('上传参考图到 RunningHub…');
-                setRepairProgress(40);
-                if (!uploadedSourceUrl) {
-                    uploadedSourceUrl = await uploadLocal(sourceImageFile, sourceImageFile.name || 'source.png');
+                updateGenProgress({ status: '上传参考图...', progress: 10 });
+                if (!uploadedPath) {
+                    uploadedPath = await uploadLocal(uploadedFile, uploadedFile.name || 'source.png');
                 }
-                const sourceFileName = await uploadToRunningHub(uploadedSourceUrl);
+                const imageFileName = await uploadToRunningHub(uploadedPath);
 
-                // 3. 提交 AI 应用任务
-                setRepairStatus('提交修复任务…');
-                setRepairProgress(55);
+                updateGenProgress({ status: 'Queueing...', progress: 30 });
                 const submit = await fetch('/api/runninghub/submit', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        webappId: RH_WEBAPP_ID,
+                        webappId: GEN_WEBAPP_ID,
                         nodeInfoList: [
-                            { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
-                            { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
+                            { nodeId: GEN_NODE_IMAGE, fieldName: 'image', fieldValue: imageFileName, description: 'image' }
                         ],
                         instanceType: 'default'
                     })
@@ -1788,8 +395,8 @@
                 const taskId = submit.taskId;
                 if (!taskId) throw new Error('未返回 taskId');
 
-                // 4. 轮询结果
-                setRepairStatus('修复任务排队/运行中…');
+                // 轮询 PLY 结果
+                let plyUrl = null;
                 for (let i = 0; i < 720; i++) {
                     await new Promise(res => setTimeout(res, 2500));
                     const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
@@ -1797,131 +404,397 @@
                         if (!r.ok || j.success === false) throw new Error(j.detail || '查询失败');
                         return j.data || j;
                     });
-                    if (data.status === 'QUEUED') { setRepairStatus('排队中…'); setRepairProgress(60); }
-                    else if (data.status === 'RUNNING') { setRepairStatus('修复生成中…'); setRepairProgress(80); }
+                    if (data.status === 'QUEUED') updateGenProgress({ status: 'Queueing...', progress: 45 });
+                    else if (data.status === 'RUNNING') updateGenProgress({ status: 'Generating...', progress: 70 });
                     else if (data.status === 'SUCCESS') {
                         const urls = data.urls || [];
-                        if (!urls.length) throw new Error('修复输出为空');
-                        setRepairProgress(100);
-                        setRepairStatus('修复完成');
-                        const out = urls[0];
-                        repairResultImg.src = out;
-                        repairResultLink.href = out;
-                        repairDownloadBtn.href = out;
-                        repairDownloadBtn.download = `gaussian-repair-${Date.now()}.png`;
-                        repairResultZone.style.display = 'flex';
-                        setTimeout(() => setRepairProgress(null), 1500);
-                        return;
+                        // 优先取 .ply，否则取第一个
+                        plyUrl = urls.find(u => /\.ply(\?|$)/i.test(u)) || urls[0];
+                        if (!plyUrl) throw new Error('生成输出为空');
+                        break;
                     }
-                    else if (data.status === 'FAILED') throw new Error(data.failReason || '修复任务失败');
+                    else if (data.status === 'FAILED') throw new Error(data.failReason || '生成任务失败');
                 }
-                throw new Error('修复任务超时');
+                if (!plyUrl) throw new Error('生成任务超时');
+
+                updateGenProgress({ status: '加载到查看器...', progress: 95 });
+                // 把生成的 PLY URL 推送给查看器加载（成功后会回传 PLY_LOADED 解锁修复）
+                if (viewerFrame.contentWindow) {
+                    viewerFrame.contentWindow.postMessage({ type: 'LOAD_PLY_URL', url: plyUrl }, '*');
+                }
+                document.getElementById('genState').innerHTML =
+                    '<i data-lucide="check-circle" class="w-12 h-12 mx-auto stroke-[1px] text-green-500"></i>' +
+                    '<p class="text-[10px] font-bold uppercase tracking-[0.3em] mt-3">已生成，正在载入查看器…</p>';
+                if (window.lucide) lucide.createIcons();
             } catch (err) {
-                console.error('[GaussianRepair] error:', err);
-                setRepairStatus('修复失败: ' + err.message, true);
-                setRepairProgress(null);
+                console.error(err);
+                updateGenProgress({ status: '失败', progress: 0 });
+                if (!err.silent) alert(err.message);
             } finally {
-                repairBtn.disabled = false;
-                repairBtn.textContent = originalText;
+                btn.disabled = false;
+                btnText.innerText = original;
             }
+        };
+
+        // 启用/禁用「开始修复」按钮
+        function setRepairEnabled(enabled) {
+            const btn = document.getElementById('genBtn');
+            if (btn) btn.disabled = !enabled;
         }
 
-        repairBtn.addEventListener('click', startRepair);
-
-        // ===== 左栏：上传图像 -> 按宽高 + FOV 计算 intrinsics =====
-        const imgFileInput = document.getElementById('imgFileInput');
-        const imgPreview = document.getElementById('imgPreview');
-        const imgDropZone = document.getElementById('imgDropZone');
-        const imgDropHint = document.getElementById('imgDropHint');
-        const imgInfo = document.getElementById('imgInfo');
-        let lastPlyBuffer = null;   // 记住已加载的 PLY，便于换图后用新内参重渲染
-        let lastPlyName = null;
-        let sourceImageFile = null; // 左栏上传的源图(File)，作为 SourceImage
-        let uploadedSourceUrl = null; // 源图上传到本地后的 url（/assets/input/...）
-
-        function applyImageIntrinsics(width, height) {
-            currentIntrinsics = computeIntrinsicsFromImage(width, height, DEFAULT_FOV_DEG);
-            const fx = currentIntrinsics[0][0];
-            imgInfo.textContent =
-                `图像尺寸: ${width} × ${height}\n` +
-                `FOV: ${DEFAULT_FOV_DEG}°\n` +
-                `fx = fy = ${fx.toFixed(2)}\n` +
-                `cx = ${(width/2).toFixed(1)}, cy = ${(height/2).toFixed(1)}`;
+        // 向宿主声明/取消"离开本页需确认"守卫
+        function setLeaveGuard(active) {
+            try { window.parent.postMessage({ type: 'page-guard', page: 'gaussian', active: !!active }, '*'); } catch (e) {}
+        }
+        // 根据当前是否有内容自动更新守卫
+        function refreshLeaveGuard() {
+            setLeaveGuard(!!(uploadedFile || plyLoaded || currentResult));
         }
 
-        async function handleImageFile(file) {
-            if (!file || !/^image\//.test(file.type)) { showError('请选择图像文件'); return; }
-            sourceImageFile = file;   // 记住源图，修复时作为 SourceImage 上传
-            uploadedSourceUrl = null; // 换图后清空已上传 url，下次修复重新上传
-            const url = URL.createObjectURL(file);
-            const img = new Image();
-            img.onload = async () => {
-                const w = img.naturalWidth;
-                const h = img.naturalHeight;
-                imgPreview.src = url;
-                imgPreview.style.display = 'block';
-                if (imgDropHint) imgDropHint.style.display = 'none';
-                applyImageIntrinsics(w, h);
-                // 若已加载过 PLY，则用新内参立即重渲染（强制视为新 mesh）
-                if (lastPlyBuffer) {
-                    lastMeshSignature = null;
-                    await loadPLYFromData(lastPlyBuffer.slice(0), lastPlyName || 'gaussian.ply', DEFAULT_EXTRINSICS, currentIntrinsics);
-                    applyFocalScale(focalScaleInput.value);
-                    scheduleFrameLayoutUpdate();
-                    setTimeout(() => { setAutoScale(); }, 500);
+        // ===== 向查看器请求当前视角渲染图（GaussianImage）=====
+        function requestViewerRender(timeout = 15000) {
+            return new Promise((resolve, reject) => {
+                if (!viewerFrame.contentWindow) { reject(new Error('查看器未就绪')); return; }
+                const reqId = 'r_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+                const onMsg = (event) => {
+                    const m = event.data || {};
+                    if (m.request_id !== reqId) return;
+                    window.removeEventListener('message', onMsg);
+                    clearTimeout(timer);
+                    if (m.type === 'RENDER_RESULT' && m.image) resolve(m.image);
+                    else reject(new Error(m.error || '渲染失败'));
+                };
+                const timer = setTimeout(() => { window.removeEventListener('message', onMsg); reject(new Error('渲染超时')); }, timeout);
+                window.addEventListener('message', onMsg);
+                viewerFrame.contentWindow.postMessage({ type: 'REQUEST_RENDER', request_id: reqId }, '*');
+            });
+        }
+
+        // dataURL -> Blob
+        function dataUrlToBlob(dataUrl) {
+            const [head, b64] = dataUrl.split(',');
+            const mime = (head.match(/data:(.*?);/) || [,'image/png'])[1];
+            const bin = atob(b64);
+            const arr = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+            return new Blob([arr], { type: mime });
+        }
+
+        async function uploadLocal(fileOrBlob, name) {
+            const fd = new FormData();
+            fd.append('files', fileOrBlob, name);
+            const r = await fetch('/api/ai/upload', { method: 'POST', body: fd });
+            const j = await r.json();
+            if (!r.ok || !j.files || !j.files[0]) throw new Error('本地上传失败');
+            return j.files[0].url;
+        }
+
+        async function uploadToRunningHub(localUrl) {
+            const r = await fetch('/api/runninghub/upload-asset', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: localUrl })
+            });
+            const j = await r.json();
+            if (!r.ok || j.success === false) throw new Error(j.detail || 'RunningHub 上传失败');
+            const fileName = (j.data || j).fileName;
+            if (!fileName) throw new Error('RunningHub 上传未返回 fileName');
+            return fileName;
+        }
+
+        async function runRepairTask() {
+            // 1. 输入源图 -> SourceImage fileName
+            updateCloudProgress({ status: '上传参考图...', progress: 10 });
+            if (!uploadedPath) {
+                uploadedPath = await uploadLocal(uploadedFile, uploadedFile.name || 'source.png');
+            }
+            const sourceFileName = await uploadToRunningHub(uploadedPath);
+
+            // 2. 查看器渲染图 -> GaussianImage fileName
+            updateCloudProgress({ status: '渲染高斯视角...', progress: 25 });
+            const renderDataUrl = await requestViewerRender();
+            const gaussianLocalUrl = await uploadLocal(dataUrlToBlob(renderDataUrl), 'gaussian_render.png');
+            updateCloudProgress({ status: '上传渲染图...', progress: 40 });
+            const gaussianFileName = await uploadToRunningHub(gaussianLocalUrl);
+
+            // 3. 提交任务
+            updateCloudProgress({ status: 'Queueing...', progress: 55 });
+            const submit = await fetch('/api/runninghub/submit', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    webappId: RH_WEBAPP_ID,
+                    nodeInfoList: [
+                        { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
+                        { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
+                    ],
+                    instanceType: 'default'
+                })
+            }).then(async r => {
+                const j = await r.json();
+                if (!r.ok || j.success === false) throw new Error(j.detail || '提交失败');
+                return j.data || j;
+            });
+            const taskId = submit.taskId;
+            if (!taskId) throw new Error('未返回 taskId');
+
+            // 4. 轮询
+            for (let i = 0; i < 720; i++) {
+                await new Promise(res => setTimeout(res, 2500));
+                const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
+                    const j = await r.json();
+                    if (!r.ok || j.success === false) throw new Error(j.detail || '查询失败');
+                    return j.data || j;
+                });
+                if (data.status === 'QUEUED') updateCloudProgress({ status: 'Queueing...', progress: 60 });
+                else if (data.status === 'RUNNING') updateCloudProgress({ status: 'Generating...', progress: 80 });
+                else if (data.status === 'SUCCESS') {
+                    const urls = data.urls || [];
+                    if (!urls.length) throw new Error('修复输出为空');
+                    updateCloudProgress({ status: 'Done', progress: 100 });
+                    return { images: urls };
                 }
-            };
-            img.onerror = () => { showError('图像读取失败'); URL.revokeObjectURL(url); };
-            img.src = url;
+                else if (data.status === 'FAILED') throw new Error(data.failReason || '修复任务失败');
+            }
+            throw new Error('修复任务超时');
         }
 
-        imgFileInput.addEventListener('change', (e) => {
-            const file = e.target.files && e.target.files[0];
-            if (file) handleImageFile(file);
-        });
-        ['dragenter', 'dragover'].forEach(evt => {
-            imgDropZone.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); imgDropZone.classList.add('dragover'); });
-        });
-        ['dragleave', 'drop'].forEach(evt => {
-            imgDropZone.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); imgDropZone.classList.remove('dragover'); });
-        });
-        imgDropZone.addEventListener('drop', (e) => {
-            const file = e.dataTransfer?.files && e.dataTransfer.files[0];
-            if (file) handleImageFile(file);
+        window.handleRepair = async function handleRepair() {
+            if (!uploadedFile) {
+                dropzone.style.transition = '0.2s';
+                dropzone.style.borderColor = '#ef4444';
+                dropzone.style.transform = 'scale(0.98)';
+                setTimeout(() => { dropzone.style.borderColor = ''; dropzone.style.transform = 'scale(1)'; }, 300);
+                return;
+            }
+            if (!plyLoaded) { alert('请先点击「3D 高斯生成」并等待模型载入查看器'); return; }
+
+            const btn = document.getElementById('genBtn');
+            btn.disabled = true;
+            btn.style.backgroundColor = '#333';
+            btn.innerHTML = `<i data-lucide="zap" class="w-4 h-4 text-yellow-400 fill-yellow-400 animate-pulse"></i><span class="tracking-[0.4em] text-[11px] uppercase">Processing</span>`;
+            lucide.createIcons();
+
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('outputImg').classList.add('hidden');
+            document.getElementById('loadingState').classList.remove('hidden');
+            document.getElementById('cloud-progress-container').classList.add('hidden');
+            document.getElementById('cloud-progress-bar').style.width = '0%';
+            document.getElementById('cloud-percent').innerText = '0%';
+
+            try {
+                const data = await runRepairTask();
+                currentResult = data;
+                refreshLeaveGuard();
+                const outputImg = document.getElementById('outputImg');
+                const downloadBtn = document.getElementById('downloadBtn');
+                outputImg.src = data.images[0];
+                outputImg.classList.remove('hidden');
+                document.getElementById('loadingState').classList.add('hidden');
+                downloadBtn.href = data.images[0];
+                downloadBtn.classList.remove('hidden');
+                downloadBtn.download = `Gaussian-Repair-${Date.now()}.png`;
+                // 持久化到历史归档（type=gaussian），刷新后仍可见
+                try {
+                    await fetch('/api/history/save', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ images: data.images, type: 'gaussian', prompt: 'Gaussian Repair', is_cloud: true })
+                    });
+                } catch (e) { console.error('保存历史失败', e); }
+                loadHistory();
+            } catch (err) {
+                console.error(err);
+                document.getElementById('loadingState').classList.add('hidden');
+                document.getElementById('emptyState').classList.remove('hidden');
+                if (!err.silent) alert(err.message);
+            } finally {
+                btn.disabled = !plyLoaded;
+                btn.style.backgroundColor = '';
+                btn.innerHTML = `<i data-lucide="zap" id="btnIcon" class="w-4 h-4 text-yellow-400"></i><span id="btnText">开始修复</span>`;
+                lucide.createIcons();
+            }
+        };
+
+        // ===== 结果放大/灯箱 =====
+        window.zoomImage = () => { const img = document.getElementById('outputImg'); if (img.src) openLightbox(img.src); };
+
+        // ===== 归档（沿用角度控制：type=gaussian）=====
+        let allHistory = [];
+        let currentIndex = 0;
+        const PAGE_SIZE = 12;
+
+        function renderImageCard(data, isNew = false) {
+            const masonry = document.getElementById('masonry');
+            const imgUrl = data.images ? data.images[0] : '';
+            if (!imgUrl) return;
+            const card = document.createElement('div');
+            card.className = 'masonry-item relative group cursor-pointer';
+            card.dataset.historyTs = data.timestamp;
+            card.id = 'history-' + data.timestamp;
+            card.onclick = () => { if (document.body.classList.contains('history-bulk-selecting')) return; openLightbox(imgUrl); };
+            const isCloud = data.is_cloud || (imgUrl && imgUrl.includes('runninghub'));
+            const badgeHtml = isCloud ? `<div class="absolute top-3 left-3 z-10"><img src="/static/images/RunningHub-B.png" class="h-4 w-auto object-contain bg-white/90 rounded-full p-0.5 shadow-sm"></div>` : '';
+            card.innerHTML = `
+                <img src="${imgUrl}" class="w-full h-full object-cover block transform group-hover:scale-105 transition-transform duration-[1.5s]">
+                ${badgeHtml}`;
+            if (isNew) masonry.prepend(card); else masonry.appendChild(card);
+        }
+
+        function loadNextPage() {
+            const batch = allHistory.slice(currentIndex, currentIndex + PAGE_SIZE);
+            if (!batch.length) return;
+            batch.forEach(item => renderImageCard(item));
+            currentIndex += PAGE_SIZE;
+        }
+
+        async function loadHistory() {
+            try {
+                const res = await fetch('/api/history?type=gaussian');
+                const history = await res.json();
+                if (Array.isArray(history)) {
+                    allHistory = history;
+                    document.getElementById('masonry').innerHTML = '';
+                    currentIndex = 0;
+                    loadNextPage();
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        // ===== 灯箱 =====
+        let lightboxPreview = null;
+        function ensureLightboxPreview() {
+            if (!lightboxPreview && window.StudioImagePreview) {
+                lightboxPreview = StudioImagePreview.attach(document.getElementById('lightboxFrame'));
+            }
+            return lightboxPreview;
+        }
+        function openLightbox(url) {
+            const frame = document.getElementById('lightboxFrame');
+            const img = document.getElementById('lightboxImg');
+            const resPill = document.getElementById('lightboxRes');
+            resPill.style.opacity = '0';
+            ensureLightboxPreview();
+            if (lightboxPreview) lightboxPreview.reset();
+            img.src = url;
+            const lb = document.getElementById('lightbox');
+            lb.classList.replace('hidden', 'flex');
+            frame.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+            const updateRes = () => { if (img.naturalWidth) { resPill.innerText = `${img.naturalWidth} x ${img.naturalHeight}`; resPill.style.opacity = '1'; } };
+            img.onload = updateRes;
+            if (img.complete) updateRes();
+        }
+        window.closeLightbox = function () {
+            if (lightboxPreview) lightboxPreview.reset();
+            document.getElementById('lightbox').classList.replace('flex', 'hidden');
+            document.body.style.overflow = 'auto';
+        };
+        window.handleOutsideClick = (e) => { if (e.target.id === 'lightbox') window.closeLightbox(); };
+        window.downloadLightboxImage = function () {
+            const img = document.getElementById('lightboxImg');
+            if (!img.src) return;
+            const a = document.createElement('a');
+            a.href = img.src; a.download = `Gaussian-Repair-${Date.now()}.png`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        };
+
+        // ===== 监听查看器就绪 =====
+        window.addEventListener('message', (event) => {
+            const m = event.data || {};
+            // 宿主询问能否离开本页
+            if (m.type === 'page-leave-check' && m.from === 'gaussian') {
+                const hadContent = !!(uploadedFile || plyLoaded || currentResult);
+                if (hadContent) {
+                    const ok = confirm('确定离开「高斯修复」页面吗？\n当前的上传图、生成模型与修复结果将被清空。');
+                    if (!ok) return; // 用户取消：留在本页，不切换
+                }
+                // 允许离开：通知宿主切换到目标页，并重置本页
+                resetPage();
+                window.parent.postMessage({ type: 'page-leave-allow', from: 'gaussian', target: m.target }, '*');
+                return;
+            }
+            // 兜底：宿主直接要求隐藏/重置（force 切换路径）
+            if (m.type === 'page-hidden' && m.page === 'gaussian') { resetPage(); return; }
+            if (m.type === 'VIEWER_READY') viewerReady = true;
+            else if (m.type === 'PLY_LOADED') {
+                plyLoaded = true;
+                refreshLeaveGuard();
+                setRepairEnabled(true);
+                updateGenProgress({ status: '已载入查看器', progress: 100 });
+                const genState = document.getElementById('genState');
+                if (genState) {
+                    genState.innerHTML =
+                        '<i data-lucide="check-circle" class="w-12 h-12 mx-auto stroke-[1px] text-green-500"></i>' +
+                        '<p class="text-[10px] font-bold uppercase tracking-[0.3em] mt-3">高斯模型已就绪，可开始修复</p>';
+                    if (window.lucide) lucide.createIcons();
+                }
+            }
+            else if (m.type === 'PLY_LOAD_ERROR') {
+                plyLoaded = false;
+                setRepairEnabled(false);
+                updateGenProgress({ status: '载入失败: ' + (m.error || ''), progress: 0 });
+            }
         });
 
-        // 拖拽加载
-        const viewerContainer = document.getElementById('viewerContainer');
-        ['dragenter', 'dragover'].forEach(evt => {
-            viewerContainer.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); viewerContainer.classList.add('dragover'); });
-        });
-        ['dragleave', 'drop'].forEach(evt => {
-            viewerContainer.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); viewerContainer.classList.remove('dragover'); });
-        });
-        viewerContainer.addEventListener('drop', (e) => {
-            const file = e.dataTransfer?.files && e.dataTransfer.files[0];
-            if (file) handlePLYFile(file);
-        });
+        // ===== 切出本页时重置 =====
+        function resetPage() {
+            // 状态变量
+            uploadedFile = null;
+            uploadedPath = null;
+            plyLoaded = false;
+            currentResult = null;
+            setLeaveGuard(false);
 
-        // 支持 ?ply=URL 自动加载
-        try {
-            const params = new URLSearchParams(window.location.search);
-            const plyParam = params.get('ply');
-            if (plyParam) { plyUrlInput.value = plyParam; loadFromUrl(plyParam); }
-        } catch (e) {}
+            // 01 输入图
+            if (fileInput) fileInput.value = '';
+            if (previewImg) { previewImg.removeAttribute('src'); previewImg.classList.add('hidden'); }
+            const uploadContent = document.getElementById('uploadContent');
+            if (uploadContent) uploadContent.classList.remove('opacity-0');
+            const changeOverlay = document.getElementById('changeOverlay');
+            if (changeOverlay) changeOverlay.classList.replace('flex', 'hidden');
+
+            // 02 生成状态/进度 + 修复按钮
+            const genState = document.getElementById('genState');
+            if (genState) {
+                genState.innerHTML =
+                    '<i data-lucide="box" class="w-10 h-10 mx-auto stroke-[1px]"></i>' +
+                    '<p class="text-[10px] font-bold uppercase tracking-[0.3em]">上传参考图后，点击生成 3D 高斯</p>';
+            }
+            const genProg = document.getElementById('gen-progress-container');
+            if (genProg) genProg.classList.add('hidden');
+            const genBar = document.getElementById('gen-progress-bar');
+            if (genBar) genBar.style.width = '0%';
+            const genPct = document.getElementById('gen-percent');
+            if (genPct) genPct.innerText = '0%';
+            const genBtnEl = document.getElementById('genGaussianBtn');
+            if (genBtnEl) genBtnEl.disabled = false;
+            setRepairEnabled(false);
+
+            // 03 查看器：重载 iframe 清空已加载的 PLY
+            if (viewerFrame) {
+                viewerReady = false;
+                viewerFrame.src = '/static/gaussian-viewer.html?embed=1';
+            }
+
+            // 04 结果预览
+            const outputImg = document.getElementById('outputImg');
+            if (outputImg) { outputImg.removeAttribute('src'); outputImg.classList.add('hidden'); }
+            const downloadBtn = document.getElementById('downloadBtn');
+            if (downloadBtn) downloadBtn.classList.add('hidden');
+            const loadingState = document.getElementById('loadingState');
+            if (loadingState) loadingState.classList.add('hidden');
+            const emptyState = document.getElementById('emptyState');
+            if (emptyState) emptyState.classList.remove('hidden');
+            const cloudProg = document.getElementById('cloud-progress-container');
+            if (cloudProg) cloudProg.classList.add('hidden');
+
+            if (window.lucide) lucide.createIcons();
+        }
 
         // 初始化
-        initViewer();
-
-        const updateUIScale = () => {
-            const width = window.innerWidth;
-            const scale = Math.max(0.7, Math.min(1.8, 1.0 + (width - 512) / 1000));
-            document.documentElement.style.setProperty('--ui-scale', scale);
-        };
-        new ResizeObserver(updateUIScale).observe(document.body);
-        updateUIScale();
-
-        console.log('[GaussianViewer] 独立页就绪 - 等待加载 PLY');
+        if (window.lucide) lucide.createIcons();
+        loadHistory();
+        // 归档批量管理（管理 / 多选 / 删除），与角度控制页一致
+        window.HistoryBulkManager?.attach({ masonry: '#masonry' });
     </script>
 </body>
+
 </html>
