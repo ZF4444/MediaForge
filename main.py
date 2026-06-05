@@ -164,7 +164,6 @@ APP_VERSION = "2026.05.19"
 async def startup_event():
     global GLOBAL_LOOP
     GLOBAL_LOOP = asyncio.get_running_loop()
-    sync_static_html_versions()
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
@@ -1216,6 +1215,19 @@ os.makedirs(WORKFLOW_DIR, exist_ok=True)
 os.makedirs(CONVERSATION_DIR, exist_ok=True)
 os.makedirs(CANVAS_DIR, exist_ok=True)
 
+# 注意：此路由必须在 app.mount("/static", ...) 之前注册，
+# 否则 StaticFiles 挂载会先匹配 /static/*.html，导致无法动态注入版本号。
+@app.get("/static/{page:path}")
+async def static_html_page(page: str):
+    # 仅拦截顶层 HTML 页面（如 /static/angle.html），运行时动态注入版本号。
+    # 其它静态资源（js/css/图片/子目录文件）仍由下方 StaticFiles 挂载提供。
+    if "/" in page or not page.lower().endswith(".html"):
+        raise HTTPException(status_code=404)
+    file_path = os.path.join(STATIC_DIR, page)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404)
+    return static_html_response(page)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
@@ -1246,25 +1258,9 @@ def versioned_static_html(html: str) -> str:
     return pattern.sub(lambda m: f"{m.group('prefix')}{m.group('url')}?v={safe_version}", html)
 
 def sync_static_html_versions():
-    version = current_app_version()
-    if not version:
-        return
-    safe_version = urllib.parse.quote(version, safe="._-")
-    try:
-        for name in os.listdir(STATIC_DIR):
-            if not name.lower().endswith(".html"):
-                continue
-            path = os.path.join(STATIC_DIR, name)
-            if not os.path.isfile(path):
-                continue
-            with open(path, "r", encoding="utf-8") as f:
-                old = f.read()
-            new = re.sub(r'([?&]v=)[^"\'`\s<>)]*', rf'\g<1>{safe_version}', old)
-            if new != old:
-                with open(path, "w", encoding="utf-8", newline="") as f:
-                    f.write(new)
-    except Exception as e:
-        print(f"同步静态页面版本号失败: {e}")
+    # 已弃用：不再把版本号写回磁盘文件，避免污染 git diff。
+    # 版本号改为在请求时由 versioned_static_html() 动态注入。
+    return
 
 def static_html_response(filename: str):
     path = os.path.join(STATIC_DIR, filename)
