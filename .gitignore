@@ -6,3 +6,4 @@ assets/
 data/
 workflows/
 history.json
+scripts/sync_to_remote.sh
