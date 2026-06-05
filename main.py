@@ -1243,16 +1243,20 @@ os.makedirs(CANVAS_DIR, exist_ok=True)
 
 # 注意：此路由必须在 app.mount("/static", ...) 之前注册，
 # 否则 StaticFiles 挂载会先匹配 /static/*.html，导致无法动态注入版本号。
-@app.get("/static/{page:path}")
+# 路径模式只匹配顶层 HTML 页面（{page} 为字符串转换器，不含斜杠），
+# 因此 js/css/图片/子目录等其它静态资源不会命中此路由，会继续交给下方 StaticFiles 挂载。
+# 说明：Starlette 1.0 起，命中的路由内部 raise 404 不会再回退到后续 Mount，
+# 所以这里必须用精确的路径模式，而不能用 {page:path} 再在函数里过滤。
+@app.get("/static/{page}.html")
 async def static_html_page(page: str):
     # 仅拦截顶层 HTML 页面（如 /static/angle.html），运行时动态注入版本号。
-    # 其它静态资源（js/css/图片/子目录文件）仍由下方 StaticFiles 挂载提供。
-    if "/" in page or not page.lower().endswith(".html"):
+    if "/" in page:
         raise HTTPException(status_code=404)
-    file_path = os.path.join(STATIC_DIR, page)
+    file_name = f"{page}.html"
+    file_path = os.path.join(STATIC_DIR, file_name)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404)
-    return static_html_response(page)
+    return static_html_response(file_name)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
