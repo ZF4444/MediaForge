@@ -2690,114 +2690,17 @@ from app.core.media import (
     output_file_from_url,
 )
 
-def local_media_file_by_basename(name: str):
-    safe = os.path.basename(urllib.parse.unquote(str(name or "")))
-    if not safe:
-        return None
-    roots = [
-        OUTPUT_OUTPUT_DIR,
-        OUTPUT_INPUT_DIR,
-        os.path.join(ASSETS_DIR, "output"),
-        os.path.join(ASSETS_DIR, "input"),
-        os.path.join(ASSETS_DIR, "library"),
-    ]
-    for root in roots:
-        path = os.path.abspath(os.path.join(root, safe))
-        root_abs = os.path.abspath(root)
-        if os.path.commonpath([root_abs, path]) == root_abs and os.path.isfile(path):
-            return path
-    return None
-
-def filename_from_media_url(url: str, fallback: str = "download.bin") -> str:
-    path = urllib.parse.urlsplit(str(url or "")).path
-    name = os.path.basename(urllib.parse.unquote(path))
-    return sanitize_export_filename(name or fallback, fallback)
-
-def fetch_remote_media_bytes(url: str, timeout: float = 30.0, max_bytes: int = 200 * 1024 * 1024):
-    text = str(url or "").strip()
-    parsed = urllib.parse.urlparse(text)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        return None
-    with requests.get(text, stream=True, timeout=timeout, headers={"User-Agent": "ComfyUI-API-Modelscope/1.0"}) as response:
-        response.raise_for_status()
-        content_type = response.headers.get("content-type") or "application/octet-stream"
-        chunks = []
-        total = 0
-        for chunk in response.iter_content(chunk_size=1024 * 256):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > max_bytes:
-                raise HTTPException(status_code=413, detail="文件太大，无法下载")
-            chunks.append(chunk)
-        return b"".join(chunks), content_type
-
-def origin_from_url(value):
-    parsed = urllib.parse.urlparse(str(value or ""))
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        return ""
-    return f"{parsed.scheme}://{parsed.netloc}".lower()
-
-def ensure_same_origin_request(request: Request):
-    host = str(request.headers.get("host") or "").lower()
-    expected = f"{request.url.scheme}://{host}".lower() if host else ""
-    origin = origin_from_url(request.headers.get("origin", ""))
-    referer = origin_from_url(request.headers.get("referer", ""))
-    actual = origin or referer
-    if expected and actual != expected:
-        raise HTTPException(status_code=403, detail="只允许从当前页面导入本地图片")
-
-def normalize_local_image_path(value):
-    text = str(value or "").strip().strip('"').strip("'")
-    if not text:
-        raise HTTPException(status_code=400, detail="本地图片路径为空")
-    if text.lower().startswith("file:"):
-        parsed = urllib.parse.urlparse(text)
-        if parsed.scheme.lower() != "file":
-            raise HTTPException(status_code=400, detail="只支持本地图片路径")
-        if parsed.netloc and re.match(r"^[a-zA-Z]:$", parsed.netloc) and os.name == "nt":
-            path = f"{parsed.netloc}{urllib.request.url2pathname(parsed.path or '')}"
-        elif parsed.netloc and parsed.netloc.lower() not in ("localhost",):
-            raise HTTPException(status_code=400, detail="只支持本机图片路径")
-        else:
-            path = urllib.request.url2pathname(parsed.path or "")
-    else:
-        path = text
-    path = path.strip().strip('"').strip("'")
-    if re.match(r"^/[a-zA-Z]:[\\/]", path):
-        path = path[1:]
-    if re.match(r"^[a-zA-Z]:[\\/]", path):
-        return os.path.abspath(path)
-    if path.startswith("/") and os.name != "nt":
-        return os.path.abspath(path)
-    raise HTTPException(status_code=400, detail="只支持本机绝对图片路径")
-
-def import_local_image_file(path):
-    ext = os.path.splitext(path)[1].lower()
-    if ext not in LOCAL_IMAGE_IMPORT_EXTS:
-        raise HTTPException(status_code=400, detail="仅支持 PNG、JPG、JPEG、WEBP、GIF 图片")
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="本地图片不存在或无法读取")
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        raise HTTPException(status_code=404, detail="本地图片不存在或无法读取")
-    if size <= 0:
-        raise HTTPException(status_code=400, detail="本地图片为空")
-    if size > LOCAL_IMAGE_IMPORT_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="本地图片过大，请使用 50MB 以内的图片")
-    try:
-        with Image.open(path) as img:
-            img.verify()
-    except Exception:
-        raise HTTPException(status_code=400, detail="文件不是可识别的图片")
-    filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
-    dest = output_path_for(filename, "input")
-    try:
-        shutil.copyfile(path, dest)
-    except OSError:
-        raise HTTPException(status_code=500, detail="导入本地图片失败")
-    return {"url": output_url_for(filename, "input"), "name": os.path.basename(path) or filename, "kind": "image"}
+# --- 媒体文件/远程下载/本地导入工具 ---
+# 已迁移至 app/core/media.py（原样迁移），多域复用。此处导入以保持原模块级名称可用。
+from app.core.media import (
+    local_media_file_by_basename,
+    filename_from_media_url,
+    fetch_remote_media_bytes,
+    origin_from_url,
+    ensure_same_origin_request,
+    normalize_local_image_path,
+    import_local_image_file,
+)
 
 # --- 素材库数据逻辑 ---
 # 已迁移至 app/services/assets.py（原样迁移），数据 CRUD 路由迁移至 app/routers/assets.py。
@@ -5196,28 +5099,7 @@ def view_image(filename: str, type: str = "input", subfolder: str = ""):
                 return FileResponse(local_path, media_type=content_type_for_path(local_path))
     raise HTTPException(status_code=404, detail="Image not found on any available backend")
 
-@app.get("/api/download-output")
-def download_output(url: str, name: str = "", inline: bool = False):
-    path = output_file_from_url(url)
-    if not path:
-        path = local_media_file_by_basename(filename_from_media_url(url, ""))
-    if path:
-        filename = sanitize_export_filename(os.path.basename(name) if name else os.path.basename(path), os.path.basename(path))
-        return FileResponse(path, media_type=content_type_for_path(path), filename=None if inline else filename)
-    try:
-        remote = fetch_remote_media_bytes(url)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"远程文件下载失败：{exc}")
-    if not remote:
-        raise HTTPException(status_code=404, detail="文件不存在")
-    content, content_type = remote
-    fallback = filename_from_media_url(url, "download.bin")
-    filename = sanitize_export_filename(os.path.basename(name) if name else fallback, fallback)
-    disposition = "inline" if inline else "attachment"
-    headers = {"Content-Disposition": f"{disposition}; filename*=UTF-8''{urllib.parse.quote(filename)}"}
-    return Response(content, media_type=content_type, headers=headers)
+# /api/download-output 路由已迁移至 app/routers/local_assets.py。
 
 @app.post("/api/upload")
 async def upload_image(files: List[UploadFile] = File(...)):
@@ -5247,140 +5129,8 @@ async def upload_image(files: List[UploadFile] = File(...)):
 
     return {"files": uploaded_files}
 
-@app.post("/api/ai/upload")
-async def upload_ai_reference(files: List[UploadFile] = File(...)):
-    uploaded = []
-    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-    video_exts = {".mp4", ".webm", ".mov", ".m4v"}
-    audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
-    for file in files:
-        content = await file.read()
-        if not content:
-            continue
-        ext = os.path.splitext(file.filename or "")[1].lower()
-        content_type = (file.content_type or "").lower()
-        kind = "image"
-        if ext in video_exts or content_type.startswith("video/"):
-            kind = "video"
-            if ext not in video_exts:
-                ext = ".webm" if "webm" in content_type else ".mov" if "quicktime" in content_type else ".mp4"
-        elif ext in audio_exts or content_type.startswith("audio/"):
-            kind = "audio"
-            if ext not in audio_exts:
-                ext = ".wav" if "wav" in content_type else ".ogg" if "ogg" in content_type else ".m4a" if "mp4" in content_type else ".mp3"
-        elif ext in image_exts or content_type.startswith("image/"):
-            kind = "image"
-            if ext not in image_exts:
-                ext = ".jpg" if "jpeg" in content_type else ".webp" if "webp" in content_type else ".gif" if "gif" in content_type else ".png"
-        else:
-            continue
-        filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
-        path = output_path_for(filename, "input")
-        with open(path, "wb") as f:
-            f.write(content)
-        uploaded.append({"url": output_url_for(filename, "input"), "name": file.filename or filename, "kind": kind})
-    return {"files": uploaded}
-
-def _local_upload_kind_ext(filename, content_type):
-    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-    video_exts = {".mp4", ".webm", ".mov", ".m4v"}
-    audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
-    ext = os.path.splitext(filename or "")[1].lower()
-    ct = (content_type or "").lower()
-    if ext in video_exts or ct.startswith("video/"):
-        if ext not in video_exts:
-            ext = ".webm" if "webm" in ct else ".mov" if "quicktime" in ct else ".mp4"
-        return "video", ext
-    if ext in audio_exts or ct.startswith("audio/"):
-        if ext not in audio_exts:
-            ext = ".wav" if "wav" in ct else ".ogg" if "ogg" in ct else ".m4a" if "mp4" in ct else ".mp3"
-        return "audio", ext
-    if ext in image_exts or ct.startswith("image/"):
-        if ext not in image_exts:
-            ext = ".jpg" if "jpeg" in ct else ".webp" if "webp" in ct else ".gif" if "gif" in ct else ".png"
-        return "image", ext
-    return None, ext
-
-def _local_upload_display_name(filename):
-    # 文件名形如 up_<hex>_<原始名>；去掉前缀还原展示名
-    m = re.match(r"^up_[0-9a-f]{12}_(.+)$", filename)
-    return m.group(1) if m else filename
-
-def _local_upload_item(filename):
-    path = os.path.join(LOCAL_UPLOAD_DIR, filename)
-    try:
-        stat = os.stat(path)
-        size = stat.st_size
-        created_at = stat.st_mtime
-    except OSError:
-        size = 0
-        created_at = 0
-    kind, _ = _local_upload_kind_ext(filename, "")
-    return {
-        "id": filename,
-        "file": filename,
-        "name": _local_upload_display_name(filename),
-        "url": f"/assets/uploads/{filename}",
-        "kind": kind or "image",
-        "size": size,
-        "created_at": created_at,
-    }
-
-@app.post("/api/local-assets/upload")
-async def upload_local_assets(files: List[UploadFile] = File(...)):
-    uploaded = []
-    for file in files:
-        content = await file.read()
-        if not content:
-            continue
-        kind, ext = _local_upload_kind_ext(file.filename, file.content_type)
-        if kind is None:
-            continue
-        base = os.path.splitext(os.path.basename(file.filename or "file"))[0]
-        base = re.sub(r"[^0-9A-Za-z一-鿿._-]+", "_", base).strip("_") or "file"
-        base = base[:60]
-        filename = f"up_{uuid.uuid4().hex[:12]}_{base}{ext}"
-        path = os.path.join(LOCAL_UPLOAD_DIR, filename)
-        with open(path, "wb") as f:
-            f.write(content)
-        uploaded.append(_local_upload_item(filename))
-    return {"files": uploaded}
-
-@app.get("/api/local-assets")
-async def list_local_assets():
-    try:
-        names = os.listdir(LOCAL_UPLOAD_DIR)
-    except OSError:
-        names = []
-    items = []
-    for name in names:
-        if name.startswith("."):
-            continue
-        if not os.path.isfile(os.path.join(LOCAL_UPLOAD_DIR, name)):
-            continue
-        items.append(_local_upload_item(name))
-    items.sort(key=lambda it: it.get("created_at") or 0, reverse=True)
-    return {"items": items}
-
-@app.post("/api/local-assets/delete")
-async def delete_local_assets(payload: dict, request: Request):
-    ensure_same_origin_request(request)
-    names = payload.get("names") if isinstance(payload, dict) else None
-    if not isinstance(names, list):
-        names = []
-    deleted = []
-    for name in names:
-        name = os.path.basename(str(name or "").strip())
-        if not name:
-            continue
-        path = os.path.join(LOCAL_UPLOAD_DIR, name)
-        if os.path.isfile(path):
-            try:
-                os.remove(path)
-                deleted.append(name)
-            except OSError:
-                pass
-    return {"deleted": deleted}
+# /api/ai/upload、/api/local-assets(upload|list|delete) 路由及 _local_upload_* 助手
+# 已迁移至 app/routers/local_assets.py。
 
 @app.post("/api/temp-sh/upload")
 async def temp_sh_upload(payload: TempShUploadRequest, request: Request):
@@ -5392,15 +5142,7 @@ async def cloud_video_upload(payload: CloudVideoUploadRequest, request: Request)
     ensure_same_origin_request(request)
     return await upload_local_video_to_cloud(payload.url, payload.service)
 
-@app.post("/api/ai/import-local-image")
-async def import_local_ai_reference(payload: LocalImageImportRequest, request: Request):
-    ensure_same_origin_request(request)
-    requested = [payload.path] if payload.path else []
-    requested.extend(payload.paths or [])
-    requested = [p for p in requested if str(p or "").strip()][:20]
-    if not requested:
-        raise HTTPException(status_code=400, detail="没有可导入的本地图片")
-    return {"files": [import_local_image_file(normalize_local_image_path(path)) for path in requested]}
+# /api/ai/import-local-image 路由已迁移至 app/routers/local_assets.py。
 
 @app.get("/api/runninghub/app-info")
 async def runninghub_app_info(webappId: str = ""):
@@ -7443,10 +7185,8 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
     headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"}
     return Response(buffer.getvalue(), media_type="application/zip", headers=headers)
 
-def sanitize_export_filename(name: str, fallback: str) -> str:
-    base = os.path.basename(str(name or "").strip()) or fallback
-    base = re.sub(r'[\\/:*?"<>|]+', "_", base)
-    return base or fallback
+# sanitize_export_filename 已迁移至 app/core/media.py（原样迁移），多域复用。
+from app.core.media import sanitize_export_filename
 
 def smart_group_export_folder(folder: str, group_name: str) -> str:
     text = str(folder or "").strip()
@@ -8894,6 +8634,7 @@ from app.routers import canvases as canvases_router
 from app.routers import assets as assets_router
 from app.routers import shared_folders as shared_folders_router
 from app.routers import history as history_router
+from app.routers import local_assets as local_assets_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -8901,6 +8642,7 @@ app.include_router(canvases_router.router)
 app.include_router(assets_router.router)
 app.include_router(shared_folders_router.router)
 app.include_router(history_router.router)
+app.include_router(local_assets_router.router)
 
 
 if __name__ == "__main__":
