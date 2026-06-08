@@ -1263,43 +1263,14 @@ app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 # --- Pydantic 模型 ---
 
-def current_app_version():
-    version_file = os.path.join(BASE_DIR, "VERSION")
-    try:
-        if os.path.exists(version_file):
-            with open(version_file, "r", encoding="utf-8") as f:
-                version = (f.read().strip().splitlines() or [""])[0].strip()
-                if version:
-                    return version
-    except Exception:
-        pass
-    try:
-        return time.strftime("%Y.%m.%d", time.localtime())
-    except Exception:
-        return ""
-
-def versioned_static_html(html: str) -> str:
-    version = current_app_version()
-    if not version:
-        return html
-    safe_version = urllib.parse.quote(version, safe="._-")
-    pattern = re.compile(r'(?P<prefix>(?:src|href)=["\']|@import\s+url\(["\'])(?P<url>/static/[^"\')?#]+(?:\.(?:js|css|html)))(?:\?v=[^"\')#]*)?', re.I)
-    return pattern.sub(lambda m: f"{m.group('prefix')}{m.group('url')}?v={safe_version}", html)
-
-def sync_static_html_versions():
-    # 已弃用：不再把版本号写回磁盘文件，避免污染 git diff。
-    # 版本号改为在请求时由 versioned_static_html() 动态注入。
-    return
-
-def static_html_response(filename: str):
-    path = os.path.join(STATIC_DIR, filename)
-    with open(path, "r", encoding="utf-8") as f:
-        html = f.read()
-    return Response(
-        versioned_static_html(html),
-        media_type="text/html; charset=utf-8",
-        headers={"Cache-Control": "no-cache"},
-    )
+# 静态 HTML 版本号注入/页面响应 helper 已迁移至 app/routers/pages.py（原样迁移）。
+# /static/{page}.html 路由仍在 main.py（与静态挂载相邻），故此处 import-back。
+from app.routers.pages import (
+    current_app_version,
+    versioned_static_html,
+    sync_static_html_versions,
+    static_html_response,
+)
 
 STATIC_PROMPT_TEMPLATE_MD = os.path.join(STATIC_DIR, "system-prompts", "infinite-canvas-prompt-templates.md")
 # 提示词模板解析/英文映射已迁移至 app/services/prompts.py（原样迁移）。
@@ -4936,82 +4907,9 @@ def upstream_message_from_record(item):
 
 # --- 路由接口 ---
 
-@app.get("/")
-async def index():
-    return static_html_response("index.html")
-
-
-# --- 认证：用户名登录（无密码）+ 持久化会话 ---
-
-
-@app.get("/login")
-async def login_page(request: Request):
-    # 已登录则直接回首页
-    token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    if token and get_session(token):
-        return RedirectResponse(url="/", status_code=302)
-    return static_html_response("login.html")
-
-
-def _issue_session_response(user_id: str, username: str):
-    token = create_session(user_id, username)
-    resp = JSONResponse({"ok": True, "user_id": user_id, "username": username})
-    resp.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=token,
-        max_age=SESSION_MAX_AGE,
-        httponly=True,
-        samesite="lax",
-        path="/",
-    )
-    return resp
-
-
-@app.post("/auth/register")
-async def auth_register(payload: LoginRequest):
-    user_id = clean_user_id(payload.username)
-    if not user_id:
-        raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
-    if len(user_id) < 5:
-        raise HTTPException(status_code=400, detail="用户名至少需要 5 位。")
-    username = payload.username.strip()[:60]
-    if not register_user(user_id, username):
-        raise HTTPException(status_code=409, detail="该用户名已被占用，请换一个或直接登录。")
-    return _issue_session_response(user_id, username)
-
-
-@app.post("/auth/login")
-async def auth_login(payload: LoginRequest):
-    user_id = clean_user_id(payload.username)
-    if not user_id:
-        raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
-    if not user_exists(user_id):
-        raise HTTPException(status_code=404, detail="该用户名尚未注册，请先注册。")
-    username = payload.username.strip()[:60]
-    return _issue_session_response(user_id, username)
-
-
-@app.post("/auth/logout")
-async def auth_logout(request: Request):
-    token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    destroy_session(token)
-    resp = JSONResponse({"ok": True})
-    resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
-    return resp
-
-
-@app.get("/auth/me")
-async def auth_me(request: Request):
-    token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    sess = get_session(token) if token else None
-    if not sess:
-        return JSONResponse({"authenticated": False}, status_code=401)
-    return {
-        "authenticated": True,
-        "user_id": sess.get("user_id"),
-        "username": sess.get("username") or sess.get("user_id"),
-    }
-
+# --- 页面与认证路由 ---
+# /、/login、/auth/register、/auth/login、/auth/logout、/auth/me 已迁移至
+# app/routers/pages.py（含 _issue_session_response）。auth_middleware 与 /ws/stats 仍在 main.py。
 
 @app.get("/api/view")
 def view_image(filename: str, type: str = "input", subfolder: str = ""):
@@ -8472,6 +8370,7 @@ from app.routers import shared_folders as shared_folders_router
 from app.routers import history as history_router
 from app.routers import local_assets as local_assets_router
 from app.routers import workflows as workflows_router
+from app.routers import pages as pages_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -8481,6 +8380,7 @@ app.include_router(shared_folders_router.router)
 app.include_router(history_router.router)
 app.include_router(local_assets_router.router)
 app.include_router(workflows_router.router)
+app.include_router(pages_router.router)
 
 
 if __name__ == "__main__":
