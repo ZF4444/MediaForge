@@ -1,0 +1,1565 @@
+{
+  "AIReference": {
+    "properties": {
+      "name": {
+        "default": "",
+        "type": "string"
+      },
+      "role": {
+        "default": "",
+        "type": "string"
+      },
+      "url": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "ApiProviderPayload": {
+    "properties": {
+      "api_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "base_url": {
+        "default": "",
+        "type": "string"
+      },
+      "chat_models": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "clear_key": {
+        "default": false,
+        "type": "boolean"
+      },
+      "clear_volcengine_access_key_id": {
+        "default": false,
+        "type": "boolean"
+      },
+      "clear_volcengine_secret_access_key": {
+        "default": false,
+        "type": "boolean"
+      },
+      "clear_wallet_key": {
+        "default": false,
+        "type": "boolean"
+      },
+      "enabled": {
+        "default": true,
+        "type": "boolean"
+      },
+      "id": {
+        "default": "",
+        "type": "string"
+      },
+      "image_edit_endpoint": {
+        "default": "",
+        "type": "string"
+      },
+      "image_generation_endpoint": {
+        "default": "",
+        "type": "string"
+      },
+      "image_models": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "model_protocols": {
+        "default": {},
+        "type": "object"
+      },
+      "ms_defaults_version": {
+        "default": 0,
+        "type": "integer"
+      },
+      "ms_loras": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      },
+      "primary": {
+        "default": false,
+        "type": "boolean"
+      },
+      "protocol": {
+        "default": "openai",
+        "type": "string"
+      },
+      "rh_apps": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "rh_workflows": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "video_models": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "volcengine_access_key_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "volcengine_project_name": {
+        "default": "default",
+        "type": "string"
+      },
+      "volcengine_region": {
+        "default": "cn-beijing",
+        "type": "string"
+      },
+      "volcengine_secret_access_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "wallet_api_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": []
+  },
+  "AssetAvatarRegisterRequest": {
+    "properties": {
+      "group_name": {
+        "default": "",
+        "type": "string"
+      },
+      "library_id": {
+        "default": "",
+        "type": "string"
+      },
+      "project_name": {
+        "default": "default",
+        "type": "string"
+      },
+      "provider_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "AssetLibraryAddRequest": {
+    "properties": {
+      "category_id": {
+        "default": "",
+        "type": "string"
+      },
+      "library_id": {
+        "default": "",
+        "type": "string"
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      },
+      "url": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "AssetLibraryBatchAddRequest": {
+    "properties": {
+      "category_id": {
+        "default": "",
+        "type": "string"
+      },
+      "items": {
+        "default": [],
+        "items": {
+          "$ref": "#/components/schemas/AssetLibraryAddRequest"
+        },
+        "type": "array"
+      },
+      "library_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "AssetLibraryBatchCropRequest": {
+    "properties": {
+      "ids": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "library_id": {
+        "default": "",
+        "type": "string"
+      },
+      "mode": {
+        "default": "square",
+        "type": "string"
+      },
+      "target_category_id": {
+        "default": "",
+        "type": "string"
+      },
+      "target_library_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "AssetLibraryBatchDeleteRequest": {
+    "properties": {
+      "ids": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "library_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "AssetLibraryBatchMoveRequest": {
+    "properties": {
+      "ids": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "library_id": {
+        "default": "",
+        "type": "string"
+      },
+      "target_category_id": {
+        "default": "",
+        "type": "string"
+      },
+      "target_library_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "AssetLibraryCategoryRequest": {
+    "properties": {
+      "library_id": {
+        "default": "",
+        "type": "string"
+      },
+      "name": {
+        "default": "新文件夹",
+        "type": "string"
+      },
+      "type": {
+        "default": "image",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "AssetLibraryRenameRequest": {
+    "properties": {
+      "name": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "AssetLibraryRequest": {
+    "properties": {
+      "name": {
+        "default": "资产库",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "Body_upload_ai_reference_api_ai_upload_post": {
+    "properties": {
+      "files": {
+        "items": {
+          "contentMediaType": "application/octet-stream",
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "files"
+    ]
+  },
+  "Body_upload_image_api_upload_post": {
+    "properties": {
+      "files": {
+        "items": {
+          "contentMediaType": "application/octet-stream",
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "files"
+    ]
+  },
+  "Body_upload_local_assets_api_local_assets_upload_post": {
+    "properties": {
+      "files": {
+        "items": {
+          "contentMediaType": "application/octet-stream",
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "files"
+    ]
+  },
+  "CanvasAssetCheckRequest": {
+    "properties": {
+      "urls": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": []
+  },
+  "CanvasAssetDownloadRequest": {
+    "properties": {
+      "filename": {
+        "default": "canvas-output-images.zip",
+        "type": "string"
+      },
+      "items": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "urls": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": []
+  },
+  "CanvasCreateRequest": {
+    "properties": {
+      "icon": {
+        "default": "🧩",
+        "type": "string"
+      },
+      "kind": {
+        "default": "classic",
+        "type": "string"
+      },
+      "title": {
+        "default": "未命名画布",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "CanvasLLMRequest": {
+    "properties": {
+      "images": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "message": {
+        "maxLength": 20000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "messages": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "model": {
+        "default": "",
+        "type": "string"
+      },
+      "ms_model": {
+        "default": "",
+        "type": "string"
+      },
+      "provider": {
+        "default": "comfly",
+        "type": "string"
+      },
+      "system_prompt": {
+        "default": "",
+        "type": "string"
+      },
+      "videos": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "message"
+    ]
+  },
+  "CanvasMetaUpdate": {
+    "properties": {
+      "color": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "icon": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "owner": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "pinned": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": []
+  },
+  "CanvasSaveRequest": {
+    "properties": {
+      "base_updated_at": {
+        "default": 0,
+        "type": "integer"
+      },
+      "client_id": {
+        "default": "",
+        "type": "string"
+      },
+      "connections": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "icon": {
+        "default": "🧩",
+        "type": "string"
+      },
+      "logs": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "nodes": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "settings": {
+        "default": {},
+        "type": "object"
+      },
+      "title": {
+        "default": "未命名画布",
+        "type": "string"
+      },
+      "viewport": {
+        "default": {},
+        "type": "object"
+      }
+    },
+    "required": []
+  },
+  "CanvasVideoRequest": {
+    "properties": {
+      "aspect_ratio": {
+        "default": "16:9",
+        "type": "string"
+      },
+      "audios": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "camerafixed": {
+        "default": false,
+        "type": "boolean"
+      },
+      "duration": {
+        "default": 5,
+        "type": "integer"
+      },
+      "enable_upsample": {
+        "default": false,
+        "type": "boolean"
+      },
+      "enhance_prompt": {
+        "default": false,
+        "type": "boolean"
+      },
+      "generate_audio": {
+        "default": false,
+        "type": "boolean"
+      },
+      "images": {
+        "default": [],
+        "items": {
+          "$ref": "#/components/schemas/AIReference"
+        },
+        "type": "array"
+      },
+      "model": {
+        "default": "veo3-fast",
+        "type": "string"
+      },
+      "multimodal": {
+        "default": false,
+        "type": "boolean"
+      },
+      "prompt": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "provider_id": {
+        "default": "comfly",
+        "type": "string"
+      },
+      "resolution": {
+        "default": "",
+        "type": "string"
+      },
+      "return_last_frame": {
+        "default": false,
+        "type": "boolean"
+      },
+      "seed": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "size": {
+        "default": "",
+        "type": "string"
+      },
+      "trusted_asset": {
+        "default": false,
+        "type": "boolean"
+      },
+      "videos": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "watermark": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "ChatRequest": {
+    "properties": {
+      "conversation_id": {
+        "default": "",
+        "type": "string"
+      },
+      "image_model": {
+        "default": "",
+        "type": "string"
+      },
+      "message": {
+        "maxLength": 20000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "mode": {
+        "default": "chat",
+        "type": "string"
+      },
+      "model": {
+        "default": "",
+        "type": "string"
+      },
+      "ms_model": {
+        "default": "",
+        "type": "string"
+      },
+      "provider": {
+        "default": "comfly",
+        "type": "string"
+      },
+      "quality": {
+        "default": "auto",
+        "type": "string"
+      },
+      "reference_images": {
+        "default": [],
+        "items": {
+          "$ref": "#/components/schemas/AIReference"
+        },
+        "type": "array"
+      },
+      "size": {
+        "default": "1024x1024",
+        "type": "string"
+      }
+    },
+    "required": [
+      "message"
+    ]
+  },
+  "CloudGenRequest": {
+    "properties": {
+      "api_key": {
+        "default": "",
+        "type": "string"
+      },
+      "client_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "image_urls": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "loras": {
+        "anyOf": [
+          {},
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "model": {
+        "default": "",
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "resolution": {
+        "default": "1024x1024",
+        "type": "string"
+      },
+      "type": {
+        "default": "zimage",
+        "type": "string"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "CloudPollRequest": {
+    "properties": {
+      "api_key": {
+        "default": "",
+        "type": "string"
+      },
+      "client_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "task_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ]
+  },
+  "CloudVideoUploadRequest": {
+    "properties": {
+      "service": {
+        "default": "auto",
+        "type": "string"
+      },
+      "url": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "ComfyInstancesPayload": {
+    "properties": {
+      "instances": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": []
+  },
+  "ConversationCreateRequest": {
+    "properties": {
+      "title": {
+        "default": "新对话",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "DeleteHistoryRequest": {
+    "properties": {
+      "timestamp": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "timestamp"
+    ]
+  },
+  "GenerateRequest": {
+    "properties": {
+      "client_id": {
+        "default": "",
+        "type": "string"
+      },
+      "convert_to_jpg": {
+        "default": false,
+        "type": "boolean"
+      },
+      "height": {
+        "default": 1024,
+        "type": "integer"
+      },
+      "params": {
+        "default": {},
+        "type": "object"
+      },
+      "prompt": {
+        "default": "",
+        "type": "string"
+      },
+      "type": {
+        "default": "zimage",
+        "type": "string"
+      },
+      "width": {
+        "default": 1024,
+        "type": "integer"
+      },
+      "workflow_json": {
+        "default": "Z-Image.json",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "HTTPValidationError": {
+    "properties": {
+      "detail": {
+        "items": {
+          "$ref": "#/components/schemas/ValidationError"
+        },
+        "type": "array"
+      }
+    },
+    "required": []
+  },
+  "JimengHelpRequest": {
+    "properties": {
+      "command": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "JimengQueryMediaRequest": {
+    "properties": {
+      "kind": {
+        "default": "image",
+        "type": "string"
+      },
+      "submit_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "LocalImageImportRequest": {
+    "properties": {
+      "path": {
+        "default": "",
+        "type": "string"
+      },
+      "paths": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": []
+  },
+  "LoginRequest": {
+    "properties": {
+      "username": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "MsGenerateRequest": {
+    "properties": {
+      "api_key": {
+        "default": "",
+        "type": "string"
+      },
+      "client_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "height": {
+        "default": 0,
+        "type": "integer"
+      },
+      "image_urls": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "loras": {
+        "anyOf": [
+          {},
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "model": {
+        "default": "black-forest-labs/FLUX.2-klein-9B",
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "size": {
+        "default": "",
+        "type": "string"
+      },
+      "width": {
+        "default": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "OnlineImageRequest": {
+    "properties": {
+      "model": {
+        "default": "",
+        "type": "string"
+      },
+      "n": {
+        "default": 1,
+        "type": "integer"
+      },
+      "prompt": {
+        "maxLength": 20000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "provider_id": {
+        "default": "comfly",
+        "type": "string"
+      },
+      "quality": {
+        "default": "auto",
+        "type": "string"
+      },
+      "reference_images": {
+        "default": [],
+        "items": {
+          "$ref": "#/components/schemas/AIReference"
+        },
+        "type": "array"
+      },
+      "size": {
+        "default": "1024x1024",
+        "type": "string"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "PromptLibraryBatchDeleteRequest": {
+    "properties": {
+      "ids": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": []
+  },
+  "PromptLibraryCategoryRequest": {
+    "properties": {
+      "library_id": {
+        "default": "",
+        "type": "string"
+      },
+      "name": {
+        "default": "新分组",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "PromptLibraryItemRequest": {
+    "properties": {
+      "category": {
+        "default": "custom",
+        "type": "string"
+      },
+      "item_id": {
+        "default": "",
+        "type": "string"
+      },
+      "library_id": {
+        "default": "",
+        "type": "string"
+      },
+      "name": {
+        "default": "提示词",
+        "type": "string"
+      },
+      "negative": {
+        "default": "",
+        "type": "string"
+      },
+      "positive": {
+        "default": "",
+        "type": "string"
+      },
+      "scene": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "PromptLibraryRequest": {
+    "properties": {
+      "name": {
+        "default": "提示词库",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "RunningHubSubmitRequest": {
+    "properties": {
+      "instanceType": {
+        "default": "",
+        "type": "string"
+      },
+      "nodeInfoList": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "useWallet": {
+        "default": false,
+        "type": "boolean"
+      },
+      "webappId": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "RunningHubUploadAssetRequest": {
+    "properties": {
+      "url": {
+        "default": "",
+        "type": "string"
+      },
+      "useWallet": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": []
+  },
+  "RunningHubWorkflowConfig": {
+    "properties": {
+      "description": {
+        "default": "",
+        "type": "string"
+      },
+      "fields": {
+        "items": {
+          "$ref": "#/components/schemas/RunningHubWorkflowConfigField"
+        },
+        "type": "array"
+      },
+      "optionalImageMode": {
+        "default": "prune-workflow",
+        "type": "string"
+      },
+      "raw": {
+        "type": "object"
+      },
+      "title": {
+        "default": "",
+        "type": "string"
+      },
+      "workflowId": {
+        "default": "",
+        "type": "string"
+      },
+      "workflowJson": {
+        "type": "object"
+      }
+    },
+    "required": []
+  },
+  "RunningHubWorkflowConfigField": {
+    "properties": {
+      "enabled": {
+        "default": true,
+        "type": "boolean"
+      },
+      "fieldName": {
+        "default": "",
+        "type": "string"
+      },
+      "fieldType": {
+        "default": "TEXT",
+        "type": "string"
+      },
+      "fieldValue": {
+        "default": "",
+        "type": "string"
+      },
+      "group": {
+        "default": "",
+        "type": "string"
+      },
+      "id": {
+        "default": "",
+        "type": "string"
+      },
+      "imageOrder": {
+        "default": 0,
+        "type": "integer"
+      },
+      "label": {
+        "default": "",
+        "type": "string"
+      },
+      "max": {
+        "default": ""
+      },
+      "min": {
+        "default": ""
+      },
+      "nodeId": {
+        "default": "",
+        "type": "string"
+      },
+      "note": {
+        "default": "",
+        "type": "string"
+      },
+      "options": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "random_enabled": {
+        "default": false,
+        "type": "boolean"
+      },
+      "required": {
+        "default": false,
+        "type": "boolean"
+      },
+      "sourceFromUpstream": {
+        "default": true,
+        "type": "boolean"
+      },
+      "step": {
+        "default": ""
+      }
+    },
+    "required": []
+  },
+  "RunningHubWorkflowSubmitRequest": {
+    "properties": {
+      "nodeInfoList": {
+        "default": [],
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "useWallet": {
+        "default": false,
+        "type": "boolean"
+      },
+      "workflow": {},
+      "workflowId": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "SaveHistoryRequest": {
+    "properties": {
+      "images": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "is_cloud": {
+        "default": false,
+        "type": "boolean"
+      },
+      "prompt": {
+        "default": "",
+        "type": "string"
+      },
+      "type": {
+        "default": "zimage",
+        "type": "string"
+      }
+    },
+    "required": [
+      "images"
+    ]
+  },
+  "SharedFolderImport": {
+    "properties": {
+      "category_id": {
+        "default": "",
+        "type": "string"
+      },
+      "folder_id": {
+        "default": "",
+        "type": "string"
+      },
+      "library_id": {
+        "default": "",
+        "type": "string"
+      },
+      "paths": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": []
+  },
+  "SharedFolderRegister": {
+    "properties": {
+      "name": {
+        "default": "",
+        "type": "string"
+      },
+      "path": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "SmartCanvasGroupExportItem": {
+    "properties": {
+      "kind": {
+        "default": "",
+        "type": "string"
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      },
+      "text": {
+        "default": "",
+        "type": "string"
+      },
+      "url": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "SmartCanvasGroupExportRequest": {
+    "properties": {
+      "folder": {
+        "default": "",
+        "type": "string"
+      },
+      "group_name": {
+        "default": "group",
+        "type": "string"
+      },
+      "items": {
+        "default": [],
+        "items": {
+          "$ref": "#/components/schemas/SmartCanvasGroupExportItem"
+        },
+        "type": "array"
+      }
+    },
+    "required": []
+  },
+  "TempShUploadRequest": {
+    "properties": {
+      "url": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "TestConnectionPayload": {
+    "properties": {
+      "api_key": {
+        "default": "",
+        "type": "string"
+      },
+      "base_url": {
+        "default": "",
+        "type": "string"
+      },
+      "protocol": {
+        "default": "openai",
+        "type": "string"
+      },
+      "provider_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "ValidationError": {
+    "properties": {
+      "ctx": {
+        "type": "object"
+      },
+      "input": {},
+      "loc": {
+        "items": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ]
+        },
+        "type": "array"
+      },
+      "msg": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "loc",
+      "msg",
+      "type"
+    ]
+  },
+  "WorkflowConfig": {
+    "properties": {
+      "fields": {
+        "default": [],
+        "items": {
+          "$ref": "#/components/schemas/WorkflowField"
+        },
+        "type": "array"
+      },
+      "mini_cards": {
+        "default": {},
+        "type": "object"
+      },
+      "title": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "WorkflowField": {
+    "properties": {
+      "default": {},
+      "id": {
+        "type": "string"
+      },
+      "input": {
+        "default": "",
+        "type": "string"
+      },
+      "max": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "min": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      },
+      "node": {
+        "default": "",
+        "type": "string"
+      },
+      "options": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "random_enabled": {
+        "default": false,
+        "type": "boolean"
+      },
+      "step": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "type": {
+        "default": "text",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "WorkflowRunRequest": {
+    "properties": {
+      "client_id": {
+        "default": "",
+        "type": "string"
+      },
+      "config": {
+        "$ref": "#/components/schemas/WorkflowConfig"
+      },
+      "fields": {
+        "default": {},
+        "type": "object"
+      }
+    },
+    "required": [
+      "config"
+    ]
+  },
+  "WorkflowUploadRequest": {
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "workflow": {
+        "type": "object"
+      }
+    },
+    "required": [
+      "name",
+      "workflow"
+    ]
+  }
+}

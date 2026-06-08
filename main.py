@@ -115,98 +115,20 @@ async def auth_middleware(request: Request, call_next):
 
 
 # --- WebSocket 状态管理器 ---
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-        self.user_connections: Dict[str, WebSocket] = {}
-        self.connection_clients: Dict[WebSocket, str] = {}
+# 已迁移至 app/core/ws.py，此处导入以保持原模块级名称可用。
+from app.core.ws import ConnectionManager, manager
 
-    async def connect(self, websocket: WebSocket, client_id: str = None):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        self.connection_clients[websocket] = client_id or f"anon-{id(websocket)}"
-        if client_id:
-            self.user_connections[client_id] = websocket
-        print(f"WS Connected. Total: {len(self.active_connections)}, Online: {self.online_count()}")
-        await self.broadcast_count()
-
-    async def disconnect(self, websocket: WebSocket, client_id: str = None):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-        self.connection_clients.pop(websocket, None)
-        if client_id and self.user_connections.get(client_id) is websocket:
-            del self.user_connections[client_id]
-        print(f"WS Disconnected. Total: {len(self.active_connections)}, Online: {self.online_count()}")
-        await self.broadcast_count()
-
-    def online_count(self):
-        visible_clients = {
-            client_id for client_id in self.connection_clients.values()
-            if client_id and not str(client_id).startswith("canvas_")
-        }
-        return len(visible_clients)
-
-    async def broadcast_count(self):
-        count = self.online_count()
-        data = json.dumps({"type": "stats", "online_count": count})
-        for connection in self.active_connections[:]:
-            try:
-                await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast error: {e}")
-                self.active_connections.remove(connection)
-
-    async def broadcast_new_image(self, image_data: dict):
-        data = json.dumps({"type": "new_image", "data": image_data})
-        for connection in self.active_connections[:]:
-            try:
-                await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast image error: {e}")
-                self.active_connections.remove(connection)
-
-    async def broadcast_canvas_updated(self, canvas_id: str, updated_at: int, client_id: str = ""):
-        data = json.dumps({
-            "type": "canvas_updated",
-            "canvas_id": canvas_id,
-            "updated_at": updated_at,
-            "client_id": client_id or "",
-        })
-        for connection in self.active_connections[:]:
-            try:
-                await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast canvas error: {e}")
-                self.active_connections.remove(connection)
-
-    async def broadcast_asset_library_updated(self, updated_at: int = 0):
-        data = json.dumps({
-            "type": "asset_library_updated",
-            "updated_at": updated_at or now_ms(),
-        })
-        for connection in self.active_connections[:]:
-            try:
-                await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast asset library error: {e}")
-                self.active_connections.remove(connection)
-
-    async def send_personal_message(self, message: dict, client_id: str):
-        ws = self.user_connections.get(client_id)
-        if ws:
-            try:
-                await ws.send_text(json.dumps(message))
-            except Exception as e:
-                print(f"Personal message error for {client_id}: {e}")
-
-manager = ConnectionManager()
 GLOBAL_LOOP = None
 APP_VERSION = "2026.05.19"
+
+# 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
+import app.core.shared_state as shared_state
 
 @app.on_event("startup")
 async def startup_event():
     global GLOBAL_LOOP
     GLOBAL_LOOP = asyncio.get_running_loop()
+    shared_state.set_global_loop(GLOBAL_LOOP)
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
@@ -223,207 +145,77 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
         await manager.disconnect(websocket, client_id)
 
 # --- 配置区域 ---
-
-CLIENT_ID = str(uuid.uuid4())
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-WORKFLOW_DIR = os.path.join(BASE_DIR, "workflows")
-WORKFLOW_PATH = os.path.join(WORKFLOW_DIR, "Z-Image.json")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-STATIC_RUNNINGHUB_DIR = os.path.join(STATIC_DIR, "runninghub")
-STATIC_RUNNINGHUB_THUMBNAIL_DIR = os.path.join(STATIC_RUNNINGHUB_DIR, "thumbnails")
-STATIC_RUNNINGHUB_API_PROVIDERS_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "api_providers.json")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
-OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
-ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
-LOCAL_UPLOAD_DIR = os.path.join(ASSETS_DIR, "uploads")
-HISTORY_FILE = os.path.join(BASE_DIR, "history.json")  # 旧的全局历史文件（仅遗留，已改为每用户 history_file()）
-API_ENV_FILE = os.path.join(BASE_DIR, "API", ".env")
-DATA_DIR = os.path.join(BASE_DIR, "data")
-# 每个登录用户的私有数据根目录：data/users/<user_id>/
-USERS_DIR = os.path.join(DATA_DIR, "users")
-SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
-USERS_REGISTRY_FILE = os.path.join(DATA_DIR, "users_registry.json")
-# 兼容旧的全局路径（仅用于历史遗留/默认回退，不再直接读写用户数据）。
-LEGACY_CONVERSATION_DIR = os.path.join(DATA_DIR, "conversations")
-LEGACY_CANVAS_DIR = os.path.join(DATA_DIR, "canvases")
-API_PROVIDERS_FILE = os.path.join(DATA_DIR, "api_providers.json")
-RUNNINGHUB_WORKFLOW_STORE_FILE = os.path.join(DATA_DIR, "runninghub_workflows.json")
-SHARED_FOLDERS_FILE = os.path.join(DATA_DIR, "shared_folders.json")
-GLOBAL_CONFIG_FILE = os.path.join(BASE_DIR, "global_config.json")
-CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
-LOCAL_IMAGE_IMPORT_MAX_BYTES = int(os.getenv("LOCAL_IMAGE_IMPORT_MAX_BYTES", str(50 * 1024 * 1024)))
-LOCAL_IMAGE_IMPORT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-RUNNINGHUB_THUMBNAIL_EXTS = (".jpg",)
-
-QUEUE = []
-QUEUE_LOCK = Lock()
-HISTORY_LOCK = Lock()
-GLOBAL_CONFIG_LOCK = Lock()
-CONVERSATION_LOCK = Lock()
-CANVAS_LOCK = Lock()
-LOAD_LOCK = Lock()
-RUNNINGHUB_WORKFLOW_LOCK = Lock()
+# 已迁移至 app/config.py（值完全一致），此处导入以保持原模块级名称可用。
+from app.config import (
+    CLIENT_ID,
+    BASE_DIR,
+    WORKFLOW_DIR,
+    WORKFLOW_PATH,
+    STATIC_DIR,
+    STATIC_RUNNINGHUB_DIR,
+    STATIC_RUNNINGHUB_THUMBNAIL_DIR,
+    STATIC_RUNNINGHUB_API_PROVIDERS_FILE,
+    OUTPUT_DIR,
+    ASSETS_DIR,
+    OUTPUT_INPUT_DIR,
+    OUTPUT_OUTPUT_DIR,
+    ASSET_LIBRARY_DIR,
+    LOCAL_UPLOAD_DIR,
+    HISTORY_FILE,
+    API_ENV_FILE,
+    DATA_DIR,
+    USERS_DIR,
+    SESSIONS_FILE,
+    USERS_REGISTRY_FILE,
+    LEGACY_CONVERSATION_DIR,
+    LEGACY_CANVAS_DIR,
+    API_PROVIDERS_FILE,
+    RUNNINGHUB_WORKFLOW_STORE_FILE,
+    SHARED_FOLDERS_FILE,
+    GLOBAL_CONFIG_FILE,
+    CANVAS_TRASH_RETENTION_MS,
+    LOCAL_IMAGE_IMPORT_MAX_BYTES,
+    LOCAL_IMAGE_IMPORT_EXTS,
+    RUNNINGHUB_THUMBNAIL_EXTS,
+    QUEUE,
+    QUEUE_LOCK,
+    HISTORY_LOCK,
+    GLOBAL_CONFIG_LOCK,
+    CONVERSATION_LOCK,
+    CANVAS_LOCK,
+    LOAD_LOCK,
+    RUNNINGHUB_WORKFLOW_LOCK,
+)
 
 # --- 认证 / 会话 / 用户数据隔离 ---
-import contextvars
-import secrets as _secrets
-
-SESSION_LOCK = Lock()
-SESSION_COOKIE_NAME = "sid"
-SESSION_MAX_AGE = 365 * 24 * 60 * 60  # 1 年：同一台电脑不用反复登录
-# 当前请求的登录用户（由认证中间件设置），数据路径解析器据此隔离。
-current_user_var: "contextvars.ContextVar[str]" = contextvars.ContextVar("current_user", default="")
-# token -> {user_id, username, created_at, last_seen}
-SESSIONS: Dict[str, Dict[str, Any]] = {}
-
-# 用户注册表（无密码，仅记录已注册的用户名）。user_id -> {username, created_at}
-USERS_LOCK = Lock()
-USERS: Dict[str, Dict[str, Any]] = {}
-
-
-def clean_user_id(raw: str) -> str:
-    """把用户输入的用户名清洗成安全的目录名/用户标识。"""
-    candidate = (raw or "").strip()
-    candidate = re.sub(r"[^a-zA-Z0-9_.\u4e00-\u9fff-]", "-", candidate)[:60].strip(".-")
-    return candidate
-
-
-def load_users_registry():
-    global USERS
-    with USERS_LOCK:
-        if os.path.exists(USERS_REGISTRY_FILE):
-            try:
-                with open(USERS_REGISTRY_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    USERS = data
-            except Exception:
-                USERS = {}
-        else:
-            USERS = {}
-
-
-def _persist_users_unlocked():
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = USERS_REGISTRY_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(USERS, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, USERS_REGISTRY_FILE)
-    except Exception as e:
-        print(f"[auth] persist users failed: {e}")
-
-
-def user_exists(user_id: str) -> bool:
-    with USERS_LOCK:
-        return user_id in USERS
-
-
-def register_user(user_id: str, username: str) -> bool:
-    """注册新用户名；若已被占用返回 False。"""
-    with USERS_LOCK:
-        if user_id in USERS:
-            return False
-        USERS[user_id] = {"username": username, "created_at": now_ms()}
-        _persist_users_unlocked()
-    return True
-
-
-def load_sessions():
-    global SESSIONS
-    with SESSION_LOCK:
-        if os.path.exists(SESSIONS_FILE):
-            try:
-                with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    SESSIONS = data
-            except Exception:
-                SESSIONS = {}
-        else:
-            SESSIONS = {}
-
-
-def _persist_sessions_unlocked():
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = SESSIONS_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(SESSIONS, f, ensure_ascii=False)
-        os.replace(tmp, SESSIONS_FILE)
-    except Exception as e:
-        print(f"[auth] persist sessions failed: {e}")
-
-
-def create_session(user_id: str, username: str) -> str:
-    token = _secrets.token_urlsafe(32)
-    now = now_ms()
-    with SESSION_LOCK:
-        SESSIONS[token] = {
-            "user_id": user_id,
-            "username": username,
-            "created_at": now,
-            "last_seen": now,
-        }
-        _persist_sessions_unlocked()
-    return token
-
-
-def get_session(token: str):
-    if not token:
-        return None
-    with SESSION_LOCK:
-        sess = SESSIONS.get(token)
-        if sess:
-            sess["last_seen"] = now_ms()
-        return dict(sess) if sess else None
-
-
-def destroy_session(token: str):
-    if not token:
-        return
-    with SESSION_LOCK:
-        if token in SESSIONS:
-            del SESSIONS[token]
-            _persist_sessions_unlocked()
-
-
-def current_user_id() -> str:
-    """返回当前请求的用户 id；未登录上下文回退到 'anonymous'（仅防御性兜底）。"""
-    return current_user_var.get() or "anonymous"
-
-
-def user_data_dir() -> str:
-    path = os.path.join(USERS_DIR, current_user_id())
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-# 以下解析器替代原来的全局路径常量，实现按用户隔离（方案 A）。
-def canvas_dir() -> str:
-    path = os.path.join(user_data_dir(), "canvases")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def conversation_base_dir() -> str:
-    path = os.path.join(user_data_dir(), "conversations")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def history_file() -> str:
-    return os.path.join(user_data_dir(), "history.json")
-
-
-def asset_library_path() -> str:
-    return os.path.join(user_data_dir(), "asset_library.json")
-
-
-def prompt_library_path() -> str:
-    return os.path.join(user_data_dir(), "prompt_libraries.json")
+# 已迁移至 app/core/auth.py，此处导入以保持原模块级名称可用。
+from app.core.utils import now_ms
+from app.core.auth import (
+    SESSION_LOCK,
+    SESSION_COOKIE_NAME,
+    SESSION_MAX_AGE,
+    current_user_var,
+    SESSIONS,
+    USERS_LOCK,
+    USERS,
+    clean_user_id,
+    load_users_registry,
+    _persist_users_unlocked,
+    user_exists,
+    register_user,
+    load_sessions,
+    _persist_sessions_unlocked,
+    create_session,
+    get_session,
+    destroy_session,
+    current_user_id,
+    user_data_dir,
+    canvas_dir,
+    conversation_base_dir,
+    history_file,
+    asset_library_path,
+    prompt_library_path,
+)
 
 NEXT_TASK_ID = 1
 JIMENG_LOGIN_SESSION = {
@@ -468,8 +260,7 @@ try:
 except Exception:
     JIMENG_DEFAULT_POLL_SECONDS = 900
 VOLCENGINE_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-VOLCENGINE_DEFAULT_PROJECT_NAME = "default"
-VOLCENGINE_DEFAULT_REGION = "cn-beijing"
+from app.config import VOLCENGINE_DEFAULT_PROJECT_NAME, VOLCENGINE_DEFAULT_REGION
 VOLCENGINE_DEFAULT_VIDEO_MODELS = [
     "doubao-seedance-2-0-260128",
     "doubao-seedance-2-0-fast-260128",
@@ -674,7 +465,9 @@ APIMART_IMAGE_INITIAL_POLL_DELAY = float(os.getenv("APIMART_IMAGE_INITIAL_POLL_D
 VIDEO_POLL_TIMEOUT = float(os.getenv("VIDEO_POLL_TIMEOUT", "1800"))
 ONLINE_IMAGE_PROMPT_MAX_LENGTH = int(os.getenv("ONLINE_IMAGE_PROMPT_MAX_LENGTH", "20000"))
 VIDEO_PROMPT_MAX_LENGTH = int(os.getenv("VIDEO_PROMPT_MAX_LENGTH", "4000"))
+from app.config import ONLINE_IMAGE_PROMPT_MAX_LENGTH, VIDEO_PROMPT_MAX_LENGTH
 LLM_MESSAGE_MAX_LENGTH = int(os.getenv("LLM_MESSAGE_MAX_LENGTH", "20000"))
+from app.config import LLM_MESSAGE_MAX_LENGTH
 
 FIELD_LABELS = {
     "prompt": "提示词",
@@ -1509,428 +1302,77 @@ def static_html_response(filename: str):
     )
 
 STATIC_PROMPT_TEMPLATE_MD = os.path.join(STATIC_DIR, "system-prompts", "infinite-canvas-prompt-templates.md")
-PROMPT_TEMPLATE_PATHS = [STATIC_PROMPT_TEMPLATE_MD]
-PROMPT_TEMPLATE_EN = {
-    "多机位九宫格": {
-        "name": "9-Angle Multi-Camera Grid",
-        "scene": "Show the same subject or scene from 9 camera angles for character turnarounds, product views, or space scouting.",
-    },
-    "多机位九宫格4K": {
-        "name": "9-Angle Multi-Camera Grid 4K",
-        "scene": "A high-resolution 9-angle reference sheet for print-grade output, large displays, and fine material study.",
-    },
-    "剧情推演四宫格": {
-        "name": "4-Panel Story Progression",
-        "scene": "Preview four consecutive story beats or emotional stages for storyboard planning and narrative rhythm tests.",
-    },
-    "角色脸部三视图": {
-        "name": "Character Face 3-View Sheet",
-        "scene": "Front, side, and three-quarter face references for Actor ID locking and expression consistency.",
-    },
-    "产品三视图": {
-        "name": "Product 3-View Sheet",
-        "scene": "Front, side, and top product views for industrial design, ecommerce detail pages, and technical documents.",
-    },
-    "25宫格连贯分镜": {
-        "name": "25-Panel Continuous Storyboard",
-        "scene": "A full 5x5 storyboard for continuous scene or action flow, useful for film previews and motion continuity tests.",
-    },
-    "电影级光影校正": {
-        "name": "Cinematic Lighting Comparison",
-        "scene": "Compare the same subject or scene under different lighting conditions for mood, color, and lighting choices.",
-    },
-    "角色设定参考表（胸口特写+全身三视图）": {
-        "name": "Character Reference Sheet: Portrait + Full-Body Views",
-        "scene": "A consistency reference combining a face anchor and full-body front, side, and back views for Actor ID and costume lock.",
-    },
-    "6种基础表情胸像（2×3六宫格）": {
-        "name": "6 Basic Expression Busts",
-        "scene": "Six basic expressions of the same character for expression consistency, emotion baselines, and Seedance Talk-to-Edit reference.",
-    },
-    "360全景图": {
-        "name": "360 Panorama VR Image",
-        "scene": "Generate a seamless 360-degree VR panorama with continuous left and right edges and natural pole transitions.",
-    },
-}
+# 提示词模板解析/英文映射已迁移至 app/services/prompts.py（原样迁移）。
+# 此处导入以保持原模块级名称可用（canvas smart-templates 路由仍在 main.py 使用）。
+from app.services.prompts import (
+    PROMPT_TEMPLATE_PATHS,
+    PROMPT_TEMPLATE_EN,
+    prompt_template_markdown_path,
+    prompt_template_category,
+    extract_prompt_template_section,
+    parse_prompt_template_markdown,
+)
 
-def prompt_template_markdown_path() -> str:
-    for path in PROMPT_TEMPLATE_PATHS:
-        if os.path.exists(path):
-            return path
-    return ""
-
-def prompt_template_category(name: str, scene: str) -> str:
-    text = f"{name} {scene}"
-    if any(k in text for k in ["光影", "灯光", "光效", "电影级"]):
-        return "lighting"
-    if any(k in text for k in ["视角", "全景", "VR", "镜头", "俯拍", "仰拍", "景别", "构图", "透视"]):
-        return "view"
-    if any(k in text for k in ["角色", "脸部", "表情", "Actor", "服装"]):
-        return "character"
-    if any(k in name for k in ["产品", "电商", "工业"]):
-        return "product"
-    return "storyboard"
-
-def extract_prompt_template_section(block: str, title: str) -> str:
-    pattern = rf"###\s*{re.escape(title)}\s*\n(?P<body>.*?)(?=\n###\s+|\Z)"
-    match = re.search(pattern, block, re.S)
-    if not match:
-        return ""
-    body = match.group("body").strip()
-    fence = re.search(r"```(?:\w+)?\s*\n(?P<code>.*?)\n```", body, re.S)
-    return (fence.group("code") if fence else body).strip()
-
-def parse_prompt_template_markdown(text: str):
-    templates = []
-    matches = list(re.finditer(r"^##\s*预设\s*(\d+)\s*[：:]\s*(.+?)\s*$", text, re.M))
-    for index, match in enumerate(matches):
-        number = match.group(1).strip()
-        name = match.group(2).strip()
-        start = match.end()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        block = text[start:end]
-        scene = extract_prompt_template_section(block, "适用场景")
-        positive = extract_prompt_template_section(block, "正向提示词")
-        negative = extract_prompt_template_section(block, "负向提示词")
-        params_raw = extract_prompt_template_section(block, "平台参数建议")
-        params = {}
-        for line in params_raw.splitlines():
-            item = re.match(r"[-*]\s*\*\*(.+?)\*\*\s*[：:]\s*(.+)", line.strip())
-            if item:
-                params[item.group(1).strip()] = item.group(2).strip()
-        if not positive:
-            continue
-        templates.append({
-            "id": f"builtin_md_{number}",
-            "number": number,
-            "name": name,
-            "name_en": PROMPT_TEMPLATE_EN.get(name, {}).get("name", name),
-            "category": prompt_template_category(name, scene),
-            "scene": scene,
-            "scene_en": PROMPT_TEMPLATE_EN.get(name, {}).get("scene", scene),
-            "positive": positive,
-            "negative": negative,
-            "params": params,
-            "builtin": True,
-        })
-    return templates
-
-class GenerateRequest(BaseModel):
-    prompt: str = ""
-    width: int = 1024
-    height: int = 1024
-    workflow_json: str = "Z-Image.json"
-    params: Dict[str, Any] = {}
-    type: str = "zimage"
-    client_id: str = ""
-    convert_to_jpg: bool = False
-
-class DeleteHistoryRequest(BaseModel):
-    timestamp: float
-
-class SaveHistoryRequest(BaseModel):
-    images: List[str]
-    type: str = "zimage"
-    prompt: str = ""
-    is_cloud: bool = False
-
-class TokenRequest(BaseModel):
-    token: str
-
-class CloudGenRequest(BaseModel):
-    prompt: str
-    api_key: str = ""
-    model: str = ""
-    resolution: str = "1024x1024"
-    type: str = "zimage"
-    image_urls: List[str] = []
-    loras: Optional[Any] = None
-    client_id: Optional[str] = None
-
-class CloudPollRequest(BaseModel):
-    task_id: str
-    api_key: str = ""
-    client_id: Optional[str] = None
-
-class AIReference(BaseModel):
-    url: str = ""
-    name: str = ""
-    role: str = ""
-
-class OnlineImageRequest(BaseModel):
-    prompt: str = Field(min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
-    provider_id: str = "comfly"
-    model: str = ""
-    size: str = "1024x1024"
-    quality: str = "auto"
-    n: int = 1
-    reference_images: List[AIReference] = []
+# --- Pydantic 模型 ---
+# 全部模型已迁移至 app/models/__init__.py，此处统一导入以保持原模块级名称可用。
+from app.models import (
+    GenerateRequest,
+    DeleteHistoryRequest,
+    SaveHistoryRequest,
+    TokenRequest,
+    CloudGenRequest,
+    CloudPollRequest,
+    AIReference,
+    OnlineImageRequest,
+    CanvasVideoRequest,
+    TempShUploadRequest,
+    CloudVideoUploadRequest,
+    RunningHubSubmitRequest,
+    RunningHubWorkflowSubmitRequest,
+    RunningHubUploadAssetRequest,
+    JimengHelpRequest,
+    JimengQueryMediaRequest,
+    RunningHubWorkflowConfigField,
+    RunningHubWorkflowConfig,
+    ApiProviderPayload,
+    ChatRequest,
+    MsGenerateRequest,
+    CanvasLLMRequest,
+    ConversationCreateRequest,
+    CanvasCreateRequest,
+    CanvasMetaUpdate,
+    CanvasSaveRequest,
+    CanvasAssetCheckRequest,
+    CanvasAssetDownloadRequest,
+    SmartCanvasGroupExportItem,
+    SmartCanvasGroupExportRequest,
+    LocalImageImportRequest,
+    AssetLibraryCategoryRequest,
+    AssetLibraryRequest,
+    AssetLibraryAddRequest,
+    AssetLibraryBatchAddRequest,
+    SharedFolderRegister,
+    SharedFolderImport,
+    AssetLibraryRenameRequest,
+    AssetLibraryBatchDeleteRequest,
+    AssetLibraryBatchMoveRequest,
+    AssetLibraryBatchCropRequest,
+    AssetAvatarRegisterRequest,
+    PromptLibraryRequest,
+    PromptLibraryItemRequest,
+    PromptLibraryBatchDeleteRequest,
+    PromptLibraryCategoryRequest,
+    LoginRequest,
+    TestConnectionPayload,
+    WorkflowField,
+    WorkflowConfig,
+    WorkflowUploadRequest,
+    WorkflowRunRequest,
+    ComfyInstancesPayload,
+)
 
 CANVAS_TASKS: Dict[str, Dict[str, Any]] = {}
 CANVAS_TASK_LOCK = Lock()
-
-class CanvasVideoRequest(BaseModel):
-    prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
-    provider_id: str = "comfly"
-    model: str = "veo3-fast"
-    duration: int = 5
-    aspect_ratio: str = "16:9"
-    resolution: str = ""
-    size: str = ""
-    images: List[AIReference] = []
-    videos: List[str] = []
-    audios: List[str] = []
-    enhance_prompt: bool = False
-    enable_upsample: bool = False
-    watermark: bool = False
-    seed: Optional[int] = None
-    camerafixed: bool = False
-    return_last_frame: bool = False
-    generate_audio: bool = False
-    multimodal: bool = False
-    trusted_asset: bool = False
-
-class TempShUploadRequest(BaseModel):
-    url: str = ""
-
-class CloudVideoUploadRequest(BaseModel):
-    url: str = ""
-    service: str = "auto"
-
-class RunningHubSubmitRequest(BaseModel):
-    webappId: str = ""
-    nodeInfoList: List[Dict[str, Any]] = []
-    instanceType: str = ""
-    useWallet: bool = False
-
-class RunningHubWorkflowSubmitRequest(BaseModel):
-    workflowId: str = ""
-    nodeInfoList: List[Dict[str, Any]] = []
-    workflow: Any = None
-    useWallet: bool = False
-
-class RunningHubUploadAssetRequest(BaseModel):
-    url: str = ""
-    useWallet: bool = False
-
-class JimengHelpRequest(BaseModel):
-    command: str = ""
-
-class JimengQueryMediaRequest(BaseModel):
-    submit_id: str = ""
-    kind: str = "image"
-
-class RunningHubWorkflowConfigField(BaseModel):
-    id: str = ""
-    nodeId: str = ""
-    fieldName: str = ""
-    fieldValue: str = ""
-    fieldType: str = "TEXT"
-    label: str = ""
-    enabled: bool = True
-    sourceFromUpstream: bool = True
-    group: str = ""
-    note: str = ""
-    options: List[str] = Field(default_factory=list)
-    random_enabled: bool = False
-    min: Any = ""
-    max: Any = ""
-    step: Any = ""
-    imageOrder: int = 0
-    required: bool = False
-
-class RunningHubWorkflowConfig(BaseModel):
-    workflowId: str = ""
-    title: str = ""
-    description: str = ""
-    fields: List[RunningHubWorkflowConfigField] = Field(default_factory=list)
-    workflowJson: Dict[str, Any] = Field(default_factory=dict)
-    optionalImageMode: str = "prune-workflow"
-    raw: Dict[str, Any] = Field(default_factory=dict)
-
-class ApiProviderPayload(BaseModel):
-    id: str = ""
-    name: str = ""
-    base_url: str = ""
-    protocol: str = "openai"
-    image_generation_endpoint: str = ""
-    image_edit_endpoint: str = ""
-    enabled: bool = True
-    primary: bool = False
-    image_models: List[str] = []
-    chat_models: List[str] = []
-    video_models: List[str] = []
-    model_protocols: Dict[str, str] = {}
-    ms_loras: List[Dict[str, Any]] = []
-    ms_defaults_version: int = 0
-    rh_apps: List[Dict[str, Any]] = []
-    rh_workflows: List[Dict[str, Any]] = []
-    volcengine_project_name: str = VOLCENGINE_DEFAULT_PROJECT_NAME
-    volcengine_region: str = VOLCENGINE_DEFAULT_REGION
-    volcengine_access_key_id: Optional[str] = None
-    volcengine_secret_access_key: Optional[str] = None
-    api_key: Optional[str] = None
-    wallet_api_key: Optional[str] = None
-    clear_key: bool = False
-    clear_wallet_key: bool = False
-    clear_volcengine_access_key_id: bool = False
-    clear_volcengine_secret_access_key: bool = False
-
-class ChatRequest(BaseModel):
-    conversation_id: str = ""
-    message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
-    model: str = ""
-    image_model: str = ""
-    mode: str = "chat"
-    size: str = "1024x1024"
-    quality: str = "auto"
-    reference_images: List[AIReference] = []
-    provider: str = "comfly"
-    ms_model: str = ""
-
-class MsGenerateRequest(BaseModel):
-    prompt: str
-    api_key: str = ""
-    model: str = "black-forest-labs/FLUX.2-klein-9B"
-    image_urls: List[str] = []
-    width: int = 0
-    height: int = 0
-    size: str = ""
-    loras: Optional[Any] = None
-    client_id: Optional[str] = None
-
-class CanvasLLMRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
-    system_prompt: str = ""
-    model: str = ""
-    messages: List[Dict[str, Any]] = []
-    provider: str = "comfly"
-    ms_model: str = ""
-    images: List[str] = []   # 可以是 /output/*.png、/assets/*.png 本地路径 或 http(s) URL 或 data URL
-    videos: List[str] = []   # 可以是 /output/*.mp4、/assets/*.mp4 本地路径 或 http(s) URL 或 data URL
-
-class ConversationCreateRequest(BaseModel):
-    title: str = "新对话"
-
-class CanvasCreateRequest(BaseModel):
-    title: str = "未命名画布"
-    icon: str = "🧩"
-    kind: str = "classic"
-
-class CanvasMetaUpdate(BaseModel):
-    title: Optional[str] = None
-    icon: Optional[str] = None
-    owner: Optional[str] = None
-    color: Optional[str] = None
-    pinned: Optional[bool] = None
-
-class CanvasSaveRequest(BaseModel):
-    title: str = "未命名画布"
-    icon: str = "🧩"
-    nodes: List[Dict[str, Any]] = []
-    connections: List[Dict[str, Any]] = []
-    viewport: Dict[str, Any] = {}
-    logs: List[Dict[str, Any]] = []
-    settings: Dict[str, Any] = {}
-    client_id: str = ""
-    base_updated_at: int = 0
-
-class CanvasAssetCheckRequest(BaseModel):
-    urls: List[str] = []
-
-class CanvasAssetDownloadRequest(BaseModel):
-    urls: List[str] = []
-    items: List[Dict[str, Any]] = []
-    filename: str = "canvas-output-images.zip"
-
-class SmartCanvasGroupExportItem(BaseModel):
-    kind: str = ""
-    url: str = ""
-    text: str = ""
-    name: str = ""
-
-class SmartCanvasGroupExportRequest(BaseModel):
-    folder: str = ""
-    group_name: str = "group"
-    items: List[SmartCanvasGroupExportItem] = []
-
-class LocalImageImportRequest(BaseModel):
-    path: str = ""
-    paths: List[str] = Field(default_factory=list)
-
-class AssetLibraryCategoryRequest(BaseModel):
-    name: str = "新文件夹"
-    type: str = "image"
-    library_id: str = ""
-
-class AssetLibraryRequest(BaseModel):
-    name: str = "资产库"
-
-class AssetLibraryAddRequest(BaseModel):
-    category_id: str = ""
-    url: str = ""
-    name: str = ""
-    library_id: str = ""
-
-class AssetLibraryBatchAddRequest(BaseModel):
-    category_id: str = ""
-    library_id: str = ""
-    items: List[AssetLibraryAddRequest] = []
-
-class SharedFolderRegister(BaseModel):
-    path: str = ""
-    name: str = ""
-
-class SharedFolderImport(BaseModel):
-    library_id: str = ""
-    category_id: str = ""
-    folder_id: str = ""
-    paths: List[str] = []
-
-class AssetLibraryRenameRequest(BaseModel):
-    name: str = ""
-
-class AssetLibraryBatchDeleteRequest(BaseModel):
-    ids: List[str] = []
-    library_id: str = ""
-
-class AssetLibraryBatchMoveRequest(BaseModel):
-    ids: List[str] = []
-    library_id: str = ""
-    target_library_id: str = ""
-    target_category_id: str = ""
-
-class AssetLibraryBatchCropRequest(BaseModel):
-    ids: List[str] = []
-    library_id: str = ""
-    target_library_id: str = ""
-    target_category_id: str = ""
-    mode: str = "square"
-
-class AssetAvatarRegisterRequest(BaseModel):
-    library_id: str = ""
-    provider_id: str = ""
-    project_name: str = "default"
-    group_name: str = ""
-
-class PromptLibraryRequest(BaseModel):
-    name: str = "提示词库"
-
-class PromptLibraryItemRequest(BaseModel):
-    library_id: str = ""
-    item_id: str = ""
-    name: str = "提示词"
-    category: str = "custom"
-    positive: str = ""
-    negative: str = ""
-    scene: str = ""
-
-class PromptLibraryBatchDeleteRequest(BaseModel):
-    ids: List[str] = []
-
-class PromptLibraryCategoryRequest(BaseModel):
-    name: str = "新分组"
-    library_id: str = ""
 
 # --- 负载均衡 ---
 
@@ -2148,223 +1590,42 @@ def collect_comfy_file_items(node_output):
                 items.append((key, item))
     return items
 
-def save_to_history(record):
-    with HISTORY_LOCK:
-        hist_path = history_file()
-        history = []
-        if os.path.exists(hist_path):
-            try:
-                with open(hist_path, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-            except: pass
-        if "timestamp" not in record:
-            record["timestamp"] = time.time()
-        history.insert(0, record)
-        with open(hist_path, 'w', encoding='utf-8') as f:
-            json.dump(history[:5000], f, ensure_ascii=False, indent=4)
+# --- 历史记录数据逻辑 ---
+# save_to_history / get_comfy_history 已迁移至 app/services/history.py（原样迁移）。
+# 此处导入以保持原模块级名称可用（生成域多处仍在 main.py 使用）。
+from app.services.history import save_to_history, get_comfy_history
 
-def get_comfy_history(comfy_address, prompt_id):
-    try:
-        with urllib.request.urlopen(f"http://{comfy_address}/history/{prompt_id}") as response:
-            return json.loads(response.read())
-    except Exception as e:
-        return {}
+# --- 用户身份解析 / 对话管理 ---
+# safe_user_id / user_dir 已迁移至 app/core/auth.py；
+# 对话管理 helpers 与路由已迁移至 app/routers/conversations.py。
+# 此处导入以保持原模块级名称可用（chat / chat_stream 仍在 main.py 使用它们）。
+from app.core.auth import safe_user_id, user_dir
+from app.routers.conversations import (
+    conversation_path,
+    save_conversation,
+    new_conversation,
+    load_conversation,
+    list_conversations,
+)
 
-def safe_user_id(user_id, request: Request):
-    # 安全：始终使用认证中间件注入的当前登录用户，忽略前端传来的 X-User-Id（防伪造）。
-    authed = current_user_var.get()
-    if authed:
-        return authed
-    # 兜底（理论上中间件已拦截未登录请求，不应到达此处）。
-    candidate = (user_id or "").strip()
-    if not candidate and request and request.client:
-        candidate = f"ip-{request.client.host}"
-    candidate = re.sub(r"[^a-zA-Z0-9_.-]", "-", candidate)[:80].strip(".-")
-    return candidate or "anonymous"
-
-def user_dir(user_id):
-    # 对话目录改到每用户私有根目录下：data/users/<user_id>/conversations
-    path = os.path.join(USERS_DIR, user_id, "conversations")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-def conversation_path(user_id, conversation_id):
-    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", conversation_id or "")
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="无效的对话 ID")
-    return os.path.join(user_dir(user_id), f"{cleaned}.json")
-
-def now_ms():
-    return int(time.time() * 1000)
-
-def save_conversation(user_id, conversation):
-    with CONVERSATION_LOCK:
-        path = conversation_path(user_id, conversation["id"])
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(conversation, f, ensure_ascii=False, indent=2)
-
-def new_conversation(user_id, title="新对话"):
-    timestamp = now_ms()
-    conversation = {
-        "id": uuid.uuid4().hex,
-        "title": (title or "新对话")[:80],
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "messages": [],
-    }
-    save_conversation(user_id, conversation)
-    return conversation
-
-def load_conversation(user_id, conversation_id):
-    path = conversation_path(user_id, conversation_id)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="对话不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-def list_conversations(user_id):
-    records = []
-    for filename in os.listdir(user_dir(user_id)):
-        if not filename.endswith(".json"):
-            continue
-        path = os.path.join(user_dir(user_id), filename)
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            continue
-        messages = data.get("messages", [])
-        last_message = next((m for m in reversed(messages) if m.get("role") != "system"), None)
-        records.append({
-            "id": data.get("id"),
-            "title": data.get("title", "新对话"),
-            "created_at": data.get("created_at", 0),
-            "updated_at": data.get("updated_at", 0),
-            "last_message": (last_message or {}).get("content", ""),
-        })
-    return sorted(records, key=lambda item: item["updated_at"], reverse=True)
-
-def canvas_path(canvas_id):
-    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", canvas_id or "")
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="无效的画布 ID")
-    return os.path.join(canvas_dir(), f"{cleaned}.json")
-
-def save_canvas(canvas):
-    canvas["updated_at"] = now_ms()
-    with CANVAS_LOCK:
-        with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
-            json.dump(canvas, f, ensure_ascii=False, indent=2)
-
-def normalize_canvas_kind(kind="classic"):
-    return "smart" if str(kind or "").strip().lower() == "smart" else "classic"
-
-def new_canvas(title="未命名画布", icon="layers", kind="classic"):
-    timestamp = now_ms()
-    canvas_kind = normalize_canvas_kind(kind)
-    canvas = {
-        "id": uuid.uuid4().hex,
-        "title": (title or ("智能画布" if canvas_kind == "smart" else "未命名画布"))[:80],
-        "icon": (icon or ("sparkles" if canvas_kind == "smart" else "🧩"))[:32],
-        "kind": canvas_kind,
-        "owner": "",
-        "color": "",
-        "pinned": False,
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "nodes": [],
-        "connections": [],
-        "viewport": {"x": 0, "y": 0, "scale": 1},
-    }
-    save_canvas(canvas)
-    return canvas
-
-def load_canvas(canvas_id):
-    path = canvas_path(canvas_id)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="画布不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        canvas = json.load(f)
-    if canvas.get("deleted_at"):
-        raise HTTPException(status_code=404, detail="画布已在回收站")
-    return canvas
-
-def load_canvas_any(canvas_id):
-    path = canvas_path(canvas_id)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="画布不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-CANVAS_COLORS = {"", "red", "orange", "amber", "green", "teal", "blue", "violet", "pink", "slate"}
-
-def normalize_canvas_color(value):
-    color = str(value or "").strip().lower()
-    return color if color in CANVAS_COLORS else ""
-
-def canvas_record(data):
-    return {
-        "id": data.get("id"),
-        "title": data.get("title", "未命名画布"),
-        "icon": data.get("icon", "🧩"),
-        "kind": normalize_canvas_kind(data.get("kind")),
-        "owner": str(data.get("owner") or "")[:40],
-        "color": normalize_canvas_color(data.get("color")),
-        "pinned": bool(data.get("pinned") or False),
-        "created_at": data.get("created_at", 0),
-        "updated_at": data.get("updated_at", 0),
-        "deleted_at": data.get("deleted_at", 0),
-        "node_count": len(data.get("nodes", [])),
-    }
-
-def cleanup_expired_canvas_trash():
-    cutoff = now_ms() - CANVAS_TRASH_RETENTION_MS
-    cdir = canvas_dir()
-    with CANVAS_LOCK:
-        for filename in os.listdir(cdir):
-            if not filename.endswith(".json"):
-                continue
-            path = os.path.join(cdir, filename)
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                deleted_at = int(data.get("deleted_at") or 0)
-                if deleted_at and deleted_at < cutoff:
-                    os.remove(path)
-            except Exception:
-                continue
-
-def iter_canvas_records(include_deleted=False):
-    cleanup_expired_canvas_trash()
-    cdir = canvas_dir()
-    records = []
-    for filename in os.listdir(cdir):
-        if not filename.endswith(".json"):
-            continue
-        try:
-            with open(os.path.join(cdir, filename), 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            continue
-        is_deleted = bool(data.get("deleted_at"))
-        if include_deleted != is_deleted:
-            continue
-        records.append(canvas_record(data))
-    return records
-
-def list_canvases():
-    records = iter_canvas_records(include_deleted=False)
-    return sorted(
-        records,
-        key=lambda item: (
-            0 if item.get("pinned") else 1,
-            -int(item.get("updated_at") or item.get("created_at") or 0),
-        ),
-    )
-
-def list_deleted_canvases():
-    records = iter_canvas_records(include_deleted=True)
-    return sorted(records, key=lambda item: item["deleted_at"], reverse=True)
+# --- 画布管理数据逻辑 ---
+# helpers 与路由已迁移至 app/routers/canvases.py（原样迁移）。
+# 此处导入以保持原模块级名称可用（如有 main 内残留引用）。
+from app.routers.canvases import (
+    canvas_path,
+    save_canvas,
+    normalize_canvas_kind,
+    new_canvas,
+    load_canvas,
+    load_canvas_any,
+    CANVAS_COLORS,
+    normalize_canvas_color,
+    canvas_record,
+    cleanup_expired_canvas_trash,
+    iter_canvas_records,
+    list_canvases,
+    list_deleted_canvases,
+)
 
 def display_title(text):
     title = re.sub(r"\s+", " ", text or "").strip()
@@ -3420,37 +2681,14 @@ async def wait_for_image_task(client, task_id, provider=None):
         await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
     raise HTTPException(status_code=504, detail=f"生图任务超时（已等待 {int(timeout)} 秒），task_id={task_id}")
 
-def output_storage(category="output"):
-    return (OUTPUT_INPUT_DIR, "input") if category == "input" else (OUTPUT_OUTPUT_DIR, "output")
-
-def output_url_for(filename, category="output"):
-    _, subdir = output_storage(category)
-    return f"/assets/{subdir}/{filename}"
-
-def output_path_for(filename, category="output"):
-    folder, _ = output_storage(category)
-    return os.path.join(folder, filename)
-
-def output_file_from_url(url):
-    if isinstance(url, dict):
-        url = url.get("url", "")
-    if not url or not (url.startswith("/output/") or url.startswith("/assets/")):
-        return None
-    clean = urllib.parse.unquote(url.split("?", 1)[0]).replace("\\", "/")
-    if clean.startswith("/assets/"):
-        root = ASSETS_DIR
-        rel = clean[len("/assets/"):]
-    else:
-        root = OUTPUT_DIR
-        rel = clean[len("/output/"):]
-    rel = rel.lstrip("/")
-    if not rel:
-        return None
-    path = os.path.abspath(os.path.join(root, rel))
-    output_root = os.path.abspath(root)
-    if os.path.commonpath([output_root, path]) != output_root or not os.path.exists(path):
-        return None
-    return path
+# 本地媒体路径解析器已迁移至 app/core/media.py（原样迁移），多域复用。
+# 此处导入以保持原模块级名称可用。
+from app.core.media import (
+    output_storage,
+    output_url_for,
+    output_path_for,
+    output_file_from_url,
+)
 
 def local_media_file_by_basename(name: str):
     safe = os.path.basename(urllib.parse.unquote(str(name or "")))
@@ -3561,526 +2799,51 @@ def import_local_image_file(path):
         raise HTTPException(status_code=500, detail="导入本地图片失败")
     return {"url": output_url_for(filename, "input"), "name": os.path.basename(path) or filename, "kind": "image"}
 
-def default_asset_library():
-    categories = [
-        {"id": "characters", "name": "角色", "type": "image", "items": []},
-        {"id": "scenes", "name": "场景", "type": "image", "items": []},
-        {"id": "workflows", "name": "工作流", "type": "workflow", "items": []},
-    ]
-    return {
-        "active_library_id": "default",
-        "libraries": [{"id": "default", "name": "默认资产库", "type": "asset", "categories": categories}],
-        "categories": categories,
-        "updated_at": now_ms(),
-    }
+# --- 素材库数据逻辑 ---
+# 已迁移至 app/services/assets.py（原样迁移），数据 CRUD 路由迁移至 app/routers/assets.py。
+# avatar 注册/审核路由暂留 main.py，故此处导入以保持原模块级名称可用。
+from app.services.assets import (
+    default_asset_library,
+    normalize_asset_library,
+    migrate_asset_item_registrations,
+    load_asset_library,
+    sort_asset_library_items,
+    asset_library_media_kind,
+    asset_library_safe_extension,
+    make_asset_library_item,
+    save_asset_library,
+    find_asset_category,
+    find_asset_library,
+    find_asset_category_in_library,
+    find_asset_category_with_library,
+    find_asset_item_in_library,
+)
 
-def normalize_asset_library(lib):
-    if not isinstance(lib, dict):
-        lib = default_asset_library()
-    legacy_categories = lib.get("categories") if isinstance(lib.get("categories"), list) else None
-    libraries = lib.get("libraries") if isinstance(lib.get("libraries"), list) else []
-    if not libraries:
-        libraries = [{
-            "id": "default",
-            "name": "默认资产库",
-            "type": "asset",
-            "categories": legacy_categories or default_asset_library()["categories"],
-        }]
-    for library in libraries:
-        library["id"] = re.sub(r"[^A-Za-z0-9_-]+", "_", str(library.get("id") or f"lib_{uuid.uuid4().hex[:8]}"))[:40]
-        library["name"] = sanitize_asset_name(library.get("name") or "资产库", "资产库")
-        cats = library.get("categories") if isinstance(library.get("categories"), list) else []
-        if not any(c.get("type") == "workflow" for c in cats):
-            cats.append({"id": "workflows", "name": "工作流", "type": "workflow", "items": []})
-        for cat in cats:
-            for item in (cat.get("items") or []):
-                migrate_asset_item_registrations(item)
-        library["categories"] = cats
-    active = str(lib.get("active_library_id") or libraries[0].get("id") or "default")
-    if not any(item.get("id") == active for item in libraries):
-        active = libraries[0].get("id") or "default"
-    active_library = next((item for item in libraries if item.get("id") == active), libraries[0])
-    lib["libraries"] = libraries
-    lib["active_library_id"] = active
-    lib["categories"] = active_library.get("categories") or []
-    lib["updated_at"] = int(lib.get("updated_at") or now_ms())
-    sort_asset_library_items(lib)
-    return lib
+# --- 共享文件夹（局域网只读浏览/引用） ---
+# helpers 与 6 个路由已迁移至 app/routers/shared_folders.py（原样迁移）。
 
-AVATAR_LEGACY_FLAT_FIELDS = ("platform", "provider_id", "project_name", "avatar_task_id",
-                             "avatar_status", "avatar_detail", "asset_uri", "asset_id", "registered_at")
+# --- 提示词库数据逻辑 ---
+# 已迁移至 app/services/prompts.py（原样迁移），路由迁移至 app/routers/prompts.py。
+# 此处导入以保持原模块级名称可用（canvas smart-templates 仍在 main.py 使用 builtin_prompt_templates）。
+from app.services.prompts import (
+    builtin_prompt_templates,
+    normalize_prompt_category_id,
+    normalize_prompt_library_item,
+    seed_system_prompt_library,
+    default_prompt_libraries,
+    defaultPromptTemplateCategories,
+    normalize_prompt_template_categories,
+    normalize_prompt_libraries,
+    load_prompt_libraries,
+    save_prompt_libraries,
+    public_prompt_libraries,
+    find_prompt_library,
+)
 
-def migrate_asset_item_registrations(item):
-    """一个素材可注册到多平台：把旧的单平台扁平字段折叠进 item['registrations'][platform]，再清掉旧字段。"""
-    if not isinstance(item, dict):
-        return
-    regs = item.get("registrations")
-    if not isinstance(regs, dict):
-        regs = {}
-    legacy_platform = str(item.get("platform") or "").strip()
-    if legacy_platform and legacy_platform not in regs and (item.get("asset_uri") or item.get("avatar_task_id")):
-        regs[legacy_platform] = {
-            "provider_id": item.get("provider_id") or "",
-            "project_name": item.get("project_name") or "default",
-            "task_id": item.get("avatar_task_id") or "",
-            "status": item.get("avatar_status") or "",
-            "detail": item.get("avatar_detail") or "",
-            "asset_uri": item.get("asset_uri") or "",
-            "asset_id": item.get("asset_id") or "",
-            "registered_at": item.get("registered_at") or 0,
-        }
-    item["registrations"] = regs if isinstance(regs, dict) else {}
-    for key in AVATAR_LEGACY_FLAT_FIELDS:
-        item.pop(key, None)
+from app.core.shared import sanitize_asset_name
 
-def load_asset_library():
-    lib_path = asset_library_path()
-    if not os.path.exists(lib_path):
-        lib = default_asset_library()
-        save_asset_library(lib)
-        return lib
-    try:
-        with open(lib_path, "r", encoding="utf-8") as f:
-            lib = json.load(f)
-    except Exception:
-        lib = default_asset_library()
-    return normalize_asset_library(lib)
-
-def sort_asset_library_items(lib):
-    cats = list(lib.get("categories", []))
-    for library in lib.get("libraries", []) if isinstance(lib.get("libraries"), list) else []:
-        cats.extend(library.get("categories") or [])
-    seen = set()
-    for cat in cats:
-        if id(cat) in seen:
-            continue
-        seen.add(id(cat))
-        items = cat.get("items")
-        if isinstance(items, list):
-            def created_at_key(item):
-                if not isinstance(item, dict):
-                    return 0
-                try:
-                    return int(float(item.get("created_at") or 0))
-                except (TypeError, ValueError):
-                    return 0
-            items.sort(key=created_at_key, reverse=True)
-
-def asset_library_media_kind(path: str, content_type: str = "") -> str:
-    ext = os.path.splitext(path or "")[1].lower()
-    ct = (content_type or "").lower()
-    if ext in {".mp4", ".webm", ".mov", ".m4v", ".mkv"} or ct.startswith("video/"):
-        return "video"
-    if ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"} or ct.startswith("audio/"):
-        return "audio"
-    return "image"
-
-def asset_library_safe_extension(path: str, kind: str) -> str:
-    ext = os.path.splitext(path or "")[1].lower()
-    allowed = {
-        "image": {".png", ".jpg", ".jpeg", ".webp", ".gif"},
-        "video": {".mp4", ".webm", ".mov", ".m4v", ".mkv"},
-        "audio": {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"},
-    }
-    fallback = {"image": ".png", "video": ".mp4", "audio": ".mp3"}
-    return ext if ext in allowed.get(kind, allowed["image"]) else fallback.get(kind, ".png")
-
-def make_asset_library_item(src: str, name: str = "") -> Tuple[str, Dict[str, Any]]:
-    kind = asset_library_media_kind(src)
-    ext = asset_library_safe_extension(src, kind)
-    safe_name = sanitize_asset_name(name or os.path.basename(src), "asset")
-    if not os.path.splitext(safe_name)[1]:
-        safe_name += ext
-    dest_name = f"lib_{uuid.uuid4().hex[:12]}_{safe_name}"
-    dest_path = os.path.join(ASSET_LIBRARY_DIR, dest_name)
-    shutil.copy2(src, dest_path)
-    item = {
-        "id": f"asset_{uuid.uuid4().hex[:12]}",
-        "name": os.path.splitext(safe_name)[0][:120],
-        "url": f"/assets/library/{dest_name}",
-        "kind": kind,
-        "created_at": now_ms(),
-    }
-    return dest_name, item
-    return lib
-
-def save_asset_library(lib):
-    lib = normalize_asset_library(lib)
-    sort_asset_library_items(lib)
-    lib["updated_at"] = now_ms()
-    os.makedirs(user_data_dir(), exist_ok=True)
-    with open(asset_library_path(), "w", encoding="utf-8") as f:
-        json.dump(lib, f, ensure_ascii=False, indent=2)
-    if GLOBAL_LOOP:
-        asyncio.run_coroutine_threadsafe(manager.broadcast_asset_library_updated(int(lib["updated_at"])), GLOBAL_LOOP)
-
-def find_asset_category(lib, category_id):
-    for cat in lib.get("categories", []):
-        if cat.get("id") == category_id:
-            return cat
-    return None
-
-def find_asset_library(lib, library_id=""):
-    lib = normalize_asset_library(lib)
-    library_id = str(library_id or lib.get("active_library_id") or "").strip()
-    return next((item for item in lib.get("libraries", []) if item.get("id") == library_id), None) or (lib.get("libraries") or [None])[0]
-
-def find_asset_category_in_library(lib, category_id, library_id=""):
-    library = find_asset_library(lib, library_id)
-    if not library:
-        return None
-    for cat in library.get("categories", []):
-        if cat.get("id") == category_id:
-            return cat
-    return None
-
-def find_asset_category_with_library(lib, category_id, library_id=""):
-    lib = normalize_asset_library(lib)
-    preferred = str(library_id or "").strip()
-    libraries = lib.get("libraries", []) or []
-    if preferred:
-        libraries = [item for item in libraries if item.get("id") == preferred]
-    for library in libraries:
-        for cat in library.get("categories", []) or []:
-            if cat.get("id") == category_id:
-                return library, cat
-    return None, None
-
-# ---------------- 共享文件夹（局域网只读浏览/引用） ----------------
-SHARED_MEDIA_EXTS = {
-    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
-    ".mp4", ".webm", ".mov", ".m4v", ".mkv",
-    ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",
-}
-SHARED_SCAN_MAX_ENTRIES = 8000
-SHARED_FOLDERS_LOCK = Lock()
-
-def shared_folders_load():
-    try:
-        with open(SHARED_FOLDERS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    folders = data.get("folders")
-    if not isinstance(folders, list):
-        folders = []
-    return {"folders": [f for f in folders if isinstance(f, dict)]}
-
-def shared_folders_save(data):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(SHARED_FOLDERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-def shared_folder_by_id(folder_id):
-    for entry in shared_folders_load().get("folders", []):
-        if entry.get("id") == folder_id:
-            return entry
-    return None
-
-def shared_folder_abs(entry):
-    rel = (entry or {}).get("rel") or ""
-    return os.path.normpath(os.path.join(BASE_DIR, rel))
-
-def shared_resolve_register(path):
-    """校验 path 必须位于项目目录内、是一个存在的子目录（非项目根）。返回 (abs, rel)。"""
-    raw = (path or "").strip().strip('"').strip("'")
-    if not raw:
-        raise HTTPException(status_code=400, detail="请提供文件夹路径")
-    candidate = raw if os.path.isabs(raw) else os.path.join(BASE_DIR, raw)
-    abs_path = os.path.normpath(os.path.abspath(candidate))
-    base = os.path.normpath(os.path.abspath(BASE_DIR))
-    try:
-        common = os.path.commonpath([abs_path, base])
-    except ValueError:
-        raise HTTPException(status_code=400, detail="只允许登记项目目录内的文件夹")
-    if common != base:
-        raise HTTPException(status_code=400, detail="只允许登记项目目录内的文件夹")
-    if abs_path == base:
-        raise HTTPException(status_code=400, detail="不能直接登记项目根目录，请选择子文件夹")
-    if not os.path.isdir(abs_path):
-        raise HTTPException(status_code=400, detail="文件夹不存在")
-    rel = os.path.relpath(abs_path, base)
-    return abs_path, rel
-
-def shared_child_abs(folder_abs, rel):
-    """把相对 folder_abs 的子路径解析为绝对路径，并防止越界访问。"""
-    rel = (rel or "").replace("\\", "/").lstrip("/")
-    abs_path = os.path.normpath(os.path.join(folder_abs, rel))
-    base = os.path.normpath(os.path.abspath(folder_abs))
-    try:
-        common = os.path.commonpath([os.path.abspath(abs_path), base])
-    except ValueError:
-        raise HTTPException(status_code=400, detail="非法路径")
-    if common != base:
-        raise HTTPException(status_code=400, detail="非法路径")
-    return abs_path
-
-def scan_shared_tree(folder_id, folder_abs, rel_prefix="", display="", counter=None):
-    """递归扫描共享文件夹，返回 {id,name,path,items,children}。"""
-    if counter is None:
-        counter = {"n": 0}
-    node = {
-        "id": f"{folder_id}:{rel_prefix or '__root__'}",
-        "name": display or os.path.basename(folder_abs) or folder_abs,
-        "path": rel_prefix,
-        "items": [],
-        "children": [],
-    }
-    try:
-        entries = sorted(os.scandir(folder_abs), key=lambda e: (not e.is_dir(), e.name.lower()))
-    except OSError:
-        return node
-    for ent in entries:
-        if counter["n"] >= SHARED_SCAN_MAX_ENTRIES:
-            break
-        if ent.name.startswith(".") or ent.name.startswith("._"):
-            continue
-        child_rel = f"{rel_prefix}/{ent.name}".lstrip("/")
-        if ent.is_dir():
-            child = scan_shared_tree(folder_id, ent.path, child_rel, ent.name, counter)
-            if child["items"] or child["children"]:
-                node["children"].append(child)
-        elif ent.is_file():
-            ext = os.path.splitext(ent.name)[1].lower()
-            if ext not in SHARED_MEDIA_EXTS:
-                continue
-            counter["n"] += 1
-            try:
-                st = ent.stat()
-                size = st.st_size
-                mtime = int(st.st_mtime * 1000)
-            except OSError:
-                size = 0
-                mtime = 0
-            node["items"].append({
-                "id": f"{folder_id}:{child_rel}",
-                "name": ent.name,
-                "url": f"/api/shared-folders/{folder_id}/file?path={urllib.parse.quote(child_rel)}",
-                "kind": asset_library_media_kind(ent.name),
-                "size": size,
-                "lastModified": mtime,
-                "relativePath": child_rel,
-                "folderId": folder_id,
-            })
-    return node
-
-def builtin_prompt_templates():
-    try:
-        template_path = prompt_template_markdown_path()
-        if not template_path:
-            return []
-        with open(template_path, "r", encoding="utf-8") as f:
-            return parse_prompt_template_markdown(f.read())
-    except Exception as e:
-        print(f"读取提示词模板失败: {e}")
-        return []
-
-def normalize_prompt_category_id(category="custom"):
-    category_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(category or "custom"))[:40] or "custom"
-    return "custom" if category_id in {"mine", "my", "personal"} else category_id
-
-def normalize_prompt_library_item(item):
-    if not isinstance(item, dict):
-        item = {}
-    name = sanitize_asset_name(item.get("name") or "提示词", "提示词")
-    positive = str(item.get("positive") or item.get("text") or "").strip()
-    return {
-        "id": re.sub(r"[^A-Za-z0-9_-]+", "_", str(item.get("id") or item.get("item_id") or f"tpl_{uuid.uuid4().hex[:12]}"))[:60],
-        "name": name,
-        "category": normalize_prompt_category_id(item.get("category") or "custom"),
-        "scene": str(item.get("scene") or "").strip()[:500],
-        "positive": positive,
-        "negative": str(item.get("negative") or "").strip(),
-        "params": item.get("params") if isinstance(item.get("params"), dict) else {},
-        "created_at": int(item.get("created_at") or now_ms()),
-        "updated_at": int(item.get("updated_at") or item.get("created_at") or now_ms()),
-    }
-
-def seed_system_prompt_library():
-    return {
-        "id": "system",
-        "name": "系统提示词库",
-        "type": "prompt",
-        "items": builtin_prompt_templates(),
-        "categories": defaultPromptTemplateCategories(),
-    }
-
-def default_prompt_libraries():
-    return {
-        "active_library_id": "system",
-        "libraries": [seed_system_prompt_library()],
-        "updated_at": now_ms(),
-    }
-
-def defaultPromptTemplateCategories():
-    return [
-        {"id": "view", "name": "视角"},
-        {"id": "storyboard", "name": "分镜"},
-        {"id": "character", "name": "角色"},
-        {"id": "product", "name": "产品"},
-        {"id": "lighting", "name": "光影"},
-        {"id": "custom", "name": "我的"},
-    ]
-
-def normalize_prompt_template_categories(*category_lists, include_defaults=True):
-    normalized = []
-    seen = set()
-
-    def add_category(category):
-        if not isinstance(category, dict):
-            return
-        cat_id = normalize_prompt_category_id(category.get("id") or category.get("name") or "custom")
-        if cat_id in seen:
-            return
-        seen.add(cat_id)
-        name = "我的" if cat_id == "custom" else sanitize_asset_name(category.get("name") or cat_id, cat_id)
-        normalized.append({"id": cat_id, "name": name})
-
-    if include_defaults:
-        for category in defaultPromptTemplateCategories():
-            add_category(category)
-    for categories in category_lists:
-        if isinstance(categories, list):
-            for category in categories:
-                add_category(category)
-    return normalized
-
-def normalize_prompt_libraries(data):
-    if not isinstance(data, dict):
-        data = default_prompt_libraries()
-    raw_libraries = data.get("libraries") if isinstance(data.get("libraries"), list) else []
-    raw_libraries = [lib for lib in raw_libraries if isinstance(lib, dict)]
-    if not any(lib.get("id") == "system" for lib in raw_libraries):
-        raw_libraries = [seed_system_prompt_library()] + raw_libraries
-    libraries = []
-    seen_lib_ids = set()
-    for raw in raw_libraries:
-        is_system = raw.get("id") == "system"
-        if is_system:
-            lib_id = "system"
-        else:
-            lib_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(raw.get("id") or f"lib_{uuid.uuid4().hex[:12]}"))[:60] or f"lib_{uuid.uuid4().hex[:12]}"
-        if lib_id in seen_lib_ids:
-            continue
-        seen_lib_ids.add(lib_id)
-        items = []
-        seen_items = set()
-        for raw_item in (raw.get("items") if isinstance(raw.get("items"), list) else []):
-            if not isinstance(raw_item, dict):
-                continue
-            item = normalize_prompt_library_item(raw_item)
-            item_id = item.get("id") or f"tpl_{uuid.uuid4().hex[:12]}"
-            if item_id in seen_items:
-                continue
-            seen_items.add(item_id)
-            items.append(item)
-        default_name = "系统提示词库" if is_system else "提示词库"
-        raw_categories = raw.get("categories") if isinstance(raw.get("categories"), list) else []
-        if not is_system:
-            # 非系统库不保留任何内置分组（视角/分镜等），仅保留用户自建分组
-            builtin_ids = {"view", "storyboard", "character", "product", "lighting", "custom"}
-            raw_categories = [c for c in raw_categories if isinstance(c, dict) and normalize_prompt_category_id(c.get("id") or c.get("name") or "") not in builtin_ids]
-        libraries.append({
-            "id": lib_id,
-            "name": sanitize_asset_name(raw.get("name") or default_name, default_name),
-            "type": "prompt",
-            "readonly": False,
-            "system": is_system,
-            "categories": normalize_prompt_template_categories(raw_categories, include_defaults=is_system),
-            "items": items,
-        })
-    active = str(data.get("active_library_id") or "system")
-    if not any(lib["id"] == active for lib in libraries):
-        active = "system" if any(lib["id"] == "system" for lib in libraries) else (libraries[0]["id"] if libraries else "system")
-    return {"active_library_id": active, "libraries": libraries, "updated_at": int(data.get("updated_at") or now_ms())}
-
-def load_prompt_libraries():
-    lib_path = prompt_library_path()
-    if not os.path.exists(lib_path):
-        data = default_prompt_libraries()
-        return save_prompt_libraries(data)
-    try:
-        with open(lib_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        data = default_prompt_libraries()
-    if not isinstance(data, dict):
-        data = default_prompt_libraries()
-    normalized = normalize_prompt_libraries(data)
-    if normalized.get("active_library_id") != data.get("active_library_id") or normalized.get("libraries") != data.get("libraries"):
-        return save_prompt_libraries(normalized)
-    return normalized
-
-def save_prompt_libraries(data):
-    data = normalize_prompt_libraries(data)
-    data["updated_at"] = now_ms()
-    os.makedirs(user_data_dir(), exist_ok=True)
-    with open(prompt_library_path(), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return data
-
-def public_prompt_libraries(data=None):
-    data = normalize_prompt_libraries(data or load_prompt_libraries())
-    return {
-        "active_library_id": data.get("active_library_id") or (data.get("libraries") or [{}])[0].get("id") or "system",
-        "libraries": data.get("libraries") or [],
-        "updated_at": data.get("updated_at") or now_ms(),
-    }
-
-def find_prompt_library(data, library_id=""):
-    if not isinstance(data, dict):
-        return None
-    libraries = data.get("libraries") if isinstance(data.get("libraries"), list) else []
-    library_id = str(library_id or data.get("active_library_id") or "").strip()
-    return next((item for item in libraries if item.get("id") == library_id), None) or (libraries[0] if libraries else None)
-
-def sanitize_asset_name(name, fallback="asset"):
-    name = re.sub(r'[\\/:*?"<>|]+', "_", str(name or fallback)).strip()
-    return name[:120] or fallback
-
-def content_type_for_path(path):
-    ext = os.path.splitext(path)[1].lower()
-    if ext in [".mp4", ".m4v"]:
-        return "video/mp4"
-    if ext == ".webm":
-        return "video/webm"
-    if ext == ".mov":
-        return "video/quicktime"
-    if ext == ".mp3":
-        return "audio/mpeg"
-    if ext == ".wav":
-        return "audio/wav"
-    if ext == ".m4a":
-        return "audio/mp4"
-    if ext == ".aac":
-        return "audio/aac"
-    if ext == ".ogg":
-        return "audio/ogg"
-    if ext == ".flac":
-        return "audio/flac"
-    if ext == ".gif":
-        return "image/gif"
-    if ext in [".jpg", ".jpeg"]:
-        return "image/jpeg"
-    if ext == ".webp":
-        return "image/webp"
-    if ext == ".txt":
-        return "text/plain; charset=utf-8"
-    if ext == ".json":
-        return "application/json; charset=utf-8"
-    if ext == ".csv":
-        return "text/csv; charset=utf-8"
-    if ext == ".md":
-        return "text/markdown; charset=utf-8"
-    if ext == ".srt":
-        return "application/x-subrip; charset=utf-8"
-    if ext == ".vtt":
-        return "text/vtt; charset=utf-8"
-    if ext == ".png":
-        return "image/png"
-    return "application/octet-stream"
+# content_type_for_path 已迁移至 app/core/media.py（原样迁移），多域复用。
+from app.core.media import content_type_for_path
 
 def is_image_reference_value(value):
     if not isinstance(value, str) or not value:
@@ -6339,8 +5102,6 @@ async def index():
 
 
 # --- 认证：用户名登录（无密码）+ 持久化会话 ---
-class LoginRequest(BaseModel):
-    username: str = ""
 
 
 @app.get("/login")
@@ -7203,11 +5964,6 @@ async def get_global_token():
 
 # --- 在线生图 (COMFLY) ---
 
-class TestConnectionPayload(BaseModel):
-    base_url: str = ""
-    api_key: str = ""
-    provider_id: str = ""
-    protocol: str = "openai"
 
 def protocol_from_payload(payload):
     provider_id = str(getattr(payload, "provider_id", "") or "").strip().lower()
@@ -8602,84 +7358,10 @@ async def canvas_llm(payload: CanvasLLMRequest):
     return {"text": text, "model": model, "raw_usage": raw_data.get("usage")}
 
 # --- 对话管理 ---
-
-@app.get("/api/conversations")
-async def conversations(request: Request, x_user_id: str = Header(default="")):
-    user_id = safe_user_id(x_user_id, request)
-    return {"user_id": user_id, "conversations": list_conversations(user_id)}
-
-@app.post("/api/conversations")
-async def create_conversation(payload: ConversationCreateRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = safe_user_id(x_user_id, request)
-    return {"conversation": new_conversation(user_id, payload.title)}
-
-@app.get("/api/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
-    user_id = safe_user_id(x_user_id, request)
-    return {"conversation": load_conversation(user_id, conversation_id)}
-
-@app.delete("/api/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
-    user_id = safe_user_id(x_user_id, request)
-    path = conversation_path(user_id, conversation_id)
-    if os.path.exists(path):
-        os.remove(path)
-    return {"ok": True}
+# 路由已迁移至 app/routers/conversations.py，通过 app.include_router 注册。
 
 # --- 画布管理 ---
-
-@app.get("/api/canvases")
-async def canvases():
-    return {"canvases": list_canvases()}
-
-@app.get("/api/canvases/trash")
-async def trashed_canvases():
-    return {"canvases": list_deleted_canvases(), "retention_days": 30}
-
-@app.post("/api/canvases")
-async def create_canvas(payload: CanvasCreateRequest):
-    return {"canvas": new_canvas(payload.title, payload.icon, payload.kind)}
-
-@app.get("/api/canvases/{canvas_id}/meta")
-async def get_canvas_meta(canvas_id: str):
-    canvas = load_canvas(canvas_id)
-    return {
-        "id": canvas.get("id"),
-        "updated_at": canvas.get("updated_at", 0),
-        "title": canvas.get("title", "未命名画布"),
-        "icon": canvas.get("icon", "layers"),
-        "kind": normalize_canvas_kind(canvas.get("kind")),
-    }
-
-@app.post("/api/canvases/{canvas_id}/meta")
-async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
-    """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
-    刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
-    canvas = load_canvas(canvas_id)
-    if payload.title is not None:
-        canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
-    if payload.icon is not None:
-        canvas["icon"] = (payload.icon or "layers")[:32]
-    if payload.owner is not None:
-        canvas["owner"] = str(payload.owner).strip()[:40]
-    if payload.color is not None:
-        canvas["color"] = normalize_canvas_color(payload.color)
-    if payload.pinned is not None:
-        canvas["pinned"] = bool(payload.pinned)
-    with CANVAS_LOCK:
-        with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
-            json.dump(canvas, f, ensure_ascii=False, indent=2)
-    return {"canvas": canvas_record(canvas)}
-
-@app.get("/api/canvases/{canvas_id}")
-async def get_canvas(canvas_id: str):
-    return {"canvas": load_canvas(canvas_id)}
-
-@app.post("/api/canvases/{canvas_id}/touch")
-async def touch_canvas(canvas_id: str):
-    canvas = load_canvas(canvas_id)
-    save_canvas(canvas)
-    return {"canvas": canvas_record(canvas), "updated_at": canvas.get("updated_at", 0)}
+# 路由已迁移至 app/routers/canvases.py，通过 app.include_router 注册。
 
 @app.get("/api/smart-canvas/prompt-templates")
 async def smart_canvas_prompt_templates():
@@ -8825,417 +7507,16 @@ async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest):
         raise HTTPException(status_code=404, detail="没有可导出的内容")
     return {"ok": True, "folder": target_dir, "count": count}
 
-@app.get("/api/asset-library")
-async def get_asset_library():
-    return {"library": load_asset_library()}
+# --- 提示词库 ---
+# 路由已迁移至 app/routers/prompts.py，通过 app.include_router 注册。
 
-@app.get("/api/prompt-libraries")
-async def get_prompt_libraries():
-    return {"library": public_prompt_libraries()}
+# --- 素材库 ---
+# 数据 CRUD 路由已迁移至 app/routers/assets.py；avatar 注册/审核路由暂留 main.py（见下）。
 
-@app.post("/api/prompt-libraries")
-async def create_prompt_library(payload: PromptLibraryRequest):
-    data = load_prompt_libraries()
-    library = {
-        "id": f"lib_{uuid.uuid4().hex[:12]}",
-        "name": sanitize_asset_name(payload.name, "提示词库"),
-        "type": "prompt",
-        "categories": [],
-        "items": [],
-    }
-    data.setdefault("libraries", []).append(library)
-    data["active_library_id"] = library["id"]
-    data = save_prompt_libraries(data)
-    new_lib = next((lib for lib in data.get("libraries", []) if lib.get("id") == library["id"]), library)
-    return {"library": public_prompt_libraries(data), "prompt_library": new_lib}
+# 共享文件夹 6 个路由已迁移至 app/routers/shared_folders.py。
 
-@app.patch("/api/prompt-libraries/{library_id}")
-async def rename_prompt_library(library_id: str, payload: PromptLibraryRequest):
-    data = load_prompt_libraries()
-    library = find_prompt_library(data, library_id)
-    if not library or library.get("id") != library_id:
-        raise HTTPException(status_code=404, detail="提示词库不存在")
-    library["name"] = sanitize_asset_name(payload.name, library.get("name") or "提示词库")
-    data = save_prompt_libraries(data)
-    return {"library": public_prompt_libraries(data), "prompt_library": library}
-
-@app.delete("/api/prompt-libraries/{library_id}")
-async def delete_prompt_library(library_id: str):
-    if library_id == "system":
-        raise HTTPException(status_code=400, detail="系统提示词库不能删除，可以删除其中的提示词")
-    data = load_prompt_libraries()
-    libraries = data.get("libraries", []) or []
-    kept = [lib for lib in libraries if lib.get("id") != library_id]
-    if len(kept) == len(libraries):
-        raise HTTPException(status_code=404, detail="提示词库不存在")
-    data["libraries"] = kept
-    if data.get("active_library_id") == library_id:
-        data["active_library_id"] = "system"
-    data = save_prompt_libraries(data)
-    return {"library": public_prompt_libraries(data)}
-
-@app.post("/api/prompt-libraries/items")
-async def add_prompt_library_item(payload: PromptLibraryItemRequest):
-    data = load_prompt_libraries()
-    library = find_prompt_library(data, payload.library_id)
-    if not library:
-        raise HTTPException(status_code=404, detail="提示词库不存在")
-    if not str(payload.positive or "").strip():
-        raise HTTPException(status_code=400, detail="提示词内容不能为空")
-    item = normalize_prompt_library_item({
-        "id": f"tpl_{uuid.uuid4().hex[:12]}",
-        "name": payload.name,
-        "category": payload.category,
-        "positive": payload.positive,
-        "negative": payload.negative,
-        "scene": payload.scene,
-        "created_at": now_ms(),
-        "updated_at": now_ms(),
-    })
-    library.setdefault("items", []).insert(0, item)
-    data["active_library_id"] = library.get("id") or data.get("active_library_id")
-    data = save_prompt_libraries(data)
-    return {"library": public_prompt_libraries(data), "item": item}
-
-@app.patch("/api/prompt-libraries/items/{item_id}")
-async def update_prompt_library_item(item_id: str, payload: PromptLibraryItemRequest):
-    data = load_prompt_libraries()
-    for library in data.get("libraries", []) or []:
-        if payload.library_id and library.get("id") != payload.library_id:
-            continue
-        for index, item in enumerate(library.get("items", []) or []):
-            if item.get("id") == item_id:
-                next_item = normalize_prompt_library_item({
-                    **item,
-                    "name": payload.name or item.get("name"),
-                    "category": payload.category or item.get("category"),
-                    "positive": payload.positive or item.get("positive"),
-                    "negative": payload.negative,
-                    "scene": payload.scene,
-                    "updated_at": now_ms(),
-                })
-                library["items"][index] = next_item
-                data = save_prompt_libraries(data)
-                return {"library": public_prompt_libraries(data), "item": next_item}
-    raise HTTPException(status_code=404, detail="提示词不存在")
-
-@app.delete("/api/prompt-libraries/items/{item_id}")
-async def delete_prompt_library_item(item_id: str):
-    data = load_prompt_libraries()
-    removed = None
-    for library in data.get("libraries", []) or []:
-        keep = []
-        for item in library.get("items", []) or []:
-            if item.get("id") == item_id:
-                removed = item
-            else:
-                keep.append(item)
-        library["items"] = keep
-    if not removed:
-        raise HTTPException(status_code=404, detail="提示词不存在")
-    data = save_prompt_libraries(data)
-    return {"library": public_prompt_libraries(data), "removed": 1}
-
-@app.post("/api/prompt-libraries/items/delete")
-async def batch_delete_prompt_library_items(payload: PromptLibraryBatchDeleteRequest):
-    ids = {str(item) for item in (payload.ids or []) if str(item)}
-    if not ids:
-        raise HTTPException(status_code=400, detail="没有选择提示词")
-    data = load_prompt_libraries()
-    removed = 0
-    for library in data.get("libraries", []) or []:
-        keep = []
-        for item in library.get("items", []) or []:
-            if item.get("id") in ids:
-                removed += 1
-            else:
-                keep.append(item)
-        library["items"] = keep
-    data = save_prompt_libraries(data)
-    return {"library": public_prompt_libraries(data), "removed": removed}
-
-PROMPT_BUILTIN_CATEGORY_IDS = {"view", "storyboard", "character", "product", "lighting", "custom"}
-
-@app.post("/api/prompt-libraries/categories")
-async def add_prompt_library_category(payload: PromptLibraryCategoryRequest):
-    data = load_prompt_libraries()
-    library = find_prompt_library(data, payload.library_id) or find_prompt_library(data, "system")
-    if not library:
-        raise HTTPException(status_code=404, detail="提示词库不存在")
-    name = sanitize_asset_name(payload.name, "新分组")
-    existing = {str(c.get("id")) for c in (library.get("categories") or []) if isinstance(c, dict)} | PROMPT_BUILTIN_CATEGORY_IDS
-    cat_id = f"pcat_{uuid.uuid4().hex[:10]}"
-    while cat_id in existing:
-        cat_id = f"pcat_{uuid.uuid4().hex[:10]}"
-    category = {"id": cat_id, "name": name}
-    library.setdefault("categories", []).append(category)
-    data = save_prompt_libraries(data)
-    return {"library": public_prompt_libraries(data), "category": category}
-
-@app.patch("/api/prompt-libraries/categories/{category_id}")
-async def rename_prompt_library_category(category_id: str, payload: PromptLibraryCategoryRequest):
-    if category_id in PROMPT_BUILTIN_CATEGORY_IDS:
-        raise HTTPException(status_code=400, detail="内置分组不能重命名")
-    name = sanitize_asset_name(payload.name, "")
-    if not name:
-        raise HTTPException(status_code=400, detail="分组名称不能为空")
-    data = load_prompt_libraries()
-    updated = False
-    for library in data.get("libraries", []) or []:
-        for cat in library.get("categories") or []:
-            if isinstance(cat, dict) and cat.get("id") == category_id:
-                cat["name"] = name
-                updated = True
-    if not updated:
-        raise HTTPException(status_code=404, detail="分组不存在")
-    data = save_prompt_libraries(data)
-    return {"library": public_prompt_libraries(data)}
-
-@app.delete("/api/prompt-libraries/categories/{category_id}")
-async def delete_prompt_library_category(category_id: str):
-    if category_id in PROMPT_BUILTIN_CATEGORY_IDS:
-        raise HTTPException(status_code=400, detail="内置分组不能删除")
-    data = load_prompt_libraries()
-    found = False
-    for library in data.get("libraries", []) or []:
-        cats = library.get("categories") or []
-        kept = [c for c in cats if not (isinstance(c, dict) and c.get("id") == category_id)]
-        if len(kept) != len(cats):
-            found = True
-            library["categories"] = kept
-        for item in library.get("items", []) or []:
-            if isinstance(item, dict) and item.get("category") == category_id:
-                item["category"] = "custom"
-    if not found:
-        raise HTTPException(status_code=404, detail="分组不存在")
-    data = save_prompt_libraries(data)
-    return {"library": public_prompt_libraries(data)}
-
-@app.post("/api/asset-library/libraries")
-async def create_asset_library(payload: AssetLibraryRequest):
-    lib = load_asset_library()
-    library = {"id": f"lib_{uuid.uuid4().hex[:12]}", "name": sanitize_asset_name(payload.name, "资产库"), "type": "asset", "categories": []}
-    library["categories"].append({"id": f"cat_{uuid.uuid4().hex[:12]}", "name": "默认分组", "type": "image", "items": []})
-    library["categories"].append({"id": f"wf_{uuid.uuid4().hex[:12]}", "name": "工作流", "type": "workflow", "items": []})
-    lib.setdefault("libraries", []).append(library)
-    lib["active_library_id"] = library["id"]
-    save_asset_library(lib)
-    return {"library": lib, "asset_library": library}
-
-@app.patch("/api/asset-library/libraries/{library_id}")
-async def rename_asset_library(library_id: str, payload: AssetLibraryRenameRequest):
-    lib = load_asset_library()
-    library = find_asset_library(lib, library_id)
-    if not library or library.get("id") != library_id:
-        raise HTTPException(status_code=404, detail="资产库不存在")
-    library["name"] = sanitize_asset_name(payload.name, library.get("name") or "资产库")
-    save_asset_library(lib)
-    return {"library": lib, "asset_library": library}
-
-@app.delete("/api/asset-library/libraries/{library_id}")
-async def delete_asset_library(library_id: str):
-    lib = load_asset_library()
-    libraries = lib.get("libraries") or []
-    if len(libraries) <= 1:
-        raise HTTPException(status_code=400, detail="至少保留一个资产库")
-    if not any(item.get("id") == library_id for item in libraries):
-        raise HTTPException(status_code=404, detail="资产库不存在")
-    lib["libraries"] = [item for item in libraries if item.get("id") != library_id]
-    if lib.get("active_library_id") == library_id:
-        lib["active_library_id"] = lib["libraries"][0].get("id")
-    save_asset_library(lib)
-    return {"library": lib}
-
-@app.post("/api/asset-library/categories")
-async def create_asset_library_category(payload: AssetLibraryCategoryRequest):
-    lib = load_asset_library()
-    library = find_asset_library(lib, payload.library_id)
-    if not library:
-        raise HTTPException(status_code=404, detail="资产库不存在")
-    cat_type = "workflow" if str(payload.type or "").lower() == "workflow" else "image"
-    category = {"id": f"cat_{uuid.uuid4().hex[:12]}", "name": sanitize_asset_name(payload.name, "新文件夹"), "type": cat_type, "items": []}
-    library.setdefault("categories", []).append(category)
-    lib["active_library_id"] = library.get("id") or lib.get("active_library_id")
-    save_asset_library(lib)
-    return {"library": lib, "category": category}
-
-@app.patch("/api/asset-library/categories/{category_id}")
-async def rename_asset_library_category(category_id: str, payload: AssetLibraryRenameRequest):
-    lib = load_asset_library()
-    _, cat = find_asset_category_with_library(lib, category_id)
-    if not cat:
-        raise HTTPException(status_code=404, detail="分类不存在")
-    cat["name"] = sanitize_asset_name(payload.name, cat.get("name") or "新文件夹")
-    save_asset_library(lib)
-    return {"library": lib, "category": cat}
-
-@app.delete("/api/asset-library/categories/{category_id}")
-async def delete_asset_library_category(category_id: str):
-    lib = load_asset_library()
-    library, cat = find_asset_category_with_library(lib, category_id)
-    if not cat:
-        raise HTTPException(status_code=404, detail="分类不存在")
-    if cat.get("type") == "workflow" and category_id == "workflows":
-        raise HTTPException(status_code=400, detail="默认工作流分类不能删除")
-    library["categories"] = [c for c in library.get("categories", []) if c.get("id") != category_id]
-    save_asset_library(lib)
-    return {"library": lib}
-
-@app.post("/api/asset-library/items")
-async def add_asset_library_item(payload: AssetLibraryAddRequest):
-    lib = load_asset_library()
-    cat = find_asset_category_in_library(lib, payload.category_id, payload.library_id)
-    if not cat:
-        raise HTTPException(status_code=404, detail="分类不存在")
-    if cat.get("type") != "image":
-        raise HTTPException(status_code=400, detail="该分类暂不支持添加媒体")
-    src = output_file_from_url(payload.url)
-    if not src:
-        raise HTTPException(status_code=400, detail="只支持保存本地 /assets 或 /output 媒体")
-    _, item = make_asset_library_item(src, payload.name or os.path.basename(src))
-    cat.setdefault("items", []).append(item)
-    save_asset_library(lib)
-    return {"library": lib, "item": item}
-
-@app.post("/api/asset-library/items/batch")
-async def batch_add_asset_library_items(payload: AssetLibraryBatchAddRequest):
-    added = []
-    lib = load_asset_library()
-    cat = find_asset_category_in_library(lib, payload.category_id, payload.library_id)
-    if not cat:
-        raise HTTPException(status_code=404, detail="分类不存在")
-    for entry in (payload.items or [])[:200]:
-        entry.category_id = payload.category_id
-        entry.library_id = payload.library_id
-        src = output_file_from_url(entry.url)
-        if not src:
-            continue
-        _, item = make_asset_library_item(src, entry.name or os.path.basename(src))
-        cat.setdefault("items", []).append(item)
-        added.append(item)
-    save_asset_library(lib)
-    return {"library": lib, "items": added}
-
-@app.get("/api/shared-folders")
-async def list_shared_folders():
-    data = shared_folders_load()
-    folders = []
-    for entry in data.get("folders", []):
-        abs_path = shared_folder_abs(entry)
-        folders.append({
-            "id": entry.get("id"),
-            "name": entry.get("name") or os.path.basename(abs_path) or abs_path,
-            "rel": entry.get("rel") or "",
-            "path": abs_path,
-            "exists": os.path.isdir(abs_path),
-            "created_at": entry.get("created_at"),
-        })
-    return {"folders": folders}
-
-@app.post("/api/shared-folders")
-async def register_shared_folder(payload: SharedFolderRegister):
-    abs_path, rel = shared_resolve_register(payload.path)
-    name = sanitize_asset_name(payload.name or os.path.basename(abs_path), "共享文件夹")
-    with SHARED_FOLDERS_LOCK:
-        data = shared_folders_load()
-        for entry in data.get("folders", []):
-            if os.path.normpath(shared_folder_abs(entry)) == os.path.normpath(abs_path):
-                entry["name"] = name
-                shared_folders_save(data)
-                return {"folder": {**entry, "path": abs_path, "exists": True}}
-        entry = {
-            "id": f"shared_{uuid.uuid4().hex[:12]}",
-            "name": name,
-            "rel": rel,
-            "created_at": now_ms(),
-        }
-        data.setdefault("folders", []).append(entry)
-        shared_folders_save(data)
-    return {"folder": {**entry, "path": abs_path, "exists": True}}
-
-@app.delete("/api/shared-folders/{folder_id}")
-async def unregister_shared_folder(folder_id: str):
-    with SHARED_FOLDERS_LOCK:
-        data = shared_folders_load()
-        before = len(data.get("folders", []))
-        data["folders"] = [f for f in data.get("folders", []) if f.get("id") != folder_id]
-        if len(data["folders"]) == before:
-            raise HTTPException(status_code=404, detail="共享文件夹不存在")
-        shared_folders_save(data)
-    return {"ok": True}
-
-@app.get("/api/shared-folders/{folder_id}/tree")
-async def get_shared_folder_tree(folder_id: str):
-    entry = shared_folder_by_id(folder_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="共享文件夹不存在")
-    abs_path = shared_folder_abs(entry)
-    if not os.path.isdir(abs_path):
-        raise HTTPException(status_code=404, detail="文件夹已不存在")
-    tree = scan_shared_tree(folder_id, abs_path, "", entry.get("name") or os.path.basename(abs_path))
-    return {"folder": {"id": folder_id, "name": entry.get("name"), "path": abs_path}, "tree": tree}
-
-@app.get("/api/shared-folders/{folder_id}/file")
-async def get_shared_folder_file(folder_id: str, path: str = ""):
-    entry = shared_folder_by_id(folder_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="共享文件夹不存在")
-    folder_abs = shared_folder_abs(entry)
-    abs_path = shared_child_abs(folder_abs, path)
-    if not os.path.isfile(abs_path):
-        raise HTTPException(status_code=404, detail="文件不存在")
-    ext = os.path.splitext(abs_path)[1].lower()
-    if ext not in SHARED_MEDIA_EXTS:
-        raise HTTPException(status_code=400, detail="不支持的文件类型")
-    return FileResponse(abs_path, media_type=content_type_for_path(abs_path))
-
-@app.post("/api/shared-folders/import")
-async def import_shared_folder_files(payload: SharedFolderImport):
-    entry = shared_folder_by_id(payload.folder_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="共享文件夹不存在")
-    folder_abs = shared_folder_abs(entry)
-    lib = load_asset_library()
-    cat = find_asset_category_in_library(lib, payload.category_id, payload.library_id)
-    if not cat:
-        raise HTTPException(status_code=404, detail="分类不存在")
-    if cat.get("type") != "image":
-        raise HTTPException(status_code=400, detail="该分类暂不支持添加媒体")
-    added = []
-    for rel in (payload.paths or [])[:200]:
-        abs_path = shared_child_abs(folder_abs, rel)
-        if not os.path.isfile(abs_path):
-            continue
-        ext = os.path.splitext(abs_path)[1].lower()
-        if ext not in SHARED_MEDIA_EXTS:
-            continue
-        _, item = make_asset_library_item(abs_path, os.path.basename(abs_path))
-        cat.setdefault("items", []).append(item)
-        added.append(item)
-    save_asset_library(lib)
-    return {"library": lib, "items": added}
-
-@app.patch("/api/asset-library/items/{item_id}")
-async def rename_asset_library_item(item_id: str, payload: AssetLibraryRenameRequest):
-    lib = load_asset_library()
-    for library in lib.get("libraries", []):
-        for cat in library.get("categories", []):
-            for item in cat.get("items", []):
-                if item.get("id") == item_id:
-                    item["name"] = sanitize_asset_name(payload.name, item.get("name") or "asset")
-                    save_asset_library(lib)
-                    return {"library": lib, "item": item}
-    raise HTTPException(status_code=404, detail="资产不存在")
-
-def find_asset_item_in_library(lib, item_id, library_id=""):
-    for library in lib.get("libraries", []):
-        if library_id and library.get("id") != library_id:
-            continue
-        for cat in library.get("categories", []):
-            for item in cat.get("items", []):
-                if item.get("id") == item_id:
-                    return item
-    return None
+# items PATCH(重命名) 路由已迁移至 app/routers/assets.py。
+# find_asset_item_in_library 已迁移至 app/services/assets.py（import-back，见上）。
 
 @app.post("/api/asset-library/items/{item_id}/register-avatar")
 async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
@@ -9324,177 +7605,9 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
     save_asset_library(lib)
     return {"library": lib, "item": target_item}
 
-@app.delete("/api/asset-library/items/{item_id}")
-async def delete_asset_library_item(item_id: str):
-    lib = load_asset_library()
-    removed = None
-    for library in lib.get("libraries", []):
-        for cat in library.get("categories", []):
-            keep = []
-            for item in cat.get("items", []):
-                if item.get("id") == item_id:
-                    removed = item
-                else:
-                    keep.append(item)
-            cat["items"] = keep
-    if not removed:
-        raise HTTPException(status_code=404, detail="资产不存在")
-    save_asset_library(lib)
-    return {"library": lib}
+# items DELETE / delete / move / crop 路由已迁移至 app/routers/assets.py。
 
-@app.post("/api/asset-library/items/delete")
-async def batch_delete_asset_library_items(payload: AssetLibraryBatchDeleteRequest):
-    ids = {str(item) for item in (payload.ids or []) if str(item)}
-    if not ids:
-        raise HTTPException(status_code=400, detail="没有选择资产")
-    lib = load_asset_library()
-    removed = 0
-    for library in lib.get("libraries", []):
-        if payload.library_id and library.get("id") != payload.library_id:
-            continue
-        for cat in library.get("categories", []):
-            keep = []
-            for item in cat.get("items", []):
-                if item.get("id") in ids:
-                    removed += 1
-                else:
-                    keep.append(item)
-            cat["items"] = keep
-    save_asset_library(lib)
-    return {"library": lib, "removed": removed}
-
-@app.post("/api/asset-library/items/move")
-async def batch_move_asset_library_items(payload: AssetLibraryBatchMoveRequest):
-    ids = {str(item) for item in (payload.ids or []) if str(item)}
-    if not ids:
-        raise HTTPException(status_code=400, detail="没有选择资产")
-    lib = load_asset_library()
-    target_cat = find_asset_category_in_library(lib, payload.target_category_id, payload.target_library_id)
-    if not target_cat:
-        raise HTTPException(status_code=404, detail="目标分组不存在")
-    if target_cat.get("type") != "image":
-        raise HTTPException(status_code=400, detail="目标分组不支持媒体")
-    moved = []
-    for library in lib.get("libraries", []):
-        if payload.library_id and library.get("id") != payload.library_id:
-            continue
-        for cat in library.get("categories", []):
-            keep = []
-            for item in cat.get("items", []):
-                if item.get("id") in ids:
-                    moved.append(item)
-                else:
-                    keep.append(item)
-            cat["items"] = keep
-    existing_ids = {item.get("id") for item in target_cat.get("items", [])}
-    for item in moved:
-        if item.get("id") not in existing_ids:
-            target_cat.setdefault("items", []).append(item)
-            existing_ids.add(item.get("id"))
-    save_asset_library(lib)
-    return {"library": lib, "moved": len(moved)}
-
-@app.post("/api/asset-library/items/crop")
-async def batch_crop_asset_library_items(payload: AssetLibraryBatchCropRequest):
-    ids = {str(item) for item in (payload.ids or []) if str(item)}
-    if not ids:
-        raise HTTPException(status_code=400, detail="没有选择资产")
-    lib = load_asset_library()
-    target_cat = None
-    if payload.target_category_id:
-        target_cat = find_asset_category_in_library(lib, payload.target_category_id, payload.target_library_id)
-        if not target_cat:
-            raise HTTPException(status_code=404, detail="目标分组不存在")
-        if target_cat.get("type") != "image":
-            raise HTTPException(status_code=400, detail="目标分组不支持媒体")
-    added = []
-    for library in lib.get("libraries", []):
-        if payload.library_id and library.get("id") != payload.library_id:
-            continue
-        for cat in library.get("categories", []):
-            if cat.get("type") != "image":
-                continue
-            source_items = [item for item in (cat.get("items", []) or []) if item.get("id") in ids]
-            for item in source_items:
-                src = output_file_from_url(item.get("url") or "")
-                if not src or not os.path.isfile(src):
-                    continue
-                try:
-                    with Image.open(src) as img:
-                        img = img.convert("RGBA")
-                        w, h = img.size
-                        side = min(w, h)
-                        if side <= 0:
-                            continue
-                        left = max(0, (w - side) // 2)
-                        top = max(0, (h - side) // 2)
-                        cropped = img.crop((left, top, left + side, top + side))
-                        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-                        tmp_path = tmp.name
-                        tmp.close()
-                        try:
-                            cropped.save(tmp_path, "PNG")
-                            base_name = os.path.splitext(item.get("name") or "asset")[0] + "_crop.png"
-                            _, next_item = make_asset_library_item(tmp_path, base_name)
-                            (target_cat or cat).setdefault("items", []).append(next_item)
-                            added.append(next_item)
-                        finally:
-                            try:
-                                os.remove(tmp_path)
-                            except Exception:
-                                pass
-                except Exception:
-                    continue
-    save_asset_library(lib)
-    return {"library": lib, "added": len(added), "items": added}
-
-@app.put("/api/canvases/{canvas_id}")
-async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
-    canvas = load_canvas(canvas_id)
-    current_updated_at = int(canvas.get("updated_at") or 0)
-    if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at:
-        raise HTTPException(status_code=409, detail={
-            "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
-            "canvas": canvas,
-            "updated_at": current_updated_at,
-        })
-    canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
-    canvas["icon"] = (payload.icon or canvas.get("icon") or "layers")[:32]
-    canvas["kind"] = normalize_canvas_kind(canvas.get("kind"))
-    canvas["nodes"] = payload.nodes
-    canvas["connections"] = payload.connections
-    if canvas["kind"] == "smart":
-        canvas["viewport"] = payload.viewport
-    else:
-        canvas["viewport"] = canvas.get("viewport") or {"x": 0, "y": 0, "scale": 1}
-    canvas["logs"] = payload.logs[-500:]
-    canvas["settings"] = payload.settings or {}
-    save_canvas(canvas)
-    await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
-    return {"canvas": canvas}
-
-@app.delete("/api/canvases/{canvas_id}")
-async def delete_canvas(canvas_id: str):
-    canvas = load_canvas_any(canvas_id)
-    if not canvas.get("deleted_at"):
-        canvas["deleted_at"] = now_ms()
-        save_canvas(canvas)
-    return {"ok": True}
-
-@app.post("/api/canvases/{canvas_id}/restore")
-async def restore_canvas(canvas_id: str):
-    canvas = load_canvas_any(canvas_id)
-    if canvas.get("deleted_at"):
-        canvas.pop("deleted_at", None)
-        save_canvas(canvas)
-    return {"canvas": canvas}
-
-@app.delete("/api/canvases/{canvas_id}/purge")
-async def purge_canvas(canvas_id: str):
-    path = canvas_path(canvas_id)
-    if os.path.exists(path):
-        os.remove(path)
-    return {"ok": True}
+# 画布 PUT/DELETE/restore/purge 路由已迁移至 app/routers/canvases.py。
 
 # --- GPT 对话 ---
 
@@ -9681,44 +7794,8 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
 
 # --- 历史记录 ---
 
-@app.get("/api/history")
-async def get_history_api(type: str = None):
-    hist_path = history_file()
-    if os.path.exists(hist_path):
-        try:
-            with open(hist_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if type:
-                    data = [item for item in data if item.get("type", "zimage") == type]
-                data = [item for item in data if item.get("images") and len(item["images"]) > 0]
-
-                def sort_key(item):
-                    ts = item.get("timestamp", 0)
-                    if isinstance(ts, (int, float)):
-                        return float(ts)
-                    return 0
-
-                data.sort(key=sort_key, reverse=True)
-                return data
-        except Exception as e:
-            print(f"读取历史文件失败: {e}")
-            return []
-    return []
-
-@app.post("/api/history/save")
-async def save_history_api(req: SaveHistoryRequest):
-    images = [u for u in (req.images or []) if u]
-    if not images:
-        return {"success": False, "message": "no images"}
-    record = {
-        "timestamp": time.time(),
-        "prompt": req.prompt or "",
-        "images": images,
-        "type": req.type or "zimage",
-        "is_cloud": bool(req.is_cloud),
-    }
-    save_to_history(record)
-    return {"success": True, "record": record}
+# --- 历史记录 ---
+# GET /api/history、POST /api/history/save、POST /api/history/delete 路由已迁移至 app/routers/history.py。
 
 @app.get("/api/queue_status")
 async def get_queue_status(client_id: str):
@@ -9727,48 +7804,6 @@ async def get_queue_status(client_id: str):
         positions = [i + 1 for i, t in enumerate(QUEUE) if t["client_id"] == client_id]
         position = positions[0] if positions else 0
     return {"total": total, "position": position}
-
-@app.post("/api/history/delete")
-async def delete_history(req: DeleteHistoryRequest):
-    hist_path = history_file()
-    if not os.path.exists(hist_path):
-        return {"success": False, "message": "History file not found"}
-    try:
-        with HISTORY_LOCK:
-            with open(hist_path, 'r', encoding='utf-8') as f:
-                history = json.load(f)
-            target_record = None
-            new_history = []
-            for item in history:
-                is_match = False
-                item_ts = item.get("timestamp", 0)
-                if isinstance(req.timestamp, (int, float)) and isinstance(item_ts, (int, float)):
-                    if abs(float(item_ts) - float(req.timestamp)) < 0.001:
-                        is_match = True
-                elif str(item_ts) == str(req.timestamp):
-                    is_match = True
-                if is_match:
-                    target_record = item
-                else:
-                    new_history.append(item)
-            if target_record:
-                with open(hist_path, 'w', encoding='utf-8') as f:
-                    json.dump(new_history, f, ensure_ascii=False, indent=4)
-
-        if target_record:
-            for img_url in target_record.get("images", []):
-                file_path = output_file_from_url(img_url)
-                if file_path and os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        print(f"Failed to delete file {file_path}: {e}")
-            return {"success": True}
-        else:
-            return {"success": False, "message": "Record not found"}
-    except Exception as e:
-        print(f"Delete history error: {e}")
-        return {"success": False, "message": str(e)}
 
 # --- ModelScope 角度控制 ---
 
@@ -10333,33 +8368,6 @@ CUSTOM_WORKFLOW_FOLDER = "custom"
 LEGACY_CUSTOM_WORKFLOW_FOLDER = "自定义"
 WORKFLOW_NAME_RE = re.compile(rf"^(?:(?:{CUSTOM_WORKFLOW_FOLDER}|{LEGACY_CUSTOM_WORKFLOW_FOLDER})/)?[a-zA-Z0-9_一-龥\.\-]+\.json$")
 
-class WorkflowField(BaseModel):
-    id: str
-    node: str = ""
-    input: str = ""
-    name: str = ""
-    type: str = "text"
-    default: Any = None
-    min: Optional[float] = None
-    max: Optional[float] = None
-    step: Optional[float] = None
-    options: List[str] = []
-    random_enabled: bool = False
-
-class WorkflowConfig(BaseModel):
-    title: str = ""
-    fields: List[WorkflowField] = []
-    mini_cards: Dict[str, Any] = {}
-
-class WorkflowUploadRequest(BaseModel):
-    name: str
-    workflow: Dict[str, Any]
-
-class WorkflowRunRequest(BaseModel):
-    fields: Dict[str, Any] = {}
-    config: WorkflowConfig
-    client_id: str = ""
-
 def workflow_path_from_name(name: str) -> str:
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
@@ -10697,9 +8705,6 @@ def runninghub_collect_workflow_fields(workflow_json):
             })
     return fields
 
-class ComfyInstancesPayload(BaseModel):
-    instances: List[str] = []
-
 @app.get("/api/comfyui/instances")
 def get_comfyui_instances():
     return {"instances": COMFYUI_INSTANCES}
@@ -10879,6 +8884,24 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
         client_id=payload.client_id or str(uuid.uuid4()),
     )
     return generate(req)
+
+
+# --- 注册按功能域拆分出的路由 ---
+# 每个 router 使用独立 APIRouter()，URL/模型/状态码与原 main.py 完全一致。
+from app.routers import conversations as conversations_router
+from app.routers import prompts as prompts_router
+from app.routers import canvases as canvases_router
+from app.routers import assets as assets_router
+from app.routers import shared_folders as shared_folders_router
+from app.routers import history as history_router
+
+app.include_router(conversations_router.router)
+app.include_router(prompts_router.router)
+app.include_router(canvases_router.router)
+app.include_router(assets_router.router)
+app.include_router(shared_folders_router.router)
+app.include_router(history_router.router)
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -13,3 +13,13 @@ dependencies = [
     "httpx>=0.28.1",
     "pillow>=12.2.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v"
