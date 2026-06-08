@@ -333,21 +333,34 @@
     <script src="/static/js/ltx-director-timeline.js"></script>
     <script src="/static/js/canvas.js"></script>
     <script>
-    /* 访问控制：按当前用户权限隐藏无限画布的节点工具栏按钮。
-       node id -> 工具栏按钮 onclick 中的函数名（与 app/core/access_control.py ALL_NODES 对应）。 */
+    /* 访问控制：按当前用户权限限制无限画布可用节点。
+       - 暴露 window.__canvasAllowedNodes（Set 或 null=全部），由 canvas.js 在 addNode 源头强制拦截，
+         覆盖工具栏 / 右键菜单 / 连线菜单 / 端口菜单 / 复制粘贴等所有创建路径。
+       - 同时隐藏静态的工具栏按钮与右键菜单项，避免用户看到不可用入口。
+       node 访问控制 id -> 静态按钮 onclick 中的关键串（与 app/core/access_control.py ALL_NODES 对应）。 */
     (function () {
-        var NODE_ONCLICK = {
-            image: 'addImageNode', prompt: 'addPromptNode', loop: 'addLoopNode',
-            llm: 'addLLMNode', generator: 'addGeneratorNode', msgen: 'addMsGenNode',
-            video: 'addVideoNode', rh: 'addRhNode', comfy: 'addComfyNode',
-            ltx: 'addLTXDirectorNode', output: 'addOutputNode', group: 'groupSelectedImages'
+        // 访问控制 id -> 该 id 对应的「按钮 onclick 关键串」列表（含工具栏函数名与右键 menuAdd 的 type）
+        var NODE_SELECTORS = {
+            image: ['addImageNode(', "menuAdd('image')"],
+            prompt: ['addPromptNode(', "menuAdd('prompt')"],
+            loop: ['addLoopNode(', "menuAdd('loop')"],
+            llm: ['addLLMNode(', "menuAdd('llm')"],
+            generator: ['addGeneratorNode(', "menuAdd('generator')"],
+            msgen: ['addMsGenNode(', "menuAdd('msgen')"],
+            video: ['addVideoNode(', "menuAdd('video')"],
+            rh: ['addRhNode(', "menuAdd('rh')"],
+            comfy: ['addComfyNode(', "menuAdd('comfy')"],
+            ltx: ['addLTXDirectorNode(', "menuAdd('ltxDirector')"],
+            output: ['addOutputNode(', "menuAdd('output')"],
+            group: ['groupSelectedImages(']
         };
         function hideNode(id) {
-            var fn = NODE_ONCLICK[id];
-            if (!fn) return;
-            document.querySelectorAll('.toolbar-items .tool-btn').forEach(function (btn) {
+            var keys = NODE_SELECTORS[id] || [];
+            document.querySelectorAll('.toolbar-items .tool-btn, #createMenu .menu-btn').forEach(function (btn) {
                 var oc = btn.getAttribute('onclick') || '';
-                if (oc.indexOf(fn + '(') !== -1) btn.style.display = 'none';
+                for (var i = 0; i < keys.length; i++) {
+                    if (oc.indexOf(keys[i]) !== -1) { btn.style.display = 'none'; return; }
+                }
             });
         }
         async function applyCanvasAccessControl() {
@@ -357,9 +370,13 @@
                 if (!res.ok) return;
                 me = await res.json();
             } catch (e) { return; }
-            if (!me || me.is_admin) return;          // admin 全开
-            var allowed = new Set(Array.isArray(me.nodes) ? me.nodes : Object.keys(NODE_ONCLICK));
-            Object.keys(NODE_ONCLICK).forEach(function (id) {
+            if (!me || me.is_admin) {
+                window.__canvasAllowedNodes = null;   // 全部放开
+                return;
+            }
+            var allowed = new Set(Array.isArray(me.nodes) ? me.nodes : Object.keys(NODE_SELECTORS));
+            window.__canvasAllowedNodes = allowed;     // 供 canvas.js addNode 强制拦截
+            Object.keys(NODE_SELECTORS).forEach(function (id) {
                 if (!allowed.has(id)) hideNode(id);
             });
         }

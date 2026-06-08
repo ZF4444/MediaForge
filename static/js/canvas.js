@@ -1932,10 +1932,29 @@ backToManagerBtn.addEventListener('click', returnToCanvasManager);
 
 function addNode(node){
     if(!ensureCanvas()) return;
+    if(!canvasNodeTypeAllowed(node && node.type)){
+        try { showErrorModal(tr('canvas.nodeNotAllowed'), tr('canvas.nodeNotAllowedTitle')); } catch(e) {}
+        return null;
+    }
     nodes.push(node);
     render();
     scheduleSave();
     return node;
+}
+// 访问控制：node.type -> 访问控制节点 id（多数同名，仅 ltxDirector 映射为 ltx）。
+function canvasNodeAccessId(type){
+    if(type === 'ltxDirector') return 'ltx';
+    return type;
+}
+function canvasNodeTypeAllowed(type){
+    var allowed = window.__canvasAllowedNodes;
+    if(!allowed) return true;            // null/未设置 => 全部放开（admin / 未配置用户 / 加载失败兜底）
+    if(!type) return true;               // 无类型不拦截
+    var id = canvasNodeAccessId(type);
+    // 不在访问控制清单内的类型（如 promptGroup 等内部派生类型）默认放行
+    var KNOWN = ['image','prompt','loop','llm','generator','msgen','video','rh','comfy','ltx','output','group'];
+    if(KNOWN.indexOf(id) === -1) return true;
+    return allowed.has(id);
 }
 function defaultPoint(dx=0, dy=0){ return screenToWorld(window.innerWidth / 2 + dx, window.innerHeight / 2 + dy); }
 function addImageNode(point){
