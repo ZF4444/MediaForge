@@ -65,6 +65,7 @@ const linkCreateMenu = document.getElementById('linkCreateMenu');
 const nodeInputMenu = document.getElementById('nodeInputMenu');
 const nodeOutputMenu = document.getElementById('nodeOutputMenu');
 const imageNodeMenu = document.getElementById('imageNodeMenu');
+const promptMentionMenu = document.getElementById('promptMentionMenu');
 const selectionBox = document.getElementById('selectionBox');
 const selectionHub = document.getElementById('selectionHub');
 const gateStatus = document.getElementById('gateStatus');
@@ -5350,12 +5351,14 @@ function renderNode(node){
             openPromptTemplateModal(node.id);
         };
         bindScrollableText(textarea);
+        bindPromptMention(textarea, node.id);
         textarea.oninput = e => {
             node.text = e.target.value;
             refreshPromptCounter(body, node.text);
             scheduleSave();
             syncGeneratorInputs();
             refreshGeneratorInputViews();
+            if(isPromptMentionOpen()) maybeOpenPromptMention(textarea, node.id);
         };
     }
     if(node.type === 'loop') body.appendChild(renderLoopBody(node));
@@ -9077,6 +9080,201 @@ function reorderInput(gen, movedId, targetId){
     gen.inputs = [...ids, ...promptIds];
     render();
     scheduleSave();
+}
+function generatorImageInputsForPrompt(promptNodeId){
+    // 找到该提示词节点直接连接的所有 AI 生成节点，按连线顺序取它们的有序图片输入。
+    // 返回的列表顺序即对应"图1 / 图2 / ..."。
+    const seen = new Set();
+    const result = [];
+    connections
+        .filter(c => c.from === promptNodeId)
+        .map(c => nodes.find(n => n.id === c.to))
+        .filter(gen => gen && CANVAS_GENERATOR_TYPES.includes(gen.type))
+        .forEach(gen => {
+            if(seen.has(gen.id)) return;
+            seen.add(gen.id);
+            const sources = orderedSources(gen, generatorSources(gen));
+            const imageInputs = sources
+                .map(src => ({...src, refs:imageRefsOnly(src.refs || [])}))
+                .filter(src => src.refs?.length);
+            imageInputs.forEach((src, i) => {
+                result.push({
+                    index:i + 1,
+                    preview:src.preview || src.refs?.[0]?.url || '',
+                    label:src.label || `图${i + 1}`,
+                    genId:gen.id
+                });
+            });
+        });
+    return result;
+}
+// ===== 提示词 @ 图片引用菜单 =====
+let promptMentionState = null; // { textarea, nodeId, triggerPos, items, filtered, activeIndex }
+function isPromptMentionOpen(){
+    return !!promptMentionState && promptMentionMenu.classList.contains('open');
+}
+function closePromptMentionMenu(){
+    promptMentionState = null;
+    promptMentionMenu.classList.remove('open');
+    promptMentionMenu.innerHTML = '';
+}
+function renderPromptMentionMenu(){
+    const state = promptMentionState;
+    if(!state) return;
+    const items = state.filtered;
+    if(!items.length){
+        promptMentionMenu.innerHTML = `<div class="prompt-mention-empty">${escapeHtml(tr('canvas.promptMentionEmpty'))}</div>`;
+        refreshIcons();
+        return;
+    }
+    promptMentionMenu.innerHTML = items.map((item, i) => {
+        const previewHtml = item.preview && !isMissingAssetUrl(item.preview)
+            ? `<img src="${escapeAttr(item.preview)}">`
+            : '<i data-lucide="image" class="w-4 h-4 text-slate-400"></i>';
+        const title = trf('canvas.promptMentionImage', {n:item.index});
+        return `<div class="prompt-mention-item ${i === state.activeIndex ? 'active' : ''}" data-mention-index="${i}" role="option">
+            <div class="prompt-mention-thumb"><span class="prompt-mention-index">${item.index}</span>${previewHtml}</div>
+            <div class="prompt-mention-text"><span class="prompt-mention-title">${escapeHtml(title)}</span><span class="prompt-mention-label">${escapeHtml(item.label || '')}</span></div>
+        </div>`;
+    }).join('');
+    promptMentionMenu.querySelectorAll('.prompt-mention-item').forEach(el => {
+        el.addEventListener('mousedown', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            applyPromptMention(Number(el.dataset.mentionIndex));
+        });
+        el.addEventListener('mouseenter', () => {
+            state.activeIndex = Number(el.dataset.mentionIndex);
+            updatePromptMentionActive();
+        });
+    });
+    refreshIcons();
+}
+function updatePromptMentionActive(){
+    const state = promptMentionState;
+    if(!state) return;
+    promptMentionMenu.querySelectorAll('.prompt-mention-item').forEach(el => {
+        el.classList.toggle('active', Number(el.dataset.mentionIndex) === state.activeIndex);
+    });
+    const activeEl = promptMentionMenu.querySelector('.prompt-mention-item.active');
+    if(activeEl) activeEl.scrollIntoView({block:'nearest'});
+}
+function positionPromptMentionMenu(textarea){
+    const rect = textarea.getBoundingClientRect();
+    const menuWidth = 226;
+    let left = rect.left;
+    let top = rect.bottom + 4;
+    if(left + menuWidth > window.innerWidth - 8) left = window.innerWidth - 8 - menuWidth;
+    if(left < 8) left = 8;
+    promptMentionMenu.style.left = `${Math.round(left)}px`;
+    promptMentionMenu.style.top = `${Math.round(top)}px`;
+}
+function filterPromptMentionItems(state, query){
+    const q = String(query || '').trim();
+    if(!q) return state.items.slice();
+    // query 可能是数字（图N）或文本（匹配标签）
+    if(/^\d+$/.test(q)){
+        return state.items.filter(item => String(item.index).startsWith(q));
+    }
+    const lower = q.toLowerCase();
+    return state.items.filter(item =>
+        String(item.index).includes(q) ||
+        (item.label || '').toLowerCase().includes(lower)
+    );
+}
+function maybeOpenPromptMention(textarea, nodeId){
+    const pos = textarea.selectionStart;
+    const value = textarea.value;
+    // 从光标向前找最近的 @，且 @ 与光标之间不含空白与换行。
+    // @ 本身即显式触发符，不限制其前一个字符，从而支持连续多次 @（如"图1@"再次触发）。
+    let at = -1;
+    for(let i = pos - 1; i >= 0; i--){
+        const ch = value[i];
+        if(ch === '@'){ at = i; break; }
+        if(ch === '\n' || ch === ' ' || ch === '\t'){ break; }
+    }
+    if(at < 0){ closePromptMentionMenu(); return; }
+    const query = value.slice(at + 1, pos);
+    if(/\s/.test(query)){ closePromptMentionMenu(); return; }
+    const items = generatorImageInputsForPrompt(nodeId);
+    promptMentionState = {textarea, nodeId, triggerPos:at, query, items, filtered:[], activeIndex:0};
+    promptMentionState.filtered = filterPromptMentionItems(promptMentionState, query);
+    promptMentionState.activeIndex = 0;
+    promptMentionMenu.classList.add('open');
+    positionPromptMentionMenu(textarea);
+    renderPromptMentionMenu();
+}
+function applyPromptMention(index){
+    const state = promptMentionState;
+    if(!state) return;
+    const item = state.filtered[index];
+    if(!item){ closePromptMentionMenu(); return; }
+    const textarea = state.textarea;
+    const node = nodes.find(n => n.id === state.nodeId);
+    const insert = trf('canvas.promptMentionInsert', {n:item.index});
+    const value = textarea.value;
+    const caret = textarea.selectionStart;
+    const before = value.slice(0, state.triggerPos);
+    const after = value.slice(caret);
+    const newValue = before + insert + after;
+    textarea.value = newValue;
+    const newCaret = before.length + insert.length;
+    textarea.setSelectionRange(newCaret, newCaret);
+    closePromptMentionMenu();
+    if(node){
+        node.text = newValue;
+        const body = textarea.closest('.node-body') || textarea.parentElement;
+        if(body) refreshPromptCounter(body, node.text);
+        scheduleSave();
+        syncGeneratorInputs();
+        refreshGeneratorInputViews();
+    }
+    textarea.focus();
+}
+function handlePromptMentionKeydown(e){
+    if(!isPromptMentionOpen()) return false;
+    const state = promptMentionState;
+    if(e.key === 'ArrowDown'){
+        e.preventDefault();
+        if(state.filtered.length){ state.activeIndex = (state.activeIndex + 1) % state.filtered.length; updatePromptMentionActive(); }
+        return true;
+    }
+    if(e.key === 'ArrowUp'){
+        e.preventDefault();
+        if(state.filtered.length){ state.activeIndex = (state.activeIndex - 1 + state.filtered.length) % state.filtered.length; updatePromptMentionActive(); }
+        return true;
+    }
+    if(e.key === 'Enter' || e.key === 'Tab'){
+        if(state.filtered.length){
+            e.preventDefault();
+            applyPromptMention(state.activeIndex);
+            return true;
+        }
+        closePromptMentionMenu();
+        return false;
+    }
+    if(e.key === 'Escape'){
+        e.preventDefault();
+        closePromptMentionMenu();
+        return true;
+    }
+    return false;
+}
+function bindPromptMention(textarea, nodeId){
+    textarea.addEventListener('keydown', e => {
+        if(handlePromptMentionKeydown(e)) return;
+        if(e.key === '@'){
+            // 字符尚未插入，下一帧再检测
+            requestAnimationFrame(() => maybeOpenPromptMention(textarea, nodeId));
+        }
+    });
+    textarea.addEventListener('keyup', e => {
+        if(['ArrowDown','ArrowUp','Enter','Tab','Escape'].includes(e.key)) return;
+        maybeOpenPromptMention(textarea, nodeId);
+    });
+    textarea.addEventListener('click', () => maybeOpenPromptMention(textarea, nodeId));
+    textarea.addEventListener('blur', () => { setTimeout(() => closePromptMentionMenu(), 120); });
+    textarea.addEventListener('scroll', () => { if(isPromptMentionOpen()) positionPromptMentionMenu(textarea); });
 }
 function syncGeneratorInputs(){
     nodes.filter(n => CANVAS_GENERATOR_TYPES.includes(n.type)).forEach(gen => {
