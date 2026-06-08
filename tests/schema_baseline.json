@@ -1,133 +1,150 @@
 {
   "AIReference": {
     "properties": {
+      "url": {
+        "type": "string",
+        "default": ""
+      },
       "name": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "role": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      }
+    },
+    "required": []
+  },
+  "AccessControlConfigPayload": {
+    "properties": {
+      "users": {
+        "type": "object"
       },
-      "url": {
-        "default": "",
-        "type": "string"
+      "default": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/AccessControlUserEntry"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": []
+  },
+  "AccessControlUserEntry": {
+    "properties": {
+      "pages": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "nodes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
       }
     },
     "required": []
   },
   "ApiProviderPayload": {
     "properties": {
-      "api_key": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "base_url": {
-        "default": "",
-        "type": "string"
-      },
-      "chat_models": {
-        "default": [],
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
-      },
-      "clear_key": {
-        "default": false,
-        "type": "boolean"
-      },
-      "clear_volcengine_access_key_id": {
-        "default": false,
-        "type": "boolean"
-      },
-      "clear_volcengine_secret_access_key": {
-        "default": false,
-        "type": "boolean"
-      },
-      "clear_wallet_key": {
-        "default": false,
-        "type": "boolean"
-      },
-      "enabled": {
-        "default": true,
-        "type": "boolean"
-      },
       "id": {
-        "default": "",
-        "type": "string"
-      },
-      "image_edit_endpoint": {
-        "default": "",
-        "type": "string"
-      },
-      "image_generation_endpoint": {
-        "default": "",
-        "type": "string"
-      },
-      "image_models": {
-        "default": [],
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
-      },
-      "model_protocols": {
-        "default": {},
-        "type": "object"
-      },
-      "ms_defaults_version": {
-        "default": 0,
-        "type": "integer"
-      },
-      "ms_loras": {
-        "default": [],
-        "items": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "type": "array"
+        "type": "string",
+        "default": ""
       },
       "name": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
-      "primary": {
-        "default": false,
-        "type": "boolean"
+      "base_url": {
+        "type": "string",
+        "default": ""
       },
       "protocol": {
-        "default": "openai",
-        "type": "string"
+        "type": "string",
+        "default": "openai"
       },
-      "rh_apps": {
-        "default": [],
-        "items": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "type": "array"
+      "image_generation_endpoint": {
+        "type": "string",
+        "default": ""
       },
-      "rh_workflows": {
-        "default": [],
-        "items": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "type": "array"
+      "image_edit_endpoint": {
+        "type": "string",
+        "default": ""
       },
-      "video_models": {
-        "default": [],
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "primary": {
+        "type": "boolean",
+        "default": false
+      },
+      "image_models": {
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
+      },
+      "chat_models": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "video_models": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "model_protocols": {
+        "type": "object",
+        "default": {}
+      },
+      "ms_loras": {
+        "type": "array",
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "default": []
+      },
+      "ms_defaults_version": {
+        "type": "integer",
+        "default": 0
+      },
+      "rh_apps": {
+        "type": "array",
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "default": []
+      },
+      "rh_workflows": {
+        "type": "array",
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "default": []
+      },
+      "volcengine_project_name": {
+        "type": "string",
+        "default": "default"
+      },
+      "volcengine_region": {
+        "type": "string",
+        "default": "cn-beijing"
       },
       "volcengine_access_key_id": {
         "anyOf": [
@@ -139,15 +156,17 @@
           }
         ]
       },
-      "volcengine_project_name": {
-        "default": "default",
-        "type": "string"
-      },
-      "volcengine_region": {
-        "default": "cn-beijing",
-        "type": "string"
-      },
       "volcengine_secret_access_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "api_key": {
         "anyOf": [
           {
             "type": "string"
@@ -166,27 +185,43 @@
             "type": "null"
           }
         ]
+      },
+      "clear_key": {
+        "type": "boolean",
+        "default": false
+      },
+      "clear_wallet_key": {
+        "type": "boolean",
+        "default": false
+      },
+      "clear_volcengine_access_key_id": {
+        "type": "boolean",
+        "default": false
+      },
+      "clear_volcengine_secret_access_key": {
+        "type": "boolean",
+        "default": false
       }
     },
     "required": []
   },
   "AssetAvatarRegisterRequest": {
     "properties": {
-      "group_name": {
-        "default": "",
-        "type": "string"
-      },
       "library_id": {
-        "default": "",
-        "type": "string"
-      },
-      "project_name": {
-        "default": "default",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "provider_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "project_name": {
+        "type": "string",
+        "default": "default"
+      },
+      "group_name": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
@@ -194,20 +229,20 @@
   "AssetLibraryAddRequest": {
     "properties": {
       "category_id": {
-        "default": "",
-        "type": "string"
-      },
-      "library_id": {
-        "default": "",
-        "type": "string"
-      },
-      "name": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "url": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "name": {
+        "type": "string",
+        "default": ""
+      },
+      "library_id": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
@@ -215,19 +250,19 @@
   "AssetLibraryBatchAddRequest": {
     "properties": {
       "category_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "library_id": {
+        "type": "string",
+        "default": ""
       },
       "items": {
-        "default": [],
+        "type": "array",
         "items": {
           "$ref": "#/components/schemas/AssetLibraryAddRequest"
         },
-        "type": "array"
-      },
-      "library_id": {
-        "default": "",
-        "type": "string"
+        "default": []
       }
     },
     "required": []
@@ -235,27 +270,27 @@
   "AssetLibraryBatchCropRequest": {
     "properties": {
       "ids": {
-        "default": [],
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
       },
       "library_id": {
-        "default": "",
-        "type": "string"
-      },
-      "mode": {
-        "default": "square",
-        "type": "string"
-      },
-      "target_category_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "target_library_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "target_category_id": {
+        "type": "string",
+        "default": ""
+      },
+      "mode": {
+        "type": "string",
+        "default": "square"
       }
     },
     "required": []
@@ -263,15 +298,15 @@
   "AssetLibraryBatchDeleteRequest": {
     "properties": {
       "ids": {
-        "default": [],
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
       },
       "library_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
@@ -279,40 +314,40 @@
   "AssetLibraryBatchMoveRequest": {
     "properties": {
       "ids": {
-        "default": [],
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
       },
       "library_id": {
-        "default": "",
-        "type": "string"
-      },
-      "target_category_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "target_library_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "target_category_id": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
   },
   "AssetLibraryCategoryRequest": {
     "properties": {
-      "library_id": {
-        "default": "",
-        "type": "string"
-      },
       "name": {
-        "default": "新文件夹",
-        "type": "string"
+        "type": "string",
+        "default": "新文件夹"
       },
       "type": {
-        "default": "image",
-        "type": "string"
+        "type": "string",
+        "default": "image"
+      },
+      "library_id": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
@@ -320,8 +355,8 @@
   "AssetLibraryRenameRequest": {
     "properties": {
       "name": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
@@ -329,8 +364,8 @@
   "AssetLibraryRequest": {
     "properties": {
       "name": {
-        "default": "资产库",
-        "type": "string"
+        "type": "string",
+        "default": "资产库"
       }
     },
     "required": []
@@ -338,11 +373,11 @@
   "Body_upload_ai_reference_api_ai_upload_post": {
     "properties": {
       "files": {
+        "type": "array",
         "items": {
-          "contentMediaType": "application/octet-stream",
-          "type": "string"
-        },
-        "type": "array"
+          "type": "string",
+          "contentMediaType": "application/octet-stream"
+        }
       }
     },
     "required": [
@@ -352,11 +387,11 @@
   "Body_upload_image_api_upload_post": {
     "properties": {
       "files": {
+        "type": "array",
         "items": {
-          "contentMediaType": "application/octet-stream",
-          "type": "string"
-        },
-        "type": "array"
+          "type": "string",
+          "contentMediaType": "application/octet-stream"
+        }
       }
     },
     "required": [
@@ -366,11 +401,11 @@
   "Body_upload_local_assets_api_local_assets_upload_post": {
     "properties": {
       "files": {
+        "type": "array",
         "items": {
-          "contentMediaType": "application/octet-stream",
-          "type": "string"
-        },
-        "type": "array"
+          "type": "string",
+          "contentMediaType": "application/octet-stream"
+        }
       }
     },
     "required": [
@@ -380,100 +415,100 @@
   "CanvasAssetCheckRequest": {
     "properties": {
       "urls": {
-        "default": [],
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
       }
     },
     "required": []
   },
   "CanvasAssetDownloadRequest": {
     "properties": {
-      "filename": {
-        "default": "canvas-output-images.zip",
-        "type": "string"
+      "urls": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
       },
       "items": {
-        "default": [],
+        "type": "array",
         "items": {
           "additionalProperties": true,
           "type": "object"
         },
-        "type": "array"
+        "default": []
       },
-      "urls": {
-        "default": [],
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
+      "filename": {
+        "type": "string",
+        "default": "canvas-output-images.zip"
       }
     },
     "required": []
   },
   "CanvasCreateRequest": {
     "properties": {
+      "title": {
+        "type": "string",
+        "default": "未命名画布"
+      },
       "icon": {
-        "default": "🧩",
-        "type": "string"
+        "type": "string",
+        "default": "🧩"
       },
       "kind": {
-        "default": "classic",
-        "type": "string"
-      },
-      "title": {
-        "default": "未命名画布",
-        "type": "string"
+        "type": "string",
+        "default": "classic"
       }
     },
     "required": []
   },
   "CanvasLLMRequest": {
     "properties": {
-      "images": {
-        "default": [],
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
-      },
       "message": {
+        "type": "string",
         "maxLength": 20000,
-        "minLength": 1,
-        "type": "string"
+        "minLength": 1
+      },
+      "system_prompt": {
+        "type": "string",
+        "default": ""
+      },
+      "model": {
+        "type": "string",
+        "default": ""
       },
       "messages": {
-        "default": [],
+        "type": "array",
         "items": {
           "additionalProperties": true,
           "type": "object"
         },
-        "type": "array"
-      },
-      "model": {
-        "default": "",
-        "type": "string"
-      },
-      "ms_model": {
-        "default": "",
-        "type": "string"
+        "default": []
       },
       "provider": {
-        "default": "comfly",
-        "type": "string"
+        "type": "string",
+        "default": "comfly"
       },
-      "system_prompt": {
-        "default": "",
-        "type": "string"
+      "ms_model": {
+        "type": "string",
+        "default": ""
       },
-      "videos": {
-        "default": [],
+      "images": {
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
+      },
+      "videos": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
       }
     },
     "required": [
@@ -482,7 +517,7 @@
   },
   "CanvasMetaUpdate": {
     "properties": {
-      "color": {
+      "title": {
         "anyOf": [
           {
             "type": "string"
@@ -512,20 +547,20 @@
           }
         ]
       },
-      "pinned": {
+      "color": {
         "anyOf": [
           {
-            "type": "boolean"
+            "type": "string"
           },
           {
             "type": "null"
           }
         ]
       },
-      "title": {
+      "pinned": {
         "anyOf": [
           {
-            "type": "string"
+            "type": "boolean"
           },
           {
             "type": "null"
@@ -537,121 +572,120 @@
   },
   "CanvasSaveRequest": {
     "properties": {
-      "base_updated_at": {
-        "default": 0,
-        "type": "integer"
-      },
-      "client_id": {
-        "default": "",
-        "type": "string"
-      },
-      "connections": {
-        "default": [],
-        "items": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "type": "array"
+      "title": {
+        "type": "string",
+        "default": "未命名画布"
       },
       "icon": {
-        "default": "🧩",
-        "type": "string"
-      },
-      "logs": {
-        "default": [],
-        "items": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "type": "array"
+        "type": "string",
+        "default": "🧩"
       },
       "nodes": {
-        "default": [],
+        "type": "array",
         "items": {
           "additionalProperties": true,
           "type": "object"
         },
-        "type": "array"
+        "default": []
       },
-      "settings": {
-        "default": {},
-        "type": "object"
-      },
-      "title": {
-        "default": "未命名画布",
-        "type": "string"
+      "connections": {
+        "type": "array",
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "default": []
       },
       "viewport": {
-        "default": {},
-        "type": "object"
+        "type": "object",
+        "default": {}
+      },
+      "logs": {
+        "type": "array",
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "default": []
+      },
+      "settings": {
+        "type": "object",
+        "default": {}
+      },
+      "client_id": {
+        "type": "string",
+        "default": ""
+      },
+      "base_updated_at": {
+        "type": "integer",
+        "default": 0
       }
     },
     "required": []
   },
   "CanvasVideoRequest": {
     "properties": {
-      "aspect_ratio": {
-        "default": "16:9",
-        "type": "string"
+      "prompt": {
+        "type": "string",
+        "maxLength": 4000,
+        "minLength": 1
       },
-      "audios": {
-        "default": [],
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
+      "provider_id": {
+        "type": "string",
+        "default": "comfly"
       },
-      "camerafixed": {
-        "default": false,
-        "type": "boolean"
+      "model": {
+        "type": "string",
+        "default": "veo3-fast"
       },
       "duration": {
-        "default": 5,
-        "type": "integer"
+        "type": "integer",
+        "default": 5
       },
-      "enable_upsample": {
-        "default": false,
-        "type": "boolean"
+      "aspect_ratio": {
+        "type": "string",
+        "default": "16:9"
       },
-      "enhance_prompt": {
-        "default": false,
-        "type": "boolean"
+      "resolution": {
+        "type": "string",
+        "default": ""
       },
-      "generate_audio": {
-        "default": false,
-        "type": "boolean"
+      "size": {
+        "type": "string",
+        "default": ""
       },
       "images": {
-        "default": [],
+        "type": "array",
         "items": {
           "$ref": "#/components/schemas/AIReference"
         },
-        "type": "array"
+        "default": []
       },
-      "model": {
-        "default": "veo3-fast",
-        "type": "string"
+      "videos": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
       },
-      "multimodal": {
-        "default": false,
-        "type": "boolean"
+      "audios": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
       },
-      "prompt": {
-        "maxLength": 4000,
-        "minLength": 1,
-        "type": "string"
+      "enhance_prompt": {
+        "type": "boolean",
+        "default": false
       },
-      "provider_id": {
-        "default": "comfly",
-        "type": "string"
+      "enable_upsample": {
+        "type": "boolean",
+        "default": false
       },
-      "resolution": {
-        "default": "",
-        "type": "string"
-      },
-      "return_last_frame": {
-        "default": false,
-        "type": "boolean"
+      "watermark": {
+        "type": "boolean",
+        "default": false
       },
       "seed": {
         "anyOf": [
@@ -663,24 +697,25 @@
           }
         ]
       },
-      "size": {
-        "default": "",
-        "type": "string"
+      "camerafixed": {
+        "type": "boolean",
+        "default": false
+      },
+      "return_last_frame": {
+        "type": "boolean",
+        "default": false
+      },
+      "generate_audio": {
+        "type": "boolean",
+        "default": false
+      },
+      "multimodal": {
+        "type": "boolean",
+        "default": false
       },
       "trusted_asset": {
-        "default": false,
-        "type": "boolean"
-      },
-      "videos": {
-        "default": [],
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
-      },
-      "watermark": {
-        "default": false,
-        "type": "boolean"
+        "type": "boolean",
+        "default": false
       }
     },
     "required": [
@@ -690,48 +725,48 @@
   "ChatRequest": {
     "properties": {
       "conversation_id": {
-        "default": "",
-        "type": "string"
-      },
-      "image_model": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "message": {
+        "type": "string",
         "maxLength": 20000,
-        "minLength": 1,
-        "type": "string"
-      },
-      "mode": {
-        "default": "chat",
-        "type": "string"
+        "minLength": 1
       },
       "model": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
-      "ms_model": {
-        "default": "",
-        "type": "string"
+      "image_model": {
+        "type": "string",
+        "default": ""
       },
-      "provider": {
-        "default": "comfly",
-        "type": "string"
+      "mode": {
+        "type": "string",
+        "default": "chat"
+      },
+      "size": {
+        "type": "string",
+        "default": "1024x1024"
       },
       "quality": {
-        "default": "auto",
-        "type": "string"
+        "type": "string",
+        "default": "auto"
       },
       "reference_images": {
-        "default": [],
+        "type": "array",
         "items": {
           "$ref": "#/components/schemas/AIReference"
         },
-        "type": "array"
+        "default": []
       },
-      "size": {
-        "default": "1024x1024",
-        "type": "string"
+      "provider": {
+        "type": "string",
+        "default": "comfly"
+      },
+      "ms_model": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": [
@@ -740,26 +775,31 @@
   },
   "CloudGenRequest": {
     "properties": {
-      "api_key": {
-        "default": "",
+      "prompt": {
         "type": "string"
       },
-      "client_id": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ]
+      "api_key": {
+        "type": "string",
+        "default": ""
+      },
+      "model": {
+        "type": "string",
+        "default": ""
+      },
+      "resolution": {
+        "type": "string",
+        "default": "1024x1024"
+      },
+      "type": {
+        "type": "string",
+        "default": "zimage"
       },
       "image_urls": {
-        "default": [],
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
       },
       "loras": {
         "anyOf": [
@@ -769,20 +809,15 @@
           }
         ]
       },
-      "model": {
-        "default": "",
-        "type": "string"
-      },
-      "prompt": {
-        "type": "string"
-      },
-      "resolution": {
-        "default": "1024x1024",
-        "type": "string"
-      },
-      "type": {
-        "default": "zimage",
-        "type": "string"
+      "client_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
@@ -791,9 +826,12 @@
   },
   "CloudPollRequest": {
     "properties": {
-      "api_key": {
-        "default": "",
+      "task_id": {
         "type": "string"
+      },
+      "api_key": {
+        "type": "string",
+        "default": ""
       },
       "client_id": {
         "anyOf": [
@@ -804,9 +842,6 @@
             "type": "null"
           }
         ]
-      },
-      "task_id": {
-        "type": "string"
       }
     },
     "required": [
@@ -815,13 +850,13 @@
   },
   "CloudVideoUploadRequest": {
     "properties": {
-      "service": {
-        "default": "auto",
-        "type": "string"
-      },
       "url": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "service": {
+        "type": "string",
+        "default": "auto"
       }
     },
     "required": []
@@ -829,11 +864,11 @@
   "ComfyInstancesPayload": {
     "properties": {
       "instances": {
-        "default": [],
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
       }
     },
     "required": []
@@ -841,8 +876,8 @@
   "ConversationCreateRequest": {
     "properties": {
       "title": {
-        "default": "新对话",
-        "type": "string"
+        "type": "string",
+        "default": "新对话"
       }
     },
     "required": []
@@ -859,37 +894,37 @@
   },
   "GenerateRequest": {
     "properties": {
-      "client_id": {
-        "default": "",
-        "type": "string"
-      },
-      "convert_to_jpg": {
-        "default": false,
-        "type": "boolean"
-      },
-      "height": {
-        "default": 1024,
-        "type": "integer"
-      },
-      "params": {
-        "default": {},
-        "type": "object"
-      },
       "prompt": {
-        "default": "",
-        "type": "string"
-      },
-      "type": {
-        "default": "zimage",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "width": {
-        "default": 1024,
-        "type": "integer"
+        "type": "integer",
+        "default": 1024
+      },
+      "height": {
+        "type": "integer",
+        "default": 1024
       },
       "workflow_json": {
-        "default": "Z-Image.json",
-        "type": "string"
+        "type": "string",
+        "default": "Z-Image.json"
+      },
+      "params": {
+        "type": "object",
+        "default": {}
+      },
+      "type": {
+        "type": "string",
+        "default": "zimage"
+      },
+      "client_id": {
+        "type": "string",
+        "default": ""
+      },
+      "convert_to_jpg": {
+        "type": "boolean",
+        "default": false
       }
     },
     "required": []
@@ -897,10 +932,10 @@
   "HTTPValidationError": {
     "properties": {
       "detail": {
+        "type": "array",
         "items": {
           "$ref": "#/components/schemas/ValidationError"
-        },
-        "type": "array"
+        }
       }
     },
     "required": []
@@ -908,21 +943,21 @@
   "JimengHelpRequest": {
     "properties": {
       "command": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
   },
   "JimengQueryMediaRequest": {
     "properties": {
-      "kind": {
-        "default": "image",
-        "type": "string"
-      },
       "submit_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "kind": {
+        "type": "string",
+        "default": "image"
       }
     },
     "required": []
@@ -930,14 +965,14 @@
   "LocalImageImportRequest": {
     "properties": {
       "path": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "paths": {
+        "type": "array",
         "items": {
           "type": "string"
-        },
-        "type": "array"
+        }
       }
     },
     "required": []
@@ -945,17 +980,51 @@
   "LoginRequest": {
     "properties": {
       "username": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
   },
   "MsGenerateRequest": {
     "properties": {
-      "api_key": {
-        "default": "",
+      "prompt": {
         "type": "string"
+      },
+      "api_key": {
+        "type": "string",
+        "default": ""
+      },
+      "model": {
+        "type": "string",
+        "default": "black-forest-labs/FLUX.2-klein-9B"
+      },
+      "image_urls": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "width": {
+        "type": "integer",
+        "default": 0
+      },
+      "height": {
+        "type": "integer",
+        "default": 0
+      },
+      "size": {
+        "type": "string",
+        "default": ""
+      },
+      "loras": {
+        "anyOf": [
+          {},
+          {
+            "type": "null"
+          }
+        ]
       },
       "client_id": {
         "anyOf": [
@@ -966,40 +1035,6 @@
             "type": "null"
           }
         ]
-      },
-      "height": {
-        "default": 0,
-        "type": "integer"
-      },
-      "image_urls": {
-        "default": [],
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
-      },
-      "loras": {
-        "anyOf": [
-          {},
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "model": {
-        "default": "black-forest-labs/FLUX.2-klein-9B",
-        "type": "string"
-      },
-      "prompt": {
-        "type": "string"
-      },
-      "size": {
-        "default": "",
-        "type": "string"
-      },
-      "width": {
-        "default": 0,
-        "type": "integer"
       }
     },
     "required": [
@@ -1008,37 +1043,37 @@
   },
   "OnlineImageRequest": {
     "properties": {
-      "model": {
-        "default": "",
-        "type": "string"
-      },
-      "n": {
-        "default": 1,
-        "type": "integer"
-      },
       "prompt": {
+        "type": "string",
         "maxLength": 20000,
-        "minLength": 1,
-        "type": "string"
+        "minLength": 1
       },
       "provider_id": {
-        "default": "comfly",
-        "type": "string"
+        "type": "string",
+        "default": "comfly"
+      },
+      "model": {
+        "type": "string",
+        "default": ""
+      },
+      "size": {
+        "type": "string",
+        "default": "1024x1024"
       },
       "quality": {
-        "default": "auto",
-        "type": "string"
+        "type": "string",
+        "default": "auto"
+      },
+      "n": {
+        "type": "integer",
+        "default": 1
       },
       "reference_images": {
-        "default": [],
+        "type": "array",
         "items": {
           "$ref": "#/components/schemas/AIReference"
         },
-        "type": "array"
-      },
-      "size": {
-        "default": "1024x1024",
-        "type": "string"
+        "default": []
       }
     },
     "required": [
@@ -1048,57 +1083,57 @@
   "PromptLibraryBatchDeleteRequest": {
     "properties": {
       "ids": {
-        "default": [],
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
       }
     },
     "required": []
   },
   "PromptLibraryCategoryRequest": {
     "properties": {
-      "library_id": {
-        "default": "",
-        "type": "string"
-      },
       "name": {
-        "default": "新分组",
-        "type": "string"
+        "type": "string",
+        "default": "新分组"
+      },
+      "library_id": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
   },
   "PromptLibraryItemRequest": {
     "properties": {
-      "category": {
-        "default": "custom",
-        "type": "string"
+      "library_id": {
+        "type": "string",
+        "default": ""
       },
       "item_id": {
-        "default": "",
-        "type": "string"
-      },
-      "library_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "name": {
-        "default": "提示词",
-        "type": "string"
+        "type": "string",
+        "default": "提示词"
       },
-      "negative": {
-        "default": "",
-        "type": "string"
+      "category": {
+        "type": "string",
+        "default": "custom"
       },
       "positive": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "negative": {
+        "type": "string",
+        "default": ""
       },
       "scene": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
@@ -1106,33 +1141,33 @@
   "PromptLibraryRequest": {
     "properties": {
       "name": {
-        "default": "提示词库",
-        "type": "string"
+        "type": "string",
+        "default": "提示词库"
       }
     },
     "required": []
   },
   "RunningHubSubmitRequest": {
     "properties": {
-      "instanceType": {
-        "default": "",
-        "type": "string"
+      "webappId": {
+        "type": "string",
+        "default": ""
       },
       "nodeInfoList": {
-        "default": [],
+        "type": "array",
         "items": {
           "additionalProperties": true,
           "type": "object"
         },
-        "type": "array"
+        "default": []
+      },
+      "instanceType": {
+        "type": "string",
+        "default": ""
       },
       "useWallet": {
-        "default": false,
-        "type": "boolean"
-      },
-      "webappId": {
-        "default": "",
-        "type": "string"
+        "type": "boolean",
+        "default": false
       }
     },
     "required": []
@@ -1140,44 +1175,44 @@
   "RunningHubUploadAssetRequest": {
     "properties": {
       "url": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "useWallet": {
-        "default": false,
-        "type": "boolean"
+        "type": "boolean",
+        "default": false
       }
     },
     "required": []
   },
   "RunningHubWorkflowConfig": {
     "properties": {
-      "description": {
-        "default": "",
-        "type": "string"
-      },
-      "fields": {
-        "items": {
-          "$ref": "#/components/schemas/RunningHubWorkflowConfigField"
-        },
-        "type": "array"
-      },
-      "optionalImageMode": {
-        "default": "prune-workflow",
-        "type": "string"
-      },
-      "raw": {
-        "type": "object"
+      "workflowId": {
+        "type": "string",
+        "default": ""
       },
       "title": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
-      "workflowId": {
-        "default": "",
-        "type": "string"
+      "description": {
+        "type": "string",
+        "default": ""
+      },
+      "fields": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/RunningHubWorkflowConfigField"
+        }
       },
       "workflowJson": {
+        "type": "object"
+      },
+      "optionalImageMode": {
+        "type": "string",
+        "default": "prune-workflow"
+      },
+      "raw": {
         "type": "object"
       }
     },
@@ -1185,94 +1220,94 @@
   },
   "RunningHubWorkflowConfigField": {
     "properties": {
-      "enabled": {
-        "default": true,
-        "type": "boolean"
+      "id": {
+        "type": "string",
+        "default": ""
+      },
+      "nodeId": {
+        "type": "string",
+        "default": ""
       },
       "fieldName": {
-        "default": "",
-        "type": "string"
-      },
-      "fieldType": {
-        "default": "TEXT",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "fieldValue": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
-      "group": {
-        "default": "",
-        "type": "string"
-      },
-      "id": {
-        "default": "",
-        "type": "string"
-      },
-      "imageOrder": {
-        "default": 0,
-        "type": "integer"
+      "fieldType": {
+        "type": "string",
+        "default": "TEXT"
       },
       "label": {
-        "default": "",
-        "type": "string"
-      },
-      "max": {
+        "type": "string",
         "default": ""
+      },
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "sourceFromUpstream": {
+        "type": "boolean",
+        "default": true
+      },
+      "group": {
+        "type": "string",
+        "default": ""
+      },
+      "note": {
+        "type": "string",
+        "default": ""
+      },
+      "options": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "random_enabled": {
+        "type": "boolean",
+        "default": false
       },
       "min": {
         "default": ""
       },
-      "nodeId": {
-        "default": "",
-        "type": "string"
-      },
-      "note": {
-        "default": "",
-        "type": "string"
-      },
-      "options": {
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
-      },
-      "random_enabled": {
-        "default": false,
-        "type": "boolean"
-      },
-      "required": {
-        "default": false,
-        "type": "boolean"
-      },
-      "sourceFromUpstream": {
-        "default": true,
-        "type": "boolean"
+      "max": {
+        "default": ""
       },
       "step": {
         "default": ""
+      },
+      "imageOrder": {
+        "type": "integer",
+        "default": 0
+      },
+      "required": {
+        "type": "boolean",
+        "default": false
       }
     },
     "required": []
   },
   "RunningHubWorkflowSubmitRequest": {
     "properties": {
+      "workflowId": {
+        "type": "string",
+        "default": ""
+      },
       "nodeInfoList": {
-        "default": [],
+        "type": "array",
         "items": {
           "additionalProperties": true,
           "type": "object"
         },
-        "type": "array"
-      },
-      "useWallet": {
-        "default": false,
-        "type": "boolean"
+        "default": []
       },
       "workflow": {},
-      "workflowId": {
-        "default": "",
-        "type": "string"
+      "useWallet": {
+        "type": "boolean",
+        "default": false
       }
     },
     "required": []
@@ -1280,22 +1315,22 @@
   "SaveHistoryRequest": {
     "properties": {
       "images": {
+        "type": "array",
         "items": {
           "type": "string"
-        },
-        "type": "array"
-      },
-      "is_cloud": {
-        "default": false,
-        "type": "boolean"
-      },
-      "prompt": {
-        "default": "",
-        "type": "string"
+        }
       },
       "type": {
-        "default": "zimage",
-        "type": "string"
+        "type": "string",
+        "default": "zimage"
+      },
+      "prompt": {
+        "type": "string",
+        "default": ""
+      },
+      "is_cloud": {
+        "type": "boolean",
+        "default": false
       }
     },
     "required": [
@@ -1304,37 +1339,37 @@
   },
   "SharedFolderImport": {
     "properties": {
+      "library_id": {
+        "type": "string",
+        "default": ""
+      },
       "category_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "folder_id": {
-        "default": "",
-        "type": "string"
-      },
-      "library_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "paths": {
-        "default": [],
+        "type": "array",
         "items": {
           "type": "string"
         },
-        "type": "array"
+        "default": []
       }
     },
     "required": []
   },
   "SharedFolderRegister": {
     "properties": {
-      "name": {
-        "default": "",
-        "type": "string"
-      },
       "path": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "name": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
@@ -1342,20 +1377,20 @@
   "SmartCanvasGroupExportItem": {
     "properties": {
       "kind": {
-        "default": "",
-        "type": "string"
-      },
-      "name": {
-        "default": "",
-        "type": "string"
-      },
-      "text": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "url": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "text": {
+        "type": "string",
+        "default": ""
+      },
+      "name": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
@@ -1363,19 +1398,19 @@
   "SmartCanvasGroupExportRequest": {
     "properties": {
       "folder": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
       "group_name": {
-        "default": "group",
-        "type": "string"
+        "type": "string",
+        "default": "group"
       },
       "items": {
-        "default": [],
+        "type": "array",
         "items": {
           "$ref": "#/components/schemas/SmartCanvasGroupExportItem"
         },
-        "type": "array"
+        "default": []
       }
     },
     "required": []
@@ -1383,40 +1418,37 @@
   "TempShUploadRequest": {
     "properties": {
       "url": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       }
     },
     "required": []
   },
   "TestConnectionPayload": {
     "properties": {
-      "api_key": {
-        "default": "",
-        "type": "string"
-      },
       "base_url": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
       },
-      "protocol": {
-        "default": "openai",
-        "type": "string"
+      "api_key": {
+        "type": "string",
+        "default": ""
       },
       "provider_id": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "protocol": {
+        "type": "string",
+        "default": "openai"
       }
     },
     "required": []
   },
   "ValidationError": {
     "properties": {
-      "ctx": {
-        "type": "object"
-      },
-      "input": {},
       "loc": {
+        "type": "array",
         "items": {
           "anyOf": [
             {
@@ -1426,14 +1458,17 @@
               "type": "integer"
             }
           ]
-        },
-        "type": "array"
+        }
       },
       "msg": {
         "type": "string"
       },
       "type": {
         "type": "string"
+      },
+      "input": {},
+      "ctx": {
+        "type": "object"
       }
     },
     "required": [
@@ -1444,33 +1479,55 @@
   },
   "WorkflowConfig": {
     "properties": {
+      "title": {
+        "type": "string",
+        "default": ""
+      },
       "fields": {
-        "default": [],
+        "type": "array",
         "items": {
           "$ref": "#/components/schemas/WorkflowField"
         },
-        "type": "array"
+        "default": []
       },
       "mini_cards": {
-        "default": {},
-        "type": "object"
-      },
-      "title": {
-        "default": "",
-        "type": "string"
+        "type": "object",
+        "default": {}
       }
     },
     "required": []
   },
   "WorkflowField": {
     "properties": {
-      "default": {},
       "id": {
         "type": "string"
       },
+      "node": {
+        "type": "string",
+        "default": ""
+      },
       "input": {
-        "default": "",
-        "type": "string"
+        "type": "string",
+        "default": ""
+      },
+      "name": {
+        "type": "string",
+        "default": ""
+      },
+      "type": {
+        "type": "string",
+        "default": "text"
+      },
+      "default": {},
+      "min": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "max": {
         "anyOf": [
@@ -1482,35 +1539,6 @@
           }
         ]
       },
-      "min": {
-        "anyOf": [
-          {
-            "type": "number"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "name": {
-        "default": "",
-        "type": "string"
-      },
-      "node": {
-        "default": "",
-        "type": "string"
-      },
-      "options": {
-        "default": [],
-        "items": {
-          "type": "string"
-        },
-        "type": "array"
-      },
-      "random_enabled": {
-        "default": false,
-        "type": "boolean"
-      },
       "step": {
         "anyOf": [
           {
@@ -1521,9 +1549,16 @@
           }
         ]
       },
-      "type": {
-        "default": "text",
-        "type": "string"
+      "options": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "random_enabled": {
+        "type": "boolean",
+        "default": false
       }
     },
     "required": [
@@ -1532,16 +1567,16 @@
   },
   "WorkflowRunRequest": {
     "properties": {
-      "client_id": {
-        "default": "",
-        "type": "string"
+      "fields": {
+        "type": "object",
+        "default": {}
       },
       "config": {
         "$ref": "#/components/schemas/WorkflowConfig"
       },
-      "fields": {
-        "default": {},
-        "type": "object"
+      "client_id": {
+        "type": "string",
+        "default": ""
       }
     },
     "required": [

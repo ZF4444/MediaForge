@@ -854,6 +854,14 @@
                     </svg>
                     <span class="side-pill-text" data-i18n="common.comfyuiSettings">工作流设置</span>
                 </button>
+                <button class="side-pill" id="nav-access-control" onclick="switchUI(this, 'access-control')" type="button" title="访问控制" style="display:none">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        <circle cx="12" cy="16" r="1"></circle>
+                    </svg>
+                    <span class="side-pill-text">访问控制</span>
+                </button>
             </div>
         </aside>
         <script>
@@ -884,6 +892,7 @@
             <iframe id="frame-asset-manager" data-src="/static/asset-manager.html" scrolling="yes"></iframe>
             <iframe id="frame-api-settings" data-src="/static/api-settings.html" scrolling="yes"></iframe>
             <iframe id="frame-comfyui-settings" data-src="/static/comfyui-settings.html" scrolling="yes"></iframe>
+            <iframe id="frame-access-control" data-src="/static/access-control.html" scrolling="yes"></iframe>
 
             <div class="nano-monitor" id="nano-monitor">
                 <div class="stat-group">
@@ -917,7 +926,7 @@
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_PINNED_KEY = 'studio_sidebar_pinned';
         const DEFAULT_PAGE_ID = 'zimage';
-        const PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','online','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings'];
+        const PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','online','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings','access-control'];
         const LOCAL_PAGE_IDS = ['zimage','enhance','klein','angle','gaussian'];
 
         function setSidebarPinned(pinned, options = {}) {
@@ -1069,6 +1078,41 @@
             document.documentElement.classList.remove('studio-route-booting');
         }
         document.addEventListener('DOMContentLoaded', restoreActivePage, { once:true });
+
+        // --- 访问控制：按当前用户权限过滤侧边栏页面入口 ---
+        async function applyAccessControl() {
+            let me;
+            try {
+                const res = await fetch('/api/access-control/me', { credentials:'same-origin' });
+                if (!res.ok) return;            // 未登录/异常时不做裁剪，保持默认全开
+                me = await res.json();
+            } catch(e) { return; }
+
+            const isAdmin = !!(me && me.is_admin);
+            // 仅 admin 显示访问控制入口
+            const acNav = document.getElementById('nav-access-control');
+            if (acNav) acNav.style.display = isAdmin ? '' : 'none';
+            if (isAdmin) return;               // admin 拥有全部权限，无需裁剪
+
+            const allowed = new Set(me && Array.isArray(me.pages) ? me.pages : PAGE_IDS);
+            let hidActive = false;
+            PAGE_IDS.forEach(pid => {
+                if (pid === 'access-control') return;   // 该入口仅 admin，已在上面处理
+                if (allowed.has(pid)) return;
+                // 隐藏对应导航入口（nav-item 或 side-pill）
+                document.querySelectorAll(`[onclick*="'${pid}'"],[onclick*='"${pid}"']`).forEach(el => {
+                    el.style.display = 'none';
+                    if (el.classList.contains('active')) hidActive = true;
+                });
+            });
+            // 若当前激活页被裁剪，回退到第一个允许的页面
+            if (hidActive) {
+                const fallback = PAGE_IDS.find(p => p !== 'access-control' && allowed.has(p)) || DEFAULT_PAGE_ID;
+                const trigger = document.querySelector(`[onclick*="'${fallback}'"],[onclick*='"${fallback}"']`);
+                switchUI(trigger, fallback);
+            }
+        }
+        document.addEventListener('DOMContentLoaded', applyAccessControl, { once:true });
 
         async function syncStatus() {
             try {

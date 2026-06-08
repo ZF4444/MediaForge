@@ -7,6 +7,34 @@
     "APIRoute"
   ],
   [
+    "/api/access-control/config",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/access-control/config",
+    [
+      "PUT"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/access-control/me",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/access-control/users",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/ai/import-local-image",
     [
       "POST"

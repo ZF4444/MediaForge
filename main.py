@@ -8371,6 +8371,7 @@ from app.routers import history as history_router
 from app.routers import local_assets as local_assets_router
 from app.routers import workflows as workflows_router
 from app.routers import pages as pages_router
+from app.routers import access_control as access_control_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -8381,6 +8382,7 @@ app.include_router(history_router.router)
 app.include_router(local_assets_router.router)
 app.include_router(workflows_router.router)
 app.include_router(pages_router.router)
+app.include_router(access_control_router.router)
 
 
 if __name__ == "__main__":

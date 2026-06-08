@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>访问控制</title>
+    <script>
+        (function(){
+            try {
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                if(theme === 'dark') {
+                    document.documentElement.classList.add('studio-theme-dark');
+                    document.documentElement.classList.add('theme-dark');
+                }
+            } catch(e) {}
+        })();
+    </script>
+    <script src="/static/vendor/js/lucide.js"></script>
+    <script src="/static/js/theme.js"></script>
+    <link rel="stylesheet" href="/static/css/theme.css">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: var(--bg, #f5f6f8);
+            color: var(--text, #1a1f29);
+        }
+        .ac-wrap { max-width: 1080px; margin: 0 auto; padding: 28px 24px 60px; }
+        .ac-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+        .ac-title { font-size: 20px; font-weight: 700; }
+        .ac-sub { font-size: 12.5px; color: var(--faint, #6b7280); margin-top: 6px; line-height: 1.6; max-width: 640px; }
+        .ac-status { font-size: 12px; color: var(--faint, #6b7280); min-height: 18px; }
+        .ac-status.ok { color: #16a34a; }
+        .ac-status.err { color: #dc2626; }
+        .ac-layout { display: grid; grid-template-columns: 240px 1fr; gap: 18px; }
+        .ac-card {
+            background: var(--panel, #fff);
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 14px;
+            padding: 14px;
+        }
+        .ac-card-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+        .ac-user-list { display: flex; flex-direction: column; gap: 4px; max-height: 70vh; overflow: auto; }
+        .ac-user-item {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 13px;
+            border: 1px solid transparent;
+        }
+        .ac-user-item:hover { background: var(--hover, #f3f4f6); }
+        .ac-user-item.active { background: var(--hover, #eef2ff); border-color: var(--text, #1a1f29); font-weight: 600; }
+        .ac-user-badge { font-size: 10px; padding: 1px 7px; border-radius: 999px; background: var(--border, #e5e7eb); color: var(--faint, #6b7280); }
+        .ac-user-badge.restricted { background: #fef3c7; color: #b45309; }
+        .ac-section { margin-bottom: 22px; }
+        .ac-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .ac-section-title { font-size: 13.5px; font-weight: 700; }
+        .ac-bulk { display: flex; gap: 6px; }
+        .ac-mini-btn {
+            font-size: 11px; padding: 4px 10px; border-radius: 7px; cursor: pointer;
+            border: 1px solid var(--border, #e5e7eb); background: var(--panel, #fff); color: var(--text, #1a1f29);
+        }
+        .ac-mini-btn:hover { background: var(--hover, #f3f4f6); }
+        .ac-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+        .ac-check {
+            display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+            border: 1px solid var(--border, #e5e7eb); border-radius: 9px; cursor: pointer; font-size: 12.5px;
+            user-select: none;
+        }
+        .ac-check:hover { background: var(--hover, #f3f4f6); }
+        .ac-check input { width: 15px; height: 15px; cursor: pointer; accent-color: #4f46e5; }
+        .ac-check.checked { border-color: var(--text, #1a1f29); }
+        .ac-footer { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+        .ac-save-btn {
+            font-size: 13px; font-weight: 600; padding: 9px 20px; border-radius: 9px; cursor: pointer;
+            border: 1px solid var(--text, #1a1f29); background: var(--text, #1a1f29); color: var(--bg, #fff);
+        }
+        .ac-save-btn:disabled { opacity: .5; cursor: not-allowed; }
+        .ac-hint { font-size: 11.5px; color: var(--faint, #6b7280); }
+        .ac-empty { font-size: 12.5px; color: var(--faint, #6b7280); padding: 24px 4px; text-align: center; }
+        .ac-forbidden { padding: 60px 20px; text-align: center; color: var(--faint, #6b7280); font-size: 14px; }
+        @media (max-width: 760px) { .ac-layout { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="ac-wrap" id="acRoot">
+        <div class="ac-head">
+            <div>
+                <div class="ac-title">访问控制</div>
+                <div class="ac-sub">为每个用户配置侧边栏可见的页面，以及无限画布中可用的节点。未在此处限制的用户默认拥有全部权限。管理员（admin）始终拥有全部权限，不可被裁剪。</div>
+            </div>
+            <div id="acStatus" class="ac-status"></div>
+        </div>
+
+        <div class="ac-layout" id="acMain" style="display:none">
+            <div class="ac-card">
+                <div class="ac-card-title">用户</div>
+                <div id="acUserList" class="ac-user-list"></div>
+            </div>
+
+            <div class="ac-card">
+                <div id="acDetailEmpty" class="ac-empty">从左侧选择「默认（新用户）」或某个用户进行配置。</div>
+                <div id="acDetail" style="display:none">
+                    <div class="ac-section-title" id="acDetailTitle" style="margin-bottom:14px;font-size:15px"></div>
+                    <div class="ac-section">
+                        <div class="ac-section-head">
+                            <div class="ac-section-title">可访问页面</div>
+                            <div class="ac-bulk">
+                                <button class="ac-mini-btn" type="button" data-bulk="pages" data-val="all">全选</button>
+                                <button class="ac-mini-btn" type="button" data-bulk="pages" data-val="none">全不选</button>
+                            </div>
+                        </div>
+                        <div id="acPages" class="ac-grid"></div>
+                    </div>
+                    <div class="ac-section">
+                        <div class="ac-section-head">
+                            <div class="ac-section-title">画布可用节点</div>
+                            <div class="ac-bulk">
+                                <button class="ac-mini-btn" type="button" data-bulk="nodes" data-val="all">全选</button>
+                                <button class="ac-mini-btn" type="button" data-bulk="nodes" data-val="none">全不选</button>
+                            </div>
+                        </div>
+                        <div id="acNodes" class="ac-grid"></div>
+                    </div>
+                    <div class="ac-footer">
+                        <button id="acSaveBtn" class="ac-save-btn" type="button">保存配置</button>
+                        <span id="acClearDefaultWrap" style="display:none">
+                            <button id="acClearDefaultBtn" class="ac-mini-btn" type="button">清除默认（恢复全开）</button>
+                        </span>
+                        <span class="ac-hint">保存后，对应用户下次刷新页面即生效。未单独配置的用户将应用「默认（新用户）」配置。</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="acForbidden" class="ac-forbidden" style="display:none">仅管理员（用户名 admin）可访问此页面。</div>
+    </div>
+
+    <script src="/static/access-control.page.js"></script>
+</body>
+</html>

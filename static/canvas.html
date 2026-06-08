@@ -332,5 +332,43 @@
 
     <script src="/static/js/ltx-director-timeline.js"></script>
     <script src="/static/js/canvas.js"></script>
+    <script>
+    /* 访问控制：按当前用户权限隐藏无限画布的节点工具栏按钮。
+       node id -> 工具栏按钮 onclick 中的函数名（与 app/core/access_control.py ALL_NODES 对应）。 */
+    (function () {
+        var NODE_ONCLICK = {
+            image: 'addImageNode', prompt: 'addPromptNode', loop: 'addLoopNode',
+            llm: 'addLLMNode', generator: 'addGeneratorNode', msgen: 'addMsGenNode',
+            video: 'addVideoNode', rh: 'addRhNode', comfy: 'addComfyNode',
+            ltx: 'addLTXDirectorNode', output: 'addOutputNode', group: 'groupSelectedImages'
+        };
+        function hideNode(id) {
+            var fn = NODE_ONCLICK[id];
+            if (!fn) return;
+            document.querySelectorAll('.toolbar-items .tool-btn').forEach(function (btn) {
+                var oc = btn.getAttribute('onclick') || '';
+                if (oc.indexOf(fn + '(') !== -1) btn.style.display = 'none';
+            });
+        }
+        async function applyCanvasAccessControl() {
+            var me;
+            try {
+                var res = await fetch('/api/access-control/me', { credentials: 'same-origin' });
+                if (!res.ok) return;
+                me = await res.json();
+            } catch (e) { return; }
+            if (!me || me.is_admin) return;          // admin 全开
+            var allowed = new Set(Array.isArray(me.nodes) ? me.nodes : Object.keys(NODE_ONCLICK));
+            Object.keys(NODE_ONCLICK).forEach(function (id) {
+                if (!allowed.has(id)) hideNode(id);
+            });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', applyCanvasAccessControl, { once: true });
+        } else {
+            applyCanvasAccessControl();
+        }
+    })();
+    </script>
 </body>
 </html>
