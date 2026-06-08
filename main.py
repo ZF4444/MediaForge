@@ -3723,71 +3723,8 @@ async def upload_local_video_to_cloud(ref_url: str, service: str = "auto") -> Di
 async def upload_local_video_to_temp_sh(ref_url: str) -> Dict[str, str]:
     return await upload_local_video_to_cloud(ref_url, "auto")
 
-async def save_ai_image_to_output(image_data, prefix="online_", category="output"):
-    filename = f"{prefix}{uuid.uuid4().hex[:10]}.png"
-    path = output_path_for(filename, category)
-    if image_data["type"] == "b64":
-        mime_type = str(image_data.get("mime_type") or "").lower()
-        if "jpeg" in mime_type or "jpg" in mime_type:
-            filename = filename[:-4] + ".jpg"
-            path = output_path_for(filename, category)
-        elif "webp" in mime_type:
-            filename = filename[:-4] + ".webp"
-            path = output_path_for(filename, category)
-        with open(path, "wb") as f:
-            f.write(base64.b64decode(image_data["value"]))
-        return output_url_for(filename, category)
-    value = image_data["value"]
-    if value.startswith("/output/") or value.startswith("/assets/"):
-        return value
-    try:
-        timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(value)
-            response.raise_for_status()
-            content_type = response.headers.get("Content-Type", "")
-            if "jpeg" in content_type or "jpg" in content_type:
-                filename = filename[:-4] + ".jpg"
-                path = output_path_for(filename, category)
-            elif "webp" in content_type:
-                filename = filename[:-4] + ".webp"
-                path = output_path_for(filename, category)
-            with open(path, "wb") as f:
-                f.write(response.content)
-            return output_url_for(filename, category)
-    except Exception as e:
-        print(f"保存上游图片失败: {e}")
-        return value
-
-async def save_remote_video_to_output(url, prefix="video_", category="output"):
-    if not url:
-        return ""
-    if url.startswith("/output/") or url.startswith("/assets/"):
-        return url
-    filename = f"{prefix}{uuid.uuid4().hex[:10]}.mp4"
-    path = output_path_for(filename, category)
-    try:
-        async with httpx.AsyncClient(timeout=VIDEO_POLL_TIMEOUT) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            content_type = (response.headers.get("Content-Type") or "").lower()
-            clean_path = urllib.parse.urlparse(url).path
-            ext = os.path.splitext(clean_path)[1].lower()
-            if ext in {".mp4", ".webm", ".mov"}:
-                filename = filename[:-4] + ext
-                path = output_path_for(filename, category)
-            elif "webm" in content_type:
-                filename = filename[:-4] + ".webm"
-                path = output_path_for(filename, category)
-            elif "quicktime" in content_type or "mov" in content_type:
-                filename = filename[:-4] + ".mov"
-                path = output_path_for(filename, category)
-            with open(path, "wb") as f:
-                f.write(response.content)
-            return output_url_for(filename, category)
-    except Exception as e:
-        print(f"保存上游视频失败: {e}")
-        return url
+# save_ai_image_to_output / save_remote_video_to_output 已迁移至 app/core/media.py（原样迁移）。
+from app.core.media import save_ai_image_to_output, save_remote_video_to_output
 
 def parse_size_pair(size):
     match = re.fullmatch(r"\s*(\d+)\s*[xX*]\s*(\d+)\s*", str(size or ""))
