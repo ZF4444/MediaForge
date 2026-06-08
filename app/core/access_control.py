@@ -52,7 +52,7 @@ ALL_NODES: List[Dict[str, str]] = [
     {"id": "prompt", "label": "提示词"},
     {"id": "loop", "label": "循环"},
     {"id": "llm", "label": "LLM"},
-    {"id": "generator", "label": "API生成"},
+    {"id": "generator", "label": "AI生成"},
     {"id": "msgen", "label": "MS生成"},
     {"id": "video", "label": "视频生成"},
     {"id": "rh", "label": "RH生成"},
