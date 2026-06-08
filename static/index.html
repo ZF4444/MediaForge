@@ -727,11 +727,11 @@
             </button>
 
             <nav>
-                <button class="nav-fold-toggle" id="local-nav-toggle" type="button" onclick="toggleLocalNav()" aria-expanded="true" title="折叠本地功能">
+                <button class="nav-fold-toggle" id="local-nav-toggle" type="button" onclick="toggleLocalNav()" aria-expanded="true" title="折叠定制功能">
                     <svg class="nav-fold-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <polyline points="6 9 12 15 18 9"></polyline>
                     </svg>
-                    <span class="nav-text" data-i18n="nav.localTools">本地功能</span>
+                    <span class="nav-text" data-i18n="nav.localTools">定制功能</span>
                 </button>
 
                 <div class="nav-fold-group" id="local-nav-group">
@@ -955,7 +955,7 @@
             if(group) group.classList.toggle('is-collapsed', collapsed);
             if(toggle) {
                 toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-                toggle.title = collapsed ? '展开本地功能' : '折叠本地功能';
+                toggle.title = collapsed ? '展开定制功能' : '折叠定制功能';
             }
             if(!options.skipRemember) localStorage.setItem(LOCAL_NAV_COLLAPSED_KEY, collapsed ? '1' : '0');
         }

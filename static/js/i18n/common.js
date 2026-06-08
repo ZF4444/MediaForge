@@ -16,7 +16,7 @@
         "common.close": { zh: "关闭", en: "Close" },
         "common.loading": { zh: "加载中...", en: "Loading..." },
         "nav.textToImage": { zh: "文生图", en: "Text to Image" },
-        "nav.localTools": { zh: "本地功能", en: "Local Tools" },
+        "nav.localTools": { zh: "定制功能", en: "Custom Tools" },
         "nav.enhance": { zh: "细节增强", en: "Enhance" },
         "nav.imageEdit": { zh: "图片编辑", en: "Image Edit" },
         "nav.angle": { zh: "角度控制", en: "Angle Control" },
