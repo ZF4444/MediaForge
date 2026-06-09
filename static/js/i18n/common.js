@@ -5,6 +5,7 @@
         "common.comfyuiSettings": { zh: "工作流设置", en: "Workflow Settings" },
         "common.darkMode": { zh: "黑夜模式", en: "Dark Mode" },
         "common.language": { zh: "中文", en: "English" },
+        "common.userGuide": { zh: "使用说明", en: "User Guide" },
         "common.cancel": { zh: "取消", en: "Cancel" },
         "common.confirm": { zh: "确定", en: "Confirm" },
         "common.save": { zh: "保存", en: "Save" },
