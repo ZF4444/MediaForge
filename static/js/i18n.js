@@ -1,5 +1,5 @@
 (function(){
-    const VERSION = '2026.06.03.6';
+    const VERSION = (document.currentScript?.src?.match(/[?&]v=([^&]*)/)||[])[1] || Date.now();
     const scripts = [
         '/static/js/i18n-core.js',
         '/static/js/i18n/common.js',
