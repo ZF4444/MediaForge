@@ -2650,9 +2650,10 @@ function closeCreateMenu(){
 function linkCreateOptions(state){
     const node = nodes.find(n => n.id === state?.originId);
     if(!node) return [];
+    var opts;
     if(state.originKind === 'out'){
         if(['image','prompt','loop','group','promptGroup','llm','output'].includes(node.type)){
-            return [
+            opts = [
                 {type:'generator', label:tr('canvas.apiGenerate'), icon:'wand-sparkles'},
                 {type:'msgen', label:tr('canvas.modelscopeGenerate'), icon:'cloud-lightning'},
                 {type:'comfy', label:tr('canvas.comfyGenerate'), icon:'workflow'},
@@ -2661,19 +2662,17 @@ function linkCreateOptions(state){
                 {type:'video', label:tr('canvas.videoGenerateNode'), icon:'clapperboard'},
                 ...(node.type === 'output' ? [] : [{type:'llm', label:'LLM', icon:'message-square-text'}])
             ];
-        }
-        return [];
-    }
-    if(CANVAS_GENERATOR_TYPES.includes(node.type) || node.type === 'llm'){
-        return [
+        } else { return []; }
+    } else if(CANVAS_GENERATOR_TYPES.includes(node.type) || node.type === 'llm'){
+        opts = [
             {type:'image', label:tr('canvas.imageCard'), icon:'image-plus'},
             {type:'prompt', label:tr('canvas.prompt'), icon:'text-cursor-input'},
             {type:'loop', label:tr('canvas.loopNode'), icon:'repeat-2'},
             {type:'group', label:tr('canvas.group'), icon:'group'},
             {type:'llm', label:'LLM', icon:'message-square-text'}
         ];
-    }
-    return [];
+    } else { return []; }
+    return opts.filter(o => canvasNodeTypeAllowed(o.type));
 }
 function openLinkCreateMenu(originId, originKind, clientX, clientY){
     const state = {originId, originKind, point:screenToWorld(clientX, clientY)};
@@ -2710,7 +2709,7 @@ function openGeneratorNodeMenu(nodeId, clientX, clientY){
             {type:'ltxDirector', label:tr('canvas.ltxDirector'), icon:'film'},
             {type:'video', label:tr('canvas.videoGenerateNode'), icon:'clapperboard'}
         ] : [])
-    ];
+    ].filter(o => canvasNodeTypeAllowed(o.type));
     const buttonsHtml = (options, kind) => `<div class="node-port-menu-grid">${options.map(opt => `<button class="menu-btn" data-link-create="${escapeAttr(opt.type)}" data-link-kind="${kind}" title="${escapeAttr(opt.label)}"><i data-lucide="${escapeAttr(opt.icon)}"></i><span>${escapeHtml(opt.label.replace('生成', ''))}</span></button>`).join('')}</div>`;
     linkCreateState = {originId:nodeId, originKind:'in', point};
     createMenu.classList.remove('open');
