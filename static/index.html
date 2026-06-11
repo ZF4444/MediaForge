@@ -1250,6 +1250,31 @@
             });
         });
     </script>
+    <!-- 版本更新检测 -->
+    <div id="versionToast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:99999;background:var(--bg);color:var(--text);padding:12px 24px;border-radius:12px;font-size:13px;font-weight:500;box-shadow:0 8px 24px rgba(0,0,0,.12);border:1px solid var(--border);align-items:center;gap:12px;">
+        <span>检测到新版本，建议刷新页面以获取最新功能</span>
+        <button onclick="location.reload()" style="background:var(--accent);color:var(--bg);border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;">刷新</button>
+        <button onclick="document.getElementById('versionToast').style.display='none'" style="background:transparent;color:var(--muted);border:none;font-size:16px;cursor:pointer;padding:2px 6px;">✕</button>
+    </div>
+    <script>
+    (function(){
+        var initial;
+        async function checkVersion(){
+            try{
+                var res = await fetch('/api/version?' + Date.now());
+                if(!res.ok) return;
+                var v = (await res.text()).trim();
+                if(!v) return;
+                if(!initial){ initial = v; return; }
+                if(v !== initial){
+                    document.getElementById('versionToast').style.display = 'flex';
+                }
+            }catch(e){}
+        }
+        checkVersion();
+        setInterval(checkVersion, 5 * 60 * 1000);
+    })();
+    </script>
 </body>
 
 </html>

@@ -1246,6 +1246,10 @@ load_users_registry()
 # 因此 js/css/图片/子目录等其它静态资源不会命中此路由，会继续交给下方 StaticFiles 挂载。
 # 说明：Starlette 1.0 起，命中的路由内部 raise 404 不会再回退到后续 Mount，
 # 所以这里必须用精确的路径模式，而不能用 {page:path} 再在函数里过滤。
+@app.get("/api/version")
+async def api_version():
+    return Response(current_app_version(), media_type="text/plain", headers={"Cache-Control": "no-store"})
+
 @app.get("/static/{page}.html")
 async def static_html_page(page: str):
     # 仅拦截顶层 HTML 页面（如 /static/angle.html），运行时动态注入版本号。
