@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/images/logo.png" type="image/png">
-    <title>Angle Control | 视角重塑</title>
+    <title>Rough Angle | 视角粗调</title>
     <script>
         (function(){
             try {
@@ -224,7 +224,7 @@
             transition: transform 0.3s var(--easing);
             z-index: 1;
 
-            /* 角度控制滑块：明/暗模式都保持清晰的轨道与滑块 */
+            /* 视角粗调滑块：明/暗模式都保持清晰的轨道与滑块 */
             #rotate-h, #rotate-v, #distance {
                 -webkit-appearance: none;
                 appearance: none;
@@ -282,7 +282,7 @@
         <header class="flex flex-col md:flex-row justify-between items-end mb-16 gap-6">
             <div class="space-y-1">
                 <h1 class="text-4xl font-extrabold tracking-[-0.05em] flex items-center">
-                    ANGLE CONTROL<span class="text-base mt-3 ml-1">®</span>
+                    ROUGH ANGLE<span class="text-base mt-3 ml-1">®</span>
                 </h1>
                 <p class="text-[10px] font-bold uppercase tracking-[0.5em] text-gray-400" data-i18n="studio.cameraPerspective">Camera & Perspective Control
                 </p>
@@ -413,16 +413,6 @@
                 <section class="flex flex-col space-y-6">
                     <h3 class="text-[9px] font-black uppercase tracking-[0.3em] text-gray-400">03. <span data-i18n="studio.parameters">Parameters</span></h3>
 
-                    <div class="space-y-3 flex-1 flex flex-col">
-                        <div class="flex items-center gap-2 text-gray-800 ml-1">
-                            <i data-lucide="text-quote" class="w-3 h-3"></i>
-                            <span class="text-[10px] font-bold uppercase tracking-widest">Prompt</span>
-                        </div>
-                        <textarea id="promptInput"
-                            class="nano-input w-full flex-1 p-5 text-sm outline-none resize-none placeholder-gray-300"
-                            placeholder="通过右侧控制器调整角度，或输入：<sks> front view eye-level shot medium shot"></textarea>
-                    </div>
-
                     <!-- Engine: RunningHub (Qwen-Edit-2511 Multiple-Angles LoRA) -->
                     <div class="flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 py-2">
                         <i data-lucide="cloud" class="w-3 h-3"></i>
@@ -434,6 +424,16 @@
                         <i data-lucide="zap" id="btnIcon" class="w-4 h-4 text-yellow-400"></i>
                         <span id="btnText" data-i18n="studio.generateAngle">Generate New Angle</span>
                     </button>
+
+                    <div class="space-y-3 flex-1 flex flex-col">
+                        <div class="flex items-center gap-2 text-gray-800 ml-1">
+                            <i data-lucide="text-quote" class="w-3 h-3"></i>
+                            <span class="text-[10px] font-bold uppercase tracking-widest">Prompt</span>
+                        </div>
+                        <textarea id="promptInput"
+                            class="nano-input w-full flex-1 p-5 text-sm outline-none resize-none placeholder-gray-300"
+                            placeholder="通过右侧控制器调整视角，或输入：<sks> front view eye-level shot medium shot" readonly></textarea>
+                    </div>
                 </section>
 
                 <section class="space-y-6 flex flex-col">

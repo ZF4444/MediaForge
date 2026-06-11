@@ -36,7 +36,7 @@ ALL_PAGES: List[Dict[str, str]] = [
     {"id": "zimage", "label": "文生图"},
     {"id": "enhance", "label": "细节增强"},
     {"id": "klein", "label": "图片编辑"},
-    {"id": "angle", "label": "角度控制"},
+    {"id": "angle", "label": "视角粗调"},
     {"id": "gaussian", "label": "高斯修复"},
     {"id": "online", "label": "在线生图"},
     {"id": "gpt-chat", "label": "GPT 对话"},
