@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/images/logo.png" type="image/png">
-    <title>Gaussian Repair | 高斯泼溅修复</title>
+    <title>Fine Angle | 视角微调</title>
     <script>
         (function(){
             try {
@@ -94,12 +94,12 @@
         <header class="flex flex-col md:flex-row justify-between items-end mb-16 gap-6">
             <div class="space-y-1">
                 <h1 class="text-4xl font-extrabold tracking-[-0.05em] flex items-center">
-                    GAUSSIAN REPAIR<span class="text-base mt-3 ml-1">®</span>
+                    FINE ANGLE<span class="text-base mt-3 ml-1">®</span>
                 </h1>
-                <p class="text-[10px] font-bold uppercase tracking-[0.5em] text-gray-400">3D Gaussian Splatting Repair</p>
+                <p class="text-[10px] font-bold uppercase tracking-[0.5em] text-gray-400">Fine Angle Adjustment</p>
             </div>
             <nav class="flex gap-8 text-[11px] font-bold uppercase tracking-widest text-gray-500">
-                <span class="text-black border-b-2 border-black pb-1">Gaussian</span>
+                <span class="text-black border-b-2 border-black pb-1">Fine Angle</span>
             </nav>
         </header>
 
@@ -132,7 +132,7 @@
                         <!-- 生成状态 -->
                         <div id="genState" class="text-center space-y-3 text-gray-400">
                             <i data-lucide="box" class="w-10 h-10 mx-auto stroke-[1px]"></i>
-                            <p class="text-[10px] font-bold uppercase tracking-[0.3em]">上传参考图后，点击生成 3D 高斯</p>
+                            <p class="text-[10px] font-bold uppercase tracking-[0.3em]">上传参考图后，点击生成 3D 高斯模型</p>
                         </div>
 
                         <!-- 3D 高斯生成（上） -->
@@ -158,11 +158,11 @@
                             <span>RunningHub</span>
                         </div>
 
-                        <!-- 开始修复（下） -->
+                        <!-- 生成新视角（下） -->
                         <button id="genBtn" onclick="handleRepair()" disabled
                             class="glass-btn w-full py-5 text-white rounded-xl font-bold text-[11px] uppercase tracking-[0.4em] flex items-center justify-center gap-3 shadow-xl shadow-black/10 disabled:opacity-50 disabled:cursor-not-allowed">
                             <i data-lucide="zap" id="btnIcon" class="w-4 h-4 text-yellow-400"></i>
-                            <span id="btnText">开始修复</span>
+                            <span id="btnText">生成新视角</span>
                         </button>
                     </div>
                 </section>
@@ -608,7 +608,7 @@
             } finally {
                 btn.disabled = !plyLoaded;
                 btn.style.backgroundColor = '';
-                btn.innerHTML = `<i data-lucide="zap" id="btnIcon" class="w-4 h-4 text-yellow-400"></i><span id="btnText">开始修复</span>`;
+                btn.innerHTML = `<i data-lucide="zap" id="btnIcon" class="w-4 h-4 text-yellow-400"></i><span id="btnText">生成新视角</span>`;
                 lucide.createIcons();
             }
         };
@@ -756,7 +756,7 @@
             if (genState) {
                 genState.innerHTML =
                     '<i data-lucide="box" class="w-10 h-10 mx-auto stroke-[1px]"></i>' +
-                    '<p class="text-[10px] font-bold uppercase tracking-[0.3em]">上传参考图后，点击生成 3D 高斯</p>';
+                    '<p class="text-[10px] font-bold uppercase tracking-[0.3em]">上传参考图后，点击生成 3D 高斯模型</p>';
             }
             const genProg = document.getElementById('gen-progress-container');
             if (genProg) genProg.classList.add('hidden');

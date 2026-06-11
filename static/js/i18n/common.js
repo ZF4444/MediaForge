@@ -21,7 +21,7 @@
         "nav.enhance": { zh: "细节增强", en: "Enhance" },
         "nav.imageEdit": { zh: "图片编辑", en: "Image Edit" },
         "nav.angle": { zh: "视角粗调", en: "Rough Angle" },
-        "nav.gaussian": { zh: "高斯修复", en: "Gaussian Repair" },
+        "nav.gaussian": { zh: "视角微调", en: "Fine Angle" },
         "nav.online": { zh: "在线生图", en: "Online Image" },
         "nav.gpt": { zh: "GPT 对话", en: "GPT Chat" },
         "nav.canvas": { zh: "无限画布", en: "Infinite Canvas" },
