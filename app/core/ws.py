@@ -50,7 +50,10 @@ class ConnectionManager:
                 await connection.send_text(data)
             except Exception as e:
                 print(f"Broadcast error: {e}")
-                self.active_connections.remove(connection)
+                try:
+                    self.active_connections.remove(connection)
+                except ValueError:
+                    pass
 
     async def broadcast_new_image(self, image_data: dict):
         data = json.dumps({"type": "new_image", "data": image_data})
@@ -59,7 +62,10 @@ class ConnectionManager:
                 await connection.send_text(data)
             except Exception as e:
                 print(f"Broadcast image error: {e}")
-                self.active_connections.remove(connection)
+                try:
+                    self.active_connections.remove(connection)
+                except ValueError:
+                    pass
 
     async def broadcast_canvas_updated(self, canvas_id: str, updated_at: int, client_id: str = ""):
         data = json.dumps({
@@ -73,7 +79,10 @@ class ConnectionManager:
                 await connection.send_text(data)
             except Exception as e:
                 print(f"Broadcast canvas error: {e}")
-                self.active_connections.remove(connection)
+                try:
+                    self.active_connections.remove(connection)
+                except ValueError:
+                    pass
 
     async def broadcast_asset_library_updated(self, updated_at: int = 0):
         data = json.dumps({
@@ -85,7 +94,10 @@ class ConnectionManager:
                 await connection.send_text(data)
             except Exception as e:
                 print(f"Broadcast asset library error: {e}")
-                self.active_connections.remove(connection)
+                try:
+                    self.active_connections.remove(connection)
+                except ValueError:
+                    pass
 
     async def send_personal_message(self, message: dict, client_id: str):
         ws = self.user_connections.get(client_id)
