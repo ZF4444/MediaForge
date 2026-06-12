@@ -370,7 +370,7 @@ video.node-img { object-fit:cover; background:#0f172a; }
 .panorama-custom-ratio span { color:var(--faint); font-size:10px; font-weight:900; }
 .preview-compare-layer { position:absolute; inset:0; width:var(--compare-pos, 50%); overflow:hidden; border-radius:14px 0 0 14px; pointer-events:none; display:none; }
 .preview-stage.compare-on .preview-compare-layer { display:block; }
-.preview-compare-layer img { width:100%; height:100%; max-width:none; max-height:none; object-fit:cover; object-position:left center; border-radius:14px 0 0 14px; }
+.preview-compare-layer img { width:100%; height:100%; max-width:none; max-height:none; object-fit:fill; border-radius:14px 0 0 14px; }
 .preview-compare-handle { position:absolute; top:0; bottom:0; left:var(--compare-pos, 50%); width:30px; margin-left:-15px; background:transparent; display:none; cursor:ew-resize; z-index:6; touch-action:none; }
 .preview-compare-handle::before { content:""; position:absolute; left:50%; top:0; bottom:0; width:2px; margin-left:-1px; background:rgba(255,255,255,.92); box-shadow:0 0 0 1px rgba(15,23,42,.22), 0 0 18px rgba(15,23,42,.18); }
 .preview-compare-handle::after { content:""; position:absolute; left:50%; top:50%; width:30px; height:30px; border-radius:999px; transform:translate(-50%, -50%); background:rgba(15,23,42,.72); border:1px solid rgba(255,255,255,.75); box-shadow:0 8px 24px rgba(15,23,42,.24); }
