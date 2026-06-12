@@ -2706,14 +2706,18 @@ function renderModels(kind){
         list.innerHTML = `<div class="empty">${tr('api.noModels')}</div>`;
         return;
     }
+    const aliases = item?.model_aliases || {};
     const showProtocol = kind !== 'video' && providerSupportsModelProtocol(item);
-    list.innerHTML = models.map((model, index) => `
+    list.innerHTML = models.map((model, index) => {
+        const alias = aliases[model] || '';
+        return `
         <div class="model-row${showProtocol ? ' has-protocol' : ''}">
-            <input value="${escapeAttr(model)}" oninput="updateModel('${kind}', ${index}, this.value)">
+            <input value="${escapeAttr(model)}" oninput="updateModel('${kind}', ${index}, this.value)" title="模型名">
+            <input class="model-alias-input" value="${escapeAttr(alias)}" oninput="updateModelAlias('${kind}', ${index}, this.value)" placeholder="别名（选填）" title="画布中显示的名称">
             ${modelProtocolSelectHtml(kind, index, model, item)}
             <button class="icon-btn" type="button" onclick="removeModel('${kind}', ${index})" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
         </div>
-    `).join('');
+    `;}).join('');
     refreshIcons();
 }
 function msLoraTargetOptions(selected){
@@ -2896,7 +2900,25 @@ function updateModel(kind, index, value){
             if(newName) item.model_protocols[newName] = proto;
         }
     }
+    // 重命名时迁移别名
+    if(item.model_aliases && typeof item.model_aliases === 'object' && oldName && oldName !== newName){
+        if(Object.prototype.hasOwnProperty.call(item.model_aliases, oldName)){
+            const alias = item.model_aliases[oldName];
+            delete item.model_aliases[oldName];
+            if(newName) item.model_aliases[newName] = alias;
+        }
+    }
     if(kind === 'image') renderMsLoras();
+}
+function updateModelAlias(kind, index, value){
+    const item = provider();
+    const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
+    const model = String(item[key]?.[index] || '').trim();
+    if(!model) return;
+    if(!item.model_aliases || typeof item.model_aliases !== 'object') item.model_aliases = {};
+    const alias = String(value || '').trim();
+    if(alias) item.model_aliases[model] = alias;
+    else delete item.model_aliases[model];
 }
 function updateModelProtocol(kind, index, value){
     const item = provider();
@@ -2986,6 +3008,7 @@ async function saveProviders(){
                 chat_models:item.chat_models || [],
                 video_models:item.video_models || [],
                 model_protocols:(item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {},
+                model_aliases:(item.model_aliases && typeof item.model_aliases === 'object') ? item.model_aliases : {},
                 ms_loras:item.id === 'modelscope' ? (item.ms_loras || []) : [],
                 ms_defaults_version:item.id === 'modelscope' ? (item.ms_defaults_version || 1) : 0,
                 rh_apps:item.id === 'runninghub' ? (item.rh_apps || []) : [],

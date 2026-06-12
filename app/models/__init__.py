@@ -179,6 +179,7 @@ class ApiProviderPayload(BaseModel):
     chat_models: List[str] = []
     video_models: List[str] = []
     model_protocols: Dict[str, str] = {}
+    model_aliases: Dict[str, str] = {}
     ms_loras: List[Dict[str, Any]] = []
     ms_defaults_version: int = 0
     rh_apps: List[Dict[str, Any]] = []
