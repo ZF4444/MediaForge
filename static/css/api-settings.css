@@ -145,8 +145,12 @@ body.studio-theme-dark .key-btn.key-clear:hover { background:rgba(127,29,29,.18)
 .models-toolbar-actions { display:flex; gap:8px; align-items:center; justify-content:flex-end; flex:0 0 auto; }
 .model-grid { display:grid; grid-template-columns:1fr; gap:20px; }
 .model-list { display:flex; flex-direction:column; gap:6px; }
-.model-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,0.8fr) 36px; align-items:center; gap:6px; padding:4px; border:1px solid var(--line); border-radius:11px; background:var(--panel); }
-.model-row.has-protocol { grid-template-columns:minmax(0,1fr) minmax(0,0.8fr) auto 36px; }
+.model-row { display:grid; grid-template-columns:20px minmax(0,1fr) minmax(0,0.8fr) 36px; align-items:center; gap:6px; padding:4px; border:1px solid var(--line); border-radius:11px; background:var(--panel); }
+.model-row.has-protocol { grid-template-columns:20px minmax(0,1fr) minmax(0,0.8fr) auto 36px; }
+.model-row.is-dragging { opacity:.45; }
+.model-row.model-drop-target { box-shadow:inset 0 0 0 1px var(--line-strong); background:var(--soft); }
+.model-drag-handle { display:flex; align-items:center; justify-content:center; color:var(--faint); cursor:grab; opacity:.5; }
+.model-row:hover .model-drag-handle { opacity:1; color:var(--muted); }
 body.studio-theme-dark .model-row { background:var(--soft); border-color:var(--line-strong); }
 .model-row input { height:34px; padding:0 10px; border:0; background:transparent; font-size:12.5px; }
 .model-alias-input { border-left:1px solid var(--line) !important; color:var(--secondary); }

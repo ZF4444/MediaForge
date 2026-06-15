@@ -2711,7 +2711,8 @@ function renderModels(kind){
     list.innerHTML = models.map((model, index) => {
         const alias = aliases[model] || '';
         return `
-        <div class="model-row${showProtocol ? ' has-protocol' : ''}">
+        <div class="model-row${showProtocol ? ' has-protocol' : ''}" draggable="true" data-kind="${kind}" data-index="${index}" ondragstart="handleModelDragStart(event,'${kind}',${index})" ondragover="handleModelDragOver(event,'${kind}',${index})" ondrop="handleModelDrop(event,'${kind}',${index})" ondragend="handleModelDragEnd(event)">
+            <span class="model-drag-handle"><i data-lucide="grip-vertical" class="w-3.5 h-3.5"></i></span>
             <input value="${escapeAttr(model)}" oninput="updateModel('${kind}', ${index}, this.value)" title="模型名">
             <input class="model-alias-input" value="${escapeAttr(alias)}" oninput="updateModelAlias('${kind}', ${index}, this.value)" placeholder="别名（选填）" title="画布中显示的名称">
             ${modelProtocolSelectHtml(kind, index, model, item)}
@@ -2944,6 +2945,41 @@ function removeModel(kind, index){
     }
     renderModels(kind);
     if(kind === 'image') renderMsLoras();
+}
+let modelDragState = null;
+function handleModelDragStart(event, kind, index){
+    modelDragState = { kind, index };
+    event.currentTarget.classList.add('is-dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', index);
+}
+function handleModelDragOver(event, kind, index){
+    if(!modelDragState || modelDragState.kind !== kind || modelDragState.index === index) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const list = kind === 'image' ? imageModelList : kind === 'video' ? videoModelList : chatModelList;
+    list.querySelectorAll('.model-drop-target').forEach(el => el.classList.remove('model-drop-target'));
+    event.currentTarget.classList.add('model-drop-target');
+}
+function handleModelDrop(event, kind, index){
+    event.preventDefault();
+    const list = kind === 'image' ? imageModelList : kind === 'video' ? videoModelList : chatModelList;
+    list.querySelectorAll('.model-drop-target').forEach(el => el.classList.remove('model-drop-target'));
+    if(!modelDragState || modelDragState.kind !== kind || modelDragState.index === index) return;
+    const item = provider();
+    const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
+    const arr = item[key];
+    const [moved] = arr.splice(modelDragState.index, 1);
+    arr.splice(index, 0, moved);
+    modelDragState = null;
+    renderModels(kind);
+    if(kind === 'image') renderMsLoras();
+    saveProviders();
+}
+function handleModelDragEnd(event){
+    modelDragState = null;
+    event.currentTarget.classList.remove('is-dragging');
+    document.querySelectorAll('.model-drop-target').forEach(el => el.classList.remove('model-drop-target'));
 }
 async function loadProviders(){
     setStatus(tr('api.loading'));
