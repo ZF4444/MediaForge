@@ -1099,6 +1099,9 @@
             // 仅 admin 显示访问控制入口
             const acNav = document.getElementById('nav-access-control');
             if (acNav) acNav.style.display = isAdmin ? '' : 'none';
+            // 仅 admin 显示 online/queue 监控
+            const nanoMon = document.getElementById('nano-monitor');
+            if (nanoMon) nanoMon.style.display = isAdmin ? '' : 'none';
             if (isAdmin) return;               // admin 拥有全部权限，无需裁剪
 
             const allowed = new Set(me && Array.isArray(me.pages) ? me.pages : PAGE_IDS);
