@@ -1131,10 +1131,6 @@ function chatProviderOptions(selectedId=''){
 function modelDisplayName(model, providerId){
     const p = providerId ? (apiProviders || []).find(pp => pp.id === providerId) : null;
     if(p?.model_aliases?.[model]) return p.model_aliases[model];
-    for(let i = 0; i < (apiProviders || []).length; i++){
-        const alias = apiProviders[i]?.model_aliases?.[model];
-        if(alias) return alias;
-    }
     return model;
 }
 function chatModelOptions(selectedModel='', providerId=''){
