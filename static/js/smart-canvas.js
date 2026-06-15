@@ -1535,13 +1535,13 @@ function renderRunningHubParams(){
         dynamicParams.innerHTML = `<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>`;
         return;
     }
-    const mediaFields = fields.filter(f => ['image','video','audio'].includes(rhFieldRole(f))).length;
-    const promptFields = fields.filter(f => rhFieldRole(f) === 'prompt').length;
+    const mediaFieldsList = fields.filter(f => ['image','video','audio'].includes(rhFieldRole(f)));
+    const aliasHints = mediaFieldsList.map(f => f.label || f.fieldName).filter(Boolean).join('、');
     dynamicParams.innerHTML = `
         ${renderRhConfigControl(ref)}
         ${renderRhPaymentControl()}
         ${renderRhMachineControl()}
-        <div class="rh-mini-summary">${escapeHtml(mediaFields)} 素材 · ${escapeHtml(promptFields)} 提示词</div>
+        ${aliasHints ? `<div class="rh-mini-summary"><span class="rh-mini-aliases">${escapeHtml(aliasHints)}</span></div>` : ''}
         ${fields.length ? fields.filter(f => !['image','video','audio','prompt'].includes(rhFieldRole(f))).map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(tr('smart.rhNeedFields'))}</div>`}
     `;
 }

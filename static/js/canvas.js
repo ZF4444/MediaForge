@@ -8360,19 +8360,32 @@ function renderRhBody(node){
 }
 function renderRhInputs(list, node, media){
     if(!list) return;
-    const refs = media.refs || [];
-    if(!refs.length){
+    const fields = rhActiveFields(node);
+    const mediaFields = fields.filter(f => ['image','video','audio'].includes(rhFieldKind(f)));
+    if(!mediaFields.length){
         list.innerHTML = `<div class="text-[11px] text-gray-300 py-2">${tr('canvas.groupEmpty')}</div>`;
         return;
     }
-    list.innerHTML = '';
-    refs.forEach((ref, i) => {
-        const kind = mediaKindForRef(ref);
-        const item = document.createElement('div');
-        item.className = 'input-item rh-input-item';
-        item.innerHTML = `<span class="input-index">${i + 1}</span>${rhMediaPreviewHtml(ref, kind)}<span class="input-label">${escapeHtml(nodeTitleForMedia({mediaKind:kind}))}</span>`;
-        list.appendChild(item);
+    const groups = {image:[], video:[], audio:[]};
+    const indexes = rhFieldIndexes(fields);
+    mediaFields.forEach(field => {
+        const kind = rhFieldKind(field);
+        const key = rhParamKey(field.nodeId, field.fieldName);
+        const idx = indexes[key] || 0;
+        const ref = (media[kind] || [])[idx];
+        groups[kind].push({field, ref, idx});
     });
+    const kindLabel = {image:'图片', video:'视频', audio:'音频'};
+    const kindIcon = {image:'image', video:'film', audio:'file-audio'};
+    let html = '';
+    for(const [kind, items] of Object.entries(groups)){
+        if(!items.length) continue;
+        items.forEach(({field, ref}) => {
+            const label = field.label || field.fieldName || kindLabel[kind];
+            html += `<div class="input-item rh-input-item"><i data-lucide="${kindIcon[kind]}" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>${rhMediaPreviewHtml(ref, kind)}<span class="input-label">${escapeHtml(label)}</span></div>`;
+        });
+    }
+    list.innerHTML = html;
 }
 function renderRhPromptFields(container, node, fields){
     if(!container) return;
@@ -9312,6 +9325,7 @@ function refreshGeneratorInputViews(){
             renderRhPromptFields(el.querySelector('.rh-prompt-list'), gen, rhActiveFields(gen));
             renderRhInputs(el.querySelector('.rh-input-list'), gen, media);
             renderRhParams(el.querySelector('.rh-param-list'), gen, rhActiveFields(gen), media);
+            refreshIcons();
         }
     });
 }

@@ -695,7 +695,8 @@ video.node-img { object-fit:cover; background:#0f172a; }
 .rh-config-control .smart-pill { max-width:168px; }
 .rh-dropdown-control .smart-pill { max-width:136px; border-color:var(--line); background:var(--card); padding-right:7px; }
 .rh-dropdown-control:hover .smart-pill,.rh-dropdown-control.pinned .smart-pill { border-color:var(--strong); }
-.rh-mini-summary { height:var(--ctrl-height); padding:0 9px; border-radius:999px; border:1px solid transparent; display:inline-flex; align-items:center; color:var(--faint); font-size:9.5px; font-weight:600; white-space:nowrap; }
+.rh-mini-summary { min-height:var(--ctrl-height); padding:4px 9px; border-radius:8px; border:1px solid transparent; display:inline-flex; flex-direction:column; justify-content:center; color:var(--faint); font-size:9.5px; font-weight:600; white-space:nowrap; line-height:1.5; }
+.rh-mini-aliases { font-weight:400; opacity:.7; font-size:9px; }
 .num-compact.rh-text-param input { width:84px !important; text-align:left; }
 .resolution-control .smart-pill,.ratio-control .smart-pill,.aspect-control .smart-pill { max-width:none; }
 .resolution-control .smart-popover { min-width:240px; }
