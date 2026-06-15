@@ -4709,6 +4709,7 @@ def extract_image_from_chat_response(data):
     支持：message.images[]、多模态 content 里的 image_url、以及正文里的 data URL / markdown 图片链接。"""
     data = unwrap_apimart_response(data) if isinstance(data, dict) else data
     choices = data.get("choices") if isinstance(data, dict) else None
+    text = ''
     if isinstance(choices, list) and choices:
         message = choices[0].get("message") if isinstance(choices[0], dict) else {}
         message = message or {}
@@ -4734,7 +4735,7 @@ def extract_image_from_chat_response(data):
                 result = omnilojo_image_from_value(candidate)
                 if result:
                     return result
-    raise HTTPException(status_code=502, detail="Omnilojo 聊天接口没有返回可识别的图片")
+    raise HTTPException(status_code=502, detail=f"聊天接口没有返回可识别的图片, 完成原因: {choices[0].get('finish_reason') if choices else ''}, 响应文本为: {text}")
 
 async def generate_omnilojo_provider_image(prompt, size, model, reference_images=None, provider=None):
     base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
