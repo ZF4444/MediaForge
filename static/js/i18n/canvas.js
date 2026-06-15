@@ -112,7 +112,7 @@
         "canvas.rhInputs": { zh: "输入素材", en: "Input Media" },
         "canvas.rhParams": { zh: "RunningHub 参数", en: "RunningHub Params" },
         "canvas.rhWorkflowParams": { zh: "工作流参数", en: "Workflow Params" },
-        "canvas.rhNoParams": { zh: "输入 webappId 并拉取应用参数", en: "Enter webappId and fetch app params" },
+        "canvas.rhNoParams": { zh: "暂无可调参数", en: "No adjustable params" },
         "canvas.rhUseUpstream": { zh: "使用上游", en: "Use upstream" },
         "canvas.rhRun": { zh: "运行 RunningHub", en: "Run RunningHub" },
         "canvas.rhRunning": { zh: "RunningHub运行中", en: "Running RunningHub" },
