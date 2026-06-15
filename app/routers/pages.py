@@ -139,6 +139,47 @@ async def auth_logout(request: Request):
     return resp
 
 
+@router.get("/auth/sso")
+async def auth_sso(request: Request):
+    """飞书等外部平台 SSO 跳转入口。
+
+    接收 query 参数中的用户信息，自动注册（若首次）并登录，然后 302 重定向到首页。
+    示例: /auth/sso?username=张三&user_id=feishu_ou_xxxx
+    """
+    raw_username = request.query_params.get("username", "").strip()
+    raw_user_id = request.query_params.get("user_id", "").strip()
+
+    # 优先使用平台传来的 user_id，否则从 username 派生
+    user_id = clean_user_id(raw_user_id) if raw_user_id else clean_user_id(raw_username)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="缺少有效的用户标识(username 或 user_id)")
+
+    username = raw_username or user_id
+
+    # 自动注册（若不存在），已存在则同步 username
+    if not user_exists(user_id):
+        register_user(user_id, username)
+    else:
+        from app.core.auth import USERS, USERS_LOCK, _persist_users_unlocked
+        with USERS_LOCK:
+            if USERS.get(user_id, {}).get("username") != username:
+                USERS[user_id]["username"] = username
+                _persist_users_unlocked()
+
+    # 创建 session 并设置 cookie，重定向到首页
+    token = create_session(user_id, username)
+    resp = RedirectResponse(url="/", status_code=302)
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return resp
+
+
 @router.get("/auth/me")
 async def auth_me(request: Request):
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
