@@ -2024,6 +2024,38 @@ function addLLMNode(point){
         running:false
     });
 }
+function addCaptionNode(point){
+    const p = point || defaultPoint(100, 0);
+    const providerId = chatApiProviders()[0]?.id || 'comfly';
+    return addNode({
+        id:uid('cap'),
+        type:'caption',
+        x:p.x,
+        y:p.y,
+        captionProvider:providerId,
+        model:resolveChatModel('', providerId),
+        systemPrompt:'请详细描述这张图片的内容，包括主体、场景、风格、光照、色彩、构图等信息，用自然语言输出，适合作为AI绘画的提示词。',
+        userPrompt:'',
+        outputText:'',
+        running:false
+    });
+}
+function addExpandNode(point){
+    const p = point || defaultPoint(100, 0);
+    const providerId = chatApiProviders()[0]?.id || 'comfly';
+    return addNode({
+        id:uid('exp'),
+        type:'expand',
+        x:p.x,
+        y:p.y,
+        expandProvider:providerId,
+        model:resolveChatModel('', providerId),
+        systemPrompt:'',
+        expandInput:'',
+        outputText:'',
+        running:false
+    });
+}
 function addGeneratorNode(point){
     const p = point || defaultPoint(120, 0);
     const providerId = imageApiProviders()[0]?.id || '';
@@ -2651,6 +2683,7 @@ function closeCreateMenu(){
     createMenu.classList.remove('open');
     closeLinkCreateMenu();
     closeImageNodeMenu();
+    const psm = document.getElementById('promptSubMenu'); if(psm) psm.classList.remove('open');
 }
 function linkCreateOptions(state){
     const node = nodes.find(n => n.id === state?.originId);
@@ -2665,10 +2698,12 @@ function linkCreateOptions(state){
                 {type:'rh', label:tr('canvas.rhGenerate'), icon:'workflow'},
                 {type:'ltxDirector', label:tr('canvas.ltxDirector'), icon:'film'},
                 {type:'video', label:tr('canvas.videoGenerateNode'), icon:'clapperboard'},
-                ...(node.type === 'output' ? [] : [{type:'llm', label:'LLM', icon:'message-square-text'}])
+                ...(node.type === 'output' ? [] : [{type:'llm', label:'LLM', icon:'message-square-text'}]),
+                ...(node.type === 'output' ? [] : [{type:'caption', label:tr('canvas.captionNode'), icon:'scan-eye'}]),
+                ...(node.type === 'output' ? [] : [{type:'expand', label:tr('canvas.expandNode'), icon:'sparkles'}])
             ];
         } else { return []; }
-    } else if(CANVAS_GENERATOR_TYPES.includes(node.type) || node.type === 'llm'){
+    } else if(CANVAS_GENERATOR_TYPES.includes(node.type) || node.type === 'llm' || node.type === 'caption' || node.type === 'expand'){
         opts = [
             {type:'image', label:tr('canvas.imageCard'), icon:'image-plus'},
             {type:'prompt', label:tr('canvas.prompt'), icon:'text-cursor-input'},
@@ -3031,6 +3066,8 @@ function createNodeByType(type, point){
     if(type === 'loop') return addLoopNode(point);
     if(type === 'group') return addGroupNode(point);
     if(type === 'llm') return addLLMNode(point);
+    if(type === 'caption') return addCaptionNode(point);
+    if(type === 'expand') return addExpandNode(point);
     if(type === 'generator') return addGeneratorNode(point);
     if(type === 'msgen') return addMsGenNode(point);
     if(type === 'video') return addVideoNode(point);
@@ -3046,6 +3083,8 @@ function menuAdd(type){
     if(type === 'prompt') addPromptNode(menuPoint);
     if(type === 'loop') addLoopNode(menuPoint);
     if(type === 'llm') addLLMNode(menuPoint);
+    if(type === 'caption') addCaptionNode(menuPoint);
+    if(type === 'expand') addExpandNode(menuPoint);
     if(type === 'generator') addGeneratorNode(menuPoint);
     if(type === 'msgen') addMsGenNode(menuPoint);
     if(type === 'video') addVideoNode(menuPoint);
@@ -3053,6 +3092,32 @@ function menuAdd(type){
     if(type === 'comfy') addComfyNode(menuPoint);
     if(type === 'ltxDirector') addLTXDirectorNode(menuPoint);
     if(type === 'output') addOutputNode(menuPoint);
+}
+function openPromptSubMenu(btn, e){
+    e && e.stopPropagation();
+    const sub = document.getElementById('promptSubMenu');
+    const isToolbar = btn.classList.contains('tool-btn');
+    sub.innerHTML = [
+        {type:'prompt', label:tr('canvas.prompt'), icon:'text-cursor-input'},
+        {type:'caption', label:tr('canvas.captionNode'), icon:'scan-eye'},
+        {type:'expand', label:tr('canvas.expandNode'), icon:'sparkles'}
+    ].map(o => `<button class="menu-btn" data-prompt-sub="${o.type}"><i data-lucide="${o.icon}" class="w-4 h-4"></i><span>${o.label}</span></button>`).join('');
+    const rect = btn.getBoundingClientRect();
+    sub.style.left = isToolbar ? `${rect.left}px` : `${rect.right + 4}px`;
+    sub.style.top = isToolbar ? `${rect.bottom + 4}px` : `${rect.top}px`;
+    sub.classList.add('open');
+    refreshIcons();
+    sub.querySelectorAll('[data-prompt-sub]').forEach(b => {
+        b.onmousedown = ev => { ev.stopPropagation(); ev.preventDefault(); };
+        b.onclick = ev => {
+            ev.stopPropagation(); sub.classList.remove('open');
+            const type = b.dataset.promptSub;
+            if(isToolbar){ if(type==='prompt') addPromptNode(); else if(type==='caption') addCaptionNode(); else if(type==='expand') addExpandNode(); }
+            else { menuAdd(type); }
+        };
+    });
+    const close = ev => { if(!sub.contains(ev.target) && ev.target !== btn && !btn.contains(ev.target)){ sub.classList.remove('open'); document.removeEventListener('pointerdown', close); } };
+    setTimeout(() => document.addEventListener('pointerdown', close), 0);
 }
 function mediaKindForUpload(file){
     const type = String(file?.type || '').toLowerCase();
@@ -5271,10 +5336,10 @@ function renderNode(node){
         if(node.type === 'output') openOutputNodeMenu(node.id, e.clientX, e.clientY);
         else openGeneratorNodeMenu(node.id, e.clientX, e.clientY);
     };
-    const title = node.type === 'image' ? 'Image' : node.type === 'prompt' ? 'Prompt' : node.type === 'loop' ? tr('canvas.loopNode') : node.type === 'promptGroup' ? 'Prompts' : node.type === 'group' ? 'Group' : node.type === 'output' ? 'Output' : node.type === 'llm' ? 'LLM' : node.type === 'comfy' ? 'ComfyUI' : node.type === 'ltxDirector' ? tr('canvas.ltxDirector') : node.type === 'rh' ? 'RunningHub' : node.type === 'msgen' ? tr('canvas.modelscopeGenerate') : node.type === 'video' ? tr('canvas.videoGenerateNode') : tr('canvas.apiGenerate');
+    const title = node.type === 'image' ? 'Image' : node.type === 'prompt' ? 'Prompt' : node.type === 'loop' ? tr('canvas.loopNode') : node.type === 'promptGroup' ? 'Prompts' : node.type === 'group' ? 'Group' : node.type === 'output' ? 'Output' : node.type === 'llm' ? 'LLM' : node.type === 'caption' ? tr('canvas.captionNode') : node.type === 'expand' ? tr('canvas.expandNode') : node.type === 'comfy' ? 'ComfyUI' : node.type === 'ltxDirector' ? tr('canvas.ltxDirector') : node.type === 'rh' ? 'RunningHub' : node.type === 'msgen' ? tr('canvas.modelscopeGenerate') : node.type === 'video' ? tr('canvas.videoGenerateNode') : tr('canvas.apiGenerate');
     const displayTitle = node.type === 'image' && node.url ? nodeTitleForMedia(node) : title;
     // 失败徽章只在一键运行模式中显示，单节点失败已通过 alert 提示
-    const showStatus = ['generator','msgen','comfy','ltxDirector','llm','video','rh'].includes(node.type) && node.runStatus
+    const showStatus = ['generator','msgen','comfy','ltxDirector','llm','caption','expand','video','rh'].includes(node.type) && node.runStatus
         && (node.runStatus !== 'failed' || node._cascadeFailed);
     const statusHtml = showStatus ? (() => {
         const label = { queued:'排队中', running:'运行中', done:'完成', failed:'失败' }[node.runStatus] || '';
@@ -5400,6 +5465,8 @@ function renderNode(node){
         body.innerHTML = `<div class="text-[11px] text-gray-400">${promptNodes.length} ${tr('canvas.promptCount')} ${tr('canvas.grouped')}</div>`;
     }
     if(node.type === 'llm') body.appendChild(renderLLMBody(node));
+    if(node.type === 'caption') body.appendChild(renderCaptionBody(node));
+    if(node.type === 'expand') body.appendChild(renderExpandBody(node));
     if(node.type === 'generator') body.appendChild(renderGeneratorBody(node));
     if(node.type === 'msgen') body.appendChild(renderMsGenBody(node));
     if(node.type === 'video') body.appendChild(renderVideoBody(node));
@@ -5425,8 +5492,8 @@ function renderNode(node){
         if(e.button !== 0 || !isNodeDragSurface(e.target)) return;
         startNodeDrag(e, node);
     };
-    const canInput = ['generator','comfy','ltxDirector','output','llm','msgen','video','rh'].includes(node.type) || (node.type === 'loop' && (node.imageInput || node.showPrompt));
-    const canOutput = ['image','prompt','loop','group','promptGroup','generator','comfy','ltxDirector','llm','msgen','video','rh','output'].includes(node.type);
+    const canInput = ['generator','comfy','ltxDirector','output','llm','caption','expand','msgen','video','rh'].includes(node.type) || (node.type === 'loop' && (node.imageInput || node.showPrompt));
+    const canOutput = ['image','prompt','loop','group','promptGroup','generator','comfy','ltxDirector','llm','caption','expand','msgen','video','rh','output'].includes(node.type);
     if(canInput) el.insertAdjacentHTML('beforeend', `<div class="port in" title="${tr('canvas.connectHere')}"></div>`);
     if(canOutput) el.insertAdjacentHTML('beforeend', `<div class="port out" title="${tr('canvas.dragConnect')}"></div>`);
     el.insertAdjacentHTML('beforeend', `<div class="resize-handle" title="${tr('canvas.resize')}"></div>`);
@@ -5553,6 +5620,8 @@ function defaultNodeSize(type){
     if(type === 'prompt') return {w:310, h:0};
     if(type === 'loop') return {w:336, h:0};
     if(type === 'llm') return {w:420, h:590};
+    if(type === 'caption') return {w:380, h:0};
+    if(type === 'expand') return {w:380, h:0};
     if(type === 'generator') return {w:380, h:0};
     if(type === 'msgen') return {w:380, h:0};
     if(type === 'video') return {w:400, h:0};
@@ -5600,6 +5669,8 @@ function loopInputPromptItems(node){
                 }
                 else if(n.type === 'loop') text = renderLoopPrompt(n);
                 else if(n.type === 'llm') text = n.outputText || '';
+                else if(n.type === 'caption') text = n.outputText || '';
+                else if(n.type === 'expand') text = n.outputText || '';
                 if(String(text || '').trim()) items.push(String(text || '').trim());
             });
         return items;
@@ -7040,6 +7111,309 @@ function renderLLMChatPane(container, node){
         };
     });
 }
+// ===== Caption Node: Built-in Rules & Rule Manager =====
+let CAPTION_RULES_BUILTIN = [];
+let captionUserRules = [];
+let captionRulesLoaded = false;
+async function loadCaptionRules(){
+    if(captionRulesLoaded) return;
+    try {
+        const r = await fetch('/api/caption-rules');
+        if(r.ok){
+            const d = await r.json();
+            if(d.builtin_rules && d.builtin_rules.length) CAPTION_RULES_BUILTIN = d.builtin_rules;
+            captionUserRules = d.user_rules || [];
+        }
+    } catch(e){}
+    captionRulesLoaded = true;
+}
+function allCaptionRules(){ return [...CAPTION_RULES_BUILTIN, ...captionUserRules]; }
+function saveCaptionRules(){ fetch('/api/caption-rules', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user_rules:captionUserRules})}); }
+function getActiveCaptionRule(){ const all = allCaptionRules(); return all.find(r => r.active) || all[0]; }
+function captionRuleOptions(selectedId){
+    return allCaptionRules().map(r => `<option value="${escapeHtml(r.id)}" ${r.id === selectedId ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('');
+}
+function openCaptionRuleManager(){
+    let editUserRules = JSON.parse(JSON.stringify(captionUserRules));
+    let activeId = (allCaptionRules().find(r=>r.active)||allCaptionRules()[0]).id;
+    const overlay = document.createElement('div');
+    overlay.className = 'rule-mgr-overlay';
+    const renderPopup = () => {
+        const allRules = [...CAPTION_RULES_BUILTIN, ...editUserRules];
+        overlay.innerHTML = `<div class="rule-mgr-panel">
+            <div class="rule-mgr-header"><span>${tr('canvas.captionRuleManager')}</span><button class="rm-close">✕</button></div>
+            <div class="rule-mgr-toolbar"><button class="rm-add rule-mgr-add">+ ${tr('canvas.captionRuleAdd')}</button></div>
+            <div class="rule-mgr-body"><table class="rule-mgr-table"><thead><tr>
+                <th>${tr('canvas.captionRuleStatus')}</th><th style="width:140px">${tr('canvas.captionRuleName')}</th><th>${tr('canvas.captionRuleContent')}</th><th>${tr('canvas.captionRuleOps')}</th>
+            </tr></thead><tbody>${allRules.map(r=>`<tr>
+                <td><input type="radio" name="rm-active" ${r.id===activeId?'checked':''} data-id="${escapeHtml(r.id)}" style="cursor:pointer"></td>
+                <td><span class="rule-name">${escapeHtml(r.name)}</span>${r.builtin?'<span class="rule-badge">内置</span>':''}</td>
+                <td><span class="rule-preview">${escapeHtml((r.content||'').slice(0,80))}…</span></td>
+                <td>${r.builtin
+                    ?`<button class="rule-op rm-view" data-id="${escapeHtml(r.id)}">👁</button>`
+                    :`<button class="rule-op rm-edit" data-id="${escapeHtml(r.id)}">✎</button><button class="rule-op rm-del" data-id="${escapeHtml(r.id)}">🗑</button>`}</td>
+            </tr>`).join('')}</tbody></table></div>
+            <div class="rule-mgr-footer"><button class="rm-cancel rule-mgr-cancel">${tr('canvas.captionRuleCancel')}</button><button class="rm-save rule-mgr-save">${tr('canvas.captionRuleSave')}</button></div>
+        </div>`;
+        overlay.querySelector('.rm-close').onclick = () => overlay.remove();
+        overlay.querySelector('.rm-cancel').onclick = () => overlay.remove();
+        overlay.querySelector('.rm-save').onclick = () => {
+            captionUserRules = editUserRules;
+            CAPTION_RULES_BUILTIN.forEach(r => r.active = r.id === activeId);
+            captionUserRules.forEach(r => r.active = r.id === activeId);
+            saveCaptionRules(); overlay.remove(); render();
+        };
+        overlay.querySelectorAll('input[name="rm-active"]').forEach(radio => { radio.onchange = e => { activeId = e.target.dataset.id; }; });
+        overlay.querySelector('.rm-add').onclick = () => {
+            const addOverlay = document.createElement('div');
+            addOverlay.className = 'rule-edit-overlay';
+            addOverlay.innerHTML = `<div class="rule-edit-panel">
+                <div class="rule-edit-title">${tr('canvas.captionRuleAdd')}</div>
+                <input class="add-name" placeholder="${tr('canvas.captionRuleName')}">
+                <textarea class="add-content" placeholder="${tr('canvas.captionRuleContent')}"></textarea>
+                <div class="rule-edit-actions">
+                    <button class="add-cancel rule-mgr-cancel">${tr('canvas.captionRuleCancel')}</button>
+                    <button class="add-ok rule-mgr-save">OK</button>
+                </div>
+            </div>`;
+            addOverlay.querySelector('.add-cancel').onclick = () => addOverlay.remove();
+            addOverlay.querySelector('.add-ok').onclick = () => {
+                const name = addOverlay.querySelector('.add-name').value.trim();
+                if(!name) return;
+                editUserRules.push({id:'custom_'+Date.now(), name, active:false, content:addOverlay.querySelector('.add-content').value});
+                addOverlay.remove();
+                renderPopup();
+            };
+            document.body.appendChild(addOverlay);
+        };
+        overlay.querySelectorAll('.rm-del').forEach(btn => { btn.onclick = e => {
+            const id = e.currentTarget.dataset.id;
+            editUserRules = editUserRules.filter(r => r.id !== id);
+            if(activeId === id) activeId = CAPTION_RULES_BUILTIN[0].id;
+            renderPopup();
+        }; });
+        const openEditor = (rule, readonly) => {
+            const edOverlay = document.createElement('div');
+            edOverlay.className = 'rule-edit-overlay';
+            edOverlay.innerHTML = `<div class="rule-edit-panel">
+                <div class="rule-edit-title">${readonly?tr('canvas.captionRuleView'):tr('canvas.captionRuleEdit')}</div>
+                <input class="ed-name" value="${escapeHtml(rule.name)}" ${readonly?'readonly':''}>
+                <textarea class="ed-content" ${readonly?'readonly':''}>${escapeHtml(rule.content)}</textarea>
+                <div class="rule-edit-actions">
+                    <button class="ed-cancel rule-mgr-cancel">${tr('canvas.captionRuleCancel')}</button>
+                    ${readonly?'':`<button class="ed-ok rule-mgr-save">OK</button>`}
+                </div>
+            </div>`;
+            edOverlay.querySelector('.ed-cancel').onclick = () => edOverlay.remove();
+            const okBtn = edOverlay.querySelector('.ed-ok');
+            if(okBtn) okBtn.onclick = () => { rule.name = edOverlay.querySelector('.ed-name').value.trim() || rule.name; rule.content = edOverlay.querySelector('.ed-content').value; edOverlay.remove(); renderPopup(); };
+            document.body.appendChild(edOverlay);
+        };
+        overlay.querySelectorAll('.rm-view').forEach(btn => { btn.onclick = e => {
+            const id = e.currentTarget.dataset.id;
+            const rule = CAPTION_RULES_BUILTIN.find(r=>r.id===id);
+            if(rule) openEditor(rule, true);
+        }; });
+        overlay.querySelectorAll('.rm-edit').forEach(btn => { btn.onclick = e => {
+            const id = e.currentTarget.dataset.id;
+            const rule = editUserRules.find(r=>r.id===id);
+            if(rule) openEditor(rule, false);
+        }; });
+    };
+    renderPopup();
+    document.body.appendChild(overlay);
+}
+// ===== Expand Node: Rules & Rule Manager =====
+let EXPAND_RULES_BUILTIN = [];
+let expandUserRules = [];
+let expandRulesLoaded = false;
+async function loadExpandRules(){
+    if(expandRulesLoaded) return;
+    try { const r = await fetch('/api/expand-rules'); if(r.ok){ const d = await r.json(); if(d.builtin_rules&&d.builtin_rules.length) EXPAND_RULES_BUILTIN=d.builtin_rules; expandUserRules=d.user_rules||[]; } } catch(e){}
+    expandRulesLoaded = true;
+}
+function allExpandRules(){ return [...EXPAND_RULES_BUILTIN, ...expandUserRules]; }
+function saveExpandRules(){ fetch('/api/expand-rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_rules:expandUserRules})}); }
+function getActiveExpandRule(){ const all=allExpandRules(); return all.find(r=>r.active)||all[0]; }
+function expandRuleOptions(selectedId){ return allExpandRules().map(r=>`<option value="${escapeHtml(r.id)}" ${r.id===selectedId?'selected':''}>${escapeHtml(r.name)}</option>`).join(''); }
+function openExpandRuleManager(){
+    let editUserRules = JSON.parse(JSON.stringify(expandUserRules));
+    let activeId = (allExpandRules().find(r=>r.active)||allExpandRules()[0]).id;
+    const overlay = document.createElement('div');
+    overlay.className = 'rule-mgr-overlay';
+    const renderPopup = () => {
+        const allRules = [...EXPAND_RULES_BUILTIN, ...editUserRules];
+        overlay.innerHTML = `<div class="rule-mgr-panel">
+            <div class="rule-mgr-header"><span>${tr('canvas.expandRuleManager')}</span><button class="rm-close">✕</button></div>
+            <div class="rule-mgr-toolbar"><button class="rm-add rule-mgr-add">+ ${tr('canvas.captionRuleAdd')}</button></div>
+            <div class="rule-mgr-body"><table class="rule-mgr-table"><thead><tr>
+                <th>${tr('canvas.captionRuleStatus')}</th><th style="width:140px">${tr('canvas.captionRuleName')}</th><th>${tr('canvas.captionRuleContent')}</th><th>${tr('canvas.captionRuleOps')}</th>
+            </tr></thead><tbody>${allRules.map(r=>`<tr>
+                <td><input type="radio" name="rm-active-exp" ${r.id===activeId?'checked':''} data-id="${escapeHtml(r.id)}" style="cursor:pointer"></td>
+                <td><span class="rule-name">${escapeHtml(r.name)}</span>${r.builtin?'<span class="rule-badge">内置</span>':''}</td>
+                <td><span class="rule-preview">${escapeHtml((r.content||'').slice(0,80))}…</span></td>
+                <td>${r.builtin?`<button class="rule-op rm-view" data-id="${escapeHtml(r.id)}">👁</button>`:`<button class="rule-op rm-edit" data-id="${escapeHtml(r.id)}">✎</button><button class="rule-op rm-del" data-id="${escapeHtml(r.id)}">🗑</button>`}</td>
+            </tr>`).join('')}</tbody></table></div>
+            <div class="rule-mgr-footer"><button class="rm-cancel rule-mgr-cancel">${tr('canvas.captionRuleCancel')}</button><button class="rm-save rule-mgr-save">${tr('canvas.captionRuleSave')}</button></div>
+        </div>`;
+        overlay.querySelector('.rm-close').onclick=()=>overlay.remove();
+        overlay.querySelector('.rm-cancel').onclick=()=>overlay.remove();
+        overlay.querySelector('.rm-save').onclick=()=>{ expandUserRules=editUserRules; EXPAND_RULES_BUILTIN.forEach(r=>r.active=r.id===activeId); expandUserRules.forEach(r=>r.active=r.id===activeId); saveExpandRules(); overlay.remove(); render(); };
+        overlay.querySelectorAll('input[name="rm-active-exp"]').forEach(radio=>{radio.onchange=e=>{activeId=e.target.dataset.id;};});
+        overlay.querySelector('.rm-add').onclick=()=>{
+            const addOv=document.createElement('div'); addOv.className='rule-edit-overlay';
+            addOv.innerHTML=`<div class="rule-edit-panel"><div class="rule-edit-title">${tr('canvas.captionRuleAdd')}</div><input class="add-name" placeholder="${tr('canvas.captionRuleName')}"><textarea class="add-content" placeholder="${tr('canvas.captionRuleContent')}"></textarea><div class="rule-edit-actions"><button class="add-cancel rule-mgr-cancel">${tr('canvas.captionRuleCancel')}</button><button class="add-ok rule-mgr-save">OK</button></div></div>`;
+            addOv.querySelector('.add-cancel').onclick=()=>addOv.remove();
+            addOv.querySelector('.add-ok').onclick=()=>{const n=addOv.querySelector('.add-name').value.trim();if(!n)return;editUserRules.push({id:'custom_'+Date.now(),name:n,active:false,content:addOv.querySelector('.add-content').value});addOv.remove();renderPopup();};
+            document.body.appendChild(addOv);
+        };
+        overlay.querySelectorAll('.rm-del').forEach(btn=>{btn.onclick=e=>{const id=e.currentTarget.dataset.id;editUserRules=editUserRules.filter(r=>r.id!==id);if(activeId===id)activeId=EXPAND_RULES_BUILTIN[0].id;renderPopup();};});
+        const openEd=(rule,ro)=>{const ov=document.createElement('div');ov.className='rule-edit-overlay';ov.innerHTML=`<div class="rule-edit-panel"><div class="rule-edit-title">${ro?tr('canvas.captionRuleView'):tr('canvas.captionRuleEdit')}</div><input class="ed-name" value="${escapeHtml(rule.name)}" ${ro?'readonly':''}><textarea class="ed-content" ${ro?'readonly':''}>${escapeHtml(rule.content)}</textarea><div class="rule-edit-actions"><button class="ed-cancel rule-mgr-cancel">${tr('canvas.captionRuleCancel')}</button>${ro?'':`<button class="ed-ok rule-mgr-save">OK</button>`}</div></div>`;ov.querySelector('.ed-cancel').onclick=()=>ov.remove();const ok=ov.querySelector('.ed-ok');if(ok)ok.onclick=()=>{rule.name=ov.querySelector('.ed-name').value.trim()||rule.name;rule.content=ov.querySelector('.ed-content').value;ov.remove();renderPopup();};document.body.appendChild(ov);};
+        overlay.querySelectorAll('.rm-view').forEach(btn=>{btn.onclick=e=>{const r=EXPAND_RULES_BUILTIN.find(x=>x.id===e.currentTarget.dataset.id);if(r)openEd(r,true);};});
+        overlay.querySelectorAll('.rm-edit').forEach(btn=>{btn.onclick=e=>{const r=editUserRules.find(x=>x.id===e.currentTarget.dataset.id);if(r)openEd(r,false);};});
+    };
+    renderPopup();
+    document.body.appendChild(overlay);
+}
+function renderExpandBody(node){
+    if(!expandRulesLoaded) loadExpandRules().then(()=>render());
+    const wrap = document.createElement('div');
+    wrap.className = 'llm-body';
+    node.expandProvider = resolveChatProviderId(node.expandProvider || 'comfly');
+    const prov = node.expandProvider;
+    if(!providerChatModels(prov).includes(node.model)) node.model = providerChatModels(prov)[0] || node.model;
+    const modelOpts = chatModelOptions(node.model, prov);
+    const activeRule = getActiveExpandRule();
+    const selectedRuleId = node.expandRuleId || activeRule.id;
+    const customEnabled = Boolean(node.expandCustomRule);
+    const connectedInput = llmInputText(node);
+    const isReadonly = connectedInput.length > 0;
+    const inputValue = connectedInput || node.expandInput || '';
+    wrap.innerHTML = `
+        <div class="llm-row">
+            <select class="select-lite expand-provider-select" style="flex:1">${chatProviderOptions(prov)}</select>
+            <select class="select-lite expand-model">${modelOpts}</select>
+        </div>
+        <div class="llm-row" style="gap:6px;align-items:center">
+            <select class="select-lite expand-rule-select" style="flex:1" ${customEnabled?'disabled':''}>${expandRuleOptions(selectedRuleId)}</select>
+            <button class="expand-rule-mgr-btn llm-run" type="button" style="flex:none;width:auto;height:34px;padding:0 12px;font-size:11px">${tr('canvas.expandRuleManager')}</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+            <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;white-space:nowrap;cursor:pointer"><input type="checkbox" class="expand-custom-toggle" ${customEnabled?'checked':''}>${tr('canvas.captionCustomRule')}</label>
+        </div>
+        ${customEnabled?`<textarea class="llm-system expand-system" placeholder="${tr('canvas.expandSystemPrompt')}" style="min-height:50px;max-height:100px;resize:vertical">${escapeHtml(node.systemPrompt||'')}</textarea>`:''}
+        <div class="llm-pane-label">Input${isReadonly?' <span style="font-size:9px;opacity:.5">(来自连接)</span>':''}</div>
+        <textarea class="llm-system expand-input" ${isReadonly?'readonly':''} placeholder="${tr('canvas.expandInputHint')}" style="min-height:50px;max-height:100px;resize:vertical">${escapeHtml(inputValue)}</textarea>
+        <div class="llm-output-wrap">
+            <button class="llm-copy-btn expand-output-copy" type="button" title="复制"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>
+            <div class="llm-output expand-result-output" style="max-height:180px;overflow-y:auto">${escapeHtml(node.outputText||'')}</div>
+        </div>
+        <div class="gen-run-row mt-2">
+            <button class="llm-run expand-run ${node.running?'running':''}" ${node.running?'disabled':''}><i data-lucide="play" class="w-4 h-4"></i>${node.running?tr('canvas.running'):tr('canvas.expandRun')}</button>
+            ${cascadeBtnHtml(node)}
+        </div>
+        ${retryBarHtml(node)}
+    `;
+    const provSel=wrap.querySelector('.expand-provider-select'), modSel=wrap.querySelector('.expand-model');
+    [provSel,modSel].forEach(el=>{el.onmousedown=e=>e.stopPropagation();el.onclick=e=>e.stopPropagation();});
+    provSel.value=prov; modSel.value=resolveChatModel(node.model,prov);
+    provSel.onchange=e=>{e.stopPropagation();node.expandProvider=e.target.value;node.model=providerChatModels(node.expandProvider)[0]||'';render();scheduleSave();};
+    modSel.onchange=e=>{e.stopPropagation();node.model=e.target.value;scheduleSave();};
+    const ruleSel=wrap.querySelector('.expand-rule-select'); ruleSel.onmousedown=e=>e.stopPropagation(); ruleSel.onchange=e=>{e.stopPropagation();node.expandRuleId=e.target.value;scheduleSave();};
+    const custTog=wrap.querySelector('.expand-custom-toggle'); custTog.onmousedown=e=>e.stopPropagation(); custTog.onchange=e=>{e.stopPropagation();node.expandCustomRule=e.target.checked;render();scheduleSave();};
+    wrap.querySelector('.expand-rule-mgr-btn').onclick=e=>{e.stopPropagation();openExpandRuleManager();};
+    const sysEl=wrap.querySelector('.expand-system'); if(sysEl){sysEl.oninput=e=>{node.systemPrompt=e.target.value;scheduleSave();};bindScrollableText(sysEl);}
+    const inEl=wrap.querySelector('.expand-input'); if(!isReadonly) inEl.oninput=e=>{node.expandInput=e.target.value;scheduleSave();}; bindScrollableText(inEl);
+    bindScrollableText(wrap.querySelector('.expand-result-output'));
+    wrap.querySelector('.expand-run').onclick=e=>{e.stopPropagation();runExpandNode(node.id);};
+    bindCascadeButtons(wrap, node.id);
+    const copyBtn=wrap.querySelector('.expand-output-copy');
+    if(copyBtn){copyBtn.onmousedown=e=>e.stopPropagation();copyBtn.onclick=async e=>{e.stopPropagation();const t=node.outputText||'';if(!t)return;if(await copyTextToClipboard(t)){copyBtn.classList.add('copied');setTimeout(()=>copyBtn.classList.remove('copied'),1500);}};}
+    return wrap;
+}
+function renderCaptionBody(node){
+    if(!captionRulesLoaded) loadCaptionRules().then(()=>render());
+    const wrap = document.createElement('div');
+    wrap.className = 'llm-body';
+    node.captionProvider = resolveChatProviderId(node.captionProvider || 'comfly');
+    const prov = node.captionProvider;
+    if(!providerChatModels(prov).includes(node.model)) node.model = providerChatModels(prov)[0] || node.model;
+    const modelOpts = chatModelOptions(node.model, prov);
+    const imgs = llmInputImages(node);
+    const imgBadge = imgs.length ? `<div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:rgba(16,185,129,.12);color:#047857;font-size:10.5px;font-weight:700;width:fit-content;line-height:1.4"><i data-lucide="image" class="w-3 h-3"></i>已连接 ${imgs.length} 张图片</div>` : '';
+    const activeRule = getActiveCaptionRule();
+    const selectedRuleId = node.captionRuleId || activeRule.id;
+    const customEnabled = Boolean(node.captionCustomRule);
+    wrap.innerHTML = `
+        <div class="llm-row">
+            <select class="select-lite caption-provider-select" style="flex:1">${chatProviderOptions(prov)}</select>
+            <select class="select-lite caption-model">${modelOpts}</select>
+        </div>
+        ${imgBadge}
+        <div class="llm-row" style="gap:6px;align-items:center">
+            <select class="select-lite caption-rule-select" style="flex:1" ${customEnabled?'disabled':''}>${captionRuleOptions(selectedRuleId)}</select>
+            <button class="caption-rule-mgr-btn llm-run" type="button" style="flex:none;width:auto;height:34px;padding:0 12px;font-size:11px">${tr('canvas.captionRuleManager')}</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+            <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;white-space:nowrap;cursor:pointer"><input type="checkbox" class="caption-custom-toggle" ${customEnabled?'checked':''}>${tr('canvas.captionCustomRule')}</label>
+        </div>
+        ${customEnabled ? `<textarea class="llm-system caption-system" placeholder="${tr('canvas.captionSystemPrompt')}" style="min-height:60px;max-height:120px;resize:vertical">${escapeHtml(node.systemPrompt || '')}</textarea>` : ''}
+        <textarea class="llm-system caption-user" placeholder="${tr('canvas.captionUserPrompt')}" style="min-height:36px;max-height:80px;resize:vertical">${escapeHtml(node.userPrompt || '')}</textarea>
+        <div class="llm-output-wrap">
+            <button class="llm-copy-btn caption-output-copy" type="button" title="复制"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>
+            <div class="llm-output caption-result-output" style="max-height:180px;overflow-y:auto">${escapeHtml(node.outputText || '')}</div>
+        </div>
+        <div class="gen-run-row mt-2">
+            <button class="llm-run caption-run ${node.running ? 'running' : ''}" ${node.running ? 'disabled' : ''}><i data-lucide="play" class="w-4 h-4"></i>${node.running ? tr('canvas.captionRunning') : tr('canvas.captionRun')}</button>
+            ${cascadeBtnHtml(node)}
+        </div>
+        ${retryBarHtml(node)}
+    `;
+    const providerSelect = wrap.querySelector('.caption-provider-select');
+    const modelSelect = wrap.querySelector('.caption-model');
+    [providerSelect, modelSelect].forEach(input => {
+        input.onmousedown = e => e.stopPropagation();
+        input.onclick = e => e.stopPropagation();
+    });
+    providerSelect.value = prov;
+    modelSelect.value = resolveChatModel(node.model, prov);
+    providerSelect.onchange = e => {
+        e.stopPropagation();
+        node.captionProvider = e.target.value;
+        node.model = providerChatModels(node.captionProvider)[0] || '';
+        render(); scheduleSave();
+    };
+    modelSelect.onchange = e => { e.stopPropagation(); node.model = e.target.value; scheduleSave(); };
+    const ruleSelect = wrap.querySelector('.caption-rule-select');
+    ruleSelect.onmousedown = e => e.stopPropagation();
+    ruleSelect.onchange = e => { e.stopPropagation(); node.captionRuleId = e.target.value; scheduleSave(); };
+    const customToggle = wrap.querySelector('.caption-custom-toggle');
+    customToggle.onmousedown = e => e.stopPropagation();
+    customToggle.onchange = e => { e.stopPropagation(); node.captionCustomRule = e.target.checked; render(); scheduleSave(); };
+    wrap.querySelector('.caption-rule-mgr-btn').onclick = e => { e.stopPropagation(); openCaptionRuleManager(); };
+    const sysEl = wrap.querySelector('.caption-system');
+    if(sysEl){ sysEl.oninput = e => { node.systemPrompt = e.target.value; scheduleSave(); }; bindScrollableText(sysEl); }
+    const userEl = wrap.querySelector('.caption-user');
+    userEl.oninput = e => { node.userPrompt = e.target.value; scheduleSave(); };
+    bindScrollableText(userEl);
+    bindScrollableText(wrap.querySelector('.caption-result-output'));
+    wrap.querySelector('.caption-run').onclick = e => { e.stopPropagation(); runCaptionNode(node.id); };
+    bindCascadeButtons(wrap, node.id);
+    const copyBtn = wrap.querySelector('.caption-output-copy');
+    if(copyBtn){
+        copyBtn.onmousedown = e => e.stopPropagation();
+        copyBtn.onclick = async e => {
+            e.stopPropagation();
+            const text = node.outputText || '';
+            if(!text) return;
+            if(await copyTextToClipboard(text)){
+                copyBtn.classList.add('copied');
+                setTimeout(() => copyBtn.classList.remove('copied'), 1500);
+            }
+        };
+    }
+    return wrap;
+}
 function bindScrollableText(el){
     if(!el) return;
     const stop = e => e.stopPropagation();
@@ -7146,6 +7520,8 @@ function llmInputText(node){
         if(n.type === 'loop') return renderLoopPrompt(n);
         if(n.type === 'promptGroup') return (n.items || []).map(id => nodes.find(x => x.id === id)).filter(Boolean).map(p => p.text || '').filter(Boolean).join('\n\n');
         if(n.type === 'llm') return n.outputText || '';
+        if(n.type === 'caption') return n.outputText || '';
+        if(n.type === 'expand') return n.outputText || '';
         return '';
     }).filter(Boolean).join('\n\n');
 }
@@ -9076,6 +9452,8 @@ function generatorSources(gen){
             return {id:n.id, type:'promptGroup', label:`提示词 ${prompts.length} 个`, refs:[], prompt:prompts.join('\n\n')};
         }
         if(n.type === 'llm' && (n.mode || 'node') === 'node' && n.outputText) return {id:n.id, type:'llm', label:(n.outputText || 'LLM').slice(0, 32), refs:[], prompt:n.outputText || ''};
+        if(n.type === 'caption' && n.outputText) return {id:n.id, type:'caption', label:(n.outputText || 'Caption').slice(0, 32), refs:[], prompt:n.outputText || ''};
+        if(n.type === 'expand' && n.outputText) return {id:n.id, type:'expand', label:(n.outputText || 'Expand').slice(0, 32), refs:[], prompt:n.outputText || ''};
         return null;
     }).flat().filter(Boolean);
 }
@@ -10429,6 +10807,88 @@ async function runLLMNode(nodeId, opts={}){
         alert(err.message || 'LLM 运行失败');
     }
 }
+async function runCaptionNode(nodeId, opts={}){
+    const node = nodes.find(n => n.id === nodeId);
+    if(!node || (node.running && !opts.cascade)) return;
+    const cascadeTargetId = cascadeTargetIdFromOptions(opts);
+    const images = llmInputImages(node);
+    if(!images.length){
+        if(opts.cascade) throw new Error(tr('canvas.captionNoImage'));
+        alert(tr('canvas.captionNoImage')); return;
+    }
+    if(!opts.cascade){ node.running = true; refreshNodes([node.id]); }
+    try {
+        const prov = resolveChatProviderId(node.captionProvider || 'comfly');
+        const model = resolveChatModel(node.model, prov);
+        const systemPrompt = node.captionCustomRule ? (node.systemPrompt || '请详细描述这张图片的内容。') : ((allCaptionRules().find(r => r.id === node.captionRuleId) || getActiveCaptionRule()).content || '请详细描述这张图片的内容。');
+        const message = node.userPrompt || '请描述这张图片';
+        const result = await cascadeFetch('/api/canvas-llm', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                message,
+                model,
+                ms_model: prov === 'modelscope' ? model : '',
+                provider: prov,
+                system_prompt: systemPrompt,
+                messages:[],
+                images,
+                videos:[]
+            })
+        }, {cascadeTargetId}).then(async r => {
+            if(!r.ok) throw new Error(await responseErrorMessage(r, 'Caption 运行失败'));
+            return r.json();
+        });
+        node.outputText = result.text || '';
+        if(!opts.cascade) node.running = false;
+        node.runStatus = 'done'; node.runError = '';
+        refreshNodes([node.id]);
+        scheduleSave();
+    } catch(err) {
+        if(!opts.cascade) node.running = false;
+        if(isCascadeAbortError(err)){
+            refreshNodes([node.id]);
+            if(opts.cascade) throw err;
+            return;
+        }
+        node.runStatus = 'failed'; node.runError = err.message || String(err);
+        refreshNodes([node.id]);
+        if(opts.cascade) throw err;
+        alert(err.message || 'Caption 运行失败');
+    }
+}
+async function runExpandNode(nodeId, opts={}){
+    const node = nodes.find(n => n.id === nodeId);
+    if(!node || (node.running && !opts.cascade)) return;
+    const cascadeTargetId = cascadeTargetIdFromOptions(opts);
+    const input = llmInputText(node) || node.expandInput || '';
+    if(!input){
+        if(opts.cascade) throw new Error(tr('canvas.expandNoInput'));
+        alert(tr('canvas.expandNoInput')); return;
+    }
+    if(!opts.cascade){ node.running = true; refreshNodes([node.id]); }
+    try {
+        const prov = resolveChatProviderId(node.expandProvider || 'comfly');
+        const model = resolveChatModel(node.model, prov);
+        const systemPrompt = node.expandCustomRule ? (node.systemPrompt || '') : ((allExpandRules().find(r => r.id === node.expandRuleId) || getActiveExpandRule()).content || '');
+        const result = await cascadeFetch('/api/canvas-llm', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ message:input, model, ms_model:prov==='modelscope'?model:'', provider:prov, system_prompt:systemPrompt, messages:[], images:[], videos:[] })
+        }, {cascadeTargetId}).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, 'Expand 运行失败')); return r.json(); });
+        node.outputText = result.text || '';
+        if(!opts.cascade) node.running = false;
+        node.runStatus = 'done'; node.runError = '';
+        refreshNodes([node.id]); scheduleSave();
+    } catch(err) {
+        if(!opts.cascade) node.running = false;
+        if(isCascadeAbortError(err)){ refreshNodes([node.id]); if(opts.cascade) throw err; return; }
+        node.runStatus = 'failed'; node.runError = err.message || String(err);
+        refreshNodes([node.id]);
+        if(opts.cascade) throw err;
+        alert(err.message || 'Expand 运行失败');
+    }
+}
 // 判断是不是「链尾」节点：没有下游生成节点（直接相连或经 Output 中转都算）
 function isTerminalGenerator(nodeId){
     const GEN_TYPES = canvasRunTypes();
@@ -10514,6 +10974,8 @@ function runCascadeNodeByType(node, opts={}){
     if(node.type === 'comfy') return runComfyNode(node.id, runOpts);
     if(node.type === 'ltxDirector') return runLTXDirectorNode(node.id, runOpts);
     if(node.type === 'llm') return runLLMNode(node.id, runOpts);
+    if(node.type === 'caption') return runCaptionNode(node.id, runOpts);
+    if(node.type === 'expand') return runExpandNode(node.id, runOpts);
     if(node.type === 'video') return runVideoNode(node.id, runOpts);
     if(node.type === 'rh') return runRhNode(node.id, runOpts);
     return Promise.resolve();
@@ -10549,7 +11011,7 @@ async function runLimitedCascadeRounds(rounds, limit, runner){
     return Promise.allSettled(workers);
 }
 function canvasRunTypes(){
-    return ['generator','msgen','comfy','ltxDirector','llm','video','rh'];
+    return ['generator','msgen','comfy','ltxDirector','llm','caption','expand','video','rh'];
 }
 function canvasWorkflowEdges(){
     const runTypes = canvasRunTypes();
@@ -12393,8 +12855,12 @@ function canConnect(fromId, toId){
         return allowImage || allowPrompt;
     }
     if(to.type === 'llm') return ['prompt','loop','promptGroup','llm','image','group','output'].includes(from.type);
+    if(to.type === 'caption') return ['image','group','output'].includes(from.type);
+    if(to.type === 'expand') return ['prompt','loop','promptGroup','llm','caption','expand'].includes(from.type);
     if(from.type === 'llm') return CANVAS_GENERATOR_TYPES.includes(to.type);
-    return CANVAS_GENERATOR_TYPES.includes(to.type) && ['image','prompt','loop','group','promptGroup','output','llm'].includes(from.type);
+    if(from.type === 'caption') return CANVAS_GENERATOR_TYPES.includes(to.type);
+    if(from.type === 'expand') return CANVAS_GENERATOR_TYPES.includes(to.type);
+    return CANVAS_GENERATOR_TYPES.includes(to.type) && ['image','prompt','loop','group','promptGroup','output','llm','caption','expand'].includes(from.type);
 }
 function sanitizeConnections(){
     connections = (connections || []).filter(c => canConnect(c.from, c.to));

@@ -6858,6 +6858,77 @@ async def canvas_video(payload: CanvasVideoRequest):
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
 
+# --- Caption Rules (per-user) ---
+
+_CAPTION_RULES_BUILTIN = None
+def _load_builtin_caption_rules():
+    global _CAPTION_RULES_BUILTIN
+    if _CAPTION_RULES_BUILTIN is None:
+        p = os.path.join(DATA_DIR, "caption_rules_builtin.json")
+        if os.path.isfile(p):
+            with open(p, "r", encoding="utf-8") as f:
+                _CAPTION_RULES_BUILTIN = json.load(f)
+        else:
+            _CAPTION_RULES_BUILTIN = []
+    return _CAPTION_RULES_BUILTIN
+
+_EXPAND_RULES_BUILTIN = None
+def _load_builtin_expand_rules():
+    global _EXPAND_RULES_BUILTIN
+    if _EXPAND_RULES_BUILTIN is None:
+        p = os.path.join(DATA_DIR, "expand_rules_builtin.json")
+        if os.path.isfile(p):
+            with open(p, "r", encoding="utf-8") as f:
+                _EXPAND_RULES_BUILTIN = json.load(f)
+        else:
+            _EXPAND_RULES_BUILTIN = []
+    return _EXPAND_RULES_BUILTIN
+
+
+@app.get("/api/caption-rules")
+async def get_caption_rules():
+    rules_file = os.path.join(user_data_dir(), "caption_rules.json")
+    user_rules = []
+    if os.path.isfile(rules_file):
+        try:
+            with open(rules_file, "r", encoding="utf-8") as f:
+                user_rules = json.load(f)
+        except Exception:
+            user_rules = []
+    return {"builtin_rules": _load_builtin_caption_rules(), "user_rules": user_rules}
+
+
+@app.post("/api/caption-rules")
+async def save_caption_rules(payload: dict):
+    rules_file = os.path.join(user_data_dir(), "caption_rules.json")
+    user_rules = payload.get("user_rules", [])
+    with open(rules_file, "w", encoding="utf-8") as f:
+        json.dump(user_rules, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
+
+
+@app.get("/api/expand-rules")
+async def get_expand_rules():
+    rules_file = os.path.join(user_data_dir(), "expand_rules.json")
+    user_rules = []
+    if os.path.isfile(rules_file):
+        try:
+            with open(rules_file, "r", encoding="utf-8") as f:
+                user_rules = json.load(f)
+        except Exception:
+            user_rules = []
+    return {"builtin_rules": _load_builtin_expand_rules(), "user_rules": user_rules}
+
+
+@app.post("/api/expand-rules")
+async def save_expand_rules(payload: dict):
+    rules_file = os.path.join(user_data_dir(), "expand_rules.json")
+    user_rules = payload.get("user_rules", [])
+    with open(rules_file, "w", encoding="utf-8") as f:
+        json.dump(user_rules, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
+
+
 # --- Canvas LLM ---
 
 @app.post("/api/canvas-llm")
