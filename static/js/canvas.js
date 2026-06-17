@@ -7129,7 +7129,7 @@ async function loadCaptionRules(){
 }
 function allCaptionRules(){ return [...CAPTION_RULES_BUILTIN, ...captionUserRules]; }
 function saveCaptionRules(){ fetch('/api/caption-rules', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user_rules:captionUserRules})}); }
-function getActiveCaptionRule(){ const all = allCaptionRules(); return all.find(r => r.active) || all[0]; }
+function getActiveCaptionRule(){ const all = allCaptionRules(); return all.find(r => r.active) || all[0] || {id:'',name:'',content:''}; }
 function captionRuleOptions(selectedId){
     return allCaptionRules().map(r => `<option value="${escapeHtml(r.id)}" ${r.id === selectedId ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('');
 }
@@ -7234,7 +7234,7 @@ async function loadExpandRules(){
 }
 function allExpandRules(){ return [...EXPAND_RULES_BUILTIN, ...expandUserRules]; }
 function saveExpandRules(){ fetch('/api/expand-rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_rules:expandUserRules})}); }
-function getActiveExpandRule(){ const all=allExpandRules(); return all.find(r=>r.active)||all[0]; }
+function getActiveExpandRule(){ const all=allExpandRules(); return all.find(r=>r.active)||all[0]||{id:'',name:'',content:''}; }
 function expandRuleOptions(selectedId){ return allExpandRules().map(r=>`<option value="${escapeHtml(r.id)}" ${r.id===selectedId?'selected':''}>${escapeHtml(r.name)}</option>`).join(''); }
 function openExpandRuleManager(){
     let editUserRules = JSON.parse(JSON.stringify(expandUserRules));
