@@ -9471,7 +9471,10 @@ function reorderInput(gen, movedId, targetId){
     const ids = (gen.inputs || []).filter(id => imageIds.includes(id));
     const from = ids.indexOf(movedId), to = ids.indexOf(targetId);
     if(from < 0 || to < 0) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    const [moved] = ids.splice(from, 1);
+    const insertAt = ids.indexOf(targetId);
+    if(insertAt < 0) return;
+    ids.splice(from < to ? insertAt + 1 : insertAt, 0, moved);
     gen.inputs = [...ids, ...promptIds];
     render();
     scheduleSave();
