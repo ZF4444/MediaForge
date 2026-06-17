@@ -8738,6 +8738,8 @@ function renderRhInputs(list, node, media){
         list.innerHTML = `<div class="text-[11px] text-gray-300 py-2">${tr('canvas.groupEmpty')}</div>`;
         return;
     }
+    const sources = media.sources || [];
+    const imageInputs = sources.filter(src => src.refs?.length);
     const groups = {image:[], video:[], audio:[]};
     const indexes = rhFieldIndexes(fields);
     mediaFields.forEach(field => {
@@ -8745,19 +8747,41 @@ function renderRhInputs(list, node, media){
         const key = rhParamKey(field.nodeId, field.fieldName);
         const idx = indexes[key] || 0;
         const ref = (media[kind] || [])[idx];
-        groups[kind].push({field, ref, idx});
+        const src = imageInputs[idx];
+        groups[kind].push({field, ref, idx, src});
     });
     const kindLabel = {image:'图片', video:'视频', audio:'音频'};
     const kindIcon = {image:'image', video:'film', audio:'file-audio'};
-    let html = '';
+    list.innerHTML = '';
     for(const [kind, items] of Object.entries(groups)){
         if(!items.length) continue;
-        items.forEach(({field, ref}) => {
+        items.forEach(({field, ref, src}) => {
             const label = field.label || field.fieldName || kindLabel[kind];
-            html += `<div class="input-item rh-input-item"><i data-lucide="${kindIcon[kind]}" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>${rhMediaPreviewHtml(ref, kind)}<span class="input-label">${escapeHtml(label)}</span></div>`;
+            const item = document.createElement('div');
+            item.className = 'input-item rh-input-item';
+            item.innerHTML = `<i data-lucide="${kindIcon[kind]}" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>${rhMediaPreviewHtml(ref, kind)}<span class="input-label">${escapeHtml(label)}</span>`;
+            if(src && imageInputs.length > 1){
+                item.draggable = true;
+                item.dataset.sourceId = src.id;
+                item.ondragstart = e => {
+                    e.stopPropagation();
+                    internalDrag = true;
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('application/x-canvas-input', src.id);
+                };
+                item.ondragend = () => { internalDrag = false; };
+                item.ondragover = e => { e.preventDefault(); e.stopPropagation(); };
+                item.ondrop = e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    reorderInput(node, e.dataTransfer.getData('application/x-canvas-input'), src.id);
+                    internalDrag = false;
+                };
+            }
+            list.appendChild(item);
         });
     }
-    list.innerHTML = html;
+    refreshIcons();
 }
 function renderRhPromptFields(container, node, fields){
     if(!container) return;
