@@ -1364,12 +1364,15 @@ def check_images_exist(backend_addr, images):
     return True
 
 MEDIA_INPUT_KEYS = ("image", "video", "audio", "mask", "filename", "file")
+MEDIA_OUTPUT_KEYS = {"output_filename", "filename_prefix", "save_prefix"}
 MEDIA_INPUT_EXT_RE = re.compile(r"\.(png|jpe?g|webp|gif|bmp|tiff?|mp4|webm|mov|m4v|avi|mkv|mp3|wav|m4a|aac|ogg|flac)(?:\?|$)", re.I)
 
 def is_comfy_input_media_value(input_name: str, value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
     key = str(input_name or "").lower()
+    if key in MEDIA_OUTPUT_KEYS:
+        return False
     if any(token in key for token in MEDIA_INPUT_KEYS):
         return True
     return bool(MEDIA_INPUT_EXT_RE.search(value))
@@ -1462,6 +1465,7 @@ def comfy_output_extension(item):
         ".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv",
         ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",
         ".txt", ".json", ".csv", ".srt", ".vtt", ".md",
+        ".fbx", ".stl", ".obj", ".glb", ".gltf",
     }:
         return ext
     fmt = str((item or {}).get("format") or "").lower()
@@ -1483,6 +1487,8 @@ def comfy_output_extension(item):
         return ".mov"
     if "mp4" in fmt or "h264" in fmt or "video" in fmt:
         return ".mp4"
+    if "fbx" in fmt:
+        return ".fbx"
     return ext or ".bin"
 
 def is_video_output_item(item):
@@ -1521,6 +1527,20 @@ def download_comfy_output(comfy_address, item, prefix="studio_"):
             return comfy_url_path.replace("/view", "/api/view", 1)
         return full_url
 
+def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "", prefix: str = "studio_"):
+    ext = os.path.splitext(str(comfy_filename or ""))[1].lower() or ".bin"
+    filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
+    local_path = output_path_for(filename, "output")
+    query = urllib.parse.urlencode({
+        "filename": str(comfy_filename or ""),
+        "subfolder": str(subfolder or ""),
+        "type": str(file_type or "output"),
+    })
+    full_url = f"http://{comfy_address}/view?{query}"
+    with urllib.request.urlopen(full_url, timeout=30) as response, open(local_path, 'wb') as out_file:
+        shutil.copyfileobj(response, out_file)
+    return output_url_for(filename, "output")
+
 def save_comfy_text_output(value, prefix="studio_", name=""):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
     stem = sanitize_export_filename(name or "comfy_text.txt", "comfy_text.txt")
@@ -1554,6 +1574,27 @@ def comfy_text_values_from_output(node_output):
             if text.strip():
                 values.append((text, name))
     return values
+
+def comfy_history_error_message(history_data, prompt_id: str = ""):
+    status = (history_data or {}).get("status") if isinstance(history_data, dict) else {}
+    if not isinstance(status, dict) or status.get("status_str") != "error":
+        return ""
+
+    for item in status.get("messages") or []:
+        if not isinstance(item, (list, tuple)) or len(item) < 2 or item[0] != "execution_error":
+            continue
+        payload = item[1] if isinstance(item[1], dict) else {}
+        node_id = payload.get("node_id") or "unknown"
+        node_type = payload.get("node_type") or "unknown"
+        message = str(payload.get("exception_message") or payload.get("exception_type") or "未知错误").strip()
+        first_line = next((line.strip() for line in message.splitlines() if line.strip()), message)
+        if len(first_line) > 500:
+            first_line = first_line[:500] + "..."
+        suffix = f"；prompt_id={prompt_id}" if prompt_id else ""
+        return f"ComfyUI 节点 {node_id} ({node_type}) 执行失败：{first_line}{suffix}"
+
+    suffix = f"；prompt_id={prompt_id}" if prompt_id else ""
+    return f"ComfyUI 工作流执行失败{suffix}"
 
 def collect_comfy_file_items(node_output):
     items = []
@@ -2664,6 +2705,7 @@ from app.core.media import (
     output_url_for,
     output_path_for,
     output_file_from_url,
+    sanitize_export_filename,
 )
 
 # --- 媒体文件/远程下载/本地导入工具 ---
@@ -4972,6 +5014,163 @@ async def upload_image(files: List[UploadFile] = File(...)):
 
 # /api/ai/upload、/api/local-assets(upload|list|delete) 路由及 _local_upload_* 助手
 # 已迁移至 app/routers/local_assets.py。
+
+from app.services.pose_studio import (
+    generated_model_preview,
+    register_uploaded_fbx_model,
+)
+
+SAM3D_WORKFLOW_JSON = "custom/Sam3DBody.json"
+
+def _sam3d_workflow_info() -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    if not os.path.isfile(os.path.join(WORKFLOW_DIR, SAM3D_WORKFLOW_JSON)):
+        return None, None, None
+    workflow_path = os.path.join(WORKFLOW_DIR, SAM3D_WORKFLOW_JSON)
+    try:
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            workflow = json.load(f)
+        image_node_id = None
+        export_node_id = None
+        for node_id, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
+            class_type = node.get("class_type")
+            inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+            if class_type == "LoadImage" and "image" in inputs and image_node_id is None:
+                image_node_id = str(node_id)
+            if class_type == "SAM3DBodyExportFBX" and export_node_id is None:
+                export_node_id = str(node_id)
+        return SAM3D_WORKFLOW_JSON, image_node_id, export_node_id
+    except Exception as exc:
+        print(f"Pose Studio Sam3D workflow node lookup failed: {exc}")
+    return SAM3D_WORKFLOW_JSON, None, None
+
+@app.post("/api/pose-studio/generate-fbx")
+async def pose_studio_generate_fbx(file: UploadFile = File(...)):
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="图片为空")
+    try:
+        image = Image.open(BytesIO(content))
+        image.load()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="无法读取图片") from exc
+
+    original_name = file.filename or "pose-model.png"
+    stem = sanitize_export_filename(os.path.splitext(original_name)[0], "pose-model")
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+        ext = ".png"
+    comfy_image_name = f"{stem}_{uuid.uuid4().hex[:8]}{ext}"
+
+    success_count = 0
+    last_error = ""
+    uploaded_image_name = comfy_image_name
+    for addr in COMFYUI_INSTANCES:
+        try:
+            files_data = {"image": (comfy_image_name, content, file.content_type or "image/png")}
+            response = requests.post(
+                f"http://{addr}/upload/image",
+                data={"overwrite": "true", "type": "input"},
+                files=files_data,
+                timeout=30,
+            )
+            if response.status_code == 200:
+                try:
+                    uploaded_image_name = str(response.json().get("name") or uploaded_image_name)
+                except Exception:
+                    pass
+                success_count += 1
+            else:
+                last_error = response.text[:300]
+        except Exception as exc:
+            last_error = str(exc)
+            print(f"Pose Studio Sam3D input upload error for {addr}: {exc}")
+    if success_count <= 0:
+        raise HTTPException(status_code=502, detail=f"上传图片到 ComfyUI 失败：{last_error or 'no available backend'}")
+
+    workflow_json, image_node_id, export_node_id = _sam3d_workflow_info()
+    if not workflow_json:
+        raise HTTPException(status_code=500, detail=f"Sam3D-Body 工作流文件不存在：{SAM3D_WORKFLOW_JSON}")
+    if not image_node_id:
+        raise HTTPException(status_code=500, detail=f"Sam3D-Body 工作流缺少图片加载节点：{workflow_json}")
+    if not export_node_id:
+        raise HTTPException(status_code=500, detail=f"Sam3D-Body 工作流缺少 FBX 导出节点：{workflow_json}")
+    exported_fbx_name = f"mediaforge_sam3d_{uuid.uuid4().hex}.fbx"
+    request_payload = GenerateRequest(
+        prompt="",
+        workflow_json=workflow_json,
+        params={
+            image_node_id: {"image": uploaded_image_name},
+            export_node_id: {"output_filename": exported_fbx_name},
+        },
+        type="pose-studio-sam3d",
+        client_id=f"pose-studio-{uuid.uuid4().hex}",
+    )
+    result = await asyncio.to_thread(generate, request_payload)
+    if result.get("error"):
+        raise HTTPException(status_code=502, detail=f"Sam3D-Body 工作流执行失败：{result.get('error')}")
+
+    try:
+        source_fbx_url = download_comfy_output_by_name(
+            result["backend"],
+            exported_fbx_name,
+            file_type="output",
+            prefix=f"{request_payload.type}_{int(time.time())}_",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Sam3D-Body 工作流未生成指定 FBX 文件：{exported_fbx_name}",
+        ) from exc
+
+    fbx_path = output_file_from_url(source_fbx_url)
+    if not fbx_path or not os.path.isfile(fbx_path):
+        raise HTTPException(status_code=502, detail="无法读取 Sam3D-Body 工作流输出的 FBX 文件")
+    if os.path.getsize(fbx_path) <= 0:
+        raise HTTPException(status_code=502, detail="Sam3D-Body 工作流输出的 FBX 文件为空")
+    with open(fbx_path, "rb") as f:
+        fbx_content = f.read()
+    registered = register_uploaded_fbx_model(fbx_content, exported_fbx_name)
+    registered["workflow_result"] = {
+        "workflow_json": result.get("workflow_json"),
+        "prompt_id": result.get("prompt_id"),
+        "backend": result.get("backend"),
+        "source_fbx_name": exported_fbx_name,
+        "source_fbx_url": source_fbx_url,
+    }
+    return registered
+
+@app.post("/api/pose-studio/upload-fbx")
+async def pose_studio_upload_fbx(file: UploadFile = File(...)):
+    content = await file.read()
+    return register_uploaded_fbx_model(content, file.filename or "uploaded-model")
+
+async def _pose_studio_vnccs_route(path: str, request: Request):
+    ensure_same_origin_request(request)
+    if path.startswith("/vnccs/character_studio/generated_model/") and request.method == "GET":
+        return generated_model_preview(path.rsplit("/", 1)[-1])
+
+    if path == "/vnccs/character_studio/update_preview" and request.method == "POST":
+        payload = await request.json()
+        model_id = str(payload.get("model_id") or "").strip() if isinstance(payload, dict) else ""
+        if model_id:
+            return generated_model_preview(model_id)
+        raise HTTPException(status_code=400, detail="Pose Studio 仅支持导入 FBX 模型")
+
+    raise HTTPException(status_code=404, detail="VNCCS route not found")
+
+@app.get("/vnccs/{vnccs_path:path}")
+async def vnccs_local_get(vnccs_path: str, request: Request):
+    return await _pose_studio_vnccs_route(f"/vnccs/{vnccs_path}", request)
+
+@app.post("/vnccs/{vnccs_path:path}")
+async def vnccs_local_post(vnccs_path: str, request: Request):
+    return await _pose_studio_vnccs_route(f"/vnccs/{vnccs_path}", request)
+
+@app.delete("/vnccs/{vnccs_path:path}")
+async def vnccs_local_delete(vnccs_path: str, request: Request):
+    return await _pose_studio_vnccs_route(f"/vnccs/{vnccs_path}", request)
 
 @app.post("/api/temp-sh/upload")
 async def temp_sh_upload(payload: TempShUploadRequest, request: Request):
@@ -7904,7 +8103,7 @@ def generate(req: GenerateRequest):
                 for input_name, value in node_inputs.items():
                     workflow[node_id]["inputs"][input_name] = value
 
-        p = {"prompt": workflow, "client_id": CLIENT_ID}
+        p = {"prompt": workflow, "client_id": req.client_id or CLIENT_ID}
         data = json.dumps(p).encode('utf-8')
         try:
             post_req = urllib.request.Request(f"http://{target_backend}/prompt", data=data)
@@ -7926,6 +8125,9 @@ def generate(req: GenerateRequest):
 
         if not history_data:
             raise Exception("ComfyUI 渲染超时")
+        history_error = comfy_history_error_message(history_data, prompt_id)
+        if history_error:
+            raise Exception(history_error)
 
         local_images = []
         local_videos = []
@@ -7979,7 +8181,7 @@ def generate(req: GenerateRequest):
                     local_urls.append(local_path)
 
         result = {
-            "prompt": req.prompt if req.prompt else "Detail Enhance",
+            "prompt": req.prompt if req.prompt else req.workflow_json or "Detail Enhance",
             "images": local_images,
             "videos": local_videos,
             "audios": local_audios,

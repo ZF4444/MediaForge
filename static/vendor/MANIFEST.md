@@ -7,6 +7,8 @@ This folder contains third-party assets mirrored locally so the app can load wit
 - `js/tailwindcss-cdn.js`: local mirror of `https://cdn.tailwindcss.com`
 - `js/lucide.js`: local mirror of `https://unpkg.com/lucide@latest`
 - `js/three-0.160.0.module.js`: local mirror of `https://unpkg.com/three@0.160.0/build/three.module.js`
+- `js/vnccs/three.module.js`, `OrbitControls.js`, `TransformControls.js`: local mirrors from the installed ComfyUI VNCCS utility bundle, used by the embedded VNCCS Pose Studio.
+- `js/vnccs/vnccs_pose_studio.js`: local mirror from `/home/zhang/workspace/ComfyUI/custom_nodes/ComfyUI_VNCCS_Utils_JPAI/web`, adapted for standalone FBX pose editing.
 
 ## CSS
 

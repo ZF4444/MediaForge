@@ -806,6 +806,18 @@
                         </svg>
                         <span class="nav-text" data-i18n="nav.gaussian">视角微调</span>
                     </div>
+                    <div class="nav-item" onclick="switchUI(this, 'pose-studio')">
+                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="4.5" r="2"></circle>
+                            <path d="M12 6.5v5"></path>
+                            <path d="M8.5 10.5 12 8l3.5 2.5"></path>
+                            <path d="M12 11.5 8.5 18"></path>
+                            <path d="M12 11.5 15.5 18"></path>
+                            <path d="M7 18h3"></path>
+                            <path d="M14 18h3"></path>
+                        </svg>
+                        <span class="nav-text" data-i18n="nav.poseStudio">姿势生成</span>
+                    </div>
                 </div>
             </nav>
 
@@ -893,6 +905,7 @@
             <iframe id="frame-klein" data-src="/static/klein.html" scrolling="yes"></iframe>
             <iframe id="frame-angle" data-src="/static/angle.html" scrolling="yes"></iframe>
             <iframe id="frame-gaussian" data-src="/static/gaussian.html" scrolling="yes"></iframe>
+            <iframe id="frame-pose-studio" data-src="/static/pose-studio.html" scrolling="yes"></iframe>
             <iframe id="frame-online" data-src="/static/online.html" scrolling="yes"></iframe>
             <iframe id="frame-gpt-chat" data-src="/static/gpt-chat.html" scrolling="yes"></iframe>
             <iframe id="frame-canvas" data-src="/static/canvas.html" scrolling="yes"></iframe>
@@ -933,8 +946,8 @@
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_PINNED_KEY = 'studio_sidebar_pinned';
         const DEFAULT_PAGE_ID = 'zimage';
-        const PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','online','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings','access-control'];
-        const LOCAL_PAGE_IDS = ['zimage','enhance','klein','angle','gaussian'];
+        const PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','pose-studio','online','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings','access-control'];
+        const LOCAL_PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','pose-studio'];
 
         function setSidebarPinned(pinned, options = {}) {
             const sidebar = document.getElementById('studioSidebar');

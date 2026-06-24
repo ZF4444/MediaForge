@@ -374,6 +374,16 @@
     },
     "required": []
   },
+  "Body_pose_studio_upload_fbx_api_pose_studio_upload_fbx_post": {
+    "properties": {
+      "file": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "file"
+    ]
+  },
   "Body_upload_ai_reference_api_ai_upload_post": {
     "properties": {
       "files": {
@@ -1599,6 +1609,16 @@
     "required": [
       "name",
       "workflow"
+    ]
+  },
+  "Body_pose_studio_generate_fbx_api_pose_studio_generate_fbx_post": {
+    "properties": {
+      "file": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "file"
     ]
   }
 }
