@@ -110,6 +110,10 @@
         "type": "object",
         "default": {}
       },
+      "model_aliases": {
+        "type": "object",
+        "default": {}
+      },
       "ms_loras": {
         "type": "array",
         "items": {
