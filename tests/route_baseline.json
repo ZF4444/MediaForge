@@ -525,6 +525,20 @@
     "APIRoute"
   ],
   [
+    "/api/pose-studio/generate-fbx",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/pose-studio/upload-fbx",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/prompt-libraries",
     [
       "GET"
@@ -953,6 +967,27 @@
     "/static/{page}.html",
     [
       "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/vnccs/{vnccs_path:path}",
+    [
+      "DELETE"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/vnccs/{vnccs_path:path}",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/vnccs/{vnccs_path:path}",
+    [
+      "POST"
     ],
     "APIRoute"
   ],

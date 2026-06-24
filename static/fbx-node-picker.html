@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FBX 节点点选</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { width:100%; height:100%; margin:0; overflow:hidden; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#f5f7fb; color:#111827; }
+        body { display:grid; grid-template-columns:minmax(0, 1fr) 360px; }
+        #viewport { position:relative; min-width:0; min-height:0; background:#eef2f7; }
+        #viewport canvas { display:block; width:100%; height:100%; }
+        #dropHint {
+            position:absolute; inset:18px auto auto 18px; z-index:2; display:flex; align-items:center; gap:10px;
+            background:rgba(255,255,255,.9); border:1px solid #d7dde8; border-radius:8px; padding:10px 12px;
+            font-size:12px; font-weight:700; color:#334155; box-shadow:0 8px 24px rgba(15,23,42,.08);
+        }
+        #side { border-left:1px solid #d7dde8; background:#fff; display:flex; flex-direction:column; min-height:0; }
+        .panel { padding:16px; border-bottom:1px solid #e5e7eb; }
+        h1 { font-size:16px; line-height:1.2; margin:0 0 12px; }
+        .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        button, label.file {
+            border:1px solid #cbd5e1; background:#f8fafc; color:#111827; min-height:34px; padding:7px 10px;
+            border-radius:7px; font-size:12px; font-weight:800; cursor:pointer;
+        }
+        button.primary { background:#111827; color:#fff; border-color:#111827; }
+        button:disabled { opacity:.55; cursor:not-allowed; }
+        input[type=file] { display:none; }
+        .meta { font-size:12px; color:#64748b; line-height:1.6; margin-top:10px; word-break:break-all; }
+        .search { width:100%; border:1px solid #cbd5e1; border-radius:7px; padding:8px 10px; font-size:12px; outline:none; }
+        #list { flex:1; overflow:auto; min-height:0; padding:8px; }
+        .item {
+            display:grid; grid-template-columns:22px minmax(0, 1fr); gap:8px; align-items:start;
+            padding:7px 8px; border-radius:7px; cursor:pointer; font-size:12px;
+        }
+        .item:hover { background:#f1f5f9; }
+        .item.active { background:#dbeafe; }
+        .dot { width:12px; height:12px; margin-top:2px; border-radius:50%; border:2px solid #64748b; background:#fff; }
+        .item.selected .dot { border-color:#0f766e; background:#14b8a6; }
+        .name { font-weight:800; color:#111827; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .sub { color:#64748b; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        textarea { width:100%; min-height:150px; resize:vertical; border:1px solid #cbd5e1; border-radius:7px; padding:10px; font-family:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; line-height:1.5; }
+        #toast { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); background:#111827; color:#fff; padding:8px 12px; border-radius:7px; font-size:12px; opacity:0; transition:opacity .2s; pointer-events:none; }
+        .small { font-size:11px; color:#64748b; }
+    </style>
+</head>
+<body>
+    <main id="viewport">
+        <div id="dropHint">
+            <span>拖入 FBX 或选择文件，点击骨骼点切换显示</span>
+        </div>
+        <div id="toast"></div>
+    </main>
+    <aside id="side">
+        <section class="panel">
+            <h1>FBX 节点点选</h1>
+            <div class="row">
+                <label class="file">
+                    上传 FBX
+                    <input id="fileInput" type="file" accept=".fbx">
+                </label>
+                <button id="selectMappedBtn" type="button">选择已映射</button>
+                <button id="clearBtn" type="button">清空</button>
+            </div>
+            <div id="meta" class="meta">未加载模型</div>
+        </section>
+        <section class="panel">
+            <input id="search" class="search" placeholder="过滤 Joint_001 / semanticName">
+            <div class="meta"><span id="count">0 / 0 selected</span></div>
+        </section>
+        <div id="list"></div>
+        <section class="panel">
+            <div class="row" style="margin-bottom:8px;">
+                <button id="copyJsonBtn" class="primary" type="button">复制 JSON</button>
+                <button id="copyNamesBtn" type="button">复制名称</button>
+            </div>
+            <textarea id="output" spellcheck="false" readonly></textarea>
+            <div class="small">输出包含原始 bone name、索引、semanticName 和 parent。把 JSON 发回来即可。</div>
+        </section>
+    </aside>
+
+    <script type="module">
+        import * as THREE from '/static/vendor/js/vnccs/three.module.js';
+        import { OrbitControls } from '/static/vendor/js/vnccs/OrbitControls.js';
+
+        const viewport = document.getElementById('viewport');
+        const fileInput = document.getElementById('fileInput');
+        const metaEl = document.getElementById('meta');
+        const listEl = document.getElementById('list');
+        const outputEl = document.getElementById('output');
+        const countEl = document.getElementById('count');
+        const searchEl = document.getElementById('search');
+        const toastEl = document.getElementById('toast');
+
+        const state = {
+            model: null,
+            bones: [],
+            markers: [],
+            selected: new Set(),
+            activeIndex: -1,
+        };
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf1f5f9);
+        const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
+        camera.position.set(0, 8, 28);
+        const renderer = new THREE.WebGLRenderer({ antialias:true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        viewport.appendChild(renderer.domElement);
+
+        const orbit = new OrbitControls(camera, renderer.domElement);
+        orbit.enableDamping = true;
+        orbit.dampingFactor = 0.08;
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x9ca3af, 2.2));
+        const dir = new THREE.DirectionalLight(0xffffff, 1.4);
+        dir.position.set(5, 8, 10);
+        scene.add(dir);
+        scene.add(new THREE.GridHelper(24, 24, 0xcbd5e1, 0xe2e8f0));
+
+        const modelGroup = new THREE.Group();
+        scene.add(modelGroup);
+        const markerGroup = new THREE.Group();
+        scene.add(markerGroup);
+
+        const markerGeo = new THREE.SphereGeometry(0.075, 16, 12);
+        const markerMat = new THREE.MeshBasicMaterial({ color:0xf59e0b, depthTest:false, depthWrite:false });
+        const selectedMat = new THREE.MeshBasicMaterial({ color:0x14b8a6, depthTest:false, depthWrite:false });
+        const activeMat = new THREE.MeshBasicMaterial({ color:0x2563eb, depthTest:false, depthWrite:false });
+        const lineMat = new THREE.LineBasicMaterial({ color:0x475569, transparent:true, opacity:0.55 });
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+
+        function toast(text) {
+            toastEl.textContent = text;
+            toastEl.style.opacity = '1';
+            clearTimeout(toastEl._timer);
+            toastEl._timer = setTimeout(() => toastEl.style.opacity = '0', 1400);
+        }
+
+        function resize() {
+            const w = viewport.clientWidth || 800;
+            const h = viewport.clientHeight || 600;
+            renderer.setSize(w, h, false);
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+        }
+        new ResizeObserver(resize).observe(viewport);
+        resize();
+
+        function clearGroup(group) {
+            while (group.children.length) {
+                const child = group.children[group.children.length - 1];
+                group.remove(child);
+                child.traverse?.((obj) => {
+                    if (obj.geometry && obj.geometry !== markerGeo) obj.geometry.dispose?.();
+                    if (obj.material && obj.material !== markerMat && obj.material !== selectedMat && obj.material !== activeMat && obj.material !== lineMat) {
+                        obj.material.dispose?.();
+                    }
+                });
+            }
+        }
+
+        function boneLabel(bone) {
+            return bone.semanticName ? `${bone.name} -> ${bone.semanticName}` : bone.name;
+        }
+
+        function pointFrom(value) {
+            return new THREE.Vector3(Number(value?.[0]) || 0, Number(value?.[1]) || 0, Number(value?.[2]) || 0);
+        }
+
+        function fitCamera(points) {
+            const box = new THREE.Box3().setFromPoints(points);
+            if (box.isEmpty()) return;
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const radius = Math.max(size.length() * 0.5, 1);
+            orbit.target.copy(center);
+            camera.position.copy(center).add(new THREE.Vector3(0, radius * 0.25, radius * 2.4));
+            camera.near = Math.max(radius / 500, 0.01);
+            camera.far = radius * 20 + 100;
+            camera.updateProjectionMatrix();
+            orbit.update();
+        }
+
+        function buildMesh(model) {
+            if (!model.vertices?.length || !model.indices?.length) return;
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(model.vertices, 3));
+            geometry.setIndex(model.indices);
+            geometry.computeVertexNormals();
+            const material = new THREE.MeshStandardMaterial({
+                color:0xffffff,
+                roughness:0.72,
+                metalness:0.02,
+                transparent:true,
+                opacity:0.38,
+                side:THREE.DoubleSide,
+            });
+            modelGroup.add(new THREE.Mesh(geometry, material));
+        }
+
+        function buildBones(model) {
+            state.bones = (model.bones || []).map((bone, index) => ({ ...bone, index }));
+            const byName = new Map(state.bones.map(bone => [bone.name, bone]));
+            const linePositions = [];
+            for (const bone of state.bones) {
+                const head = pointFrom(bone.headPos);
+                const parent = byName.get(bone.parent);
+                if (parent) {
+                    const parentHead = pointFrom(parent.headPos);
+                    linePositions.push(parentHead.x, parentHead.y, parentHead.z, head.x, head.y, head.z);
+                } else if (bone.tailPos) {
+                    const tail = pointFrom(bone.tailPos);
+                    linePositions.push(head.x, head.y, head.z, tail.x, tail.y, tail.z);
+                }
+                const marker = new THREE.Mesh(markerGeo, markerMat);
+                marker.position.copy(head);
+                marker.userData.index = bone.index;
+                marker.renderOrder = 10;
+                markerGroup.add(marker);
+                state.markers.push(marker);
+            }
+            if (linePositions.length) {
+                const lineGeo = new THREE.BufferGeometry();
+                lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+                modelGroup.add(new THREE.LineSegments(lineGeo, lineMat));
+            }
+        }
+
+        function updateMarkerMaterials() {
+            for (const marker of state.markers) {
+                const index = marker.userData.index;
+                marker.material = index === state.activeIndex ? activeMat : state.selected.has(index) ? selectedMat : markerMat;
+                marker.scale.setScalar(index === state.activeIndex ? 1.75 : state.selected.has(index) ? 1.35 : 1);
+            }
+        }
+
+        function selectedPayload() {
+            return [...state.selected]
+                .sort((a, b) => a - b)
+                .map(index => {
+                    const bone = state.bones[index];
+                    return {
+                        index,
+                        name: bone.name,
+                        semanticName: bone.semanticName || null,
+                        parent: bone.parent || null,
+                    };
+                });
+        }
+
+        function refreshOutput() {
+            const payload = selectedPayload();
+            outputEl.value = JSON.stringify(payload, null, 2);
+            countEl.textContent = `${payload.length} / ${state.bones.length} selected`;
+            updateMarkerMaterials();
+        }
+
+        function renderList() {
+            const query = searchEl.value.trim().toLowerCase();
+            listEl.innerHTML = '';
+            for (const bone of state.bones) {
+                const label = boneLabel(bone);
+                const haystack = `${label} ${bone.parent || ''} ${bone.index}`.toLowerCase();
+                if (query && !haystack.includes(query)) continue;
+                const row = document.createElement('div');
+                row.className = `item${state.selected.has(bone.index) ? ' selected' : ''}${state.activeIndex === bone.index ? ' active' : ''}`;
+                row.innerHTML = `
+                    <div class="dot"></div>
+                    <div>
+                        <div class="name">${label}</div>
+                        <div class="sub">#${bone.index} parent: ${bone.parent || '-'}</div>
+                    </div>
+                `;
+                row.onclick = () => toggleBone(bone.index, true);
+                listEl.appendChild(row);
+            }
+        }
+
+        function toggleBone(index, focus = false) {
+            if (state.selected.has(index)) state.selected.delete(index);
+            else state.selected.add(index);
+            state.activeIndex = index;
+            if (focus) {
+                const marker = state.markers[index];
+                if (marker) {
+                    orbit.target.copy(marker.position);
+                    orbit.update();
+                }
+            }
+            renderList();
+            refreshOutput();
+        }
+
+        function loadModel(model) {
+            state.model = model;
+            state.bones = [];
+            state.markers = [];
+            state.selected = new Set();
+            state.activeIndex = -1;
+            clearGroup(modelGroup);
+            clearGroup(markerGroup);
+            buildMesh(model);
+            buildBones(model);
+            const points = [];
+            for (let i = 0; i < (model.vertices || []).length - 2; i += 3) {
+                points.push(new THREE.Vector3(model.vertices[i], model.vertices[i + 1], model.vertices[i + 2]));
+            }
+            for (const bone of state.bones) points.push(pointFrom(bone.headPos));
+            fitCamera(points);
+            selectMapped();
+            metaEl.textContent = `${model.filename || model.model_id || 'model'} | ${Math.floor((model.vertices || []).length / 3)} verts | ${state.bones.length} bones`;
+            renderList();
+            refreshOutput();
+        }
+
+        async function uploadFile(file) {
+            if (!file) return;
+            metaEl.textContent = '正在上传并解析 FBX...';
+            const form = new FormData();
+            form.append('file', file);
+            const response = await fetch('/api/pose-studio/upload-fbx', { method:'POST', body:form });
+            const text = await response.text();
+            let data;
+            try { data = JSON.parse(text); } catch { data = null; }
+            if (!response.ok) throw new Error(data?.detail || text || `HTTP ${response.status}`);
+            const modelResponse = await fetch(data.model_url, { cache:'no-store' });
+            if (!modelResponse.ok) throw new Error(`模型 JSON 读取失败：${modelResponse.status}`);
+            const model = await modelResponse.json();
+            model.filename = data.filename;
+            loadModel(model);
+            toast('FBX 已加载');
+        }
+
+        function selectMapped() {
+            state.selected.clear();
+            for (const bone of state.bones) {
+                if (bone.showMarker === true || (!state.bones.some(item => item.showMarker === true) && bone.semanticName)) {
+                    state.selected.add(bone.index);
+                }
+            }
+            renderList();
+            refreshOutput();
+        }
+
+        fileInput.addEventListener('change', () => {
+            uploadFile(fileInput.files?.[0]).catch(err => {
+                console.error(err);
+                metaEl.textContent = `加载失败：${err.message || err}`;
+            });
+        });
+
+        viewport.addEventListener('dragover', event => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+        });
+        viewport.addEventListener('drop', event => {
+            event.preventDefault();
+            uploadFile(event.dataTransfer.files?.[0]).catch(err => {
+                console.error(err);
+                metaEl.textContent = `加载失败：${err.message || err}`;
+            });
+        });
+
+        renderer.domElement.addEventListener('pointerdown', event => {
+            const rect = renderer.domElement.getBoundingClientRect();
+            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(pointer, camera);
+            const hits = raycaster.intersectObjects(state.markers, false);
+            if (hits.length) {
+                event.preventDefault();
+                toggleBone(hits[0].object.userData.index);
+            }
+        });
+
+        document.getElementById('selectMappedBtn').onclick = selectMapped;
+        document.getElementById('clearBtn').onclick = () => {
+            state.selected.clear();
+            renderList();
+            refreshOutput();
+        };
+        document.getElementById('copyJsonBtn').onclick = async () => {
+            await navigator.clipboard.writeText(outputEl.value || '[]');
+            toast('JSON 已复制');
+        };
+        document.getElementById('copyNamesBtn').onclick = async () => {
+            const names = selectedPayload().map(item => item.name).join('\n');
+            await navigator.clipboard.writeText(names);
+            toast('名称已复制');
+        };
+        searchEl.addEventListener('input', renderList);
+
+        function animate() {
+            orbit.update();
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+        animate();
+        refreshOutput();
+    </script>
+</body>
+</html>
