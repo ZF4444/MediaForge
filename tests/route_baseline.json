@@ -294,6 +294,20 @@
     "APIRoute"
   ],
   [
+    "/api/caption-rules",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/caption-rules",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/chat",
     [
       "POST"
@@ -374,6 +388,20 @@
     "/api/download-output",
     [
       "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/expand-rules",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/expand-rules",
+    [
+      "POST"
     ],
     "APIRoute"
   ],
@@ -770,6 +798,13 @@
     "APIRoute"
   ],
   [
+    "/api/version",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/view",
     [
       "GET"
@@ -848,6 +883,13 @@
     "/auth/register",
     [
       "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/auth/sso",
+    [
+      "GET"
     ],
     "APIRoute"
   ],
