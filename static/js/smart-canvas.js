@@ -1791,6 +1791,21 @@ function toggleZoomPreview(){
     if(zoomPreviewState) exitZoomPreview();
     else enterZoomPreview();
 }
+function syncEngineOptionsVisibility(){
+    if(!engineSelect) return;
+    const has = id => (apiProviders || []).some(p => p.id === id && p.enabled !== false);
+    engineSelect.querySelector('option[value="volcengine"]').hidden = !has('volcengine');
+    engineSelect.querySelector('option[value="modelscope"]').hidden = !has('modelscope');
+    engineSelect.querySelector('option[value="runninghub"]').hidden = !has('runninghub');
+    // api 引擎：至少有一个非特殊 provider 启用且有 image_models
+    const apiHidden = !imageProviders().length;
+    engineSelect.querySelector('option[value="api"]').hidden = apiHidden;
+    // 当前选中引擎被隐藏时，回退到第一个可见引擎
+    if(engineSelect.selectedOptions[0]?.hidden){
+        const visible = engineSelect.querySelector('option:not([hidden])');
+        if(visible) { settings.engine = visible.value; engineSelect.value = visible.value; }
+    }
+}
 function imageProviders(){
     return (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'runninghub' && p.id !== 'volcengine' && (p.image_models || []).length);
 }
@@ -3490,6 +3505,8 @@ async function loadConfig(){
         const cfg = await fetch('/api/config').then(r => r.json());
         apiProviders = Array.isArray(cfg.api_providers) ? cfg.api_providers : [];
         comfyInstanceCount = Math.max(1, (Array.isArray(cfg.comfy_instances) ? cfg.comfy_instances : []).filter(Boolean).length || 1);
+        // 根据 provider 启用状态隐藏引擎选项
+        syncEngineOptionsVisibility();
         // 提供商配置已就绪即先渲染参数面板，避免等工作流预取完成后参数才「突然刷新出来」。
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
