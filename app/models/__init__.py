@@ -77,6 +77,11 @@ class OnlineImageRequest(BaseModel):
     reference_images: List[AIReference] = []
 
 
+class ImageTaskQueryRequest(BaseModel):
+    provider_id: str = "comfly"
+    task_id: str = Field(min_length=1, max_length=240)
+
+
 class CanvasVideoRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
@@ -270,6 +275,13 @@ class CanvasAssetDownloadRequest(BaseModel):
     urls: List[str] = []
     items: List[Dict[str, Any]] = []
     filename: str = "canvas-output-images.zip"
+
+
+class CanvasWorkflowExportRequest(BaseModel):
+    nodes: List[Dict[str, Any]] = []
+    connections: List[Dict[str, Any]] = []
+    filename: str = "canvas-workflow.zip"
+    include_resources: bool = False
 
 
 class SmartCanvasGroupExportItem(BaseModel):

@@ -8,6 +8,7 @@ const promptInput = document.getElementById('promptInput');
 const mentionPicker = document.getElementById('mentionPicker');
 const mentionPreview = document.getElementById('mentionPreview');
 const engineSelect = document.getElementById('engineSelect');
+const composerHeadParams = document.getElementById('composerHeadParams');
 const dynamicParams = document.getElementById('dynamicParams');
 const runBtn = document.getElementById('runBtn');
 const cascadeRunBtn = document.getElementById('cascadeRunBtn');
@@ -21,6 +22,12 @@ const imageEditModal = document.getElementById('imageEditModal');
 const smartLogModal = document.getElementById('smartLogModal');
 const smartLogList = document.getElementById('smartLogList');
 const smartShortcutModal = document.getElementById('smartShortcutModal');
+const smartWorkflowToggle = document.getElementById('smartWorkflowToggle');
+const smartWorkflowTransferModal = document.getElementById('smartWorkflowTransferModal');
+const smartWorkflowTransferSub = document.getElementById('smartWorkflowTransferSub');
+const smartWorkflowExportMeta = document.getElementById('smartWorkflowExportMeta');
+const smartWorkflowImportInput = document.getElementById('smartWorkflowImportInput');
+const smartWorkflowImportDropZone = document.getElementById('smartWorkflowImportDropZone');
 const selectionBox = document.getElementById('selectionBox');
 const assetToggle = document.getElementById('assetToggle');
 const assetPanel = document.getElementById('assetPanel');
@@ -65,7 +72,6 @@ let loopInsertPreview = null;
 let selectionState = null;
 let isRKeyDown = false;
 let selectionJustFinished = false;
-let resizeState = null;
 let thumbDragState = null;
 let uploadTargetId = '';
 let pendingGroupUploadPoint = null;
@@ -104,6 +110,9 @@ let createMenuPoint = {x:0, y:0};
 let nodeClipboard = null;
 let imageClickTimer = null;
 let suppressImageClickUntil = 0;
+let candidatePanelNodeId = '';
+let candidatePanelIndex = 0;
+let suppressComposerForCandidateNodeId = '';
 let lastMouseWorld = null;
 let lastConfigRefreshAt = 0;
 let smartMinimapState = null;
@@ -121,6 +130,7 @@ let transientSmartCloudLinks = [];
 let runBtnCooldownToken = 0;
 let smartRunStateToken = 0;
 const activeSmartTaskPolls = new Map();
+const activeRunningHubTaskPolls = new Map();
 const smartNodeRunTokens = new Map();
 let smartRhRandomValues = {};
 let lastImagePasteAt = 0;
@@ -189,6 +199,9 @@ function performUndo(){
     selectedId = snap.selectedId;
     selectedIds = snap.selectedIds;
     selectedImage = snap.selectedImage;
+    candidatePanelNodeId = '';
+    candidatePanelIndex = 0;
+    suppressComposerForCandidateNodeId = '';
     activeComposerSubject = null;
     lastComposerNodeId = '';
     render();
@@ -217,6 +230,11 @@ let gridCustomLines = [];
 let gridCustomOrientation = 'h';
 let gridCustomHistory = [];
 let gridCustomDrag = null;
+let gridOperationMode = 'split';
+let gridJoinLayout = null;
+let gridJoinDrag = null;
+let gridJoinImageCache = new Map();
+let gridJoinOutputSize = 2048;
 let imageEditZoom = 1.0;
 let imageEditBaseW = 0;
 let imageEditBaseH = 0;
@@ -368,16 +386,233 @@ function mediaItemForStorage(item){
     delete clean.uploadedUrl;
     delete clean.originalRemoteUrl;
     delete clean.tempCloudUrl;
+    delete clean.runInputRefs;
+    if(clean.runSettings) clean.runSettings = settingsForStorage(clean.runSettings);
     return clean;
+}
+function stripNodeScaleFieldsForStorage(node){
+    if(!isSmartImageNode(node)) return;
+    delete node.scale;
+    const keepPendingSize = Number(node.pending) > 0 || Boolean(node.queued || node.jimengPending || (Array.isArray(node.pendingTasks) && node.pendingTasks.length));
+    if(!keepPendingSize){
+        delete node.w;
+        delete node.h;
+    }
 }
 function canvasForStorage(){
     const clean = JSON.parse(JSON.stringify(canvas || {}));
     clean.settings = settingsForStorage(canvasDefaultSmartSettings || initialSmartSettings);
     (clean.nodes || []).forEach(node => {
         if(Array.isArray(node.images)) node.images = node.images.map(mediaItemForStorage);
+        if(Array.isArray(node.candidateImages)) node.candidateImages = node.candidateImages.map(mediaItemForStorage);
         if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
+        stripNodeScaleFieldsForStorage(node);
+        delete node.pendingCandidatePool;
+        delete node._rerunPreviousImages;
     });
     return clean;
+}
+function apiErrorMessage(data, fallback='请求失败'){
+    if(!data) return fallback;
+    if(typeof data === 'string') return data || fallback;
+    const detail = data.detail ?? data.error ?? data.message;
+    if(typeof detail === 'string') return detail || fallback;
+    if(Array.isArray(detail)){
+        const messages = detail.map(item => {
+            if(typeof item === 'string') return item;
+            const loc = Array.isArray(item?.loc) ? item.loc.filter(x => x !== 'body').join('.') : '';
+            const msg = item?.msg || item?.message || JSON.stringify(item);
+            return loc ? `${loc}: ${msg}` : msg;
+        }).filter(Boolean);
+        return messages.join('\n') || fallback;
+    }
+    if(detail && typeof detail === 'object') return detail.message || detail.msg || JSON.stringify(detail);
+    try {
+        return JSON.stringify(data);
+    } catch(e) {
+        return fallback;
+    }
+}
+async function responseErrorMessage(response, fallback='请求失败'){
+    try {
+        const data = await response.clone().json();
+        return apiErrorMessage(data, fallback);
+    } catch(e) {
+        try {
+            const text = await response.text();
+            return text || fallback;
+        } catch(_) {
+            return fallback;
+        }
+    }
+}
+function downloadBlob(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename || 'smart-canvas-workflow.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 800);
+}
+function smartWorkflowFilename(ext='json'){
+    const title = (canvas?.title || document.getElementById('smartTitle')?.textContent || 'smart-canvas').trim();
+    const safe = title.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '-').slice(0, 48) || 'smart-canvas';
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    return `${safe}-workflow-${stamp}.${ext}`;
+}
+function serializableSmartNode(node){
+    const base = JSON.parse(JSON.stringify(node || {}));
+    const copy = normalizeLegacySmartNode(base) || {};
+    if(Array.isArray(copy.images)) copy.images = copy.images.map(mediaItemForStorage).filter(Boolean);
+    if(Array.isArray(copy.candidateImages)) copy.candidateImages = copy.candidateImages.map(mediaItemForStorage).filter(Boolean);
+    if(copy.runSettings) copy.runSettings = settingsForStorage(copy.runSettings);
+    copy.running = false;
+    copy.pending = 0;
+    copy.queued = false;
+    copy.jimengPending = null;
+    delete copy.pendingTasks;
+    delete copy.pendingCandidatePool;
+    delete copy._rerunPreviousImages;
+    delete copy._dom;
+    return copy;
+}
+function selectedSmartWorkflowPayload(){
+    const ids = selectedNodeIds();
+    const idSet = new Set(ids);
+    const selectedNodes = nodes.filter(node => idSet.has(node.id)).map(serializableSmartNode);
+    const selectedSet = new Set(selectedNodes.map(node => node.id));
+    const selectedConnections = (canvas?.connections || [])
+        .filter(conn => selectedSet.has(conn.from) && selectedSet.has(conn.to))
+        .map(conn => JSON.parse(JSON.stringify(conn)));
+    return {
+        format:'infinite-smart-canvas-workflow',
+        version:1,
+        canvas_type:'smart',
+        exported_at:Date.now(),
+        nodes:selectedNodes,
+        connections:selectedConnections
+    };
+}
+function normalizeImportedSmartWorkflow(data){
+    if(Array.isArray(data)) return {nodes:data, connections:[]};
+    if(Array.isArray(data?.nodes)) return {nodes:data.nodes, connections:Array.isArray(data.connections) ? data.connections : []};
+    if(Array.isArray(data?.workflow?.nodes)) return {nodes:data.workflow.nodes, connections:Array.isArray(data.workflow.connections) ? data.workflow.connections : []};
+    return {nodes:[], connections:[]};
+}
+function openSmartWorkflowTransferModal(){
+    if(!canvas){ toast('请先打开画布'); return; }
+    toggleAssetLibrary(false);
+    updateSmartWorkflowTransferMeta();
+    if(smartWorkflowTransferModal) smartWorkflowTransferModal.hidden = false;
+    smartWorkflowTransferModal?.classList.add('open');
+    smartWorkflowToggle?.classList.add('active');
+    refreshIcons();
+}
+function closeSmartWorkflowTransferModal(){
+    smartWorkflowTransferModal?.classList.remove('open');
+    if(smartWorkflowTransferModal) smartWorkflowTransferModal.hidden = true;
+    smartWorkflowToggle?.classList.remove('active');
+    smartWorkflowImportDropZone?.classList.remove('drag-over');
+}
+function updateSmartWorkflowTransferMeta(){
+    const payload = selectedSmartWorkflowPayload();
+    const nodeCount = payload.nodes.length;
+    const connCount = payload.connections.length;
+    smartWorkflowExportMeta?.classList.remove('busy', 'success');
+    if(smartWorkflowExportMeta) smartWorkflowExportMeta.textContent = nodeCount ? `已选择 ${nodeCount} 个节点，${connCount} 条连线` : '未选择节点，请先选中要导出的组件';
+    if(smartWorkflowTransferSub) smartWorkflowTransferSub.textContent = nodeCount ? '导出当前选中内容，或把工作流导入到当前画布' : '请先选中节点再导出；导入会追加到当前画布';
+}
+async function exportSelectedSmartWorkflow(includeResources=false){
+    if(!canvas) return;
+    const payload = selectedSmartWorkflowPayload();
+    if(!payload.nodes.length){
+        updateSmartWorkflowTransferMeta();
+        toast('未选择节点，请先选中要导出的组件');
+        return;
+    }
+    try {
+        if(!includeResources){
+            downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'}), smartWorkflowFilename('json'));
+            toast('已导出智能画布工作流 JSON');
+            return;
+        }
+        if(smartWorkflowExportMeta){
+            smartWorkflowExportMeta.classList.add('busy');
+            smartWorkflowExportMeta.textContent = '正在打包资源...';
+        }
+        const filename = smartWorkflowFilename('zip');
+        const res = await fetch('/api/canvas-workflows/export', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({...payload, include_resources:true, filename})
+        });
+        if(!res.ok) throw new Error(await responseErrorMessage(res, '导出工作流失败'));
+        downloadBlob(await res.blob(), filename);
+        if(smartWorkflowExportMeta){
+            smartWorkflowExportMeta.classList.remove('busy');
+            smartWorkflowExportMeta.classList.add('success');
+            smartWorkflowExportMeta.textContent = `已导出 ${payload.nodes.length} 个节点，包含可找到的本地资源`;
+        }
+        toast('已导出包含资源的智能画布工作流包');
+        setTimeout(() => {
+            if(smartWorkflowTransferModal?.classList.contains('open')) updateSmartWorkflowTransferMeta();
+        }, 1600);
+    } catch(err) {
+        smartWorkflowExportMeta?.classList.remove('busy', 'success');
+        toast(err.message || '导出工作流失败');
+    }
+}
+function insertSmartWorkflowIntoCanvas(imported){
+    const srcNodes = (imported.nodes || []).filter(Boolean);
+    const srcConnections = (imported.connections || []).filter(Boolean);
+    if(!canvas || !srcNodes.length) throw new Error('工作流中没有可导入的节点');
+    pushUndo();
+    const minX = Math.min(...srcNodes.map(n => Number(n.x || 0)));
+    const minY = Math.min(...srcNodes.map(n => Number(n.y || 0)));
+    const target = viewportCenter();
+    const dx = target.x - minX;
+    const dy = target.y - minY;
+    const idMap = new Map();
+    const newNodes = srcNodes.map(source => {
+        const copy = serializableSmartNode(source);
+        const oldId = copy.id || uid(copy.type || 'smart');
+        copy.id = uid(copy.type || 'smart');
+        copy.x = Number(copy.x || 0) + dx;
+        copy.y = Number(copy.y || 0) + dy;
+        copy.created_at = copy.created_at || Date.now();
+        idMap.set(oldId, copy.id);
+        return normalizeLegacySmartNode(copy);
+    }).filter(Boolean);
+    const newConnections = srcConnections
+        .map(conn => ({...JSON.parse(JSON.stringify(conn)), from:idMap.get(conn.from), to:idMap.get(conn.to)}))
+        .filter(conn => conn.from && conn.to);
+    nodes.push(...newNodes);
+    canvas.connections = [...(canvas.connections || []), ...newConnections];
+    selectedIds = newNodes.length > 1 ? newNodes.map(node => node.id) : [];
+    selectedId = newNodes.length === 1 ? newNodes[0].id : '';
+    selectedImage = {nodeId:'', index:-1};
+    activeComposerSubject = null;
+    render();
+    scheduleSave();
+    toast(`已导入 ${newNodes.length} 个节点`);
+}
+async function importSmartWorkflowFile(file){
+    if(!canvas || !file) return;
+    try {
+        if(smartWorkflowTransferSub) smartWorkflowTransferSub.textContent = '正在导入工作流...';
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch('/api/canvas-workflows/import', {method:'POST', body:form});
+        if(!res.ok) throw new Error(await responseErrorMessage(res, '导入工作流失败'));
+        const data = await res.json();
+        insertSmartWorkflowIntoCanvas(normalizeImportedSmartWorkflow(data));
+        closeSmartWorkflowTransferModal();
+    } catch(err) {
+        if(smartWorkflowTransferModal?.classList.contains('open')) updateSmartWorkflowTransferMeta();
+        toast(err.message || '导入工作流失败');
+    }
 }
 const RECENT_SMART_SETTINGS_KEY = 'smart_canvas_recent_run_settings_v1';
 const initialSmartSettings = cloneSmartSettings(settings);
@@ -449,6 +684,252 @@ function clearVolcengineSelectionOutsideVolcengine(target=settings){
 function isSmartImageNode(node){
     return Boolean(node && (node.type === 'smart-image' || !node.type));
 }
+function isUploadedImageOnlyNode(node){
+    if(!isSmartImageNode(node) || isHistoryGroupNode(node)) return false;
+    const images = (node.images || []).filter(img => img?.url);
+    if(!images.length || node.pending || node.running || node.queued || node.jimengPending) return false;
+    if(node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt || node.runFinishedAt || node.runElapsedMs) return false;
+    if((node.inputNodeIds || []).length) return false;
+    if((node.runPromptRefs || []).length || (node.runInputRefs || []).length) return false;
+    if(images.some(img => img?.generatedResult || img?.runPrompt || img?.runModelPrompt || img?.runSettings || img?.sourceNodeId || img?.runAt)) return false;
+    return !(canvas?.connections || []).some(conn => conn.to === node.id && ['input', 'flow'].includes(conn.kind || 'flow'));
+}
+function normalizeGeneratedCandidateImage(img){
+    if(!img?.url) return null;
+    const kind = img.kind || mediaKindForItem(img) || 'image';
+    if(kind !== 'image') return null;
+    const clean = {...img, generatedResult:true, kind};
+    delete clean.runInputRefs;
+    return clean;
+}
+function candidateImageKey(img){
+    return String(img?.url || '');
+}
+function promptDraftHtmlFromRunMeta(meta){
+    if(!meta || meta.promptHtml == null) return '';
+    const htmlHasToken = String(meta.promptHtml || '').includes('mention-image-token');
+    if(htmlHasToken) return meta.promptHtml;
+    const ownPrompt = meta.promptText ?? meta.promptDraftText ?? meta.runPrompt ?? '';
+    return promptHtmlWithMentionTokens(ownPrompt, meta.promptRefs || meta.runPromptRefs || []) || meta.promptHtml;
+}
+function generatedImageWithRunMeta(img, meta){
+    if(!img?.url || !meta) return img;
+    const out = {...img, generatedResult:true};
+    const settingsSource = meta.settings || meta.runSettings || null;
+    out.runPrompt = meta.promptText ?? meta.promptDraftText ?? meta.runPrompt ?? '';
+    out.runModelPrompt = meta.prompt || meta.runModelPrompt || '';
+    out.runPromptRefs = (meta.promptRefs || meta.runPromptRefs || []).map(ref => ({...ref}));
+    delete out.runInputRefs;
+    if(settingsSource && Object.keys(settingsSource).length) out.runSettings = settingsForStorage(settingsSource);
+    if(meta.sourceNodeId) out.sourceNodeId = meta.sourceNodeId;
+    out.runAt = meta.createdAt || meta.runAt || Date.now();
+    if(meta.promptDraftHtml !== undefined){
+        out.promptDraftHtml = meta.promptDraftHtml;
+        out.promptDraftText = meta.promptDraftText || '';
+    } else if(meta.promptHtml != null){
+        out.promptDraftHtml = promptDraftHtmlFromRunMeta(meta);
+        out.promptDraftText = meta.promptText || '';
+    }
+    return out;
+}
+function imageRunMetaForNodeFallback(node){
+    if(!node) return null;
+    if(!node.runPrompt && !node.runModelPrompt && !node.runSettings && !node.sourceNodeId && !node.runAt && !node.promptDraftHtml) return null;
+    return {
+        runPrompt:node.runPrompt || '',
+        runModelPrompt:node.runModelPrompt || '',
+        runPromptRefs:(node.runPromptRefs || []).map(ref => ({...ref})),
+        runSettings:node.runSettings ? cloneSmartSettings(node.runSettings) : undefined,
+        sourceNodeId:node.sourceNodeId || '',
+        runAt:node.runAt || '',
+        promptDraftHtml:node.promptDraftHtml,
+        promptDraftText:node.promptDraftText
+    };
+}
+function candidateImageHasRunMeta(img){
+    return Boolean(img?.runPrompt || img?.runModelPrompt || img?.runSettings || img?.sourceNodeId || img?.runAt || img?.promptDraftHtml);
+}
+function generatedImageWithNodeFallback(img, node){
+    if(!img?.url || candidateImageHasRunMeta(img)) return img;
+    return generatedImageWithRunMeta(img, imageRunMetaForNodeFallback(node));
+}
+function applyRunMetaFromImageToNode(node, image){
+    if(!node || !image) return false;
+    const fallback = imageRunMetaForNodeFallback(node);
+    const meta = {
+        runPrompt:image.runPrompt,
+        runModelPrompt:image.runModelPrompt,
+        runPromptRefs:image.runPromptRefs,
+        runSettings:image.runSettings,
+        sourceNodeId:image.sourceNodeId,
+        runAt:image.runAt,
+        promptDraftHtml:image.promptDraftHtml,
+        promptDraftText:image.promptDraftText
+    };
+    const hasImageMeta = Boolean(meta.runPrompt || meta.runModelPrompt || meta.runSettings || meta.sourceNodeId || meta.runAt || meta.promptDraftHtml);
+    const source = hasImageMeta ? meta : fallback;
+    if(!source) return false;
+    node.runPrompt = source.runPrompt || '';
+    node.runModelPrompt = source.runModelPrompt || '';
+    node.runPromptRefs = (source.runPromptRefs || []).map(ref => ({...ref}));
+    delete node.runInputRefs;
+    if(source.runSettings) node.runSettings = settingsForStorage(source.runSettings);
+    else delete node.runSettings;
+    if(source.sourceNodeId) node.sourceNodeId = source.sourceNodeId;
+    else delete node.sourceNodeId;
+    if(source.runAt) node.runAt = source.runAt;
+    else delete node.runAt;
+    if(source.promptDraftHtml !== undefined) node.promptDraftHtml = source.promptDraftHtml;
+    else delete node.promptDraftHtml;
+    if(source.promptDraftText !== undefined) node.promptDraftText = source.promptDraftText;
+    else delete node.promptDraftText;
+    return true;
+}
+function mergeCandidateImages(...groups){
+    const out = [];
+    const seen = new Map();
+    groups.flat().forEach(img => {
+        const clean = normalizeGeneratedCandidateImage(img);
+        const key = candidateImageKey(clean);
+        if(!key) return;
+        if(seen.has(key)){
+            const index = seen.get(key);
+            if(!candidateImageHasRunMeta(out[index]) && candidateImageHasRunMeta(clean)) out[index] = {...out[index], ...clean};
+            return;
+        }
+        seen.set(key, out.length);
+        out.push(clean);
+    });
+    return out;
+}
+function nodeCandidateImages(node){
+    if(!isSmartImageNode(node)) return [];
+    const explicit = Array.isArray(node.candidateImages) ? node.candidateImages : [];
+    const displayed = (node.images || []).filter(img => img?.url && img?.generatedResult).map(img => generatedImageWithNodeFallback(img, node));
+    return mergeCandidateImages(explicit, displayed);
+}
+function shouldUseCandidatePoolForImages(node, images=node?.images || []){
+    if(!isSmartImageNode(node) || isHistoryGroupNode(node)) return false;
+    const valid = (images || []).filter(img => img?.url);
+    if(valid.length <= 1) return false;
+    return valid.every(img => mediaKindForItem(img) === 'image')
+        && valid.some(img => img.generatedResult || img.runPrompt || img.runModelPrompt || img.runSettings || img.sourceNodeId || img.runAt || node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt);
+}
+function migrateGeneratedImagesToCandidatePool(node, options={}){
+    if(!shouldUseCandidatePoolForImages(node)) return false;
+    const generatedImages = (node.images || []).filter(img => img?.url).map(img => generatedImageWithNodeFallback(img, node));
+    node.candidateImages = mergeCandidateImages(node.candidateImages || [], generatedImages);
+    const index = options.mainIndex ?? node.candidateIndex ?? 0;
+    return setNodeMainCandidate(node, index);
+}
+function candidateCountForNode(node){
+    return nodeCandidateImages(node).length;
+}
+function isCandidatePanelInteractionTarget(target){
+    return Boolean(target?.closest?.('[data-candidate-toggle],[data-candidate-prev],[data-candidate-next],[data-candidate-set-main],.candidate-panel,.candidate-toggle'));
+}
+function closeCandidatePanel(options={}){
+    if(!candidatePanelNodeId) return false;
+    const closingId = candidatePanelNodeId;
+    candidatePanelNodeId = '';
+    candidatePanelIndex = 0;
+    if(options.suppressComposer !== false && selectedId === closingId) suppressComposerForCandidateNodeId = closingId;
+    return true;
+}
+function setNodeMainCandidate(node, index=0){
+    const pool = nodeCandidateImages(node);
+    if(!node || !pool.length) return false;
+    const safeIndex = Math.max(0, Math.min(pool.length - 1, Number(index) || 0));
+    node.candidateImages = pool;
+    node.candidateIndex = safeIndex;
+    node.images = [{...pool[safeIndex], generatedResult:true}];
+    applyRunMetaFromImageToNode(node, node.images[0]);
+    node.outputKind = mediaKindForItem(node.images[0]);
+    node.scale = mediaNodeDefaultScale(node);
+    delete node.w;
+    delete node.h;
+    return true;
+}
+function syncCandidateImageDimensions(node, image, w, h){
+    if(!node || !image?.url || !(w > 0 && h > 0)) return false;
+    const key = candidateImageKey(image);
+    let changed = false;
+    const apply = item => {
+        if(!item || candidateImageKey(item) !== key) return;
+        if(!item.natural_w){
+            item.natural_w = w;
+            changed = true;
+        }
+        if(!item.natural_h){
+            item.natural_h = h;
+            changed = true;
+        }
+    };
+    (node.candidateImages || []).forEach(apply);
+    (node.images || []).forEach(apply);
+    return changed;
+}
+function addGeneratedCandidatesToNode(node, additions=[], options={}){
+    if(!node) return [];
+    const existingPool = nodeCandidateImages(node);
+    const existingDisplayed = (node.images || []).filter(img => img?.url && img?.generatedResult).map(img => generatedImageWithNodeFallback(img, node));
+    const nextAdditions = (additions || []).map(img => generatedImageWithNodeFallback(img, node)).map(normalizeGeneratedCandidateImage).filter(Boolean);
+    const pool = mergeCandidateImages(existingPool, existingDisplayed, nextAdditions);
+    node.candidateImages = pool;
+    if(!pool.length){
+        node.images = [];
+        node.candidateIndex = 0;
+        return [];
+    }
+    let mainIndex = Number.isFinite(Number(node.candidateIndex)) ? Number(node.candidateIndex) : 0;
+    if(options.main === 'firstNew' && nextAdditions.length){
+        const firstNewKey = candidateImageKey(nextAdditions[0]);
+        const found = pool.findIndex(img => candidateImageKey(img) === firstNewKey);
+        if(found >= 0) mainIndex = found;
+    } else if(options.main === 'lastNew' && nextAdditions.length){
+        const lastNewKey = candidateImageKey(nextAdditions[nextAdditions.length - 1]);
+        const found = pool.findIndex(img => candidateImageKey(img) === lastNewKey);
+        if(found >= 0) mainIndex = found;
+    } else if(!node.images?.length && nextAdditions.length){
+        const firstNewKey = candidateImageKey(nextAdditions[0]);
+        const found = pool.findIndex(img => candidateImageKey(img) === firstNewKey);
+        if(found >= 0) mainIndex = found;
+    }
+    setNodeMainCandidate(node, mainIndex);
+    return nextAdditions;
+}
+function candidateControlHtml(node){
+    const count = candidateCountForNode(node);
+    if(count <= 1 || isHistoryGroupNode(node) || node.pending || node.queued || node.jimengPending) return '';
+    const open = candidatePanelNodeId === node.id;
+    return `<button class="candidate-toggle ${open ? 'open' : ''}" type="button" data-candidate-toggle="${escapeAttr(node.id)}" title="候选图"><span class="candidate-count">${count}</span><i data-lucide="chevron-down"></i></button>`;
+}
+function candidatePreviewIndexForNode(node, count){
+    if(candidatePanelNodeId !== node?.id) return Math.max(0, Math.min(count - 1, Number(node?.candidateIndex) || 0));
+    return Math.max(0, Math.min(count - 1, Number(candidatePanelIndex) || 0));
+}
+function candidateOverlayHtml(node, layout){
+    const pool = nodeCandidateImages(node);
+    if(candidatePanelNodeId !== node.id || pool.length <= 1) return '';
+    const index = candidatePreviewIndexForNode(node, pool.length);
+    const preview = imageForDisplay(pool[index]);
+    if(!preview?.url) return '';
+    const current = Math.max(0, Math.min(pool.length - 1, Number(node.candidateIndex) || 0));
+    const indexText = `${index + 1} / ${pool.length}`;
+    const dots = pool.map((_, i) => `<span class="candidate-dot ${i === index ? 'active' : ''}"></span>`).join('');
+    return `<div class="candidate-panel" data-candidate-panel="${escapeAttr(node.id)}" data-candidate-index="${index}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">
+        ${singleMediaHtml(preview, layout.width, layout.height)}
+        ${imageResolutionBadgeHtml(preview)}
+        <button class="candidate-nav candidate-prev" type="button" data-candidate-prev="${escapeAttr(node.id)}" title="上一张"><i data-lucide="chevron-left"></i></button>
+        <button class="candidate-nav candidate-next" type="button" data-candidate-next="${escapeAttr(node.id)}" title="下一张"><i data-lucide="chevron-right"></i></button>
+        <button class="candidate-main-btn" type="button" data-candidate-set-main="${escapeAttr(node.id)}" ${index === current ? 'disabled' : ''}>设为主图</button>
+        <div class="candidate-index">${escapeHtml(indexText)}</div>
+        <div class="candidate-dots">${dots}</div>
+    </div>`;
+}
+function isSmartGroupNode(node){
+    return Boolean(node && node.type === 'smart-group');
+}
 function isHistoryGroupNode(node){
     return Boolean(isSmartImageNode(node) && (node.isHistoryGroup || node.historyFor));
 }
@@ -493,6 +974,25 @@ function normalizeLegacySmartNode(node){
     if(!node.type) node.type = 'smart-image';
     if(node.type === 'smart-image') delete node.imageMode;
     if(node.type === 'smart-image' && node.historyFor) node.isHistoryGroup = true;
+    if(node.type === 'smart-image'){
+        delete node.scale;
+        const keepPendingSize = Number(node.pending) > 0 || Boolean(node.queued || node.jimengPending || (Array.isArray(node.pendingTasks) && node.pendingTasks.length));
+        if(!keepPendingSize){
+            delete node.w;
+            delete node.h;
+        }
+    }
+    if(node.type === 'smart-image' && !node.isHistoryGroup){
+        if(!migrateGeneratedImagesToCandidatePool(node)){
+            const generatedImages = (node.images || []).filter(img => img?.url && (img.generatedResult || node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt));
+            if((node.candidateImages || []).length || generatedImages.length > 1){
+                node.candidateImages = mergeCandidateImages(node.candidateImages || [], generatedImages);
+                if(generatedImages.length && generatedImages.length === (node.images || []).filter(img => img?.url).length){
+                    setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
+                }
+            }
+        }
+    }
     return node;
 }
 function validOutpaintSize(node){
@@ -650,6 +1150,9 @@ function clearSelection(){
     selectedId = '';
     selectedIds = [];
     selectedImage = {nodeId:'', index:-1};
+    candidatePanelNodeId = '';
+    candidatePanelIndex = 0;
+    suppressComposerForCandidateNodeId = '';
 }
 function clearImageClickTimer(){
     if(imageClickTimer){
@@ -682,27 +1185,281 @@ function safeScale(value){
     return Number.isFinite(n) && n > 0 ? n : 1;
 }
 function nodeScale(node){
-    const v = Number(node?.scale);
-    if((node?.images || []).length > 1 && v === MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE) return MEDIA_GROUP_DEFAULT_SCALE;
-    return Number.isFinite(v) && v > 0 ? v : 1;
+    if(isSmartImageNode(node) || !node?.type) return mediaNodeDefaultScale(node);
+    return 1;
 }
 const MEDIA_NODE_DEFAULT_SCALE = 2;
 const MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE = 1.6;
 const MEDIA_GROUP_DEFAULT_SCALE = 0.8;
 const MEDIA_GROUP_THUMB_BASE = 224;
+const SMART_GROUP_MAX_VISIBLE_ROWS = 4;
 const EMPTY_UPLOAD_NODE_WIDTH = 316;
 const EMPTY_UPLOAD_NODE_HEIGHT = 194;
+const SMART_GROUP_DEFAULT_WIDTH = 340;
+const SMART_GROUP_DEFAULT_HEIGHT = 286;
+const SMART_GROUP_LEGACY_HEIGHT = 220;
+const SMART_GROUP_MIN_WIDTH = 150;
+const SMART_GROUP_MIN_HEIGHT = 130;
 function mediaNodeDefaultScale(node){
-    if((node?.images || []).length > 1 && !Number.isFinite(Number(node?.scale))) return MEDIA_GROUP_DEFAULT_SCALE;
-    return Number.isFinite(Number(node?.scale)) && Number(node.scale) > 0 ? Number(node.scale) : MEDIA_NODE_DEFAULT_SCALE;
+    return (node?.images || []).length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE;
 }
 function createImageNodeAt(point, images=[], options={}){
     const layout = imageLayout(images || [], mediaNodeDefaultScale({type:'smart-image', images:images || []}), {type:'smart-image', images:images || []});
     return createNode((point?.x || 0) - Math.round(layout.width / 2), (point?.y || 0) - Math.round(layout.height / 2), images, options);
 }
-function singleImageLayout(image, node, scale){
+function smartGroupLayoutSize(node){
     const explicitW = Number(node?.w);
     const explicitH = Number(node?.h);
+    const width = Number.isFinite(explicitW) && explicitW >= SMART_GROUP_MIN_WIDTH ? explicitW : SMART_GROUP_DEFAULT_WIDTH;
+    const height = !Number.isFinite(explicitH) || explicitH === SMART_GROUP_LEGACY_HEIGHT
+        ? SMART_GROUP_DEFAULT_HEIGHT
+        : Math.max(explicitH, SMART_GROUP_MIN_HEIGHT);
+    return {width:Math.round(width), height:Math.round(height)};
+}
+function smartGroupMembers(node){
+    if(!isSmartGroupNode(node)) return [];
+    const ids = Array.isArray(node.items) ? node.items : [];
+    const seen = new Set([node.id]);
+    return ids.map(id => nodes.find(n => n.id === id)).filter(member => {
+        if(!member || seen.has(member.id) || isSmartGroupNode(member)) return false;
+        seen.add(member.id);
+        return true;
+    });
+}
+function smartGroupCompactMembers(node){
+    return smartGroupMembers(node).filter(member => member?.type === 'smart-prompt' || member?.type === 'smart-loop');
+}
+function smartGroupContainingNode(nodeId){
+    if(!nodeId) return null;
+    return nodes.find(n => isSmartGroupNode(n) && Array.isArray(n.items) && n.items.includes(nodeId)) || null;
+}
+function isSmartGroupCompactMember(node){
+    return Boolean(node && (node.type === 'smart-prompt' || node.type === 'smart-loop') && smartGroupContainingNode(node.id));
+}
+function rerouteSmartConnections(fromId, toId){
+    if(canvas){
+        canvas.connections = (canvas.connections || []).map(c => {
+            let conn = c;
+            if(c.from === fromId) conn = {...conn, from:toId};
+            if(c.to === fromId) conn = {...conn, to:toId};
+            return conn;
+        }).filter((c, i, arr) => c.from !== c.to && arr.findIndex(x => x.from === c.from && x.to === c.to && (x.kind || 'flow') === (c.kind || 'flow')) === i);
+    }
+    nodes.forEach(n => {
+        if(Array.isArray(n.inputNodeIds)) n.inputNodeIds = Array.from(new Set(n.inputNodeIds.map(id => id === fromId ? toId : id).filter(id => id !== n.id)));
+    });
+}
+function absorbImageNodeIntoSmartGroup(group, child){
+    const add = (child.images || []).map(img => stripImageGenerationMeta({...img}));
+    if(!add.length) return false;
+    group.images = [...(group.images || []), ...add];
+    delete group.w;
+    delete group.h;
+    rerouteSmartConnections(child.id, group.id);
+    nodes = nodes.filter(n => n.id !== child.id);
+    nodes.forEach(g => { if(isSmartGroupNode(g) && Array.isArray(g.items)) g.items = g.items.filter(id => id !== child.id); });
+    return true;
+}
+function addNodeToSmartGroup(group, child){
+    if(!isSmartGroupNode(group) || !child || child.id === group.id) return false;
+    const items = Array.isArray(group.items) ? group.items.slice() : [];
+    if(isSmartGroupNode(child)){
+        const mergedImages = (child.images || []).map(img => stripImageGenerationMeta({...img}));
+        group.images = [...(group.images || []), ...mergedImages];
+        if(mergedImages.length){ delete group.w; delete group.h; }
+        const childMemberIds = smartGroupMembers(child).map(m => m.id).filter(id => id !== group.id && !items.includes(id));
+        group.items = [...items, ...childMemberIds];
+        rerouteSmartConnections(child.id, group.id);
+        nodes = nodes.filter(n => n.id !== child.id);
+        nodes.forEach(g => { if(isSmartGroupNode(g) && Array.isArray(g.items)) g.items = g.items.filter(id => id !== child.id); });
+        return true;
+    }
+    if(isSmartImageNode(child)) return absorbImageNodeIntoSmartGroup(group, child);
+    if(items.includes(child.id)) return false;
+    group.items = [...items, child.id];
+    return true;
+}
+function smartGroupImageRefs(group){
+    if(!isSmartGroupNode(group)) return [];
+    const refs = [];
+    (group.images || []).forEach((img, index) => {
+        const item = imageForDisplay(img);
+        if(item?.url) refs.push({nodeId:group.id, index, source:img, item});
+    });
+    const members = smartGroupMembers(group)
+        .filter(isSmartImageNode)
+        .slice()
+        .sort((a, b) => {
+            const ra = nodeRect(a), rb = nodeRect(b);
+            const dy = (Number(ra.y) || 0) - (Number(rb.y) || 0);
+            if(Math.abs(dy) > 24) return dy;
+            return (Number(ra.x) || 0) - (Number(rb.x) || 0);
+        });
+    members.forEach(node => {
+        (node.images || []).forEach((img, index) => {
+            const item = imageForDisplay(img);
+            if(item?.url) refs.push({nodeId:node.id, index, source:img, item});
+        });
+    });
+    return refs;
+}
+function smartGroupThumbLayout(node){
+    const refs = smartGroupImageRefs(node).filter(ref => ref.item?.url);
+    if(!refs.length) return null;
+    const compactMembers = smartGroupCompactMembers(node);
+    const count = refs.length + compactMembers.length;
+    const items = refs.map(ref => ref.item);
+    const explicitW = Number(node?.w);
+    const explicitH = Number(node?.h);
+    const hasExplicit = Number.isFinite(explicitW) && explicitW >= SMART_GROUP_MIN_WIDTH
+        && Number.isFinite(explicitH) && explicitH >= SMART_GROUP_MIN_HEIGHT;
+    const scale = mediaNodeDefaultScale({type:'smart-image', images:items, scale:node?.scale});
+    const summarySpace = 28;
+    const outerPad = 32;
+    if(count === 1){
+        if(hasExplicit){
+            return {
+                refs,
+                compactMembers,
+                cols:1,
+                rows:1,
+                visibleRows:1,
+                width:Math.round(explicitW),
+                height:Math.round(explicitH),
+                thumb:Math.round(96 * scale),
+                single:true,
+                innerW:Math.max(24, Math.round(explicitW - outerPad)),
+                innerH:Math.max(24, Math.round(explicitH - outerPad - summarySpace))
+            };
+        }
+        const single = singleImageLayout(refs[0].item, {}, scale);
+        return {
+            refs,
+            compactMembers,
+            ...single,
+            width:Math.max(SMART_GROUP_MIN_WIDTH, Math.round(single.width + outerPad)),
+            height:Math.max(SMART_GROUP_MIN_HEIGHT, Math.round(single.height + outerPad + summarySpace)),
+            innerW:single.width,
+            innerH:single.height
+        };
+    }
+    const gap = 8;
+    const maxVisibleRows = compactMembers.length ? count : SMART_GROUP_MAX_VISIBLE_ROWS;
+    if(hasExplicit){
+        const fitted = groupImageGridLayout(count, Math.max(72, explicitW - outerPad), Math.max(56, explicitH - outerPad - summarySpace), 100000, 0, gap, maxVisibleRows);
+        return {...fitted, refs, compactMembers, width:Math.round(explicitW), height:Math.round(explicitH)};
+    }
+    const thumb = Math.round(MEDIA_GROUP_THUMB_BASE * scale);
+    const cell = thumb + gap;
+    const cols = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(count))));
+    const rows = Math.ceil(count / cols);
+    const visibleRows = Math.min(maxVisibleRows, rows);
+    const gridW = cols * thumb + (cols - 1) * gap;
+    const gridH = visibleRows * cell - gap;
+    return {
+        refs,
+        compactMembers,
+        cols,
+        rows,
+        visibleRows,
+        thumb,
+        width:Math.max(SMART_GROUP_MIN_WIDTH, Math.round(gridW + outerPad)),
+        height:Math.max(SMART_GROUP_MIN_HEIGHT, Math.round(gridH + outerPad + summarySpace))
+    };
+}
+const SMART_GROUP_ARRANGE_PADDING = 18;
+const SMART_GROUP_ARRANGE_GAP = 16;
+const SMART_GROUP_ARRANGE_HEADER = 44;
+function arrangeSmartGroupMembers(group, options={}){
+    if(!isSmartGroupNode(group)) return false;
+    const hasThumbImages = smartGroupImageRefs(group).some(ref => ref.item?.url);
+    if(hasThumbImages){
+        const compactMembers = smartGroupCompactMembers(group);
+        if(!options.skipUndo) pushUndo();
+        const layout = smartGroupThumbLayout(group);
+        if(!layout) return true;
+        const refs = layout.refs || [];
+        const thumb = Math.max(28, Math.round(Number(layout.thumb) || 96));
+        const gap = 8;
+        const cols = Math.max(1, Number(layout.cols) || 1);
+        const gridW = cols * thumb + Math.max(0, cols - 1) * gap;
+        const contentW = Math.max(0, Math.round(Number(layout.width) || SMART_GROUP_DEFAULT_WIDTH) - 32);
+        const originX = (Number(group.x) || 0) + 16 + Math.max(0, Math.round((contentW - gridW) / 2));
+        const originY = (Number(group.y) || 0) + 16 + 28;
+        group.w = Math.max(SMART_GROUP_MIN_WIDTH, Math.round(Number(layout.width) || SMART_GROUP_DEFAULT_WIDTH));
+        group.h = Math.max(SMART_GROUP_MIN_HEIGHT, Math.round(Number(layout.height) || SMART_GROUP_DEFAULT_HEIGHT));
+        compactMembers.slice().sort((a, b) => {
+            const ra = nodeRect(a), rb = nodeRect(b);
+            const dy = (Number(ra.y) || 0) - (Number(rb.y) || 0);
+            if(Math.abs(dy) > 24) return dy;
+            return (Number(ra.x) || 0) - (Number(rb.x) || 0);
+        }).forEach((member, memberIndex) => {
+            const index = refs.length + memberIndex;
+            const col = index % cols;
+            const row = Math.floor(index / cols);
+            member.x = Math.round(originX + col * (thumb + gap));
+            member.y = Math.round(originY + row * (thumb + gap));
+            member.w = thumb;
+            member.h = thumb;
+            member.scale = 1;
+        });
+        return true;
+    }
+    const members = smartGroupMembers(group);
+    if(!members.length) return false;
+    if(!options.skipUndo) pushUndo();
+    const ordered = members.slice().sort((a, b) => {
+        const ra = nodeRect(a), rb = nodeRect(b);
+        const dy = (Number(ra.y) || 0) - (Number(rb.y) || 0);
+        if(Math.abs(dy) > 24) return dy;
+        return (Number(ra.x) || 0) - (Number(rb.x) || 0);
+    });
+    ordered.forEach(node => {
+        if(isSmartImageNode(node)){
+            delete node.w;
+            delete node.h;
+        }
+    });
+    const sizes = ordered.map(node => {
+        const r = nodeRect(node);
+        return {node, w:Math.max(40, Number(r.width) || 120), h:Math.max(40, Number(r.height) || 120)};
+    });
+    const count = sizes.length;
+    const pad = SMART_GROUP_ARRANGE_PADDING;
+    const gap = SMART_GROUP_ARRANGE_GAP;
+    const headerH = SMART_GROUP_ARRANGE_HEADER;
+    const cols = Math.max(1, Math.min(count, Math.round(Math.sqrt(count)) || 1));
+    const rows = Math.ceil(count / cols);
+    const colW = new Array(cols).fill(0);
+    const rowH = new Array(rows).fill(0);
+    sizes.forEach((s, i) => {
+        const c = i % cols, r = Math.floor(i / cols);
+        colW[c] = Math.max(colW[c], s.w);
+        rowH[r] = Math.max(rowH[r], s.h);
+    });
+    const colX = [];
+    let accX = 0;
+    for(let c = 0; c < cols; c++){ colX[c] = accX; accX += colW[c] + gap; }
+    const rowY = [];
+    let accY = 0;
+    for(let r = 0; r < rows; r++){ rowY[r] = accY; accY += rowH[r] + gap; }
+    const originX = (Number(group.x) || 0) + pad;
+    const originY = (Number(group.y) || 0) + headerH + pad;
+    sizes.forEach((s, i) => {
+        const c = i % cols, r = Math.floor(i / cols);
+        s.node.x = Math.round(originX + colX[c] + (colW[c] - s.w) / 2);
+        s.node.y = Math.round(originY + rowY[r] + (rowH[r] - s.h) / 2);
+    });
+    const totalW = colW.reduce((a, b) => a + b, 0) + gap * (cols - 1) + pad * 2;
+    const totalH = rowH.reduce((a, b) => a + b, 0) + gap * (rows - 1) + pad * 2 + headerH;
+    group.w = Math.max(SMART_GROUP_MIN_WIDTH, Math.round(totalW));
+    group.h = Math.max(SMART_GROUP_MIN_HEIGHT, Math.round(totalH));
+    return true;
+}
+function singleImageLayout(image, node, scale){
+    const useExplicitSize = node && !isSmartImageNode(node);
+    const explicitW = useExplicitSize ? Number(node?.w) : NaN;
+    const explicitH = useExplicitSize ? Number(node?.h) : NaN;
     if(Number.isFinite(explicitW) && explicitW > 24 && Number.isFinite(explicitH) && explicitH > 24){
         return {cols:1, rows:1, width:Math.round(explicitW), height:Math.round(explicitH), thumb:Math.round(96 * scale), single:true};
     }
@@ -723,18 +1480,19 @@ function singleImageLayout(image, node, scale){
     }
     return {cols:1, rows:1, width:Math.round(260*scale), height:Math.round(180*scale), thumb:Math.round(96*scale), single:true};
 }
-function groupImageGridLayout(count, explicitW, explicitH, maxThumb, pad=32, gap=8){
+function groupImageGridLayout(count, explicitW, explicitH, maxThumb, pad=32, gap=8, maxVisibleRows=3){
     let best = null;
     for(let cols = 1; cols <= count; cols++){
         const rows = Math.ceil(count / cols);
+        const visibleRows = Math.min(Math.max(1, maxVisibleRows), rows);
         const availableW = explicitW - pad - (cols - 1) * gap;
-        const availableH = explicitH - pad - (rows - 1) * gap;
+        const availableH = explicitH - pad - (visibleRows - 1) * gap;
         if(availableW <= 0 || availableH <= 0) continue;
-        const rawThumb = Math.floor(Math.min(availableW / cols, availableH / rows));
+        const rawThumb = Math.floor(Math.min(availableW / cols, availableH / visibleRows));
         const fittedThumb = Math.max(28, Math.min(maxThumb, rawThumb));
         const fits = rawThumb >= 28;
         const usedW = cols * fittedThumb + (cols - 1) * gap + pad;
-        const usedH = rows * fittedThumb + (rows - 1) * gap + pad;
+        const usedH = visibleRows * fittedThumb + (visibleRows - 1) * gap + pad;
         const spareW = Math.max(0, explicitW - usedW);
         const spareH = Math.max(0, explicitH - usedH);
         const atMax = fittedThumb >= maxThumb;
@@ -754,10 +1512,12 @@ function groupImageGridLayout(count, explicitW, explicitH, maxThumb, pad=32, gap
             }
         }
         if(better){
-            best = {cols, rows, thumb:fittedThumb, score};
+            best = {cols, rows, visibleRows, thumb:fittedThumb, score};
         }
     }
-    return best || {cols:Math.min(count, 2), rows:Math.ceil(count / Math.min(count, 2)), thumb:28};
+    const fallbackCols = Math.min(count, 2);
+    const fallbackRows = Math.ceil(count / fallbackCols);
+    return best || {cols:fallbackCols, rows:fallbackRows, visibleRows:Math.min(Math.max(1, maxVisibleRows), fallbackRows), thumb:28};
 }
 function smartNodeInputThumbRows(count){
     return count ? Math.ceil(Math.min(10, count) / 5) : 0;
@@ -807,14 +1567,19 @@ function promptNodeLayoutSize(node){
     return {width:Math.round(width), height:Math.round(height)};
 }
 function imageLayout(images, scale=1, node=null){
+    if(node?.type === 'smart-group'){
+        const groupThumbLayout = smartGroupThumbLayout(node);
+        if(groupThumbLayout) return groupThumbLayout;
+        return {cols:1, rows:1, ...smartGroupLayoutSize(node), thumb:96, single:true};
+    }
     if(node?.type === 'smart-prompt') return {cols:1, rows:1, ...promptNodeLayoutSize(node), thumb:96, single:true};
     if(node?.type === 'smart-loop') return {cols:1, rows:1, width:Math.round(Number(node.w) || smartLoopWidth(node)), height:Math.round(Math.max(Number(node.h) || 0, smartLoopHeight(node))), thumb:96, single:true};
     const count = (images || []).length;
     const s = node?.type === 'smart-image' || !node?.type ? mediaNodeDefaultScale(node) : (Number.isFinite(scale) && scale > 0 ? scale : 1);
     if(count === 0){
-        const explicitW = Number(node?.w);
-        const explicitH = Number(node?.h);
         const pending = Number(node?.pending) > 0 || Boolean(node?.queued);
+        const explicitW = pending ? Number(node?.w) : NaN;
+        const explicitH = pending ? Number(node?.h) : NaN;
         const fallbackW = pending ? 260 * s : EMPTY_UPLOAD_NODE_WIDTH;
         const fallbackH = pending ? 180 * s : EMPTY_UPLOAD_NODE_HEIGHT;
         return {
@@ -831,8 +1596,9 @@ function imageLayout(images, scale=1, node=null){
     const cell = thumb + 8;
     const PAD = 32; // group-node has 16px padding on each side
     const grid = images.find(img => img?.grid?.type === 'grid-split')?.grid;
-    const explicitW = Number(node?.w);
-    const explicitH = Number(node?.h);
+    const useExplicitSize = node && !isSmartImageNode(node);
+    const explicitW = useExplicitSize ? Number(node?.w) : NaN;
+    const explicitH = useExplicitSize ? Number(node?.h) : NaN;
     if(grid){
         const cols = Math.max(1, Number(grid.cols || 1));
         const rows = Math.max(1, Number(grid.rows || 1));
@@ -881,6 +1647,8 @@ function applyViewport(){
     world.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
     shell.style.backgroundSize = '24px 24px';
     shell.style.backgroundPosition = '0 0';
+    const active = selectedNode();
+    if(active && composer?.classList?.contains('open')) positionComposerForNode(active);
     renderMinimap();
 }
 function screenToWorld(event){
@@ -1090,7 +1858,8 @@ function rhActiveFields(sourceSettings=settings){
     let fields = rhEntryFields(ref?.entry);
     if(ref?.kind === 'workflow'){
         const cached = runningHubWorkflowCache[ref.id];
-        if(Array.isArray(cached?.fields) && cached.fields.length) fields = cached.fields;
+        if(fields.length) return sortRunningHubFields(fields.filter(f => f.enabled === true));
+        if(Array.isArray(cached?.fields)) fields = cached.fields;
     }
     fields = fields.filter(f => f.enabled === true);
     return sortRunningHubFields(fields);
@@ -1418,12 +2187,16 @@ function comfyParamValue(field){
     return field.default ?? (field.type === 'boolean' ? false : (field.type === 'number' || field.type === 'slider' ? 0 : ''));
 }
 function updateProviderModels(){ renderDynamicParams(); }
+function clearComposerHeadParams(){
+    if(composerHeadParams) composerHeadParams.innerHTML = '';
+}
 function renderDynamicParams(){
     if(!dynamicParams) return;
     settings.engine = ['api','volcengine','modelscope','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
     settings.apiKind = settings.apiKind === 'video' ? 'video' : 'image';
     clearVolcengineSelectionOutsideVolcengine(settings);
     engineSelect.value = settings.engine;
+    clearComposerHeadParams();
     syncApiKindToggleVisibility();
     if(settings.engine === 'api'){
         if(settings.apiKind === 'video') renderApiVideoParams();
@@ -1438,6 +2211,9 @@ function renderDynamicParams(){
     else renderComfyParams();
     bindDynamicParams();
     updatePromptPlaceholder();
+    syncComposerPromptVisibility();
+    renderInputThumbsRow(selectedNode());
+    renderInputPromptPreview(selectedNode());
     persistActiveSmartSettings();
     if(window.lucide) lucide.createIcons();
 }
@@ -1527,18 +2303,23 @@ function renderRunningHubParams(){
     settings.rhPayment = settings.rhPayment === 'wallet' ? 'wallet' : 'free';
     settings.rhParams = settings.rhParams || {};
     settings.rhRandomActive = settings.rhRandomActive || {};
+    if(composerHeadParams){
+        composerHeadParams.innerHTML = `
+            ${renderRhConfigControl(ref)}
+            ${renderRhPaymentControl()}
+            ${renderRhMachineControl()}
+        `;
+    }
     if(!ref){
         dynamicParams.innerHTML = `<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>`;
         return;
     }
-    const mediaFieldsList = fields.filter(f => ['image','video','audio'].includes(rhFieldRole(f)));
-    const aliasHints = mediaFieldsList.map(f => f.label || f.fieldName).filter(Boolean).join('、');
+    const params = fields.filter(field => {
+        const role = rhFieldRole(field);
+        return !['image','video','audio','prompt'].includes(role);
+    });
     dynamicParams.innerHTML = `
-        ${renderRhConfigControl(ref)}
-        ${renderRhPaymentControl()}
-        ${renderRhMachineControl()}
-        ${aliasHints ? `<div class="rh-mini-summary"><span class="rh-mini-aliases">${escapeHtml(aliasHints)}</span></div>` : ''}
-        ${fields.length ? fields.filter(f => !['image','video','audio','prompt'].includes(rhFieldRole(f))).map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(tr('smart.rhNeedFields'))}</div>`}
+        ${params.length ? params.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(fields.length ? tr('smart.rhNoParams') : tr('smart.rhNeedFields'))}</div>`}
     `;
 }
 function renderRhConfigControl(ref){
@@ -1996,6 +2777,10 @@ function rhExtractFieldOptions(field){
             return candidate.map(x => x.value ?? x.label ?? x.name).filter(v => v !== undefined && v !== null).map(String);
         }
     }
+    const fieldType = String(field?.fieldType || '').toUpperCase();
+    if(['LIST','SELECT','DROPDOWN','COMBO','ENUM'].includes(fieldType) && Array.isArray(field?.fieldValue)){
+        return field.fieldValue.filter(x => ['string','number'].includes(typeof x)).map(String);
+    }
     const name = String(field?.fieldName || '').trim();
     if(name){
         if(RH_KNOWN_FIELD_OPTIONS[name]) return RH_KNOWN_FIELD_OPTIONS[name].map(String);
@@ -2079,10 +2864,27 @@ function rhDefaultPromptSuggestion(){
     }
     return '';
 }
+function rhPromptFields(sourceSettings=settings){
+    if((sourceSettings || settings).engine !== 'runninghub') return [];
+    return rhActiveFields(sourceSettings).filter(field => rhFieldRole(field) === 'prompt');
+}
+function rhRequiresPrompt(sourceSettings=settings){
+    return rhPromptFields(sourceSettings).length > 0;
+}
+function smartPromptInputEnabledForSettings(sourceSettings=settings){
+    return !((sourceSettings || settings).engine === 'runninghub' && !rhRequiresPrompt(sourceSettings || settings));
+}
 function updatePromptPlaceholder(){
     if(!promptInput) return;
     const suggestion = rhDefaultPromptSuggestion();
     promptInput.dataset.placeholder = suggestion || tr('smart.promptPlaceholder');
+}
+function syncComposerPromptVisibility(){
+    const row = promptInput?.closest?.('.prompt-row');
+    if(!row) return;
+    const hidden = !smartPromptInputEnabledForSettings(settings);
+    row.classList.toggle('prompt-row-hidden', hidden);
+    if(hidden) closeMentionPicker();
 }
 function rhFieldIndexes(fields){
     const counters = {image:0, video:0, audio:0};
@@ -2332,7 +3134,7 @@ async function rhBuildWorkflowRequestExtras(media, nodeInfoList, sourceSettings=
         const key = rhParamKey(field.nodeId, field.fieldName);
         const idx = indexes[key] || 0;
         const hasInput = Boolean(media.image?.[idx]?.url);
-        if(field.required === true && !hasInput) throw new Error(`RunningHub 工作流缺少必选图片：${rhRequiredLabel(field)}`);
+        if(field.required === true && !hasInput) throw new Error(`工作流缺少必选图片：${rhRequiredLabel(field)}`);
         if(field.required !== true && !hasInput) missingOptional.push(field);
     }
     if(!missingOptional.length) return {};
@@ -2502,8 +3304,12 @@ function setDynamicSetting(key, value){
 function closeAllSmartPopovers(){
     document.querySelectorAll('.smart-control.pinned').forEach(c => c.classList.remove('pinned'));
 }
+function smartParamRoots(){
+    return [dynamicParams, composerHeadParams].filter(Boolean);
+}
 function bindDynamicParams(){
-    dynamicParams.querySelectorAll('.smart-control > .smart-pill').forEach(pill => {
+    const queryAll = selector => smartParamRoots().flatMap(root => Array.from(root.querySelectorAll(selector)));
+    queryAll('.smart-control > .smart-pill').forEach(pill => {
         pill.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2513,7 +3319,7 @@ function bindDynamicParams(){
             if(!wasPinned) ctrl.classList.add('pinned');
         };
     });
-    dynamicParams.querySelectorAll('[data-smart-param]').forEach(btn => {
+    queryAll('[data-smart-param]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2521,7 +3327,7 @@ function bindDynamicParams(){
             if(btn.dataset.smartParam === 'videoDuration') renderDynamicParams();
         };
     });
-    dynamicParams.querySelectorAll('[data-param]').forEach(input => {
+    queryAll('[data-param]').forEach(input => {
         input.onclick = event => event.stopPropagation();
         input.oninput = input.onchange = event => {
             event?.stopPropagation?.();
@@ -2529,7 +3335,7 @@ function bindDynamicParams(){
             if(input.dataset.param === 'videoDuration' && event?.type === 'change') renderDynamicParams();
         };
     });
-    dynamicParams.querySelectorAll('[data-toggle-param]').forEach(btn => {
+    queryAll('[data-toggle-param]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2541,7 +3347,7 @@ function bindDynamicParams(){
             scheduleSave();
         };
     });
-    dynamicParams.querySelectorAll('[data-trusted-source]').forEach(btn => {
+    queryAll('[data-trusted-source]').forEach(btn => {
         btn.onclick = async event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2558,7 +3364,7 @@ function bindDynamicParams(){
             }
         };
     });
-    dynamicParams.querySelectorAll('[data-comfy-bool]').forEach(btn => {
+    queryAll('[data-comfy-bool]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2571,7 +3377,7 @@ function bindDynamicParams(){
             scheduleSave();
         };
     });
-    dynamicParams.querySelectorAll('[data-comfy-param]').forEach(input => {
+    queryAll('[data-comfy-param]').forEach(input => {
         input.onclick = event => event.stopPropagation();
         input.oninput = input.onchange = event => {
             event?.stopPropagation?.();
@@ -2583,7 +3389,7 @@ function bindDynamicParams(){
             scheduleSave();
         };
     });
-    dynamicParams.querySelectorAll('[data-comfy-pick]').forEach(btn => {
+    queryAll('[data-comfy-pick]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2603,14 +3409,14 @@ function bindDynamicParams(){
             scheduleSave();
         };
     });
-    dynamicParams.querySelectorAll('[data-comfy-random]').forEach(btn => {
+    queryAll('[data-comfy-random]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
             toggleSmartComfyRandom(btn.dataset.comfyRandom);
         };
     });
-    dynamicParams.querySelectorAll('[data-rh-bool]').forEach(btn => {
+    queryAll('[data-rh-bool]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2625,7 +3431,7 @@ function bindDynamicParams(){
             scheduleSave();
         };
     });
-    dynamicParams.querySelectorAll('[data-rh-param]').forEach(input => {
+    queryAll('[data-rh-param]').forEach(input => {
         input.onclick = event => event.stopPropagation();
         input.oninput = input.onchange = event => {
             event?.stopPropagation?.();
@@ -2648,7 +3454,7 @@ function bindDynamicParams(){
             };
         }
     });
-    dynamicParams.querySelectorAll('[data-rh-pick]').forEach(btn => {
+    queryAll('[data-rh-pick]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2671,7 +3477,7 @@ function bindDynamicParams(){
             scheduleSave();
         };
     });
-    dynamicParams.querySelectorAll('[data-rh-random]').forEach(btn => {
+    queryAll('[data-rh-random]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -2684,7 +3490,7 @@ async function loadConfig(){
         const cfg = await fetch('/api/config').then(r => r.json());
         apiProviders = Array.isArray(cfg.api_providers) ? cfg.api_providers : [];
         comfyInstanceCount = Math.max(1, (Array.isArray(cfg.comfy_instances) ? cfg.comfy_instances : []).filter(Boolean).length || 1);
-        // 提供商配置已就绪即先渲染参数面板，避免等工作流/RunningHub 预取完成后参数才「突然刷新出来」。
+        // 提供商配置已就绪即先渲染参数面板，避免等工作流预取完成后参数才「突然刷新出来」。
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
         const wf = await fetch('/api/workflows').then(r => r.json()).catch(() => ({workflows:[]}));
@@ -3850,9 +4656,11 @@ async function loadCanvas(){
             const pendingTasks = smartPendingTasks(n);
             if(pendingTasks.length){
                 n.pending = Math.max(pendingTasks.length, Number(n.pending || 0) || pendingTasks.length);
+                n.pendingCandidatePool = pendingTasks.some(task => (task.kind || 'image') === 'image');
                 n.running = false;
             } else if(n.pending){
                 n.pending = 0;
+                delete n.pendingCandidatePool;
             }
         });
         canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
@@ -3879,7 +4687,8 @@ async function saveCanvas(){
     if(!canvasId || !canvas) return;
     savePromptDraftForCurrent();
     nodes.forEach(node => {
-        node.images = (node.images || []).map(img => mediaItemForStorage(stripImageGenerationMeta(img)));
+        node.images = (node.images || []).map(mediaItemForStorage);
+        if(Array.isArray(node.candidateImages)) node.candidateImages = node.candidateImages.map(mediaItemForStorage);
         if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
     });
     canvas.nodes = nodes;
@@ -3914,7 +4723,8 @@ async function saveCanvas(){
             if(serverCanvas){
                 applyMergedServerCanvas(serverCanvas);
                 nodes.forEach(node => {
-                    node.images = (node.images || []).map(img => mediaItemForStorage(stripImageGenerationMeta(img)));
+                    node.images = (node.images || []).map(mediaItemForStorage);
+                    if(Array.isArray(node.candidateImages)) node.candidateImages = node.candidateImages.map(mediaItemForStorage);
                     if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
                 });
                 canvas.nodes = nodes;
@@ -3985,6 +4795,15 @@ function createLoopNode(x, y, options={}){
     scheduleSave();
     return node;
 }
+function createSmartGroupNode(x, y, options={}){
+    if(!options.skipUndo) pushUndo();
+    const node = {id:uid('group'), type:'smart-group', x, y, w:SMART_GROUP_DEFAULT_WIDTH, h:SMART_GROUP_DEFAULT_HEIGHT, title:'智能分组', items:[], images:[], created_at:Date.now()};
+    nodes.push(node);
+    if(options.select !== false) selectedId = node.id;
+    render();
+    scheduleSave();
+    return node;
+}
 function cloneSmartNode(node, dx=0, dy=0){
     const copy = JSON.parse(JSON.stringify(node));
     copy.id = uid(
@@ -3992,6 +4811,8 @@ function cloneSmartNode(node, dx=0, dy=0){
             ? 'prompt'
             : node.type === 'smart-loop'
             ? 'loop'
+            : node.type === 'smart-group'
+            ? 'group'
             : 'smart'
     );
     copy.x = (Number(node.x) || 0) + dx;
@@ -4002,6 +4823,7 @@ function cloneSmartNode(node, dx=0, dy=0){
     delete copy.runFinishedAt;
     delete copy.runElapsedMs;
     delete copy.runTimerHidden;
+    if(copy.type === 'smart-group') copy.title = copy.title || '智能分组';
     return copy;
 }
 function copySelectedNodes(){
@@ -4221,7 +5043,41 @@ function isTextMediaItem(img){
 }
 function isFileMediaItem(img){
     if(!img) return false;
-    return img.kind === 'file';
+    if(img.kind === 'file') return true;
+    const url = String(img.url || '').toLowerCase();
+    return /\.(zip|rar|7z|tar|gz|psd|psb|ply|splat|glb|gltf|obj|fbx|stl)(\?|$)/.test(url);
+}
+function outputMediaKindForItem(item, fallback='image'){
+    const obj = typeof item === 'string' ? {url:item} : (item || {});
+    const explicit = String(obj.kind || obj.type || obj.mediaKind || '').toLowerCase();
+    if(['image','video','audio','text','file'].includes(explicit)) return explicit;
+    return mediaKindForItem({...obj, kind:''}) || fallback || 'image';
+}
+function defaultOutputExtForKind(kind='image'){
+    if(kind === 'video') return 'mp4';
+    if(kind === 'audio') return 'mp3';
+    if(kind === 'text') return 'txt';
+    if(kind === 'file') return 'zip';
+    return 'png';
+}
+function normalizeOutputMediaItems(items=[], fallbackKind='image', meta=null){
+    return (items || []).map((item, i) => {
+        const source = typeof item === 'string' ? {url:item} : (item || {});
+        const url = source.url || source.path || source.src || source.uri || '';
+        if(!url) return null;
+        const kind = outputMediaKindForItem(source, fallbackKind);
+        const ext = defaultOutputExtForKind(kind);
+        const image = {
+            ...source,
+            url,
+            name:source.name || source.filename || `output-${i + 1}.${ext}`,
+            kind,
+            generatedResult:true
+        };
+        return kind === 'image' && meta
+            ? generatedImageWithRunMeta(image, meta)
+            : stripImageGenerationMeta(image);
+    }).filter(item => item?.url);
 }
 function mediaKindForFile(file){
     const type = String(file?.type || '').toLowerCase();
@@ -4229,6 +5085,7 @@ function mediaKindForFile(file){
     if(type.startsWith('video/') || /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/.test(name)) return 'video';
     if(type.startsWith('audio/') || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/.test(name)) return 'audio';
     if(type.startsWith('text/') || /\.(txt|json|csv|srt|vtt|md)(\?|$)/.test(name)) return 'text';
+    if(/\.(zip|rar|7z|tar|gz|psd|psb|ply|splat|glb|gltf|obj|fbx|stl)(\?|$)/.test(name)) return 'file';
     return 'image';
 }
 function mediaKindForItem(img){
@@ -4278,11 +5135,11 @@ function resultMediaUrls(result){
                 const url = value.url || value.path || value.src || value.uri;
                 if(url) urls.push({url, kind:value.kind || value.type || value.mediaKind || '', name:value.name || value.filename || ''});
             }
-            ['outputs','videos','images','urls','data','result'].forEach(key => add(value[key]));
-            ['url','path','src','uri','output','output_url','outputUrl','video','video_url','videoUrl','mp4_url','mp4Url','download_url','downloadUrl','preview_url','previewUrl'].forEach(key => add(value[key]));
+            ['items','outputs','videos','audios','texts','files','images','urls','data','result','output','url'].forEach(key => add(value[key]));
+            ['path','src','uri','output_url','outputUrl','video','video_url','videoUrl','mp4_url','mp4Url','download_url','downloadUrl','preview_url','previewUrl'].forEach(key => add(value[key]));
         }
     };
-    ['items','outputs','videos','audios','texts','files','images','urls','data','result','output','url'].forEach(key => add(result?.[key]));
+    add(result);
     const seen = new Set();
     return urls.map(item => {
         const url = typeof item === 'string' ? item : item?.url || item?.path || '';
@@ -4295,10 +5152,11 @@ function resultMediaUrls(result){
 }
 function mediaKindForUrls(urls, fallback='image'){
     const items = (urls || []).map(item => typeof item === 'string' ? {url:item} : (item || {}));
-    if(fallback && fallback !== 'image') return fallback;
+    if(items.some(isFileMediaItem)) return 'file';
     if(items.some(isVideoMediaItem)) return 'video';
     if(items.some(isAudioMediaItem)) return 'audio';
     if(items.some(isTextMediaItem)) return 'text';
+    if(fallback && fallback !== 'image') return fallback;
     return fallback;
 }
 function imageRefsOnly(refs){
@@ -4870,29 +5728,78 @@ function smartLoopBodyHtml(node){
         </div>
     </div>`;
 }
+function smartGroupBodyHtml(node){
+    const groupThumbLayout = smartGroupThumbLayout(node);
+    const refThumbs = groupThumbLayout?.refs || [];
+    const members = smartGroupMembers(node);
+    const counts = members.reduce((acc, member) => {
+        if(member.type === 'smart-prompt') acc.prompt += 1;
+        else if(member.type === 'smart-loop') acc.loop += 1;
+        return acc;
+    }, {prompt:0, media:refThumbs.length, loop:0});
+    const summary = [
+        counts.prompt ? `${counts.prompt} 提示词` : '',
+        counts.media ? `${counts.media} 图片` : '',
+        counts.loop ? `${counts.loop} 循环` : ''
+    ].filter(Boolean).join(' · ') || '双击或拖入图片';
+    if(refThumbs.length){
+        const totalThumbs = Math.max(1, Number(groupThumbLayout?.rows || 1) * Number(groupThumbLayout?.cols || 1));
+        if(totalThumbs === 1 && refThumbs.length === 1){
+            const ref = refThumbs[0];
+            const innerW = Math.max(24, Number(groupThumbLayout.innerW || groupThumbLayout.width || SMART_GROUP_DEFAULT_WIDTH));
+            const innerH = Math.max(24, Number(groupThumbLayout.innerH || groupThumbLayout.height || SMART_GROUP_DEFAULT_HEIGHT));
+            const canDelete = ref.nodeId === node.id;
+            return `<div class="smart-group-card has-thumbs">
+                <div class="smart-group-summary"><i data-lucide="group"></i><span>${escapeHtml(summary)}</span></div>
+                <div class="image-wrap smart-group-single-thumb ${selectedImage.nodeId === ref.nodeId && Number(selectedImage.index) === Number(ref.index) ? 'image-selected' : ''}" data-ref-node-id="${escapeAttr(ref.nodeId)}" data-ref-image-index="${ref.index}" data-image-index="${ref.index}" data-media-signature="${escapeAttr(`${mediaKindForItem(ref.item)}:${ref.item?.url || ''}`)}" style="--node-img-w:${innerW}px;--node-img-h:${innerH}px">${singleMediaHtml(ref.item, innerW, innerH)}${imageResolutionBadgeHtml(ref.item)}${canDelete ? `<button class="mini-x image-delete" type="button" data-image-index="${ref.index}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button>` : ''}</div>
+            </div>`;
+        }
+        const groupMaxVisibleRows = (groupThumbLayout.compactMembers || []).length ? Number(groupThumbLayout.rows || 1) : SMART_GROUP_MAX_VISIBLE_ROWS;
+        const visibleRows = Math.max(1, Math.min(groupMaxVisibleRows, Number(groupThumbLayout.visibleRows || groupThumbLayout.rows || 1)));
+        const maxHeight = Math.max(44, visibleRows * Number(groupThumbLayout.thumb || 96) + Math.max(0, visibleRows - 1) * 8);
+        return `<div class="smart-group-card has-thumbs">
+            <div class="smart-group-summary"><i data-lucide="group"></i><span>${escapeHtml(summary)}</span></div>
+            <div class="thumb-grid smart-group-thumb-grid" data-thumb-scroll="1" style="--thumb-cols:${groupThumbLayout.cols}; --thumb-size:${groupThumbLayout.thumb}px; --thumb-max-height:${maxHeight}px">${refThumbs.map(ref => {
+                const canDelete = ref.nodeId === node.id;
+                return `<div class="thumb-item ${selectedImage.nodeId === ref.nodeId && Number(selectedImage.index) === Number(ref.index) ? 'image-selected' : ''}" data-ref-node-id="${escapeAttr(ref.nodeId)}" data-ref-image-index="${ref.index}" data-image-index="${ref.index}" data-media-signature="${escapeAttr(`${mediaKindForItem(ref.item)}:${ref.item?.url || ''}`)}">${thumbMediaHtml(ref.item)}${imageResolutionBadgeHtml(ref.item)}${canDelete ? `<button class="mini-x image-delete" type="button" data-image-index="${ref.index}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button>` : ''}</div>`;
+            }).join('')}</div>
+        </div>`;
+    }
+    return `<div class="smart-group-card">
+        <div class="smart-group-summary"><i data-lucide="group"></i><span>${escapeHtml(summary)}</span></div>
+        ${members.length ? '' : `<div class="smart-group-empty"><i data-lucide="plus"></i><span>拖入图片自动收进分组</span></div>`}
+    </div>`;
+}
 function nodeBodyHtml(node, layout){
+    if(node.type === 'smart-group') return smartGroupBodyHtml(node);
     if(node.type === 'smart-prompt') return promptNodeBodyHtml(node);
     if(node.type === 'smart-loop') return smartLoopBodyHtml(node);
     const imgs = (node.images || []).map(imageForDisplay);
     if(node.jimengPending && node.jimengPending.submitId && imgs.length === 0){
         return jimengPendingBodyHtml(node, layout);
     }
+    const recoverTask = smartRecoverableImageTask(node);
+    if(recoverTask && imgs.length === 0){
+        return imageTaskRecoverBodyHtml(node, recoverTask, layout);
+    }
     if(node.queued && imgs.length === 0 && !node.pending){
         return `<div class="loading-cell single queued" style="width:${layout.width}px;height:${layout.height}px"></div>`;
     }
     if(node.pending && imgs.length === 0){
         const count = Math.max(1, Number(node.pending) || 1);
-        if(count <= 1) return `<div class="loading-cell single" style="width:${layout.width}px;height:${layout.height}px"></div>`;
+        if(count <= 1 || node.pendingCandidatePool) return `<div class="loading-cell single" style="width:${layout.width}px;height:${layout.height}px"></div>`;
         const cols = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(count))));
         const rows = Math.ceil(count / cols);
         return `<div class="loading-skeleton" style="grid-template-columns:repeat(${cols}, 1fr);grid-template-rows:repeat(${rows}, 1fr);width:${layout.width}px;height:${layout.height}px;padding:8px;box-sizing:border-box">${Array.from({length:count}).map(() => `<div class="loading-cell"></div>`).join('')}</div>`;
     }
     if(imgs.length > 1) return `<div class="thumb-grid" style="--thumb-cols:${layout.cols}; --thumb-size:${layout.thumb}px">${imgs.map((img, i) => `<div class="thumb-item ${selectedImage.nodeId === node.id && selectedImage.index === i ? 'image-selected' : ''}" data-image-index="${i}" data-media-signature="${escapeAttr(`${mediaKindForItem(img)}:${img?.url || ''}`)}">${thumbMediaHtml(img)}${imageResolutionBadgeHtml(img)}<button class="mini-x image-delete" type="button" data-image-index="${i}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`).join('')}</div>`;
-    if(imgs[0]) return `<div class="image-wrap ${selectedImage.nodeId === node.id && selectedImage.index === 0 ? 'image-selected' : ''}" data-image-index="0" data-media-signature="${escapeAttr(`${mediaKindForItem(imgs[0])}:${imgs[0]?.url || ''}`)}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">${singleMediaHtml(imgs[0], layout.width, layout.height)}${imageResolutionBadgeHtml(imgs[0])}<button class="mini-x image-delete" type="button" data-image-index="0" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`;
-    return `<div class="node-drop" data-upload-action="files">
-        <span class="upload-node-main"><i data-lucide="upload-cloud"></i></span>
-        <span class="upload-node-title">${escapeHtml(tr('smart.createImportNode'))}</span>
-        <span class="upload-node-sub">拖拽 / 粘贴 / 点击上传</span>
+    if(imgs[0]) return `<div class="image-wrap ${candidatePanelNodeId === node.id ? 'candidate-open' : ''} ${selectedImage.nodeId === node.id && selectedImage.index === 0 ? 'image-selected' : ''}" data-image-index="0" data-media-signature="${escapeAttr(`${mediaKindForItem(imgs[0])}:${imgs[0]?.url || ''}`)}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">${singleMediaHtml(imgs[0], layout.width, layout.height)}${imageResolutionBadgeHtml(imgs[0])}${candidateOverlayHtml(node, layout)}<button class="mini-x image-delete" type="button" data-image-index="0" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`;
+    return `<div class="node-drop">
+        <button class="upload-node-trigger" type="button" data-upload-action="files" title="${escapeHtml(tr('smart.createImportNode'))}">
+            <span class="upload-node-main"><i data-lucide="upload-cloud"></i></span>
+            <span class="upload-node-title">${escapeHtml(tr('smart.createImportNode'))}</span>
+            <span class="upload-node-sub">拖拽 / 粘贴 / 点击上传</span>
+        </button>
     </div>`;
 }
 function jimengPendingBodyHtml(node, layout){
@@ -4905,6 +5812,23 @@ function jimengPendingBodyHtml(node, layout){
             <div class="jimeng-pending-text">${escapeHtml(queueText)}</div>
             <div class="jimeng-pending-sub">任务未丢失，可继续等待或手动查询</div>
             <button class="jimeng-pending-query" type="button" data-jimeng-query="${escapeAttr(node.id)}" ${querying ? 'disabled' : ''}><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i><span>${querying ? '查询中…' : '查询结果'}</span></button>
+        </div>
+    </div>`;
+}
+function smartRecoverableImageTask(node){
+    return smartPendingTasks(node).find(task => task.failed && task.recoverTaskId) || null;
+}
+function imageTaskRecoverBodyHtml(node, task, layout){
+    const querying = Boolean(task.querying);
+    const failedCount = smartPendingTasks(node).filter(item => item.failed && item.recoverTaskId).length;
+    const title = querying ? '查询中' : '任务未丢失';
+    const sub = failedCount > 1 ? `还有 ${failedCount} 个任务可查询` : `任务 ID：${task.recoverTaskId || ''}`;
+    return `<div class="jimeng-pending-cell loading-cell single" style="width:${layout.width}px;height:${layout.height}px">
+        <div class="jimeng-pending-overlay">
+            <div class="jimeng-pending-spinner"><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i></div>
+            <div class="jimeng-pending-text">${escapeHtml(title)}</div>
+            <div class="jimeng-pending-sub">${escapeHtml(sub)}</div>
+            <button class="jimeng-pending-query" type="button" data-image-task-query="${escapeAttr(node.id)}" data-task-id="${escapeAttr(task.taskId)}" ${querying ? 'disabled' : ''}><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i><span>${querying ? '查询中…' : '查询结果'}</span></button>
         </div>
     </div>`;
 }
@@ -4949,20 +5873,23 @@ function refreshRunTimerPills(){
     if(!active && runTimerInterval){ clearInterval(runTimerInterval); runTimerInterval = null; }
 }
 function render(){
-    const composerEl = composer;
     const mediaStates = captureMediaPlaybackStates();
     const reusableNodes = new Map();
     world.querySelectorAll('.image-node').forEach(el => {
         const node = nodes.find(n => n.id === el.dataset.id);
         if(smartNodeHasLiveMedia(node)) reusableNodes.set(node.id, el);
     });
+    let migratedCandidates = false;
     const nodeHtmlEntries = nodes.map(node => {
+        if(migrateGeneratedImagesToCandidatePool(node)) migratedCandidates = true;
         const imgs = node.images || [];
-        const title = node.type === 'smart-prompt' ? 'Prompt' : node.type === 'smart-loop' ? 'Loop' : (imgs.length > 1 ? 'Group' : imgs.length ? 'Image' : escapeHtml(tr('smart.createImportNode')));
+        const title = node.type === 'smart-group' ? (node.title || '智能分组') : node.type === 'smart-prompt' ? 'Prompt' : node.type === 'smart-loop' ? 'Loop' : (imgs.length > 1 ? 'Group' : imgs.length ? 'Image' : escapeHtml(tr('smart.createImportNode')));
         const scale = nodeScale(node);
         const layout = imageLayout(imgs, scale, node);
         const isPrompt = node.type === 'smart-prompt';
         const isLoop = node.type === 'smart-loop';
+        const isSmartGroup = node.type === 'smart-group';
+        const isCompactMember = isSmartGroupCompactMember(node);
         const isImageNode = node.type === 'smart-image' || !node.type;
         const isJimengPending = Boolean(node.jimengPending && node.jimengPending.submitId && imgs.length === 0);
         const isQueued = Boolean(node.queued && imgs.length === 0 && !node.pending && !isJimengPending);
@@ -4972,14 +5899,14 @@ function render(){
         const isPending = ((node.pending || isQueued || isJimengPending) && imgs.length === 0);
         const body = nodeBodyHtml(node, layout);
         const deleteBtn = `<button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button>`;
-        const hint = isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(tr('smart.hintEmpty')));
-        const html = `<div class="image-node ${isEmpty ? 'empty-node' : ''} ${isGroup ? 'group-node' : ''} ${isHistory ? 'history-group-node' : ''} ${isPrompt ? 'prompt-smart-node' : ''} ${isLoop ? 'loop-smart-node' : ''} ${isNodeSelected(node.id) ? 'selected' : ''} ${(dragState?.groupIds?.includes(node.id) || dragState?.id === node.id) ? 'dragging' : ''} ${node.running ? 'node-running' : ''} ${isPending ? 'node-pending' : ''}" data-id="${escapeHtml(node.id)}" style="left:${node.x || 0}px;top:${node.y || 0}px;width:${layout.width}px;height:${layout.height}px">
+        const hint = isSmartGroup ? '拖入图片、提示词或循环节点' : isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(tr('smart.hintEmpty')));
+        const floatingActions = `${candidateControlHtml(node)}<button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button>`;
+        const html = `<div class="image-node ${isEmpty ? 'empty-node' : ''} ${isGroup ? 'group-node' : ''} ${isHistory ? 'history-group-node' : ''} ${isPrompt ? 'prompt-smart-node' : ''} ${isLoop ? 'loop-smart-node' : ''} ${isSmartGroup ? 'smart-group-node' : ''} ${isCompactMember ? 'smart-group-member-node' : ''} ${candidatePanelNodeId === node.id ? 'candidate-panel-open-node' : ''} ${isNodeSelected(node.id) ? 'selected' : ''} ${(dragState?.groupIds?.includes(node.id) || dragState?.id === node.id) ? 'dragging' : ''} ${node.running ? 'node-running' : ''} ${isPending ? 'node-pending' : ''}" data-id="${escapeHtml(node.id)}" style="left:${node.x || 0}px;top:${node.y || 0}px;width:${layout.width}px;height:${layout.height}px">
             <div class="node-head"><div class="node-title">${title}</div><div class="node-actions">${deleteBtn}</div></div>
-            ${!isEmpty ? `<div class="floating-node-actions"><button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button></div>` : ''}
+            ${!isEmpty ? `<div class="floating-node-actions">${floatingActions}</div>` : ''}
             ${runTimePillHtml(node)}
             <div class="node-body">${body}</div>
             <div class="node-hint">${hint}</div>
-            ${imgs.length || node.pending || isQueued || isJimengPending || isPrompt || isLoop ? '<div class="node-resize-handle" data-resize="1"></div>' : ''}
             <div class="node-port port-in" data-port="in" title="input"></div>
             <div class="node-port port-out" data-port="out" title="output"></div>
         </div>`;
@@ -4994,11 +5921,9 @@ function render(){
     });
     const keepEls = new Set();
     reusableNodes.forEach(el => keepEls.add(el));
-    if(composerEl) keepEls.add(composerEl);
     [...world.childNodes].forEach(child => {
         if(!keepEls.has(child)) child.remove();
     });
-    if(composerEl) world.appendChild(composerEl);
     world.insertAdjacentHTML('beforeend', renderConnections());
     nodeHtmlEntries.forEach(entry => {
         const fresh = renderedNodeEls.get(entry.node.id);
@@ -5020,7 +5945,6 @@ function render(){
     refreshRunTimerPills();
     return;
     world.innerHTML = '';
-    if(composerEl) world.appendChild(composerEl);
     world.insertAdjacentHTML('beforeend', renderConnections());
     const nodesHtml = nodes.map(node => {
         const imgs = node.images || [];
@@ -5042,7 +5966,6 @@ function render(){
             ${runTimePillHtml(node)}
             <div class="node-body">${body}</div>
             <div class="node-hint">${isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(tr('smart.hintEmpty')))}</div>
-            ${imgs.length || node.pending || isQueued || isPrompt || isLoop ? '<div class="node-resize-handle" data-resize="1"></div>' : ''}
             <div class="node-port port-in" data-port="in" title="输入"></div>
             <div class="node-port port-out" data-port="out" title="输出"></div>
         </div>`;
@@ -5055,28 +5978,28 @@ function render(){
     if(window.lucide) lucide.createIcons();
     measureSmartNodeImages();
     refreshRunTimerPills();
+    if(migratedCandidates) scheduleSave();
 }
 function measureSmartNodeImages(){
     world.querySelectorAll('.image-node img,.image-node video').forEach(imgEl => {
+        const candidatePanel = imgEl.closest('.candidate-panel');
         const nodeEl = imgEl.closest('.image-node');
         const itemEl = imgEl.closest('[data-image-index]');
         const node = nodes.find(n => n.id === nodeEl?.dataset.id);
+        const candidateIndex = Number(candidatePanel?.dataset.candidateIndex ?? -1);
         const index = Number(itemEl?.dataset.imageIndex ?? 0);
-        const image = node?.images?.[index];
+        const candidatePool = candidatePanel ? nodeCandidateImages(node) : [];
+        const image = candidatePanel ? candidatePool[candidateIndex] : node?.images?.[index];
         if(imgEl.tagName?.toLowerCase() === 'img' && image?.url) bindImageProxyFallback(imgEl, image);
-        if(!node || !image || image.natural_w || image.natural_h) return;
+        if(!node || !image || imageResolutionLabel(image)) return;
         const apply = () => {
             const w = imgEl.naturalWidth || imgEl.videoWidth || 0;
             const h = imgEl.naturalHeight || imgEl.videoHeight || 0;
-            if(w <= 0 || h <= 0 || image.natural_w || image.natural_h) return;
+            if(w <= 0 || h <= 0 || imageResolutionLabel(image)) return;
             image.natural_w = w;
             image.natural_h = h;
+            if(candidatePanel) syncCandidateImageDimensions(node, image, w, h);
             applyThumbDisplaySizeToElement(itemEl, image, Math.max(itemEl?.clientWidth || 0, itemEl?.clientHeight || 0));
-            if((node.images || []).length === 1 && !node.w && !node.h){
-                const layout = singleImageLayout(image, node, mediaNodeDefaultScale(node));
-                node.w = layout.width;
-                node.h = layout.height;
-            }
             render();
             scheduleSave();
         };
@@ -5496,22 +6419,29 @@ function bindNodeEvents(){
             selectedId = id;
             selectedIds = [];
             selectedImage = {nodeId:'', index:-1};
+            suppressComposerForCandidateNodeId = '';
         if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
             render();
         };
-        el.ondblclick = e => e.stopPropagation();
-        const nodeDrop = el.querySelector('.node-drop');
-        nodeDrop?.addEventListener('mousedown', e => {
+        el.ondblclick = e => {
+            e.stopPropagation();
+            if(nodeForControls?.type === 'smart-group' && !e.target.closest('.thumb-item,.image-wrap,.mini-x,.node-port')){
+                openCreateMenu(e);
+            }
+        };
+        const uploadTrigger = el.querySelector('.upload-node-trigger');
+        uploadTrigger?.addEventListener('mousedown', e => {
             if(e.button !== 0) return;
             e.preventDefault();
             e.stopPropagation();
         }, true);
-        nodeDrop?.addEventListener('click', e => {
+        uploadTrigger?.addEventListener('click', e => {
             e.preventDefault(); e.stopPropagation();
             hideRunTimerForNode(nodes.find(n => n.id === id));
             selectedId = id;
             selectedIds = [];
             selectedImage = {nodeId:'', index:-1};
+            suppressComposerForCandidateNodeId = '';
             pendingGroupUploadPoint = null;
             uploadTargetId = id;
             syncSelectionUi();
@@ -5524,6 +6454,59 @@ function bindNodeEvents(){
                 deleteNodeFromButton(id);
             });
         });
+        el.querySelectorAll('[data-candidate-toggle]').forEach(btn => {
+            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            btn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                const node = nodes.find(n => n.id === id);
+                const count = candidateCountForNode(node);
+                if(count <= 1) return;
+                selectedId = id;
+                selectedIds = [];
+                selectedImage = {nodeId:'', index:-1};
+                suppressComposerForCandidateNodeId = id;
+                if(candidatePanelNodeId === id){
+                    closeCandidatePanel();
+                } else {
+                    candidatePanelNodeId = id;
+                    candidatePanelIndex = Math.max(0, Math.min(count - 1, Number(node?.candidateIndex) || 0));
+                }
+                render();
+            });
+        });
+        el.querySelectorAll('[data-candidate-prev],[data-candidate-next]').forEach(btn => {
+            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            btn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                const node = nodes.find(n => n.id === id);
+                const count = candidateCountForNode(node);
+                if(count <= 1) return;
+                const delta = btn.dataset.candidatePrev ? -1 : 1;
+                candidatePanelNodeId = id;
+                candidatePanelIndex = (candidatePreviewIndexForNode(node, count) + delta + count) % count;
+                suppressComposerForCandidateNodeId = id;
+                render();
+            });
+        });
+        el.querySelectorAll('[data-candidate-set-main]').forEach(btn => {
+            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            btn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                const node = nodes.find(n => n.id === id);
+                const count = candidateCountForNode(node);
+                if(count <= 1) return;
+                pushUndo();
+                candidatePanelIndex = candidatePreviewIndexForNode(node, count);
+                setNodeMainCandidate(node, candidatePanelIndex);
+                selectedId = id;
+                selectedIds = [];
+                selectedImage = {nodeId:'', index:-1};
+                closeCandidatePanel({suppressComposer:false});
+                suppressComposerForCandidateNodeId = '';
+                render();
+                scheduleSave();
+            });
+        });
         el.querySelectorAll('[data-jimeng-query]').forEach(btn => {
             btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
             btn.addEventListener('click', e => {
@@ -5531,10 +6514,17 @@ function bindNodeEvents(){
                 queryJimengNow(btn.dataset.jimengQuery);
             });
         });
+        el.querySelectorAll('[data-image-task-query]').forEach(btn => {
+            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            btn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                querySmartImageTaskNow(btn.dataset.imageTaskQuery, btn.dataset.taskId);
+            });
+        });
         el.querySelectorAll('.image-delete').forEach(btn => {
             btn.addEventListener('click', e => {
                 e.preventDefault(); e.stopPropagation();
-                deleteImage(id, Number(btn.dataset.imageIndex));
+                deleteImage(btn.dataset.refNodeId || id, Number(btn.dataset.imageIndex));
             });
         });
         el.querySelectorAll('.thumb-item,.image-wrap').forEach(item => {
@@ -5543,6 +6533,7 @@ function bindNodeEvents(){
                 e.preventDefault();
             });
             item.addEventListener('mousedown', e => {
+                if(isCandidatePanelInteractionTarget(e.target)) return;
                 if(e.button !== 0 || e.target.closest('.image-delete')) return;
                 if(e.detail < 2) return;
                 e.preventDefault();
@@ -5550,25 +6541,30 @@ function bindNodeEvents(){
                 e.stopImmediatePropagation();
                 clearImageClickTimer();
                 suppressImageClickUntil = Date.now() + 260;
+                const refNodeId = item.dataset.refNodeId || id;
+                const refIndex = Number(item.dataset.refImageIndex ?? item.dataset.imageIndex ?? 0);
                 selectedId = id;
                 selectedIds = [];
-                selectedImage = {nodeId:id, index:Number(item.dataset.imageIndex || 0)};
-                openImagePreview(id, Number(item.dataset.imageIndex || 0));
+                selectedImage = {nodeId:refNodeId, index:refIndex};
+                openImagePreview(refNodeId, refIndex);
             }, true);
             item.addEventListener('click', e => {
+                if(isCandidatePanelInteractionTarget(e.target)) return;
                 if(e.target.closest('.image-delete')) return;
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
                 if(Date.now() < suppressImageClickUntil) return;
                 const imageIndex = Number(item.dataset.imageIndex || 0);
+                const refNodeId = item.dataset.refNodeId || id;
+                const refIndex = Number(item.dataset.refImageIndex ?? item.dataset.imageIndex ?? 0);
                 if(e.detail >= 2){
                     clearImageClickTimer();
                     suppressImageClickUntil = Date.now() + 260;
                     selectedId = id;
                     selectedIds = [];
-                    selectedImage = {nodeId:id, index:imageIndex};
-                    openImagePreview(id, imageIndex);
+                    selectedImage = {nodeId:refNodeId, index:refIndex};
+                    openImagePreview(refNodeId, refIndex);
                     return;
                 }
                 clearImageClickTimer();
@@ -5577,34 +6573,40 @@ function bindNodeEvents(){
                 const owner = nodes.find(n => n.id === id);
                 hideRunTimerForNode(owner);
                 const isGroupOwner = (owner?.images || []).length > 1;
+                const isUploadOnlyOwner = isUploadedImageOnlyNode(owner);
                 selectedId = id;
                 selectedIds = [];
                 // 分组内的图片单击不再"穿透"到具体图片：保持节点级 composer
-                selectedImage = isGroupOwner
+                selectedImage = isGroupOwner || isUploadOnlyOwner
                     ? {nodeId:'', index:-1}
                     : {nodeId:id, index:imageIndex};
+                    suppressComposerForCandidateNodeId = '';
                     if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
                     syncSelectionUi();
                     updateComposer();
                 }, 220);
             });
         item.addEventListener('dblclick', e => {
+            if(isCandidatePanelInteractionTarget(e.target)) return;
             if(e.target.closest('.image-delete')) return;
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
             clearImageClickTimer();
             suppressImageClickUntil = Date.now() + 260;
+            const refNodeId = item.dataset.refNodeId || id;
+            const refIndex = Number(item.dataset.refImageIndex ?? item.dataset.imageIndex ?? 0);
             selectedId = id;
             selectedIds = [];
-            selectedImage = {nodeId:id, index:Number(item.dataset.imageIndex || 0)};
-            openImagePreview(id, Number(item.dataset.imageIndex || 0));
+            selectedImage = {nodeId:refNodeId, index:refIndex};
+            openImagePreview(refNodeId, refIndex);
         }, true);
         });
         el.querySelectorAll('.thumb-item').forEach(item => {
             item.addEventListener('mousedown', e => {
                 if(e.button !== 0 || e.target.closest('.mini-x')) return;
                 if(e.detail >= 2) return;
+                if(item.dataset.refNodeId && item.dataset.refNodeId !== id) return;
                 const node = nodes.find(n => n.id === id);
                 if(!node || (node.images || []).length <= 1) return;
                 e.preventDefault(); e.stopPropagation();
@@ -5612,18 +6614,8 @@ function bindNodeEvents(){
                 capturePendingUndo();
             });
         });
-        el.querySelector('.node-resize-handle')?.addEventListener('mousedown', e => {
-            if(e.button !== 0) return;
-            e.preventDefault(); e.stopPropagation();
-            const node = nodes.find(n => n.id === id);
-            if(!node) return;
-            const rect = nodeRect(node);
-            resizeState = {id, startX:e.clientX, startY:e.clientY, startW:rect.width, startH:rect.height};
-            document.body.classList.add('smart-node-resize');
-            capturePendingUndo();
-        });
         const beginNodeDrag = e => {
-            if(e.button !== 0 || e.target.closest('.mini-x, .node-resize-handle, .thumb-item, .node-port, select, input, button')) return;
+            if(e.button !== 0 || e.target.closest('.mini-x, .thumb-item, .node-port, select, input, button')) return;
             if(e.target.closest('.prompt-node-pill, .prompt-node-llm, textarea:not(.prompt-node-text)')) return;
             e.preventDefault(); e.stopPropagation();
             window.getSelection?.()?.removeAllRanges?.();
@@ -5697,6 +6689,7 @@ function canAutoConnectDraggedNode(sourceNode, targetNode){
     if(isSmartImageNode(sourceNode)) return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop' || targetNode.type === 'smart-prompt';
     if(sourceNode.type === 'smart-prompt') return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop';
     if(sourceNode.type === 'smart-loop') return isSmartImageNode(targetNode);
+    if(sourceNode.type === 'smart-group') return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop';
     return false;
 }
 function restoreDraggedNodePosition(){
@@ -5728,20 +6721,27 @@ function deleteNode(id){
     if(canvas) canvas.connections = (canvas.connections || []).filter(c => !deleteIds.has(c.from) && !deleteIds.has(c.to));
     nodes.forEach(node => {
         if(Array.isArray(node.inputNodeIds)) node.inputNodeIds = node.inputNodeIds.filter(inputId => !deleteIds.has(inputId));
+        if(isSmartGroupNode(node) && Array.isArray(node.items)) node.items = node.items.filter(itemId => !deleteIds.has(itemId));
     });
     if(selectedId === id) selectedId = '';
     selectedIds = selectedIds.filter(selected => !deleteIds.has(selected));
     if(deleteIds.has(selectedImage.nodeId)) selectedImage = {nodeId:'', index:-1};
+    if(deleteIds.has(candidatePanelNodeId)){
+        candidatePanelNodeId = '';
+        candidatePanelIndex = 0;
+    }
     render();
     scheduleSave();
 }
 function clearNodeMediaBeforeDelete(id){
     const node = nodes.find(n => n.id === id);
     if(!node || (node.type && node.type !== 'smart-image')) return false;
-    const hadMedia = Boolean((node.images || []).length || node.pending);
+    const hadMedia = Boolean((node.images || []).length || (node.candidateImages || []).length || node.pending);
     if(!hadMedia) return false;
     pushUndo();
     node.images = [];
+    node.candidateImages = [];
+    node.candidateIndex = 0;
     node.pending = 0;
     node.running = false;
     node.title = tr('smart.createImportNode');
@@ -5751,6 +6751,10 @@ function clearNodeMediaBeforeDelete(id){
     if(history){
         nodes = nodes.filter(n => n.id !== history.id);
         if(canvas) canvas.connections = (canvas.connections || []).filter(c => c.from !== history.id && c.to !== history.id);
+    }
+    if(candidatePanelNodeId === id){
+        candidatePanelNodeId = '';
+        candidatePanelIndex = 0;
     }
     if(selectedImage.nodeId === id) selectedImage = {nodeId:'', index:-1};
     selectedId = id;
@@ -5838,7 +6842,19 @@ function deleteImage(id, imageIndex){
     const node = nodes.find(n => n.id === id);
     if(!node || imageIndex < 0) return;
     pushUndo();
+    const removed = node.images?.[imageIndex];
     node.images = (node.images || []).filter((_, index) => index !== imageIndex);
+    if(removed?.url && Array.isArray(node.candidateImages)){
+        node.candidateImages = node.candidateImages.filter(img => img?.url !== removed.url);
+        node.candidateIndex = Math.max(0, Math.min(node.candidateImages.length - 1, Number(node.candidateIndex) || 0));
+        if(!node.images.length && node.candidateImages.length){
+            setNodeMainCandidate(node, node.candidateIndex);
+        }
+        if(candidatePanelNodeId === id && node.candidateImages.length <= 1){
+            candidatePanelNodeId = '';
+            candidatePanelIndex = 0;
+        }
+    }
     if(node.images.length <= 1) node.title = 'Image';
     if(selectedImage.nodeId === id) selectedImage = {nodeId:id, index:Math.min(selectedImage.index, node.images.length - 1)};
     if(selectedImage.index < 0) selectedImage = {nodeId:'', index:-1};
@@ -6198,6 +7214,7 @@ function setImageEditMode(mode, userTouched=false){
     cropCanvasEl.classList.toggle('brush-mode', imageEditMode === 'brush');
     cropCanvasEl.classList.toggle('grid-mode', imageEditMode === 'grid');
     cropCanvasEl.classList.toggle('outpaint-mode', imageEditMode === 'outpaint');
+    syncGridOperationControls();
     syncGridCustomCursor();
     document.querySelectorAll('[data-image-edit-mode]').forEach(btn => btn.classList.toggle('active', btn.dataset.imageEditMode === imageEditMode));
     document.getElementById('imagePreviewTools').classList.toggle('active', isPreview && !isVideoPreview);
@@ -7112,6 +8129,7 @@ function drawNumberLabel(point){
 }
 function beginEditDraw(event){
     if(imageEditMode === 'crop') return;
+    if(imageEditMode === 'grid' && gridOperationMode === 'join') return;
     event.preventDefault(); event.stopPropagation();
     const canvasEl = editDrawCanvas();
     canvasEl.setPointerCapture?.(event.pointerId);
@@ -7134,6 +8152,7 @@ function beginEditDraw(event){
     normalizeMaskPreviewCanvas(canvasEl);
 }
 function moveEditDraw(event){
+    if(imageEditMode === 'grid' && gridOperationMode === 'join') return;
     if(imageEditMode === 'grid' && gridCustomMode && gridCustomDrag){ event.preventDefault(); event.stopPropagation(); setGridCustomLinePos(gridCustomDrag.index, editDrawPoint(event)); refreshGridSplitPreview(); return; }
     if(!editDrawState || imageEditMode === 'crop' || imageEditMode === 'grid') return;
     event.preventDefault(); event.stopPropagation();
@@ -7153,12 +8172,85 @@ function endEditDraw(event){
     if(gridCustomDrag && event?.pointerId != null) editDrawCanvas().releasePointerCapture?.(event.pointerId);
     editDrawState = null; gridCustomDrag = null; syncEditDrawingHistoryButtons();
 }
+function beginGridJoinDrag(event){
+    if(imageEditMode !== 'grid' || gridOperationMode !== 'join') return;
+    const itemEl = event.target?.closest?.('.grid-join-item');
+    if(!itemEl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const index = Number(itemEl.dataset.gridJoinIndex);
+    const item = gridJoinLayout?.items?.find(entry => Number(entry.index) === index);
+    if(!item) return;
+    itemEl.setPointerCapture?.(event.pointerId);
+    gridJoinDrag = {index, pointerId:event.pointerId, sx:event.clientX, sy:event.clientY, x:item.x, y:item.y};
+    itemEl.classList.add('dragging');
+}
+function moveGridJoinDrag(event){
+    if(!gridJoinDrag || imageEditMode !== 'grid' || gridOperationMode !== 'join') return;
+    event.preventDefault();
+    event.stopPropagation();
+    const item = gridJoinLayout?.items?.find(entry => Number(entry.index) === Number(gridJoinDrag.index));
+    if(!item) return;
+    const host = document.getElementById('gridJoinCanvas');
+    const rect = host?.getBoundingClientRect();
+    const logical = gridJoinCanvasSize();
+    const scale = rect ? Math.max(0.001, rect.width / Math.max(1, logical.w)) : Math.max(0.001, imageEditZoom || 1);
+    const dx = (event.clientX - gridJoinDrag.sx) / scale;
+    const dy = (event.clientY - gridJoinDrag.sy) / scale;
+    gridJoinDrag.dx = dx;
+    gridJoinDrag.dy = dy;
+    const el = host?.querySelector(`[data-grid-join-index="${CSS.escape(String(gridJoinDrag.index))}"]`);
+    if(el) el.style.transform = `translate(${Math.round(dx)}px, ${Math.round(dy)}px)`;
+}
+function gridJoinDragTarget(){
+    if(!gridJoinDrag || !gridJoinLayout) return null;
+    const dragged = gridJoinLayout.items.find(entry => Number(entry.index) === Number(gridJoinDrag.index));
+    if(!dragged) return null;
+    const dx = gridJoinDrag.dx || 0;
+    const dy = gridJoinDrag.dy || 0;
+    const cx = dragged.x + dx + dragged.w / 2;
+    const cy = dragged.y + dy + dragged.h / 2;
+    return (gridJoinLayout.items || [])
+        .filter(entry => Number(entry.index) !== Number(gridJoinDrag.index))
+        .map(entry => {
+            const inside = cx >= entry.x && cx <= entry.x + entry.w && cy >= entry.y && cy <= entry.y + entry.h;
+            const score = Math.hypot(cx - (entry.x + entry.w / 2), cy - (entry.y + entry.h / 2));
+            return {entry, inside, score};
+        })
+        .filter(item => item.inside || item.score < Math.max(dragged.w, dragged.h, item.entry.w, item.entry.h) * 0.55)
+        .sort((a, b) => (b.inside - a.inside) || a.score - b.score)[0]?.entry || null;
+}
+function endGridJoinDrag(event){
+    if(!gridJoinDrag) return;
+    const host = document.getElementById('gridJoinCanvas');
+    const draggedEl = host?.querySelector(`[data-grid-join-index="${CSS.escape(String(gridJoinDrag.index))}"]`);
+    draggedEl?.classList.remove('dragging');
+    if(draggedEl) draggedEl.style.transform = '';
+    const dragged = gridJoinLayout?.items?.find(entry => Number(entry.index) === Number(gridJoinDrag.index));
+    const target = gridJoinDragTarget();
+    if(dragged && target){
+        const order = gridJoinVisualOrder();
+        const a = order.indexOf(Number(dragged.index));
+        const b = order.indexOf(Number(target.index));
+        if(a >= 0 && b >= 0) [order[a], order[b]] = [order[b], order[a]];
+        setGridJoinLayoutOrder(order, gridJoinLayout.rows, gridJoinLayout.cols, gridJoinLayout.gap);
+        renderGridJoinPreview();
+    }
+    if(event?.pointerId != null) event.target?.releasePointerCapture?.(event.pointerId);
+    gridJoinDrag = null;
+}
 function syncGridGapValue(){
     const input = document.getElementById('gridGapSize');
     const value = Math.max(0, Math.min(240, Number(input?.value || 0)));
     if(input) input.value = value;
     const label = document.getElementById('gridGapValue');
     if(label) label.textContent = String(value);
+    if(gridJoinLayout && gridOperationMode === 'join'){
+        const rows = gridJoinLayout.rows;
+        const cols = gridJoinLayout.cols;
+        const order = gridJoinVisualOrder();
+        setGridJoinLayoutOrder(order, rows, cols, value);
+    }
     return value;
 }
 function gridSplitSettings(){
@@ -7208,13 +8300,17 @@ function applyGridPreset(rows, cols){
     syncGridCustomCursor(); syncGridCustomUndoBtn(); refreshGridSplitPreview();
 }
 function syncGridCustomControls(){
+    const join = imageEditMode === 'grid' && gridOperationMode === 'join';
     const custom = document.getElementById('gridCustomControls');
-    if(custom) custom.style.display = gridCustomMode ? 'flex' : 'none';
-    document.querySelectorAll('.grid-preset-row').forEach(row => {
-        row.style.display = gridCustomMode ? 'none' : 'flex';
+    if(custom) custom.style.display = (!join && gridCustomMode) ? 'flex' : 'none';
+    document.querySelectorAll('.grid-preset-row.grid-split-control').forEach(row => {
+        row.style.display = (!join && !gridCustomMode) ? 'flex' : 'none';
     });
+    const regular = document.getElementById('gridRegularControls');
+    if(regular) regular.style.display = (!join && !gridCustomMode) ? 'contents' : 'none';
 }
 function toggleGridCustomMode(){
+    if(gridOperationMode === 'join') setGridOperationMode('split');
     gridCustomMode = !gridCustomMode;
     if(gridCustomMode){ gridCustomLines = []; gridCustomHistory = []; }
     gridCustomDrag = null;
@@ -7302,14 +8398,152 @@ function updateZoomLabel(){
 }
 function syncGridCustomCursor(){
     const el = document.getElementById('cropCanvas');
-    el.classList.toggle('grid-custom-h', imageEditMode === 'grid' && gridCustomMode && gridCustomOrientation === 'h');
-    el.classList.toggle('grid-custom-v', imageEditMode === 'grid' && gridCustomMode && gridCustomOrientation === 'v');
+    el.classList.toggle('grid-custom-h', imageEditMode === 'grid' && gridOperationMode !== 'join' && gridCustomMode && gridCustomOrientation === 'h');
+    el.classList.toggle('grid-custom-v', imageEditMode === 'grid' && gridOperationMode !== 'join' && gridCustomMode && gridCustomOrientation === 'v');
+}
+function currentGridJoinItems(){
+    const node = currentEditImage().node;
+    return (node?.images || [])
+        .map((item, index) => ({item:imageForDisplay(item), source:item, index}))
+        .filter(entry => mediaKindForItem(entry.item) === 'image' && entry.item?.url);
+}
+function canGridJoinCurrentNode(){
+    return currentGridJoinItems().length > 1;
+}
+function gridJoinAutoDims(count){
+    const cols = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count))));
+    return {rows:Math.max(1, Math.ceil(count / cols)), cols};
+}
+function gridJoinNaturalSize(entry){
+    const item = entry?.item || {};
+    const cached = gridJoinImageCache.get(entry?.index);
+    const w = Number(item.natural_w || item.width || cached?.naturalWidth || 0);
+    const h = Number(item.natural_h || item.height || cached?.naturalHeight || 0);
+    return {w:Math.max(1, w || 512), h:Math.max(1, h || 512)};
+}
+function gridJoinBaseCellSize(items){
+    const sizes = items.map(gridJoinNaturalSize);
+    const maxW = Math.max(1, ...sizes.map(size => size.w));
+    const maxH = Math.max(1, ...sizes.map(size => size.h));
+    const scale = Math.min(1, 420 / Math.max(maxW, maxH));
+    return {w:Math.max(1, Math.round(maxW * scale)), h:Math.max(1, Math.round(maxH * scale))};
+}
+function ensureGridJoinLayout(rows=null, cols=null){
+    const items = currentGridJoinItems();
+    if(!items.length){ gridJoinLayout = null; return null; }
+    const auto = gridJoinAutoDims(items.length);
+    const nextRows = Math.max(1, Number(rows || gridJoinLayout?.rows || auto.rows) || auto.rows);
+    const nextCols = Math.max(1, Number(cols || gridJoinLayout?.cols || auto.cols) || auto.cols);
+    const byIndex = new Map(items.map(entry => [entry.index, entry]));
+    const previousOrder = gridJoinVisualOrder().map(index => byIndex.get(Number(index))).filter(Boolean);
+    const ordered = [
+        ...previousOrder,
+        ...items.filter(entry => !previousOrder.some(prev => Number(prev.index) === Number(entry.index)))
+    ];
+    const cell = gridJoinBaseCellSize(ordered);
+    const gap = gridGapInputValue();
+    const layoutItems = ordered.map((entry, order) => {
+        const row = Math.floor(order / nextCols);
+        const col = order % nextCols;
+        return {index:entry.index, x:col * (cell.w + gap), y:row * (cell.h + gap), w:cell.w, h:cell.h};
+    });
+    gridJoinLayout = {rows:nextRows, cols:nextCols, cellW:cell.w, cellH:cell.h, gap, items:layoutItems};
+    return gridJoinLayout;
+}
+function gridJoinVisualOrder(layout=gridJoinLayout){
+    return (layout?.items || [])
+        .slice()
+        .sort((a, b) => (Number(a.y || 0) - Number(b.y || 0)) || (Number(a.x || 0) - Number(b.x || 0)))
+        .map(item => Number(item.index));
+}
+function setGridJoinLayoutOrder(order, rows=null, cols=null, gapOverride=null){
+    const entries = currentGridJoinItems();
+    if(!entries.length){ gridJoinLayout = null; return null; }
+    const byIndex = new Map(entries.map(entry => [entry.index, entry]));
+    const ordered = [
+        ...order.map(index => byIndex.get(Number(index))).filter(Boolean),
+        ...entries.filter(entry => !order.includes(entry.index))
+    ];
+    const auto = gridJoinAutoDims(ordered.length);
+    const nextRows = Math.max(1, Number(rows || gridJoinLayout?.rows || auto.rows) || auto.rows);
+    const nextCols = Math.max(1, Number(cols || gridJoinLayout?.cols || auto.cols) || auto.cols);
+    const cell = gridJoinBaseCellSize(ordered);
+    const gap = Math.max(0, Math.min(240, Number(gapOverride ?? document.getElementById('gridGapSize')?.value ?? 0)));
+    const layoutItems = ordered.map((entry, orderIndex) => {
+        const row = Math.floor(orderIndex / nextCols);
+        const col = orderIndex % nextCols;
+        return {index:entry.index, x:col * (cell.w + gap), y:row * (cell.h + gap), w:cell.w, h:cell.h};
+    });
+    gridJoinLayout = {rows:nextRows, cols:nextCols, cellW:cell.w, cellH:cell.h, gap, items:layoutItems};
+    return gridJoinLayout;
+}
+function resetGridJoinLayout(){
+    gridJoinLayout = null;
+    ensureGridJoinLayout();
+    renderGridJoinPreview();
+}
+function applyGridJoinPreset(rows, cols){
+    const order = gridJoinVisualOrder();
+    if(order.length) setGridJoinLayoutOrder(order, rows, cols);
+    else {
+        gridJoinLayout = null;
+        ensureGridJoinLayout(rows, cols);
+    }
+    renderGridJoinPreview();
+}
+function setGridJoinOutputSize(size){
+    gridJoinOutputSize = Math.max(256, Math.min(8192, Number(size) || 2048));
+    syncGridJoinSizeControls();
+    refreshGridSplitPreview();
+}
+function syncGridJoinSizeControls(){
+    document.querySelectorAll('[data-grid-join-size]').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.dataset.gridJoinSize || 0) === Number(gridJoinOutputSize));
+    });
+}
+function setGridOperationMode(mode){
+    gridOperationMode = mode === 'join' && canGridJoinCurrentNode() ? 'join' : 'split';
+    if(mode === 'join' && gridOperationMode !== 'join') toast('当前节点至少需要 2 张图片才能宫格拼接');
+    syncGridOperationControls();
+    refreshGridSplitPreview();
+}
+function syncGridOperationControls(){
+    const join = imageEditMode === 'grid' && gridOperationMode === 'join';
+    if(join){
+        gridCustomDrag = null;
+        gridCustomMode = false;
+        document.getElementById('gridCustomToggle')?.classList.remove('primary');
+        document.getElementById('gridCustomToggle')?.classList.add('secondary');
+        ['gridHorizontalLines','gridVerticalLines'].forEach(id => { const el = document.getElementById(id); if(el) el.disabled = false; });
+    }
+    document.getElementById('gridSplitModeBtn')?.classList.toggle('primary', !join);
+    document.getElementById('gridSplitModeBtn')?.classList.toggle('secondary', join);
+    const joinBtn = document.getElementById('gridJoinModeBtn');
+    if(joinBtn){
+        joinBtn.disabled = !canGridJoinCurrentNode();
+        joinBtn.classList.toggle('primary', join);
+        joinBtn.classList.toggle('secondary', !join);
+    }
+    document.querySelectorAll('.grid-split-control').forEach(el => { el.style.display = join ? 'none' : (el.id === 'gridRegularControls' ? 'contents' : ''); });
+    document.querySelectorAll('.grid-join-control').forEach(el => { el.style.display = join ? 'flex' : 'none'; });
+    document.getElementById('cropCanvas')?.classList.toggle('grid-join-mode', join);
+    document.getElementById('cropImage')?.classList.toggle('grid-join-hidden', join);
+    syncGridCustomCursor();
+    syncGridJoinSizeControls();
+    if(join) ensureGridJoinLayout();
+    else {
+        gridJoinDrag = null;
+        renderGridJoinPreview();
+    }
+    if(!join) syncGridCustomControls();
 }
 function refreshGridSplitPreview(){
     const canvasEl = editDrawCanvas();
     const ctx = canvasEl.getContext('2d');
     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    renderGridJoinPreview();
     if(imageEditMode !== 'grid') return;
+    if(gridOperationMode === 'join') return;
     const countEl = document.getElementById('gridSplitCount');
     const lineWidth = Math.max(2, Math.round(Math.min(canvasEl.width, canvasEl.height) / 320));
     const drawLine = (x1, y1, x2, y2) => {
@@ -7328,6 +8562,79 @@ function refreshGridSplitPreview(){
     if(countEl) countEl.textContent = tr('canvas.gridWillOutput').replace('{n}', rows * cols);
     for(let i = 1; i < cols; i++){ const x = i * canvasEl.width / cols; gap > 0 ? (drawLine(x - gap / 2, 0, x - gap / 2, canvasEl.height), drawLine(x + gap / 2, 0, x + gap / 2, canvasEl.height)) : drawLine(x, 0, x, canvasEl.height); }
     for(let i = 1; i < rows; i++){ const y = i * canvasEl.height / rows; gap > 0 ? (drawLine(0, y - gap / 2, canvasEl.width, y - gap / 2), drawLine(0, y + gap / 2, canvasEl.width, y + gap / 2)) : drawLine(0, y, canvasEl.width, y); }
+}
+function gridJoinCanvasSize(layout=gridJoinLayout){
+    if(!layout) return {w:1, h:1};
+    const gap = Math.max(0, Number(layout.gap || 0));
+    const byGrid = {
+        w:Math.max(1, Number(layout.cols || 1) * Number(layout.cellW || 1) + Math.max(0, Number(layout.cols || 1) - 1) * gap),
+        h:Math.max(1, Number(layout.rows || 1) * Number(layout.cellH || 1) + Math.max(0, Number(layout.rows || 1) - 1) * gap)
+    };
+    return (layout.items || []).reduce((acc, item) => ({
+        w:Math.max(acc.w, Number(item.x || 0) + Number(item.w || 0)),
+        h:Math.max(acc.h, Number(item.y || 0) + Number(item.h || 0))
+    }), byGrid);
+}
+function renderGridJoinPreview(){
+    const host = document.getElementById('gridJoinCanvas');
+    const countEl = document.getElementById('gridSplitCount');
+    const cropCanvasEl = document.getElementById('cropCanvas');
+    if(!host) return;
+    host.innerHTML = '';
+    if(imageEditMode !== 'grid' || gridOperationMode !== 'join'){
+        host.style.display = 'none';
+        if(cropCanvasEl){ cropCanvasEl.style.width = ''; cropCanvasEl.style.height = ''; }
+        return;
+    }
+    const items = currentGridJoinItems();
+    if(items.length <= 1){
+        host.style.display = 'none';
+        if(cropCanvasEl){ cropCanvasEl.style.width = ''; cropCanvasEl.style.height = ''; }
+        if(countEl) countEl.textContent = '至少需要 2 张图片';
+        return;
+    }
+    const layout = ensureGridJoinLayout();
+    const size = gridJoinCanvasSize(layout);
+    const zoom = Math.max(0.05, Number(imageEditZoom || 1));
+    host.style.display = 'block';
+    host.style.width = `${Math.max(1, Math.round(size.w))}px`;
+    host.style.height = `${Math.max(1, Math.round(size.h))}px`;
+    host.style.transform = `scale(${zoom})`;
+    host.style.transformOrigin = '0 0';
+    if(cropCanvasEl){
+        cropCanvasEl.style.width = `${Math.max(1, Math.round(size.w * zoom))}px`;
+        cropCanvasEl.style.height = `${Math.max(1, Math.round(size.h * zoom))}px`;
+    }
+    const byIndex = new Map(items.map(entry => [entry.index, entry]));
+    (layout.items || []).forEach(item => {
+        const entry = byIndex.get(item.index);
+        if(!entry) return;
+        const img = document.createElement('img');
+        img.className = 'grid-join-item';
+        img.draggable = false;
+        img.dataset.gridJoinIndex = String(item.index);
+        img.style.left = `${Math.round(item.x)}px`;
+        img.style.top = `${Math.round(item.y)}px`;
+        img.style.width = `${Math.round(item.w)}px`;
+        img.style.height = `${Math.round(item.h)}px`;
+        img.alt = entry.item.name || `image-${item.index + 1}`;
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            gridJoinImageCache.set(item.index, img);
+            if(!entry.source.natural_w && img.naturalWidth) entry.source.natural_w = img.naturalWidth;
+            if(!entry.source.natural_h && img.naturalHeight) entry.source.natural_h = img.naturalHeight;
+        };
+        img.onerror = () => {
+            if(img.dataset.proxyFallbackTried === '1') return;
+            const fallback = proxiedMediaUrl(entry.item);
+            if(!fallback || fallback === img.getAttribute('src')) return;
+            img.dataset.proxyFallbackTried = '1';
+            img.src = fallback;
+        };
+        img.src = displayMediaUrl(entry.item);
+        host.appendChild(img);
+    });
+    if(countEl) countEl.textContent = `将拼接 ${items.length} 张图片 · 输出长边 ${Math.round(gridJoinOutputSize / 1024)}K`;
 }
 function renderCropBox(){
     if(!cropState) return;
@@ -7463,6 +8770,7 @@ function openImageEditor(nodeId, imageIndex=0){
     previewNavState = {nodeId, index:imageIndex, count:(node.images || []).filter(img => img?.url).length};
     cropState = {nodeId, imageIndex, x:0, y:0, w:0, h:0};
     gridCustomMode = false; gridCustomLines = []; gridCustomHistory = []; gridCustomDrag = null; gridCustomOrientation = 'h';
+    gridOperationMode = 'split'; gridJoinLayout = null; gridJoinDrag = null; gridJoinImageCache = new Map();
     imageEditZoom = 1.0; imageEditBaseW = 0; imageEditBaseH = 0; imageEditModeTouched = false;
     editTextItems = []; editTextSelectedId = ''; editTextDrag = null; editTextDirty = false;
     const toggle = document.getElementById('gridCustomToggle');
@@ -7472,6 +8780,7 @@ function openImageEditor(nodeId, imageIndex=0){
     const orientH = document.getElementById('gridOrientH'), orientV = document.getElementById('gridOrientV');
     if(orientH){ orientH.classList.add('primary'); orientH.classList.remove('secondary'); }
     if(orientV){ orientV.classList.add('secondary'); orientV.classList.remove('primary'); }
+    syncGridOperationControls();
     syncGridCustomUndoBtn(); updateZoomLabel();
     const img = document.getElementById('cropImage');
     img.style.width = ''; img.style.height = ''; img.style.maxWidth = ''; img.style.maxHeight = '';
@@ -7534,15 +8843,18 @@ function closeImageEditor(){
         previewVideo.style.display = 'none';
     }
     clearEditDrawing(true);
-    cropState = null; cropDrag = null; editDrawState = null; resetEditDrawingHistory(); gridCustomDrag = null;
+    cropState = null; cropDrag = null; editDrawState = null; resetEditDrawingHistory(); gridCustomDrag = null; gridJoinDrag = null; gridJoinLayout = null; gridJoinImageCache = new Map(); gridOperationMode = 'split';
     previewNavState = {nodeId:'', index:0, count:0};
     imageEditZoom = 1.0; imageEditBaseW = 0; imageEditBaseH = 0; imageEditModeTouched = false;
     disposePanoramaPreview();
     previewPanDrag = null; previewCompareDrag = false; imageEditPanDrag = null; resetPreviewTransform();
     document.getElementById('imageEditStage')?.classList.remove('overflow-x', 'overflow-y', 'preview-mode');
     const cropCanvasEl = document.getElementById('cropCanvas');
-    cropCanvasEl?.classList.remove('grid-custom-h', 'grid-custom-v', 'outpaint-mode', 'outpaint-warning', 'dragging-image', 'text-mode');
+    cropCanvasEl?.classList.remove('grid-custom-h', 'grid-custom-v', 'grid-join-mode', 'outpaint-mode', 'outpaint-warning', 'dragging-image', 'text-mode');
     if(cropCanvasEl){ cropCanvasEl.style.width = ''; cropCanvasEl.style.height = ''; }
+    document.getElementById('cropImage')?.classList.remove('grid-join-hidden');
+    const joinCanvas = document.getElementById('gridJoinCanvas');
+    if(joinCanvas){ joinCanvas.innerHTML = ''; joinCanvas.style.display = 'none'; joinCanvas.style.width = ''; joinCanvas.style.height = ''; joinCanvas.style.transform = ''; }
     const textCanvas = editTextCanvas();
     if(textCanvas){ textCanvas.style.left = ''; textCanvas.style.top = ''; }
     updatePreviewNavButtons();
@@ -7707,6 +9019,7 @@ async function applyImageBrush(){
 }
 async function applyImageGridSplit(){
     if(!cropState) return;
+    if(gridOperationMode === 'join') return applyImageGridJoin();
     const {node, image} = currentEditImage();
     const img = document.getElementById('cropImage');
     if(!node || !image || !img.naturalWidth || !img.naturalHeight) return;
@@ -7734,6 +9047,85 @@ async function applyImageGridSplit(){
         })));
         outputNode.title = 'Grid';
         closeImageEditor(); render(); scheduleSave();
+    }
+}
+function loadGridJoinImage(entry){
+    const cached = gridJoinImageCache.get(entry.index);
+    if(cached?.complete && cached.naturalWidth) return Promise.resolve(cached);
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            gridJoinImageCache.set(entry.index, img);
+            resolve(img);
+        };
+        img.onerror = () => {
+            if(img.dataset.proxyFallbackTried === '1'){
+                reject(new Error('图片加载失败'));
+                return;
+            }
+            const fallback = proxiedMediaUrl(entry.item);
+            if(!fallback || fallback === img.src){
+                reject(new Error('图片加载失败'));
+                return;
+            }
+            img.dataset.proxyFallbackTried = '1';
+            img.src = fallback;
+        };
+        img.src = displayMediaUrl(entry.item);
+    });
+}
+function drawImageCover(ctx, img, dx, dy, dw, dh){
+    const sw = Math.max(1, Number(img?.naturalWidth || img?.width || 1));
+    const sh = Math.max(1, Number(img?.naturalHeight || img?.height || 1));
+    const targetW = Math.max(1, Number(dw || 1));
+    const targetH = Math.max(1, Number(dh || 1));
+    const scale = Math.max(targetW / sw, targetH / sh);
+    const cropW = Math.max(1, targetW / scale);
+    const cropH = Math.max(1, targetH / scale);
+    const sx = Math.max(0, (sw - cropW) / 2);
+    const sy = Math.max(0, (sh - cropH) / 2);
+    ctx.drawImage(img, sx, sy, cropW, cropH, dx, dy, targetW, targetH);
+}
+async function applyImageGridJoin(){
+    const {node, image} = currentEditImage();
+    const items = currentGridJoinItems();
+    if(!node || items.length <= 1){ toast('当前节点至少需要 2 张图片才能宫格拼接'); return; }
+    const layout = ensureGridJoinLayout();
+    if(!layout?.items?.length) return;
+    const size = gridJoinCanvasSize(layout);
+    const targetLong = Math.max(256, Number(gridJoinOutputSize) || 2048);
+    const outputScale = Math.max(1, targetLong / Math.max(1, Math.max(size.w, size.h)));
+    const canvasEl = document.createElement('canvas');
+    canvasEl.width = Math.max(1, Math.round(size.w * outputScale));
+    canvasEl.height = Math.max(1, Math.round(size.h * outputScale));
+    const ctx = canvasEl.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+    const byIndex = new Map(items.map(entry => [entry.index, entry]));
+    for(const item of layout.items || []){
+        const entry = byIndex.get(item.index);
+        if(!entry) continue;
+        const img = await loadGridJoinImage(entry);
+        drawImageCover(ctx, img, Math.round(item.x * outputScale), Math.round(item.y * outputScale), Math.round(item.w * outputScale), Math.round(item.h * outputScale));
+    }
+    const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/png'));
+    const base = safeExportFileName((downloadNameForMediaItem(image || items[0]?.item, 'image') || 'image').replace(/\.[^.]+$/, ''), 'image');
+    const file = blob ? await uploadCroppedBlob(blob, `${base}_join.png`) : null;
+    if(file){
+        const rect = nodeRect(node);
+        const outputNode = createImageNodeAt({x:rect.x + rect.width + 240, y:rect.y + rect.height / 2}, [{
+            url:file.url,
+            name:file.name,
+            kind:'image',
+            natural_w:canvasEl.width,
+            natural_h:canvasEl.height
+        }], {select:true, skipUndo:true});
+        outputNode.title = 'Grid Join';
+        closeImageEditor();
+        render();
+        scheduleSave();
+        toast('已输出拼接图片');
     }
 }
 function applyImageEdit(){
@@ -7791,12 +9183,22 @@ function positionComposerForNode(node){
     const rect = nodeRect(node);
     const gap = 14;
     const cardW = 540;
+    const screenLeft = viewport.x + (rect.x + rect.width / 2) * viewport.scale - cardW / 2;
+    const screenTop = viewport.y + (rect.y + rect.height) * viewport.scale + gap;
     composer.style.width = `${cardW}px`;
-    composer.style.left = `${rect.x + rect.width / 2 - cardW / 2}px`;
-    composer.style.top = `${rect.y + rect.height + gap}px`;
+    composer.style.left = `${Math.round(screenLeft)}px`;
+    composer.style.top = `${Math.round(screenTop)}px`;
 }
 function updateComposer(){
     const node = selectedNode();
+    if(node?.id && suppressComposerForCandidateNodeId === node.id){
+        composer.classList.remove('open');
+        if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
+        activeComposerSubject = null;
+        lastComposerNodeId = '';
+        suppressComposerForCandidateNodeId = '';
+        return;
+    }
     if(smartCascadeSilentSelection && !activeComposerSubject){
         composer.classList.remove('open');
         if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
@@ -7805,7 +9207,7 @@ function updateComposer(){
         return;
     }
     composer.classList.toggle('open', !!node);
-    if(!isSmartImageNode(node)){
+    if(!isSmartImageNode(node) || isUploadedImageOnlyNode(node)){
         if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
         savePromptDraftForCurrent();
         composer.classList.remove('open');
@@ -7832,6 +9234,7 @@ function updateComposer(){
     positionComposerForNode(node);
     const ph = Math.max(60, Math.min(380, Number(settings.promptH) || 124));
     promptInput.style.setProperty('--prompt-h', `${ph}px`);
+    syncComposerPromptVisibility();
     renderInputThumbsRow(node);
     renderInputPromptPreview(node);
     syncCascadeRunButton(node);
@@ -7839,16 +9242,83 @@ function updateComposer(){
 }
 function renderInputPromptPreview(node){
     if(!inputPromptPreview) return;
+    if(settings.engine === 'runninghub' && !rhRequiresPrompt(settings)){
+        inputPromptPreview.classList.remove('has-text');
+        inputPromptPreview.innerHTML = '';
+        return;
+    }
     const text = node ? inputPromptTextFor(node).trim() : '';
     inputPromptPreview.classList.toggle('has-text', Boolean(text));
     inputPromptPreview.innerHTML = text
         ? `<div class="input-prompt-preview-label">${escapeHtml(tr('smart.inputUpstream'))}</div><div class="input-prompt-preview-text">${escapeHtml(text)}</div>`
         : '';
 }
+function rhInputKindLabel(kind){
+    if(kind === 'video') return 'VIDEO';
+    if(kind === 'audio') return 'AUDIO';
+    return 'IMAGE';
+}
+function rhInputKindIcon(kind){
+    if(kind === 'video') return 'film';
+    if(kind === 'audio') return 'file-audio';
+    return 'image';
+}
+function renderRhInputThumb(ref, field, index, kind, node, sourceUrl){
+    const isVid = kind === 'video' || isVideoMediaItem(ref);
+    const title = `${field.label || field.fieldName || rhInputKindLabel(kind)} · ${ref?.name || tr('smart.inputNum').replace('{n}', String(index + 1))}`;
+    const inner = isVid
+        ? `<video src="${escapeAttr(ref.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>`
+        : `<img src="${escapeAttr(ref.url)}" draggable="false">`;
+    const label = rhInputKindLabel(kind).slice(0, 3);
+    const isSelf = node ? isSelfReferenceForNode(node, ref) : false;
+    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span></div>`;
+}
+function renderRunningHubInputThumbsRow(node){
+    const fields = rhActiveFields().filter(field => ['image','video','audio'].includes(rhFieldKind(field)));
+    const refs = node
+        ? uniqueReferenceImages([
+            ...defaultReferenceImagesFor(node),
+            ...(smartPromptInputEnabledForSettings(settings) ? collectMentionedImagesFromPrompt() : [])
+        ])
+        : [];
+    const media = {
+        image:imageRefsOnly(refs),
+        video:videoRefsOnly(refs),
+        audio:audioRefsOnly(refs)
+    };
+    const indexes = rhFieldIndexes(rhActiveFields());
+    inputThumbsRow.classList.add('runninghub-inputs');
+    inputThumbsRow.classList.toggle('has-items', fields.length > 0);
+    if(!fields.length){
+        inputThumbsRow.innerHTML = '';
+        return;
+    }
+    inputThumbsRow.innerHTML = `<div class="rh-input-field-list">${fields.map(field => {
+        const kind = rhFieldKind(field);
+        const key = rhParamKey(field.nodeId, field.fieldName);
+        const index = indexes[key] || 0;
+        const ref = (media[kind] || [])[index] || null;
+        const label = field.label || field.fieldName || rhInputKindLabel(kind);
+        const sourceUrl = ref?.originalLocalUrl || ref?.sourceUrl || ref?.url || '';
+        const thumb = ref?.url
+            ? renderRhInputThumb(ref, field, index, kind, node, sourceUrl)
+            : `<div class="rh-input-empty-icon"><i data-lucide="${rhInputKindIcon(kind)}"></i></div>`;
+        return `<div class="rh-input-field ${ref?.url ? '' : 'empty'}" title="${escapeAttr(label)}">
+            ${thumb}
+            <div class="rh-input-field-meta">
+                <div class="rh-input-field-name">${escapeHtml(label)}</div>
+                <div class="rh-input-field-kind">${escapeHtml(rhInputKindLabel(kind))}${field.required === true ? ' · REQUIRED' : ''}</div>
+            </div>
+        </div>`;
+    }).join('')}</div>`;
+    bindInputThumbsDrag(node, refs);
+}
 function renderInputThumbsRow(node){
     if(!inputThumbsRow) return;
     syncJimengModelPillForRefs();
     syncJimengVideoModelPillForRefs();
+    inputThumbsRow.classList.remove('runninghub-inputs');
+    if(settings.engine === 'runninghub') return renderRunningHubInputThumbsRow(node);
     const dedup = node ? visibleReferenceImagesFor(node) : [];
     inputThumbsRow.classList.toggle('has-items', dedup.length > 0);
     if(!dedup.length){ inputThumbsRow.innerHTML = ''; return; }
@@ -8252,6 +9722,16 @@ function appendImagesToSmartNode(uploaded, targetId='', opts={}){
     const images = [...(uploaded || [])].filter(file => file?.url);
     if(!images.length) return;
     let node = nodes.find(n => n.id === targetId) || selectedNode();
+    if(isSmartGroupNode(node)){
+        node.images = [...(node.images || []), ...images.map(file => ({...file, kind:file.kind || mediaKindForItem(file)}))];
+        delete node.w;
+        delete node.h;
+        arrangeSmartGroupMembers(node, {skipUndo:true});
+        selectedId = node.id;
+        render();
+        scheduleSave();
+        return;
+    }
     if(node && !isSmartImageNode(node)) node = null;
     if(opts.forceNew) node = null;
     if(!node){
@@ -8388,6 +9868,7 @@ function pendingBaseBoxSize(options={}){
 }
 function pendingBoxSize(count, options={}){
     const base = pendingBaseBoxSize(options);
+    if(options.candidatePool) return {w:Math.round(base.w), h:Math.round(base.h)};
     const aspect = base.w / Math.max(1, base.h);
     const c = Math.max(1, Number(count) || 1);
     if(c <= 1){
@@ -8452,16 +9933,10 @@ function snapshotRunMeta(prompt, sourceId, displayPrompt='', refs=[]){
 }
 function attachRunMeta(targetNode, meta){
     if(!targetNode || !meta) return;
-    targetNode.runPrompt = meta.displayPrompt || meta.promptText || meta.prompt;
+    targetNode.runPrompt = meta.promptText || meta.displayPrompt || meta.prompt;
     targetNode.runModelPrompt = meta.prompt;
     targetNode.runPromptRefs = meta.promptRefs || [];
-    targetNode.runInputRefs = (meta.inputRefs || meta.promptRefs || []).map(ref => ({
-        url:ref.url || '',
-        name:ref.name || '',
-        nodeId:ref.nodeId || '',
-        imageIndex:ref.imageIndex ?? '',
-        kind:ref.kind || ''
-    })).filter(ref => ref.url);
+    delete targetNode.runInputRefs;
     targetNode.runSettings = meta.settings;
     if(meta.sourceNodeId) targetNode.sourceNodeId = meta.sourceNodeId;
     else delete targetNode.sourceNodeId;
@@ -8538,6 +10013,11 @@ function workflowInputNodesFor(node){
     return upstreamNodesForKinds(node, ['input', 'flow']);
 }
 function imagesForNode(node){
+    if(node?.type === 'smart-group') return smartGroupImageRefs(node).map(ref => ({
+        ...ref.item,
+        nodeId:ref.nodeId,
+        imageIndex:ref.index
+    }));
     return (node?.images || []).map((img, index) => ({...imageForDisplay(img), nodeId:node.id, imageIndex:index}));
 }
 function nodeHasReferenceContent(node){
@@ -8556,6 +10036,14 @@ function candidateInputImagesFor(node, consume=false, ctx=smartLoopContext){
 }
 function defaultInputImagesFor(node, consume=false, ctx=smartLoopContext){
     return candidateInputImagesFor(node, consume, ctx);
+}
+function generatedUpstreamImagesFor(node, consume=false, ctx=smartLoopContext){
+    if(!node) return [];
+    const workflowRefs = workflowInputImagesFor(node, consume, ctx)
+        .filter(img => img?.url && !isSelfReferenceForNode(node, img));
+    if(workflowRefs.length) return workflowRefs;
+    const source = node.sourceNodeId ? nodes.find(n => n.id === node.sourceNodeId && n.id !== node.id) : null;
+    return source ? outputImagesForNode(source, consume, ctx).filter(img => img?.url) : [];
 }
 function splitSmartPromptItems(text){
     const trimmed = String(text || '').trim();
@@ -8659,6 +10147,7 @@ function smartLoopPreviewImages(node){
     }).filter(img => img?.url);
 }
 function outputImagesForNode(node, consume=false, ctx=smartLoopContext){
+    if(node?.type === 'smart-group') return imagesForNode(node).filter(img => img?.url);
     if(node?.type === 'smart-loop') return smartLoopInputImages(node, ctx);
     return imagesForNode(node).filter(img => img?.url);
 }
@@ -8669,10 +10158,11 @@ function textForNode(node, ctx=smartLoopContext){
     if(!node) return '';
     if(node.type === 'smart-prompt') return node.text || '';
     if(node.type === 'smart-loop') return smartLoopPrompt(node, ctx);
+    if(node.type === 'smart-group') return smartGroupMembers(node).map(member => textForNode(member, ctx)).filter(Boolean).join('\n\n');
     return '';
 }
 function promptInputNodesFor(node){
-    return inputNodesFor(node).filter(input => input?.type === 'smart-prompt' || input?.type === 'smart-loop');
+    return inputNodesFor(node).filter(input => input?.type === 'smart-prompt' || input?.type === 'smart-loop' || input?.type === 'smart-group');
 }
 function inputPromptTextFor(node, ctx=smartLoopContext){
     const directText = promptInputNodesFor(node).map(input => textForNode(input, ctx)).filter(Boolean);
@@ -8695,6 +10185,31 @@ function inputImagesFor(node, consume=false, ctx=smartLoopContext){
 }
 function workflowInputImagesFor(node, consume=false, ctx=smartLoopContext){
     return workflowInputNodesFor(node).flatMap(input => outputImagesForNode(input, consume, ctx));
+}
+function isGeneratedResultNode(node){
+    if(!isSmartImageNode(node)) return false;
+    if(node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt || node.runFinishedAt || node.runElapsedMs) return true;
+    if((node.runPromptRefs || []).length || (node.runInputRefs || []).length) return true;
+    return (node.images || []).some(img => img?.generatedResult || img?.runPrompt || img?.runModelPrompt || img?.runAt);
+}
+function runInputRefsForNode(node){
+    const refs = Array.isArray(node?.runInputRefs) ? node.runInputRefs.filter(ref => ref?.url) : [];
+    if(!refs.length) return [];
+    return refs.map((ref, index) => {
+        const source = ref.nodeId ? nodes.find(n => n.id === ref.nodeId) : null;
+        const sourceImage = source && Number.isFinite(Number(ref.imageIndex))
+            ? imagesForNode(source)[Number(ref.imageIndex)]
+            : null;
+        const resolved = sourceImage?.url === ref.url ? sourceImage : null;
+        return {
+            ...(resolved || {}),
+            ...ref,
+            name:ref.name || resolved?.name || `图${index + 1}`,
+            kind:ref.kind || resolved?.kind || mediaKindForItem(resolved || ref),
+            nodeId:ref.nodeId || resolved?.nodeId || '',
+            imageIndex:Number.isFinite(Number(ref.imageIndex)) ? Number(ref.imageIndex) : (Number.isFinite(Number(resolved?.imageIndex)) ? Number(resolved.imageIndex) : index)
+        };
+    }).filter(ref => ref.url);
 }
 function inputRefKey(img){
     if(!img?.url) return '';
@@ -8728,8 +10243,18 @@ function toggleInputRefBlocked(node, img){
 }
 function defaultReferenceImagesFor(node, consume=false, ctx=smartLoopContext){
     if(!node) return [];
-    const self = selfReferenceImagesForNode(node, consume, ctx).filter(img => img?.url);
+    if(isGeneratedResultNode(node)){
+        const upstream = generatedUpstreamImagesFor(node, consume, ctx);
+        if(upstream.length) return uniqueReferenceImages(upstream);
+        const ownUrls = new Set((node.images || []).map(img => img?.url).filter(Boolean));
+        const savedRunInputs = runInputRefsForNode(node)
+            .filter(ref => ref?.url && ref.nodeId !== node.id && !ownUrls.has(ref.url));
+        return savedRunInputs.length ? uniqueReferenceImages(savedRunInputs) : [];
+    }
+    const savedRunInputs = runInputRefsForNode(node);
+    if(savedRunInputs.length) return uniqueReferenceImages(savedRunInputs);
     const upstream = defaultInputImagesFor(node, consume, ctx);
+    const self = selfReferenceImagesForNode(node, consume, ctx).filter(img => img?.url);
     if(smartImageUsesWorkflowInput(node, ctx)) return uniqueReferenceImages(upstream);
     if(self.length) return uniqueReferenceImages(self);
     return uniqueReferenceImages(upstream);
@@ -8993,15 +10518,10 @@ function positionMentionPickerAtCaret(){
         caretRect = range.getClientRects()[0] || range.getBoundingClientRect();
     }
     const inputRect = promptInput.getBoundingClientRect();
-    // composer 在 world 里被 viewport.scale 缩放过，getBoundingClientRect 返回的是缩放后的屏幕像素，
-    // 而 style.left/top 是逻辑像素 → 需要除以 scale 才能正确还原 caret 的逻辑坐标
-    const scale = (typeof viewport !== 'undefined' && Number(viewport?.scale)) || 1;
-    const safeScale = scale > 0 ? scale : 1;
-    const rowLogicalWidth = rowRect.width / safeScale;
     const pickerWidth = mentionPicker.offsetWidth || 340;
-    const maxLeft = Math.max(4, rowLogicalWidth - pickerWidth - 4);
-    const rawLeft = ((caretRect?.left || inputRect.left) - rowRect.left) / safeScale - 6;
-    const rawTop = ((caretRect?.bottom || inputRect.top + 24) - rowRect.top) / safeScale + 2;
+    const maxLeft = Math.max(4, rowRect.width - pickerWidth - 4);
+    const rawLeft = (caretRect?.left || inputRect.left) - rowRect.left - 6;
+    const rawTop = (caretRect?.bottom || inputRect.top + 24) - rowRect.top + 2;
     const left = Math.max(4, Math.min(rawLeft, maxLeft));
     const top = Math.max(2, rawTop);
     mentionPicker.style.left = `${left}px`;
@@ -9097,7 +10617,8 @@ function originalPromptTextFromParts(parts){
     return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=false, ctx=smartLoopContext){
-    const parts = collectPromptParts();
+    const promptEnabled = smartPromptInputEnabledForSettings(settings);
+    const parts = promptEnabled ? collectPromptParts() : [];
     const originalPrompt = originalPromptTextFromParts(parts);
     const blockedRefs = blockedInputRefKeys(node);
     const hasOverrideImages = Array.isArray(overrideDefaultImages);
@@ -9128,9 +10649,9 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
         body += `图${refMap.get(part.url)}`;
     });
     body = body.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-    const inputPrompt = inputPromptTextFor(node, ctx).trim();
+    const inputPrompt = promptEnabled ? inputPromptTextFor(node, ctx).trim() : '';
     if(inputPrompt) body = [inputPrompt, body].filter(Boolean).join('\n\n');
-    if(!body && settings.engine === 'runninghub'){
+    if(!body && settings.engine === 'runninghub' && promptEnabled){
         body = rhDefaultPromptSuggestion();
     }
     const displayPrompt = originalPrompt || body;
@@ -9177,7 +10698,7 @@ function nextOutputPositionForSource(sourceNode, pendingBox, options={}){
     return {x, y};
 }
 function createPendingOutputFromSource(sourceNode, expectedCount, meta, options={}){
-    const pendingBox = pendingBoxSize(expectedCount, {sourceNode, refs:options.refs || meta?.promptRefs || []});
+    const pendingBox = pendingBoxSize(expectedCount, {sourceNode, refs:options.refs || meta?.promptRefs || [], candidatePool:options.candidatePool});
     const pos = nextOutputPositionForSource(sourceNode, pendingBox);
     const output = {
         id:uid('smart'),
@@ -9194,6 +10715,7 @@ function createPendingOutputFromSource(sourceNode, expectedCount, meta, options=
         scale:MEDIA_NODE_DEFAULT_SCALE,
         created_at:Date.now()
     };
+    if(options.candidatePool) output.pendingCandidatePool = true;
     output._selectAfterRunId = options.selectOutput ? output.id : sourceNode.id;
     nodes.push(output);
     if(options.connectSource === false) addConnection(sourceNode.id, output.id, 'flow');
@@ -9331,30 +10853,32 @@ function extractCurrentImagesToSource(node, meta=null){
 }
 function finalizePendingNode(pendingNode, urls, meta, kind='image'){
     if(!pendingNode) return;
-    const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : kind === 'text' ? 'txt' : 'png';
-    const imgs = urls.map((item, i) => {
-        const url = typeof item === 'string' ? item : item?.url || '';
-        const itemKind = (typeof item === 'object' && item.kind) || kind;
-        return {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true};
-    }).filter(img => img.url);
-    pendingNode.images = imgs;
+    const imgs = normalizeOutputMediaItems(urls, kind, meta);
+    const actualKind = mediaKindForUrls(imgs, kind);
+    if(actualKind === 'image') addGeneratedCandidatesToNode(pendingNode, imgs, {main:'firstNew'});
+    else {
+        pendingNode.images = imgs;
+        delete pendingNode.candidateImages;
+        delete pendingNode.candidateIndex;
+    }
     pendingNode.pending = 0;
+    delete pendingNode.pendingCandidatePool;
     pendingNode.runFinishedAt = nowMs();
     if(!pendingNode.runStartedAt) pendingNode.runStartedAt = meta?.createdAt || pendingNode.runFinishedAt;
     pendingNode.runElapsedMs = Math.max(0, pendingNode.runFinishedAt - Number(pendingNode.runStartedAt || pendingNode.runFinishedAt));
     pendingNode.runTimerHidden = false;
-    pendingNode.outputKind = kind;
-    if(imgs.length > 1) pendingNode.title = kind === 'video' ? 'Videos' : kind === 'audio' ? 'Audios' : kind === 'text' ? 'Texts' : 'Group';
-    else pendingNode.title = kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'text' ? 'Text' : kind === 'file' ? 'File' : 'Image';
+    pendingNode.outputKind = actualKind;
+    pendingNode.title = cascadeOutputTitle(actualKind, pendingNode.images.length);
     pendingNode.scale = mediaNodeDefaultScale(pendingNode);
     delete pendingNode.w;
     delete pendingNode.h;
     const metaTarget = pendingNode._runMetaTargetId ? nodes.find(n => n.id === pendingNode._runMetaTargetId) : pendingNode;
     if(metaTarget) attachRunMeta(metaTarget, meta);
-    pendingNode.images = (pendingNode.images || []).map(img => stripImageGenerationMeta(img));
+    if(actualKind !== 'image') pendingNode.images = (pendingNode.images || []).map(img => stripImageGenerationMeta(img));
     selectedId = pendingNode._selectAfterRunId || pendingNode.id;
     delete pendingNode._runMetaTargetId;
     delete pendingNode._selectAfterRunId;
+    delete pendingNode._rerunPreviousImages;
     if(activeComposerSubject?.id && selectedId === activeComposerSubject.id) lastComposerNodeId = `${selectedId}:node`;
     selectedImage = {nodeId:'', index:-1};
 }
@@ -9384,6 +10908,7 @@ function finishLoopTargetPreviewState(node){
     node.running = false;
     node.queued = false;
     delete node.pendingTasks;
+    delete node.pendingCandidatePool;
     node.runFinishedAt = nowMs();
     if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
     node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
@@ -9422,6 +10947,7 @@ function showDirectLoopRoundPreview(loopNode, target, refs, loopIndex, total){
     target.images = preview;
     target.pending = 0;
     target.running = true;
+    delete target.pendingCandidatePool;
     target.runStartedAt = nowMs();
     delete target.runFinishedAt;
     delete target.runElapsedMs;
@@ -9725,6 +11251,18 @@ function cleanHistoryImages(images=[]){
             return true;
         });
 }
+function uniqueGeneratedImages(images=[]){
+    const seen = new Set();
+    return (images || [])
+        .filter(img => img?.url)
+        .map(img => ({...img}))
+        .filter(img => {
+            const key = `${img.kind || ''}|${img.url || ''}`;
+            if(seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+}
 function hasHistoryConnection(nodeId, groupId){
     return Boolean(nodeId && groupId && (canvas?.connections || []).some(conn => conn.from === nodeId && conn.to === groupId && (conn.kind || 'flow') === 'history'));
 }
@@ -9734,7 +11272,7 @@ function demoteHistoryGroupNode(group){
     delete group.isHistoryGroup;
     if(group.title === '历史分组'){
         const count = (group.images || []).length;
-        group.title = count > 1 ? 'Group' : count === 1 ? 'Image' : tr('smart.createImportNode');
+        group.title = count > 1 ? 'Group' : (count ? 'Image' : tr('smart.createImportNode'));
     }
 }
 function historyGroupForNode(node){
@@ -9788,22 +11326,31 @@ function ensureHistoryGroupForNode(node){
 function replaceOutputsToNodeWithHistory(node, additions, kind='image', meta=null, options={}){
     if(!node || !additions?.length) return [];
     const beforeRight = (Number(node.x) || 0) + nodeRect(node).width;
-    const existing = cleanHistoryImages(node.images || []);
-    const next = cleanHistoryImages(additions);
+    const existing = kind === 'image' ? uniqueGeneratedImages(node.images || []) : cleanHistoryImages(node.images || []);
+    const next = (kind === 'image' ? uniqueGeneratedImages(additions) : cleanHistoryImages(additions))
+        .map(img => kind === 'image' && meta ? generatedImageWithRunMeta(img, meta) : img);
     if(!next.length) return [];
-    const history = existing.length ? ensureHistoryGroupForNode(node) : historyGroupForNode(node);
-    if(history){
-        const archived = cleanHistoryImages([...existing, ...(history.images || [])]);
-        history.images = archived;
-        history.title = '历史分组';
-        history.outputKind = kind;
-        history.scale = MEDIA_GROUP_DEFAULT_SCALE;
-        delete history.w;
-        delete history.h;
+    if(kind === 'image'){
+        if(existing.length) addGeneratedCandidatesToNode(node, existing, {main:'preserve'});
+        addGeneratedCandidatesToNode(node, next, {main:'firstNew'});
+    } else {
+        const history = existing.length ? ensureHistoryGroupForNode(node) : historyGroupForNode(node);
+        if(history){
+            const archived = cleanHistoryImages([...existing, ...(history.images || [])]);
+            history.images = archived;
+            history.title = '历史分组';
+            history.outputKind = kind;
+            history.scale = MEDIA_GROUP_DEFAULT_SCALE;
+            delete history.w;
+            delete history.h;
+        }
+        node.images = next;
+        delete node.candidateImages;
+        delete node.candidateIndex;
     }
-    node.images = next;
     node.pending = 0;
     node.running = false;
+    delete node.pendingCandidatePool;
     delete node.pendingTasks;
     node.runFinishedAt = nowMs();
     if(!node.runStartedAt) node.runStartedAt = meta?.createdAt || node.runFinishedAt;
@@ -9811,7 +11358,7 @@ function replaceOutputsToNodeWithHistory(node, additions, kind='image', meta=nul
     node.runTimerHidden = false;
     node.outputKind = kind;
     node.title = cascadeOutputTitle(kind, node.images.length);
-    node.scale = node.images.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE;
+    node.scale = kind === 'image' ? mediaNodeDefaultScale(node) : (node.images.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE);
     delete node.w;
     delete node.h;
     if(meta) attachRunMeta(node, meta);
@@ -9829,6 +11376,7 @@ function appendOutputsToNode(node, additions, kind='image', options={}){
     node.images = [...existing, ...next];
     node.pending = 0;
     node.running = false;
+    delete node.pendingCandidatePool;
     node.runFinishedAt = nowMs();
     if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
     node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
@@ -9868,6 +11416,52 @@ function loadNodePromptDraftToInput(node){
         else setPromptText(node?.runPrompt || '');
     }
 }
+async function createSmartComfyTask(payload){
+    const res = await fetch('/api/canvas-comfy-tasks', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload)
+    });
+    if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.errRunFailed')));
+    return res.json();
+}
+async function waitSmartComfyTaskResult(taskId){
+    if(!taskId) throw new Error(tr('smart.errRunFailed'));
+    while(true){
+        const res = await fetch(`/api/canvas-comfy-tasks/${encodeURIComponent(taskId)}`);
+        if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.errRunFailed')));
+        const data = await res.json();
+        const readyResult = data?.result || data?.outputs || data?.images || data?.videos || data?.audios || data?.texts;
+        if(readyResult && resultMediaUrls(readyResult).length) return data.result || data;
+        if(data.status === 'succeeded') return data.result || {};
+        if(data.status === 'failed') throw new Error(data.error || tr('smart.errRunFailed'));
+        await sleep(1600);
+    }
+}
+async function runQueuedSmartComfyGenerate(payload){
+    const task = await createSmartComfyTask(payload);
+    return waitSmartComfyTaskResult(task.task_id);
+}
+function comfyParamsFromWorkflowValues(config, values={}){
+    const params = {};
+    (config?.fields || []).forEach(field => {
+        if(!field?.node || !field?.input) return;
+        let value = values[field.id];
+        if(value === undefined) value = field.default;
+        if(field.type === 'number' || field.type === 'slider'){
+            const n = Number(value);
+            if(Number.isFinite(n)) value = field.step && Number(field.step) < 1 ? n : Math.round(n);
+        } else if(field.type === 'boolean'){
+            value = Boolean(value);
+        } else if(field.type === 'dropdown' && typeof value === 'string'){
+            const s = value.trim();
+            if(s && /^-?\d+(?:\.\d+)?(?:e-?\d+)?$/i.test(s)) value = s.includes('.') || /e/i.test(s) ? Number(s) : parseInt(s, 10);
+        }
+        params[field.node] = params[field.node] || {};
+        params[field.node][field.input] = value;
+    });
+    return params;
+}
 function buildPromptRequestForNode(node, defaultImages, ctx=smartLoopContext){
     const oldHtml = promptInput.innerHTML;
     loadNodePromptDraftToInput(node);
@@ -9880,77 +11474,6 @@ function buildPromptRequestForNode(node, defaultImages, ctx=smartLoopContext){
 async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=settings){
     const activeSettings = runSettings || settings;
     if(activeSettings.engine === 'comfy') return generateComfyUrlsWithSettings(activeSettings, prompt, refs);
-    if(activeSettings.engine === 'comfy'){
-        const allRefs = refs || [];
-        const imageRefs = imageRefsOnly(allRefs);
-        const mode = settings.comfyMode || 'text';
-        if(mode === 'text'){
-            const data = await fetch('/api/generate', {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({prompt, width:Number(settings.width || 1024), height:Number(settings.height || 1024), workflow_json:'Z-Image.json', type:'zimage'})
-            }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
-            const urls = resultMediaUrls(data);
-            return {urls, kind:mediaKindForUrls(urls, 'image')};
-        }
-        if(mode === 'enhance'){
-            if(!imageRefs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
-            const inputName = await comfyNameForRef(imageRefs[0]);
-            const data = await fetch('/api/generate', {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}})
-            }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
-            const urls = resultMediaUrls(data);
-            return {urls, kind:mediaKindForUrls(urls, 'image')};
-        }
-        if(mode === 'edit'){
-            if(!imageRefs.length) throw new Error(tr('smart.errEditNeedRefs'));
-            const names = [];
-            for(const ref of imageRefs.slice(0, 3)) names.push(await comfyNameForRef(ref));
-            const data = await fetch('/api/generate', {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}})
-            }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
-            const urls = resultMediaUrls(data);
-            return {urls, kind:mediaKindForUrls(urls, 'image')};
-        }
-        const workflowName = settings.comfyWorkflow || comfyWorkflows[0]?.name || '';
-        if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
-        const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
-            if(!r.ok) throw new Error(await r.text());
-            return r.json();
-        });
-        const fields = wf.config?.fields || [];
-        const values = {};
-        fields.filter(f => comfyFieldKind(f) === 'prompt').forEach((field, index) => {
-            values[field.id] = index === 0 ? prompt : (field.default ?? '');
-        });
-        const assignMediaFields = async (mediaFields, mediaRefs) => {
-            for(let i = 0; i < mediaFields.length && i < mediaRefs.length; i++){
-                values[mediaFields[i].id] = await comfyNameForRef(mediaRefs[i]);
-            }
-        };
-        await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'image'), imageRefs);
-        await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'video'), videoRefsOnly(allRefs));
-        await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'audio'), audioRefsOnly(allRefs));
-        fields.filter(f => comfyFieldKind(f) === 'setting').forEach(field => {
-            if(comfyRandomEnabledField(field) && smartComfyRandomActive(field.id)){
-                values[field.id] = smartComfyRandomValue(field);
-            } else {
-                values[field.id] = settings.comfyParams?.[field.id] ?? field.default;
-            }
-        });
-        const result = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}/run`, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({config:wf.config || {fields:[]}, fields:values})
-        }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
-        const urls = resultMediaUrls(result);
-        const fallbackKind = result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image';
-        return {urls, kind:mediaKindForUrls(urls, fallbackKind)};
-    }
     if(isApiLikeEngine(activeSettings.engine) && activeSettings.apiKind === 'video'){
         return {urls:await runApiVideoGeneration(prompt, refs, activeSettings), kind:'video'};
     }
@@ -9977,22 +11500,14 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     const imageRefs = imageRefsOnly(allRefs);
     const mode = runSettings.comfyMode || 'text';
     if(mode === 'text'){
-        const data = await fetch('/api/generate', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({prompt, width:Number(runSettings.width || 1024), height:Number(runSettings.height || 1024), workflow_json:'Z-Image.json', type:'zimage'})
-        }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+        const data = await runQueuedSmartComfyGenerate({prompt, width:Number(runSettings.width || 1024), height:Number(runSettings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId});
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
     if(mode === 'enhance'){
         if(!imageRefs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
         const inputName = await comfyNameForRef(imageRefs[0]);
-        const data = await fetch('/api/generate', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(runSettings.enhanceStrength ?? 0.5)}}})
-        }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+        const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(runSettings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
@@ -10000,11 +11515,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
         if(!imageRefs.length) throw new Error(tr('smart.errEditNeedRefs'));
         const names = [];
         for(const ref of imageRefs.slice(0, 3)) names.push(await comfyNameForRef(ref));
-        const data = await fetch('/api/generate', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}})
-        }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+        const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
@@ -10034,11 +11545,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
             values[field.id] = runSettings.comfyParams?.[field.id] ?? field.default;
         }
     });
-    const result = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}/run`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({config:wf.config || {fields:[]}, fields:values})
-    }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
     const urls = resultMediaUrls(result);
     const fallbackKind = result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image';
     return {urls, kind:mediaKindForUrls(urls, fallbackKind)};
@@ -10063,7 +11570,7 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
     );
     const prompt = (request.prompt || '').trim();
     const displayPrompt = (request.displayPrompt || '').trim();
-    if(!prompt || (!displayPrompt && !(runSettings.engine === 'comfy' && runSettings.comfyMode === 'enhance'))){
+    if((!prompt && smartPromptInputEnabledForSettings(runSettings)) || (!displayPrompt && !(runSettings.engine === 'comfy' && runSettings.comfyMode === 'enhance') && smartPromptInputEnabledForSettings(runSettings))){
         settings = previousSettings;
         throw new Error('链路节点缺少提示词');
     }
@@ -10110,7 +11617,8 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
         const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
         const additions = result.urls.map((item, i) => {
             const url = typeof item === 'string' ? item : item?.url || '';
-            return stripImageGenerationMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true});
+            const image = {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true};
+            return result.kind === 'image' ? generatedImageWithRunMeta(image, meta) : stripImageGenerationMeta(image);
         }).filter(item => item.url);
         replaceOutputsToNodeWithHistory(outputNode, additions, result.kind, null, {skipShift:Boolean(ctx?.nodeId)});
         outputNode.runPrompt = targetPromptState.runPrompt;
@@ -10153,7 +11661,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         const request = buildPromptRequestForNode(rootNode, refsForRequest.length ? refsForRequest : null, ctx);
         const prompt = (request.prompt || '').trim();
         const displayPrompt = (request.displayPrompt || '').trim();
-        if(!prompt || (!displayPrompt && !(runSettings.engine === 'comfy' && runSettings.comfyMode === 'enhance'))) throw new Error('链路节点缺少提示词');
+        if((!prompt && smartPromptInputEnabledForSettings(runSettings)) || (!displayPrompt && !(runSettings.engine === 'comfy' && runSettings.comfyMode === 'enhance') && smartPromptInputEnabledForSettings(runSettings))) throw new Error('链路节点缺少提示词');
         const meta = {
             prompt,
             displayPrompt:request.displayPrompt || '',
@@ -10172,6 +11680,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         outputSlot.queued = false;
         outputSlot.running = true;
         outputSlot.pending = expectedCount;
+        outputSlot.pendingCandidatePool = logKind === 'image';
         outputSlot.runStartedAt = nowMs();
         delete outputSlot.runFinishedAt;
         delete outputSlot.runElapsedMs;
@@ -10190,17 +11699,12 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
             const existing = cleanHistoryImages(outputSlot.images || []);
             if(existing.length){
-                const history = ensureHistoryGroupForNode(outputSlot);
-                history.images = cleanHistoryImages([...existing, ...(history.images || [])]);
-                history.title = '历史分组';
-                history.outputKind = 'image';
-                history.scale = MEDIA_GROUP_DEFAULT_SCALE;
-                delete history.w;
-                delete history.h;
+                addGeneratedCandidatesToNode(outputSlot, existing, {main:'preserve'});
                 outputSlot.images = [];
             }
-            outputSlot.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image'}));
+            outputSlot.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:taskResult.providerId, model:taskResult.model}));
             outputSlot.pending = Math.max(taskIds.length, Number(outputSlot.pending || 0) || taskIds.length);
+            outputSlot.pendingCandidatePool = true;
             outputSlot.running = false;
             render();
             scheduleSave();
@@ -10217,13 +11721,14 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         if(!result.urls?.length) throw new Error(result.kind === 'video' ? tr('smart.errNoOutVideos') : tr('smart.errNoOutImages'));
         let additions;
         if(isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'){
-            additions = (outputSlot.images || []).map(img => stripImageGenerationMeta({...img})).filter(img => img?.url);
+            additions = uniqueGeneratedImages(outputSlot.images || []).filter(img => img?.url);
             if(meta) attachRunMeta(outputSlot, meta);
         } else {
             const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
             additions = result.urls.map((item, i) => {
                 const url = typeof item === 'string' ? item : item?.url || '';
-                return stripImageGenerationMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true});
+                const image = {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true};
+                return result.kind === 'image' ? generatedImageWithRunMeta(image, meta) : stripImageGenerationMeta(image);
             }).filter(item => item.url);
             replaceOutputsToNodeWithHistory(outputSlot, additions, result.kind, meta, {skipShift:Boolean(ctx?.nodeId)});
         }
@@ -10241,6 +11746,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         outputSlot.queued = false;
         outputSlot.pending = 0;
         outputSlot.running = false;
+        delete outputSlot.pendingCandidatePool;
         throw e;
     } finally {
         settings = previousSettings;
@@ -10274,7 +11780,7 @@ function smartCascadeStopText(stopping=false){
     return stopping ? '停止中...' : '停止运行';
 }
 function smartCascadeAbortError(){
-    const err = new Error('已停止一键运行');
+    const err = new Error('已停止链路运行');
     err.smartCascadeStopped = true;
     return err;
 }
@@ -10511,7 +12017,7 @@ async function runSmartCascade(targetNode=null){
         selectedId = originalSelected;
         settings = originalSettings;
         promptInput.innerHTML = originalPromptHtml;
-        toast(e?.smartCascadeStopped ? '已停止一键运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
+        toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
     } finally {
         smartCascadeRuns.delete(runKey);
         syncSmartCascadeLegacyState();
@@ -10538,11 +12044,15 @@ async function runGeneration(){
     const request = buildPromptRequest(node, null, true, smartLoopContext);
     const prompt = request.prompt.trim();
     if(!node) return;
-    if(!prompt){ toast(tr('smart.toastNeedPrompt')); return; }
     const refs = request.refs;
     const previousSettings = cloneSmartSettings(settings);
     const runSettings = smartSettingsForNode(node);
     settings = {...settings, ...cloneSmartSettings(runSettings || {})};
+    if(!prompt && smartPromptInputEnabledForSettings(settings)){
+        toast(tr('smart.toastNeedPrompt'));
+        settings = previousSettings;
+        return;
+    }
     const outpaintSize = node?.outpaintSize && Number(node.outpaintSize.width) > 0 && Number(node.outpaintSize.height) > 0
         ? {width:Math.round(Number(node.outpaintSize.width)), height:Math.round(Number(node.outpaintSize.height))}
         : null;
@@ -10569,7 +12079,9 @@ async function runGeneration(){
     const apiConcurrentRun = isApiLikeEngine(settings.engine) || settings.engine === 'runninghub' || settings.engine === 'modelscope';
     const nodeHasImages = (node.images || []).some(img => img?.url);
     const workflowModeRun = smartImageUsesWorkflowInput(node, smartLoopContext);
-    const sourceVisualState = nodeHasImages && !workflowModeRun ? {
+    const rerunInPlace = nodeHasImages && !workflowModeRun && isGeneratedResultNode(node);
+    const shouldBranchFromImage = nodeHasImages && !workflowModeRun && !rerunInPlace;
+    const sourceVisualState = shouldBranchFromImage ? {
         images:(node.images || []).map(img => ({...img})),
         title:node.title,
         w:node.w,
@@ -10580,19 +12092,28 @@ async function runGeneration(){
     pushUndo();
     let extracted = null;
     let branchNode = null;
-    const pendingMeta = nodeHasImages && !workflowModeRun ? stripRunInputMeta(meta) : meta;
+    const pendingMeta = shouldBranchFromImage ? stripRunInputMeta(meta) : meta;
     undoSuppressed = true;
-    if(nodeHasImages && !workflowModeRun) branchNode = createPendingOutputFromSource(node, expectedCount, pendingMeta, {connectSource:false, selectOutput:true, refs});
+    if(shouldBranchFromImage) branchNode = createPendingOutputFromSource(node, expectedCount, pendingMeta, {connectSource:false, selectOutput:true, refs, candidatePool:logKind === 'image'});
     undoSuppressed = false;
     const pendingNode = branchNode || node;
     if(extracted) pendingNode._runMetaTargetId = extracted.id;
     if(!branchNode){
+        if(rerunInPlace){
+            const previousImages = (pendingNode.images || []).filter(img => img?.url).map(img => ({...img}));
+            pendingNode._rerunPreviousImages = previousImages;
+            addGeneratedCandidatesToNode(pendingNode, previousImages, {main:'preserve'});
+            pendingNode.images = [];
+            candidatePanelNodeId = '';
+            candidatePanelIndex = 0;
+        }
         pendingNode.pending = Math.max(1, Number(expectedCount) || 1);
+        pendingNode.pendingCandidatePool = logKind === 'image';
         pendingNode.runStartedAt = nowMs();
         delete pendingNode.runFinishedAt;
         delete pendingNode.runElapsedMs;
         pendingNode.runTimerHidden = false;
-        const pendingBox = pendingBoxSize(pendingNode.pending, {sourceNode:node, refs});
+        const pendingBox = pendingBoxSize(pendingNode.pending, {sourceNode:node, refs, candidatePool:pendingNode.pendingCandidatePool});
         pendingNode.w = pendingBox.w;
         pendingNode.h = pendingBox.h;
         attachRunMeta(pendingNode, pendingMeta);
@@ -10624,16 +12145,38 @@ async function runGeneration(){
             scheduleSave();
             return;
         }
-        const outImages = settings.engine === 'runninghub'
-            ? await runRunningHubGeneration(prompt, refs)
-            : settings.engine === 'modelscope'
-                ? await runModelscopeGeneration(prompt, refs)
-                : await runApiGeneration(prompt, refs);
+        if(settings.engine === 'runninghub'){
+            const taskResult = await submitRunningHubGeneration(prompt, refs);
+            const taskIds = [taskResult.taskId].filter(Boolean);
+            if(!taskIds.length) throw new Error(tr('smart.rhNoTaskId'));
+            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:'runninghub', model:taskResult.model, mode:taskResult.mode}));
+            pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
+            pendingNode.pendingCandidatePool = true;
+            pendingNode.runStartedAt = nowMs();
+            pendingNode.runTimerHidden = false;
+            pendingNode.running = false;
+            render();
+            scheduleSave();
+            await saveCanvas();
+            await resumeSmartPendingNode(pendingNode);
+            if(!(pendingNode.images || []).length) throw new Error(tr('smart.errNoOutImages'));
+            if(outpaintSize) delete node.outpaintSize;
+            if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
+            addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart});
+            clearPromptInput({preserveDraft:true});
+            settings = previousSettings;
+            scheduleSave();
+            return;
+        }
+        const outImages = settings.engine === 'modelscope'
+            ? await runModelscopeGeneration(prompt, refs)
+            : await runApiGeneration(prompt, refs);
         if(isApiLikeEngine(settings.engine)){
             const taskIds = Array.isArray(outImages?.taskIds) ? outImages.taskIds : [];
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
-            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image'}));
+            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:outImages.providerId, model:outImages.model}));
             pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
+            pendingNode.pendingCandidatePool = true;
             pendingNode.runStartedAt = nowMs();
             pendingNode.runTimerHidden = false;
             pendingNode.running = false;
@@ -10674,6 +12217,7 @@ async function runGeneration(){
             return;
         }
         pendingNode.pending = 0;
+        delete pendingNode.pendingCandidatePool;
         if(branchNode){
             nodes = nodes.filter(n => n.id !== branchNode.id);
             canvas.connections = (canvas.connections || []).filter(c => c.from !== branchNode.id && c.to !== branchNode.id);
@@ -10681,6 +12225,14 @@ async function runGeneration(){
         } else {
             pendingNode.pending = 0;
             pendingNode.running = false;
+            delete pendingNode.pendingCandidatePool;
+            if(rerunInPlace && pendingNode._rerunPreviousImages?.length && !(pendingNode.images || []).length){
+                addGeneratedCandidatesToNode(pendingNode, pendingNode._rerunPreviousImages, {main:'preserve'});
+                setNodeMainCandidate(pendingNode, Number(pendingNode.candidateIndex) || 0);
+            }
+            if(rerunInPlace && !(pendingNode.images || []).length && candidateCountForNode(pendingNode)){
+                setNodeMainCandidate(pendingNode, Number(pendingNode.candidateIndex) || 0);
+            }
             if(!(pendingNode.images || []).length){
                 delete pendingNode.w;
                 delete pendingNode.h;
@@ -10688,6 +12240,7 @@ async function runGeneration(){
         }
         if(extracted) restoreFromExtraction(node, extracted);
         delete pendingNode._runMetaTargetId;
+        delete pendingNode._rerunPreviousImages;
         addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e)});
         toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
     } finally {
@@ -10755,9 +12308,9 @@ async function runApiGeneration(prompt, refs, runSettings=settings){
         if(!r.ok) throw new Error(await r.text());
         return r.json();
     })));
-    return {taskIds:tasks.map(task => task.task_id).filter(Boolean), count};
+    return {taskIds:tasks.map(task => task.task_id).filter(Boolean), count, providerId:runSettings.provider_id, model:runSettings.model};
 }
-async function runRunningHubGeneration(prompt, refs, runSettings=settings){
+async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const ref = selectedRunningHubRef(runSettings);
     if(!ref) throw new Error(tr('smart.rhNeedConfig'));
     const fields = rhActiveFields(runSettings);
@@ -10782,21 +12335,46 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
     });
     const taskId = submit.taskId;
     if(!taskId) throw new Error(tr('smart.rhNoTaskId'));
-    for(let i = 0; i < 720; i++){
-        await sleep(2500);
-        const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
-            const json = await r.json();
-            if(!r.ok || json.success === false) throw new Error(json.detail || json.error || tr('smart.rhFailed'));
-            return json.data || json;
-        });
-        if(data.status === 'SUCCESS'){
-            const urls = data.urls || [];
-            if(!urls.length) throw new Error(tr('smart.rhOutputsEmpty'));
-            return urls;
+    return {
+        ...submit,
+        taskId,
+        providerId:'runninghub',
+        model:ref.id,
+        mode
+    };
+}
+async function pollRunningHubTask(taskId){
+    if(!taskId) throw new Error(tr('smart.rhNoTaskId'));
+    if(activeRunningHubTaskPolls.has(taskId)) return activeRunningHubTaskPolls.get(taskId);
+    const promise = (async () => {
+        let sawSuccessWithoutOutputs = false;
+        for(let i = 0; i < 720; i++){
+            await sleep(2500);
+            const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
+                const json = await r.json();
+                if(!r.ok || json.success === false) throw new Error(json.detail || json.error || tr('smart.rhFailed'));
+                return json.data || json;
+            });
+            if(data.status === 'SUCCESS'){
+                const urls = data.urls || [];
+                if(urls.length) return urls;
+                sawSuccessWithoutOutputs = true;
+                continue;
+            }
+            if(data.status === 'FAILED') throw new Error(data.failReason || tr('smart.rhFailed'));
         }
-        if(data.status === 'FAILED') throw new Error(data.failReason || tr('smart.rhFailed'));
+        throw new Error(sawSuccessWithoutOutputs ? tr('smart.rhOutputsEmpty') : tr('smart.rhTimeout'));
+    })();
+    activeRunningHubTaskPolls.set(taskId, promise);
+    try {
+        return await promise;
+    } finally {
+        activeRunningHubTaskPolls.delete(taskId);
     }
-    throw new Error(tr('smart.rhTimeout'));
+}
+async function runRunningHubGeneration(prompt, refs, runSettings=settings){
+    const submit = await submitRunningHubGeneration(prompt, refs, runSettings);
+    return pollRunningHubTask(submit.taskId);
 }
 async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
@@ -10933,14 +12511,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
             values[field.id] = settings.comfyParams?.[field.id] ?? field.default;
         }
     });
-    const result = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}/run`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({config:wf.config || {fields:[]}, fields:values})
-    }).then(async r => {
-        if(!r.ok) throw new Error(await r.text());
-        return r.json();
-    });
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
     const urls = resultMediaUrls(result);
     if(!urls.length) throw new Error(tr('smart.errComfyNoImages'));
     const kind = mediaKindForUrls(urls, result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image');
@@ -10959,11 +12530,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     scheduleSave();
 }
 async function runComfyText(node, prompt, pendingNode, meta){
-    const data = await fetch('/api/generate', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({prompt, width:Number(settings.width || 1024), height:Number(settings.height || 1024), workflow_json:'Z-Image.json', type:'zimage'})
-    }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+    const data = await runQueuedSmartComfyGenerate({prompt, width:Number(settings.width || 1024), height:Number(settings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId});
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -10979,11 +12546,7 @@ async function runComfyText(node, prompt, pendingNode, meta){
 async function runComfyEnhance(node, refs, pendingNode, meta){
     if(!refs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
     const inputName = await comfyNameForRef(refs[0]);
-    const data = await fetch('/api/generate', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}})
-    }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+    const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -10999,11 +12562,7 @@ async function runComfyEdit(node, prompt, refs, pendingNode, meta){
     if(!refs.length) throw new Error(tr('smart.errEditNeedRefs'));
     const names = [];
     for(const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref));
-    const data = await fetch('/api/generate', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}})
-    }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+    const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -11038,6 +12597,10 @@ function smartPendingTasks(node){
     if(!node || !Array.isArray(node.pendingTasks)) return [];
     return node.pendingTasks.filter(task => task && task.taskId);
 }
+function isRunningHubPendingTask(task){
+    const provider = String(task?.providerId || task?.provider || task?.engine || '').toLowerCase();
+    return provider === 'runninghub';
+}
 class JimengPendingSignal extends Error {
     constructor(info){
         const data = info || {};
@@ -11047,6 +12610,21 @@ class JimengPendingSignal extends Error {
         this.kind = data.kind || 'image';
         this.queueInfo = data.queueInfo || data.queue_info || {};
     }
+}
+class ImageTaskRecoverSignal extends Error {
+    constructor(info){
+        const data = info || {};
+        super(data.message || '任务未丢失，可稍后手动查询结果');
+        this.imageTaskRecover = true;
+        this.taskId = data.taskId || data.task_id || '';
+        this.recoverTaskId = data.recoverTaskId || data.upstream_task_id || data.task_id || '';
+        this.providerId = data.providerId || data.provider_id || '';
+        this.kind = data.kind || 'image';
+    }
+}
+function extractUpstreamTaskId(text){
+    const match = String(text || '').match(/(?:task_id|taskId|task id)\s*[=:：]\s*([A-Za-z0-9_.:-]+)/i);
+    return match ? match[1] : '';
 }
 const activeJimengPolls = new Set();
 const JIMENG_POLL_INTERVAL = 60000;
@@ -11072,6 +12650,7 @@ function setNodeJimengPending(node, signal){
     };
     node.running = false;
     node.pending = 0;
+    delete node.pendingCandidatePool;
     delete node.pendingTasks;
     if(!node.runStartedAt) node.runStartedAt = node.jimengPending.startedAt;
     delete node.runFinishedAt;
@@ -11093,7 +12672,9 @@ function finalizeJimengPending(node, urls, kind='image'){
     const additions = (urls || []).map((item, i) => {
         const url = typeof item === 'string' ? item : item?.url || '';
         const itemKind = (typeof item === 'object' && item.kind) || kind;
-        return stripImageGenerationMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
+        return kind === 'image'
+            ? generatedImageWithRunMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}, imageRunMetaForNodeFallback(node))
+            : stripImageGenerationMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
     }).filter(item => item.url);
     if(!additions.length) return false;
     delete node.jimengPending;
@@ -11157,6 +12738,59 @@ async function queryJimengNow(nodeId){
         render();
     }
 }
+function providerIdForSmartTask(node, task){
+    return task?.providerId || node?.runSettings?.provider_id || settings.provider_id || 'comfly';
+}
+async function fetchImageTaskQuery(providerId, taskId){
+    return fetch('/api/image-task-query', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider_id:providerId || 'comfly', task_id:taskId})
+    }).then(async r => {
+        if(!r.ok) throw new Error(await smartResponseErrorMessage(r, '查询失败'));
+        return r.json();
+    });
+}
+async function querySmartImageTaskNow(nodeId, localTaskId){
+    const node = nodes.find(n => n.id === nodeId);
+    if(!node) return;
+    const task = smartPendingTasks(node).find(item => item.taskId === localTaskId) || smartRecoverableImageTask(node);
+    if(!task || task.querying) return;
+    const recoverTaskId = task.recoverTaskId || extractUpstreamTaskId(task.error || '');
+    if(!recoverTaskId){
+        toast('没有任务 ID，无法查询');
+        return;
+    }
+    task.querying = true;
+    task.recoverTaskId = recoverTaskId;
+    render();
+    try {
+        const data = await fetchImageTaskQuery(providerIdForSmartTask(node, task), recoverTaskId);
+        if(data.status === 'succeeded'){
+            task.failed = false;
+            task.querying = false;
+            finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(data.images?.length ? data.images : data), task.kind || 'image');
+            render();
+            scheduleSave();
+            return;
+        }
+        if(data.status === 'failed'){
+            task.error = data.error || tr('smart.errRunFailed');
+            toast(task.error.slice(0, 160));
+        } else {
+            task.error = data.message || '任务仍在生成中，请稍后再查询';
+            toast(task.error);
+        }
+    } catch(e){
+        task.error = e.message || '查询失败';
+        toast(task.error.slice(0, 160));
+    } finally {
+        const latest = smartPendingTasks(node).find(item => item.taskId === localTaskId);
+        if(latest) latest.querying = false;
+        render();
+        scheduleSave();
+    }
+}
 function startJimengPoll(node){
     if(!node || !node.jimengPending || !node.jimengPending.submitId) return;
     const submitId = node.jimengPending.submitId;
@@ -11202,7 +12836,11 @@ async function pollSmartCanvasTask(taskId){
             });
             if(task.status === 'succeeded') return task.result || {};
             if(task.status === 'jimeng_pending') throw new JimengPendingSignal({submitId:task.submit_id, kind:task.kind, queueInfo:task.queue_info, message:task.message});
-            if(task.status === 'failed') throw new Error(task.error || tr('smart.errRunFailed'));
+            if(task.status === 'failed'){
+                const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '');
+                if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, providerId:task.provider_id, kind:'image', message:task.error || tr('smart.errRunFailed')});
+                throw new Error(task.error || tr('smart.errRunFailed'));
+            }
         }
         throw new Error(tr('smart.errRunTimeout'));
     })();
@@ -11213,42 +12851,53 @@ async function pollSmartCanvasTask(taskId){
         activeSmartTaskPolls.delete(taskId);
     }
 }
+async function pollSmartPendingTask(task){
+    if(isRunningHubPendingTask(task)) return pollRunningHubTask(task.taskId);
+    return pollSmartCanvasTask(task.taskId);
+}
 function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     if(!node || !taskId) return;
     node.pendingTasks = smartPendingTasks(node).filter(task => task.taskId !== taskId);
     node.pending = Math.max(0, Number(node.pending || 0) - 1);
-    const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : kind === 'text' ? 'txt' : 'png';
-    const additions = (images || []).map((item, i) => {
-        const url = typeof item === 'string' ? item : item?.url || '';
-        const itemKind = (typeof item === 'object' && item.kind) || kind;
-        return stripImageGenerationMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
-    }).filter(item => item.url);
-    node.images = [...(node.images || []).map(img => stripImageGenerationMeta(img)), ...additions];
+    const additions = normalizeOutputMediaItems(images, kind, imageRunMetaForNodeFallback(node));
+    const actualKind = mediaKindForUrls(additions, kind);
+    if(actualKind === 'image') {
+        if(additions.length) addGeneratedCandidatesToNode(node, additions, {main:'firstNew'});
+    }
+    else {
+        node.images = [...(node.images || []).map(img => stripImageGenerationMeta(img)), ...additions];
+        delete node.candidateImages;
+        delete node.candidateIndex;
+    }
     if(additions.length) node.outputKind = kind;
     if(!node.pending && smartPendingTasks(node).length === 0){
         delete node.pendingTasks;
+        delete node.pendingCandidatePool;
         node.runFinishedAt = nowMs();
         if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
         node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
         node.runTimerHidden = false;
         node.running = false;
-        node.title = node.images.length > 1 ? (kind === 'video' ? 'Videos' : kind === 'audio' ? 'Audios' : kind === 'text' ? 'Texts' : 'Group') : (kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'text' ? 'Text' : 'Image');
+        node.title = cascadeOutputTitle(actualKind, node.images.length);
         node.scale = mediaNodeDefaultScale(node);
         delete node.w;
         delete node.h;
+        delete node._rerunPreviousImages;
     }
 }
 async function resumeSmartPendingNode(node){
     const tasks = smartPendingTasks(node);
     if(!node || !tasks.length) return;
     node.pending = Math.max(tasks.length, Number(node.pending || 0) || tasks.length);
+    node.pendingCandidatePool = tasks.some(task => (task.kind || 'image') === 'image');
     node.running = false;
     render();
     const failures = [];
     await Promise.all(tasks.map(async task => {
+        if(task.failed && task.recoverTaskId) return;
         try {
-            const result = await pollSmartCanvasTask(task.taskId);
-            finalizeSmartPendingTask(node, task.taskId, result?.images || [], task.kind || 'image');
+            const result = await pollSmartPendingTask(task);
+            finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(result?.images?.length ? result.images : result), task.kind || 'image');
             render();
             scheduleSave();
         } catch(e) {
@@ -11259,14 +12908,32 @@ async function resumeSmartPendingNode(node){
                 scheduleSave();
                 return;
             }
+            if(e && e.imageTaskRecover && e.recoverTaskId){
+                task.failed = true;
+                task.querying = false;
+                task.recoverTaskId = e.recoverTaskId;
+                task.providerId = e.providerId || task.providerId || providerIdForSmartTask(node, task);
+                task.error = e.message || tr('smart.errRunFailed');
+                node.running = false;
+                node.pending = Math.max(1, smartPendingTasks(node).length);
+                node.pendingCandidatePool = smartPendingTasks(node).some(item => (item.kind || 'image') === 'image');
+                toast('任务未丢失，可稍后手动查询结果');
+                render();
+                scheduleSave();
+                return;
+            }
             node.pendingTasks = smartPendingTasks(node).filter(item => item.taskId !== task.taskId);
             node.pending = Math.max(0, Number(node.pending || 0) - 1);
             if(!node.pending && smartPendingTasks(node).length === 0){
                 delete node.pendingTasks;
+                delete node.pendingCandidatePool;
                 node.running = false;
                 if(!(node.images || []).length){
-                    delete node.w;
-                    delete node.h;
+                    if(candidateCountForNode(node)) setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
+                    else {
+                        delete node.w;
+                        delete node.h;
+                    }
                 }
             }
             failures.push(e);
@@ -11275,8 +12942,10 @@ async function resumeSmartPendingNode(node){
             scheduleSave();
         }
     }));
+    if(failures.length && !(node.images || []).length && candidateCountForNode(node)) setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
     if(failures.length && !(node.images || []).length){
-        throw failures[0];
+        const messages = [...new Set(failures.map(e => (e?.message || String(e || '')).trim()).filter(Boolean))];
+        throw new Error(messages.join('；') || tr('smart.errRunFailed'));
     }
 }
 function resumeSmartPendingTasks(){
@@ -11314,21 +12983,29 @@ function finishSelection(event){
 }
 function groupSelectedNodes(){
     const ids = selectedIds.length ? selectedIds.slice() : (selectedId ? [selectedId] : []);
-    const selected = ids.map(id => nodes.find(n => n.id === id)).filter(n => n && (n.images || []).length);
-    if(selected.length < 2){ toast(tr('smart.toastNeedGroup')); return; }
+    const selected = ids.map(id => nodes.find(n => n.id === id)).filter(n => n && !isSmartGroupNode(n));
+    if(selected.length < 1){ toast('请选择要放入分组的节点'); return; }
     pushUndo();
     const rects = selected.map(nodeRect);
-    const x = Math.min(...rects.map(r => r.x));
-    const y = Math.min(...rects.map(r => r.y));
-    const images = selected.flatMap(node => (node.images || []).map(img => applyNodeMetaToImage({...img}, node)));
-    const group = {id:uid('smart'), type:'smart-image', x, y, title:'Group', images, scale:MEDIA_GROUP_DEFAULT_SCALE, created_at:Date.now()};
-    nodes = nodes.filter(n => !ids.includes(n.id));
+    const minX = Math.min(...rects.map(r => r.x));
+    const minY = Math.min(...rects.map(r => r.y));
+    const maxX = Math.max(...rects.map(r => r.x + r.width));
+    const maxY = Math.max(...rects.map(r => r.y + r.height));
+    const group = {
+        id:uid('group'),
+        type:'smart-group',
+        x:Math.round(minX - 18),
+        y:Math.round(minY - 44),
+        w:Math.max(340, Math.round(maxX - minX + 36)),
+        h:Math.max(220, Math.round(maxY - minY + 72)),
+        title:'智能分组',
+        items:[],
+        images:[],
+        created_at:Date.now()
+    };
     nodes.push(group);
-    canvas.connections = (canvas.connections || []).map(conn => ({
-        ...conn,
-        from:ids.includes(conn.from) ? group.id : conn.from,
-        to:ids.includes(conn.to) ? group.id : conn.to
-    })).filter((conn, index, arr) => conn.from !== conn.to && arr.findIndex(c => c.from === conn.from && c.to === conn.to && (c.kind || 'flow') === (conn.kind || 'flow')) === index);
+    selected.forEach(node => addNodeToSmartGroup(group, node));
+    arrangeSmartGroupMembers(group, {skipUndo:true});
     selectedIds = [];
     selectedId = group.id;
     selectedImage = {nodeId:'', index:-1};
@@ -11337,6 +13014,42 @@ function groupSelectedNodes(){
 }
 function ungroupNode(groupId){
     const group = nodes.find(n => n.id === groupId);
+    if(isSmartGroupNode(group)){
+        pushUndo();
+        const memberIds = smartGroupMembers(group).map(m => m.id);
+        const groupImages = (group.images || []).filter(img => img?.url);
+        let created = [];
+        if(groupImages.length){
+            const layout = imageLayout(group.images || [], nodeScale(group), group);
+            const pad = 16;
+            const gap = 8;
+            const cell = Math.max(28, Math.round(layout.thumb || 96));
+            const cols = Math.max(1, layout.cols || 1);
+            created = groupImages.map((img, index) => {
+                const col = index % cols;
+                const row = Math.floor(index / cols);
+                const size = thumbDisplaySize(img, cell);
+                const x = Math.round(Number(group.x || 0) + pad + col * (cell + gap) + Math.max(0, (cell - size.width) / 2));
+                const y = Math.round(Number(group.y || 0) + pad + row * (cell + gap) + Math.max(0, (cell - size.height) / 2));
+                const node = {id:uid('smart'), type:'smart-image', x, y, w:size.width, h:size.height, title:'Image', images:[stripImageGenerationMeta({...img})], scale:MEDIA_NODE_DEFAULT_SCALE, created_at:Date.now()};
+                inheritNodeMetaFromImage(node);
+                return node;
+            });
+        }
+        nodes = nodes.filter(n => n.id !== groupId);
+        nodes.push(...created);
+        if(canvas) canvas.connections = (canvas.connections || []).filter(c => c.from !== groupId && c.to !== groupId);
+        nodes.forEach(node => {
+            if(Array.isArray(node.inputNodeIds)) node.inputNodeIds = node.inputNodeIds.filter(id => id !== groupId);
+            if(isSmartGroupNode(node) && Array.isArray(node.items)) node.items = node.items.filter(id => id !== groupId);
+        });
+        selectedIds = [...created.map(n => n.id), ...memberIds].filter(id => nodes.some(n => n.id === id));
+        selectedId = selectedIds.length === 1 ? selectedIds[0] : '';
+        selectedImage = {nodeId:'', index:-1};
+        render();
+        scheduleSave();
+        return true;
+    }
     if(!group || !Array.isArray(group.images) || group.images.length < 2) return false;
     pushUndo();
     const layout = imageLayout(group.images || [], nodeScale(group), group);
@@ -11406,6 +13119,36 @@ function mergeImageNodesIntoGroup(sourceId, targetId){
     selectedImage = {nodeId:'', index:-1};
     return true;
 }
+function smartGroupTargetForDraggedNode(draggedNode){
+    if(!draggedNode) return null;
+    const r = nodeRect(draggedNode);
+    const excluded = new Set([draggedNode.id, ...(dragState?.groupIds || [])]);
+    const cx = r.x + r.width / 2;
+    const cy = r.y + r.height / 2;
+    const groups = nodes
+        .filter(node => isSmartGroupNode(node) && !excluded.has(node.id))
+        .map(group => ({group, rect:nodeRect(group)}))
+        .filter(item => cx >= item.rect.x && cx <= item.rect.x + item.rect.width && cy >= item.rect.y && cy <= item.rect.y + item.rect.height);
+    if(!groups.length) return null;
+    groups.sort((a, b) => (nodes.indexOf(b.group) - nodes.indexOf(a.group)));
+    return groups[0].group;
+}
+function addDraggedNodesToSmartGroup(draggedNodes, group){
+    if(!isSmartGroupNode(group)) return false;
+    const list = (draggedNodes || []).filter(n => n && n.id !== group.id);
+    if(!list.length) return false;
+    let added = false;
+    list.forEach(n => {
+        if(addNodeToSmartGroup(group, n)) added = true;
+    });
+    if(!added) return false;
+    arrangeSmartGroupMembers(group, {skipUndo:true});
+    selectedIds = [];
+    const survivingSingle = list.length === 1 && nodes.some(n => n.id === list[0].id) ? list[0].id : '';
+    selectedId = survivingSingle || group.id;
+    selectedImage = {nodeId:'', index:-1};
+    return true;
+}
 function closeCreateMenu(){
     createMenu?.classList.remove('open');
 }
@@ -11424,10 +13167,21 @@ function openCreateMenu(event){
 function createNodeFromMenu(type){
     const p = createMenuPoint || viewportCenter();
     closeCreateMenu();
+    if(type === 'group') return createSmartGroupNode(p.x - 170, p.y - 110);
     if(type === 'prompt') return createPromptNode(p.x - 158, p.y - 97);
     if(type === 'loop') return createLoopNode(p.x - 135, p.y - 95);
     return createImageNodeAt(p);
 }
+document.addEventListener('mousedown', event => {
+    if(event.button !== 0 || !candidatePanelNodeId) return;
+    if(isCandidatePanelInteractionTarget(event.target)) return;
+    if(closeCandidatePanel()){
+        setTimeout(() => {
+            updateComposer();
+            render();
+        }, 0);
+    }
+}, true);
 shell.addEventListener('mousedown', e => {
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
@@ -11593,19 +13347,6 @@ window.onmousemove = e => {
         renderCropBox();
         return;
     }
-    if(resizeState){
-        const node = nodes.find(n => n.id === resizeState.id);
-        if(!node) return;
-        const dx = (e.clientX - resizeState.startX) / viewport.scale;
-        const dy = (e.clientY - resizeState.startY) / viewport.scale;
-        const minW = node.type === 'smart-prompt' ? 260 : node.type === 'smart-loop' ? 252 : 48;
-        const minH = node.type === 'smart-prompt' ? 170 : node.type === 'smart-loop' ? 132 : 48;
-        node.w = Math.max(minW, Math.round(resizeState.startW + dx));
-        node.h = Math.max(minH, Math.round(resizeState.startH + dy));
-        node.scale = 1;
-        updateNodeElementDuringResize(node);
-        return;
-    }
     if(thumbDragState){
         const dx = e.clientX - thumbDragState.startX;
         const dy = e.clientY - thumbDragState.startY;
@@ -11668,11 +13409,12 @@ window.onmousemove = e => {
         setAssetDragOver(false);
     }
     const draggedRect = nodeRect(node);
-    const target = (dragState.ctrlGroup || ['smart-image','smart-prompt','smart-loop'].includes(node.type))
+    const rawTarget = (dragState.ctrlGroup || ['smart-image','smart-prompt','smart-loop','smart-group'].includes(node.type))
         ? (['smart-prompt','smart-loop'].includes(node.type)
             ? dragConnectTargetFor(node, screenToWorld(e))
             : rectOverlapNode(node.id, draggedRect.x, draggedRect.y, draggedRect.width, draggedRect.height, dragState.groupIds))
         : null;
+    const target = rawTarget;
     setDropHighlight(target?.id || '');
     moveNodeElementsDuringDrag();
     updateLoopInsertPreview();
@@ -11680,7 +13422,6 @@ window.onmousemove = e => {
 };
 window.onmouseup = e => {
     document.body.classList.remove('smart-node-drag');
-    document.body.classList.remove('smart-node-resize');
     if(portDragState){
         const drag = portDragState;
         portDragState = null;
@@ -11704,17 +13445,6 @@ window.onmouseup = e => {
     if(cropDrag){
         document.getElementById('cropCanvas')?.classList.remove('dragging-image');
         cropDrag = null;
-    }
-    if(resizeState){
-        const node = nodes.find(n => n.id === resizeState.id);
-        const rect = node ? nodeRect(node) : null;
-        const changed = rect && (Math.abs(rect.width - resizeState.startW) > 1 || Math.abs(rect.height - resizeState.startH) > 1);
-        if(changed){
-            commitPendingUndo();
-        } else { discardPendingUndo(); }
-        resizeState = null;
-        if(changed) render();
-        scheduleSave();
     }
     if(thumbDragState){
         if(!thumbDragState.detached) discardPendingUndo();
@@ -11754,9 +13484,17 @@ window.onmouseup = e => {
         const insertHit = draggedNode?.type === 'smart-loop' && dragState.ctrlGroup && (dragState.group || []).length <= 1
             ? insertionConnectionForNode(draggedNode)
             : null;
+        const draggedNodes = (dragState.group || []).map(item => nodes.find(n => n.id === item.id)).filter(Boolean);
+        const smartGroupTarget = draggedNode ? smartGroupTargetForDraggedNode(draggedNode) : null;
         if(
             insertHit &&
             insertLoopNodeIntoConnection(draggedNode, insertHit)
+        ){
+            stateChanged = true;
+            render();
+        } else if(
+            smartGroupTarget &&
+            addDraggedNodesToSmartGroup(draggedNodes.length ? draggedNodes : [draggedNode], smartGroupTarget)
         ){
             stateChanged = true;
             render();
@@ -11843,15 +13581,16 @@ shell.ondrop = async e => {
     await handleSmartImageDropPayload(payload, '', {point:p, forceNew:true});
 };
 window.addEventListener('paste', e => {
+    if(canvas && nodeClipboard?.nodes?.length && !isEditableTarget(e.target) && !isEditableTarget(document.activeElement)){
+        e.preventDefault();
+        if(Date.now() - lastNodePasteAt > 80) pasteNodes();
+        return;
+    }
     const files = [...(e.clipboardData?.files || [])].filter(isSupportedUploadFile);
     if(files.length){
         lastImagePasteAt = Date.now();
         handleFiles(files, selectedId);
         return;
-    }
-    if(nodeClipboard?.nodes?.length && !isEditableTarget(e.target)){
-        e.preventDefault();
-        pasteNodes();
     }
 });
 window.addEventListener('keydown', e => {
@@ -11887,13 +13626,10 @@ window.addEventListener('keydown', e => {
         copySelectedNodes();
         return;
     }
-    if((e.ctrlKey || e.metaKey) && key === 'v' && !isEditableTarget(e.target) && nodeClipboard?.nodes?.length){
-        const requestedAt = Date.now();
-        setTimeout(() => {
-            if(lastImagePasteAt >= requestedAt) return;
-            if(lastNodePasteAt >= requestedAt) return;
-            pasteNodes();
-        }, 90);
+    if((e.ctrlKey || e.metaKey) && key === 'v' && canvas && !isEditableTarget(e.target) && nodeClipboard?.nodes?.length){
+        e.preventDefault();
+        if(Date.now() - lastNodePasteAt > 80) pasteNodes();
+        return;
     }
     if(e.key === 'Escape' && imageEditModal.classList.contains('open')){
         closeImageEditor();
@@ -11995,6 +13731,69 @@ fileInput.onchange = () => {
 };
 if(assetToggle) assetToggle.onclick = () => toggleAssetLibrary();
 if(assetCloseBtn) assetCloseBtn.onclick = () => toggleAssetLibrary(false);
+if(smartWorkflowToggle) smartWorkflowToggle.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if(smartWorkflowTransferModal?.classList.contains('open')) closeSmartWorkflowTransferModal();
+    else openSmartWorkflowTransferModal();
+};
+smartWorkflowImportInput?.addEventListener('change', event => {
+    const file = event.target.files?.[0];
+    if(file) importSmartWorkflowFile(file);
+    event.target.value = '';
+});
+smartWorkflowImportDropZone?.addEventListener('click', () => smartWorkflowImportInput?.click());
+smartWorkflowImportDropZone?.addEventListener('dragenter', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    smartWorkflowImportDropZone.classList.add('drag-over');
+});
+smartWorkflowImportDropZone?.addEventListener('dragover', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    smartWorkflowImportDropZone.classList.add('drag-over');
+});
+smartWorkflowImportDropZone?.addEventListener('dragleave', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if(!smartWorkflowImportDropZone.contains(event.relatedTarget)) smartWorkflowImportDropZone.classList.remove('drag-over');
+});
+smartWorkflowImportDropZone?.addEventListener('drop', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    smartWorkflowImportDropZone.classList.remove('drag-over');
+    const file = [...(event.dataTransfer?.files || [])].find(item => /\.(json|zip)$/i.test(item.name || ''));
+    if(file) importSmartWorkflowFile(file);
+    else toast('请拖入 JSON 或 ZIP 工作流文件');
+});
+smartWorkflowTransferModal?.addEventListener('pointerdown', e => e.stopPropagation());
+smartWorkflowTransferModal?.addEventListener('mousedown', e => e.stopPropagation());
+smartWorkflowTransferModal?.addEventListener('click', e => e.stopPropagation());
+smartWorkflowTransferModal?.addEventListener('wheel', event => {
+    event.stopPropagation();
+}, {passive:true, capture:true});
+smartWorkflowTransferModal?.addEventListener('dragover', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if(smartWorkflowImportDropZone){
+        event.dataTransfer.dropEffect = 'copy';
+        smartWorkflowImportDropZone.classList.add('drag-over');
+    }
+});
+smartWorkflowTransferModal?.addEventListener('dragleave', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if(!smartWorkflowTransferModal.contains(event.relatedTarget)) smartWorkflowImportDropZone?.classList.remove('drag-over');
+});
+smartWorkflowTransferModal?.addEventListener('drop', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    smartWorkflowImportDropZone?.classList.remove('drag-over');
+    const file = [...(event.dataTransfer?.files || [])].find(item => /\.(json|zip)$/i.test(item.name || ''));
+    if(file) importSmartWorkflowFile(file);
+    else toast('请拖入 JSON 或 ZIP 工作流文件');
+});
 assetPanel?.addEventListener('pointerdown', e => e.stopPropagation());
 assetPanel?.addEventListener('mousedown', e => e.stopPropagation());
 assetPanel?.addEventListener('click', e => e.stopPropagation());
@@ -12358,7 +14157,7 @@ document.getElementById('previewStage').addEventListener('mousedown', event => {
 document.getElementById('imageEditStage').addEventListener('mousedown', event => {
     if(imageEditMode === 'preview' || event.button !== 0) return;
     if(event.target.closest('.image-edit-actions, .preview-tools-overlay, .preview-download-overlay, .crop-box, .crop-handle')) return;
-    if(event.target.closest('#editDrawCanvas, #editTextCanvas, .edit-text-inline') && imageEditMode !== 'crop') return;
+    if(event.target.closest('#editDrawCanvas, #editTextCanvas, #gridJoinCanvas, .edit-text-inline') && imageEditMode !== 'crop') return;
     const stage = event.currentTarget;
     if(stage.scrollWidth <= stage.clientWidth && stage.scrollHeight <= stage.clientHeight) return;
     event.preventDefault();
@@ -12410,6 +14209,11 @@ document.getElementById('editDrawCanvas').addEventListener('pointermove', moveEd
 document.getElementById('editDrawCanvas').addEventListener('pointerup', endEditDraw);
 document.getElementById('editDrawCanvas').addEventListener('pointercancel', endEditDraw);
 document.getElementById('editDrawCanvas').addEventListener('pointerleave', endEditDraw);
+document.getElementById('gridJoinCanvas')?.addEventListener('pointerdown', beginGridJoinDrag);
+document.getElementById('gridJoinCanvas')?.addEventListener('pointermove', moveGridJoinDrag);
+document.getElementById('gridJoinCanvas')?.addEventListener('pointerup', endGridJoinDrag);
+document.getElementById('gridJoinCanvas')?.addEventListener('pointercancel', endGridJoinDrag);
+document.getElementById('gridJoinCanvas')?.addEventListener('pointerleave', endGridJoinDrag);
 document.getElementById('editTextCanvas')?.addEventListener('pointerdown', beginEditText);
 document.getElementById('editTextCanvas')?.addEventListener('pointermove', moveEditText);
 document.getElementById('editTextCanvas')?.addEventListener('pointerup', endEditText);

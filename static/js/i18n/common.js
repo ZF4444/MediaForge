@@ -22,7 +22,7 @@
         "nav.imageEdit": { zh: "图片编辑", en: "Image Edit" },
         "nav.angle": { zh: "视角粗调", en: "Rough Angle" },
         "nav.gaussian": { zh: "视角微调", en: "Fine Angle" },
-        "nav.poseStudio": { zh: "姿势生成", en: "Pose Studio" },
+        "nav.poseStudio": { zh: "姿势编辑", en: "Pose Editor" },
         "nav.online": { zh: "在线生图", en: "Online Image" },
         "nav.gpt": { zh: "GPT 对话", en: "GPT Chat" },
         "nav.canvas": { zh: "无限画布", en: "Infinite Canvas" },

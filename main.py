@@ -1300,6 +1300,7 @@ from app.models import (
     CloudPollRequest,
     AIReference,
     OnlineImageRequest,
+    ImageTaskQueryRequest,
     CanvasVideoRequest,
     TempShUploadRequest,
     CloudVideoUploadRequest,
@@ -1320,6 +1321,7 @@ from app.models import (
     CanvasSaveRequest,
     CanvasAssetCheckRequest,
     CanvasAssetDownloadRequest,
+    CanvasWorkflowExportRequest,
     SmartCanvasGroupExportItem,
     SmartCanvasGroupExportRequest,
     LocalImageImportRequest,
@@ -2666,13 +2668,41 @@ async def generate_jimeng_video(payload: CanvasVideoRequest, provider):
             except Exception:
                 pass
 
-async def wait_for_image_task(client, task_id, provider=None):
+IMAGE_TASK_SUCCESS_STATUSES = {"SUCCESS", "SUCCESSFUL", "SUCCEED", "SUCCEEDED", "COMPLETED", "COMPLETE", "DONE", "FINISHED", "OK", "READY"}
+IMAGE_TASK_FAILED_STATUSES = {"FAILURE", "FAILED", "FAIL", "ERROR", "ERRORED", "CANCELED", "CANCELLED", "TIMEOUT", "REJECTED", "EXPIRED"}
+
+def extract_task_id_from_text(text):
+    match = re.search(r"(?:task_id|taskId|task id)\s*[=:：]\s*([A-Za-z0-9_.:-]+)", str(text or ""), re.I)
+    return match.group(1) if match else ""
+
+def image_task_url_for_provider(provider, task_id):
     base_url = (provider.get("base_url") if provider else AI_BASE_URL).rstrip("/")
     is_apimart = is_apimart_provider(provider)
     if is_apimart:
-        task_url = f"{base_url}/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/tasks/{task_id}"
-    else:
-        task_url = f"{base_url}/images/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/images/tasks/{task_id}"
+        return f"{base_url}/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/tasks/{task_id}"
+    return f"{base_url}/images/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/images/tasks/{task_id}"
+
+def image_task_data(payload):
+    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+        return payload["data"]
+    return payload if isinstance(payload, dict) else {}
+
+def image_task_status(payload):
+    task_data = image_task_data(payload)
+    return str(task_data.get("status") or task_data.get("task_status") or "").upper()
+
+def image_task_fail_reason(payload):
+    task_data = image_task_data(payload)
+    error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
+    return task_data.get("fail_reason") or task_data.get("message") or error.get("message") or (payload.get("message") if isinstance(payload, dict) else "") or "生图任务失败"
+
+async def fetch_image_task_payload(client, task_id, provider=None):
+    response = await client.get(image_task_url_for_provider(provider, task_id), headers=api_headers(provider=provider))
+    response.raise_for_status()
+    return response.json()
+
+async def wait_for_image_task(client, task_id, provider=None):
+    is_apimart = is_apimart_provider(provider)
     timeout = APIMART_IMAGE_TASK_TIMEOUT if is_apimart else IMAGE_TASK_TIMEOUT
     interval = APIMART_IMAGE_POLL_INTERVAL if is_apimart else IMAGE_POLL_INTERVAL
     initial_delay = APIMART_IMAGE_INITIAL_POLL_DELAY if is_apimart else 0
@@ -2684,19 +2714,22 @@ async def wait_for_image_task(client, task_id, provider=None):
             initial_delay = 0
             if time.monotonic() >= deadline:
                 break
-        response = await client.get(task_url, headers=api_headers(provider=provider))
-        response.raise_for_status()
-        last_payload = response.json()
-        task_data = last_payload.get("data") if isinstance(last_payload.get("data"), dict) else last_payload
-        status = str(task_data.get("status") or task_data.get("task_status") or "").upper()
-        if status in {"SUCCESS", "SUCCEED", "SUCCEEDED", "COMPLETED", "COMPLETE", "DONE", "FINISHED", "OK", "READY"}:
+        last_payload = await fetch_image_task_payload(client, task_id, provider)
+        status = image_task_status(last_payload)
+        if not status:
+            try:
+                if extract_image(last_payload):
+                    return last_payload
+            except HTTPException:
+                pass
+        if status in IMAGE_TASK_SUCCESS_STATUSES:
             return last_payload
-        if status in {"FAILURE", "FAILED", "FAIL", "ERROR", "ERRORED", "CANCELED", "CANCELLED", "TIMEOUT", "REJECTED", "EXPIRED"}:
-            error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
-            reason = task_data.get("fail_reason") or task_data.get("message") or error.get("message") or last_payload.get("message") or "生图任务失败"
-            raise HTTPException(status_code=502, detail=f"生图任务失败：{reason}")
+        if status in IMAGE_TASK_FAILED_STATUSES:
+            raise HTTPException(status_code=502, detail=f"生图任务失败：{image_task_fail_reason(last_payload)}")
         await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
-    raise HTTPException(status_code=504, detail=f"生图任务超时（已等待 {int(timeout)} 秒），task_id={task_id}")
+    raw_text = json.dumps(last_payload, ensure_ascii=False)[:800] if last_payload else ""
+    extra = f"，最后响应：{raw_text}" if raw_text else ""
+    raise HTTPException(status_code=504, detail=f"生图任务超时（已等待 {int(timeout)} 秒），task_id={task_id}{extra}")
 
 # 本地媒体路径解析器已迁移至 app/core/media.py（原样迁移），多域复用。
 # 此处导入以保持原模块级名称可用。
@@ -4178,11 +4211,30 @@ def runninghub_local_asset_path(url):
         return None
     return path
 
+RUNNINGHUB_OUTPUT_EXTS = {"png","jpg","jpeg","webp","gif","bmp","mp4","webm","mov","m4v","mkv","mp3","wav","ogg","m4a","flac","aac","zip","gz","tar","rar","7z","ply","splat"}
+RUNNINGHUB_OUTPUT_URL_KEYS = {
+    "url", "urls", "uri", "src", "path",
+    "fileurl", "fileurls", "file_url", "file_urls",
+    "downloadurl", "downloadurls", "download_url", "download_urls",
+    "imageurl", "imageurls", "image_url", "image_urls",
+    "videourl", "videourls", "video_url", "video_urls",
+    "audiourl", "audiourls", "audio_url", "audio_urls",
+    "outputurl", "outputurls", "output_url", "output_urls",
+    "previewurl", "previewurls", "preview_url", "preview_urls",
+    "fileuri", "fileuris", "file_uri", "file_uris",
+    "file_path", "file_paths", "filepath", "filepaths",
+    "filename", "filenames", "file_name", "file_names",
+}
+RUNNINGHUB_OUTPUT_CONTAINER_KEYS = {
+    "data", "outputs", "output", "results", "result", "files", "file",
+    "images", "image", "videos", "video", "audios", "audio",
+    "items", "list", "content", "parts", "media", "resources",
+}
+
 def runninghub_output_ext(remote, content_type=""):
     tail = str(remote or "").split("?", 1)[0].split("#", 1)[0]
     ext = os.path.splitext(tail)[1].lower().strip(".")
-    allowed = {"png","jpg","jpeg","webp","gif","bmp","mp4","webm","mov","m4v","mkv","mp3","wav","ogg","m4a","flac","aac","zip","gz","tar","rar","7z","ply","splat"}
-    if ext in allowed:
+    if ext in RUNNINGHUB_OUTPUT_EXTS:
         return ext
     ct = str(content_type or "").lower()
     if "zip" in ct:
@@ -4211,28 +4263,59 @@ def runninghub_output_ext(remote, content_type=""):
         return "jpg"
     return "png"
 
+def runninghub_output_candidate(value, allow_filename=False):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    if lower.startswith(("http://", "https://", "data:")) or text.startswith("/"):
+        return text
+    if allow_filename:
+        tail = lower.split("?", 1)[0].split("#", 1)[0]
+        ext = os.path.splitext(tail)[1].lower().strip(".")
+        if ext in RUNNINGHUB_OUTPUT_EXTS:
+            return text
+    return ""
+
+def runninghub_collect_outputs(value, outputs, seen, depth=0, allow_filename=False):
+    if depth > 12 or value is None:
+        return
+    if isinstance(value, str):
+        candidate = runninghub_output_candidate(value, allow_filename)
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            outputs.append(candidate)
+        return
+    if isinstance(value, (int, float, bool)):
+        return
+    if isinstance(value, list):
+        for item in value:
+            runninghub_collect_outputs(item, outputs, seen, depth + 1, allow_filename)
+        return
+    if not isinstance(value, dict):
+        return
+
+    visited_keys = set()
+    for key, item in value.items():
+        key_norm = str(key or "").replace("-", "_").lower()
+        if key_norm in RUNNINGHUB_OUTPUT_URL_KEYS:
+            visited_keys.add(key)
+            runninghub_collect_outputs(item, outputs, seen, depth + 1, True)
+    for key, item in value.items():
+        key_norm = str(key or "").replace("-", "_").lower()
+        if key_norm in RUNNINGHUB_OUTPUT_CONTAINER_KEYS and key not in visited_keys:
+            visited_keys.add(key)
+            runninghub_collect_outputs(item, outputs, seen, depth + 1, True)
+    for key, item in value.items():
+        if key in visited_keys:
+            continue
+        # Fallback traversal catches node-id keyed output maps while avoiding bare
+        # filenames in request echoes such as nodeInfoList[].fieldValue.
+        runninghub_collect_outputs(item, outputs, seen, depth + 1, False)
+
 def runninghub_extract_outputs(data):
-    arr = []
-    if isinstance(data, list):
-        arr = data
-    elif isinstance(data, dict):
-        for key in ("outputs", "results", "files", "data"):
-            value = data.get(key)
-            if isinstance(value, list):
-                arr = value
-                break
-        if not arr and (data.get("fileUrl") or data.get("url")):
-            arr = [data]
     outputs = []
-    for item in arr:
-        if isinstance(item, str):
-            outputs.append(item)
-        elif isinstance(item, dict):
-            url = item.get("fileUrl") or item.get("file_url") or item.get("url") or item.get("downloadUrl") or item.get("download_url")
-            if isinstance(url, list):
-                outputs.extend([str(u) for u in url if u])
-            elif url:
-                outputs.append(str(url))
+    runninghub_collect_outputs(data, outputs, set(), allow_filename=True)
     return outputs
 
 async def runninghub_store_remote_output(client, remote):
@@ -4344,6 +4427,28 @@ def runninghub_query_status(raw):
         if value is not None:
             return str(value).lower()
     return ""
+
+def runninghub_normalized_status(raw, code=None, urls=None):
+    status = runninghub_query_status(raw)
+    if status:
+        compact = status.replace("_", "").replace("-", "").replace(" ", "")
+        if compact in {"success", "succeeded", "completed", "complete", "finish", "finished", "done"}:
+            return "SUCCESS"
+        if compact in {"failed", "fail", "failure", "error", "canceled", "cancelled"}:
+            return "FAILED"
+        if compact in {"running", "processing", "executing", "progress", "wait", "waiting"}:
+            return "RUNNING"
+        if compact in {"queued", "queue", "pending", "created", "submitted"}:
+            return "QUEUED"
+    if code in (804, "804"):
+        return "RUNNING"
+    if code in (813, "813"):
+        return "QUEUED"
+    if code in (805, "805"):
+        return "FAILED"
+    if code in (0, "0"):
+        return "SUCCESS" if urls else "RUNNING"
+    return "UNKNOWN"
 
 def runninghub_extract_task_id(raw):
     if not isinstance(raw, dict):
@@ -4746,31 +4851,83 @@ def omnilojo_image_from_value(value):
         return {"type": "url", "value": text}
     return None
 
+def image_from_inline_payload(value):
+    if not isinstance(value, dict):
+        return None
+    mime_type = value.get("mimeType") or value.get("mime_type") or value.get("type") or value.get("media_type") or ""
+    data = value.get("b64_json") or value.get("base64") or value.get("base64_data")
+    mime_text = str(mime_type or "").lower()
+    if data is None and ("mimeType" in value or "mime_type" in value or "media_type" in value or mime_text == "image" or mime_text.startswith("image/")):
+        data = value.get("data")
+    if not isinstance(data, str) or not data.strip():
+        return None
+    data = data.strip()
+    result = omnilojo_image_from_value(data)
+    if result:
+        return result
+    if isinstance(mime_type, str) and mime_type.startswith("image/"):
+        return {"type": "b64", "value": data, "mime_type": mime_type}
+    return {"type": "b64", "value": data, "mime_type": "image/png"}
+
+def extract_image_deep(value, depth=0):
+    if depth > 8 or value is None:
+        return None
+    result = omnilojo_image_from_value(value) if isinstance(value, str) else None
+    if result:
+        return result
+    if isinstance(value, list):
+        for item in value:
+            result = extract_image_deep(item, depth + 1)
+            if result:
+                return result
+        return None
+    if not isinstance(value, dict):
+        return None
+    for key in ("inlineData", "inline_data", "image_data"):
+        result = image_from_inline_payload(value.get(key))
+        if result:
+            return result
+    result = image_from_inline_payload(value)
+    if result:
+        return result
+    image_url = value.get("image_url")
+    if isinstance(image_url, dict):
+        result = extract_image_deep(image_url.get("url"), depth + 1)
+        if result:
+            return result
+    elif image_url:
+        result = extract_image_deep(image_url, depth + 1)
+        if result:
+            return result
+    file_data = value.get("fileData") or value.get("file_data") or {}
+    if isinstance(file_data, dict):
+        result = extract_image_deep(file_data.get("fileUri") or file_data.get("file_uri") or file_data.get("url"), depth + 1)
+        if result:
+            return result
+    for key in (
+        "url", "uri", "src", "path", "image", "images", "imageUrl", "image_url",
+        "output", "outputs", "output_url", "outputUrl", "download_url", "downloadUrl",
+        "data", "result", "results", "content", "parts", "message", "choices",
+    ):
+        if key in value:
+            result = extract_image_deep(value.get(key), depth + 1)
+            if result:
+                return result
+    return None
+
 def extract_image_from_chat_response(data):
     """从 OpenAI v1/chat/completions 响应里抽取图片。
-    支持：message.images[]、多模态 content 里的 image_url、以及正文里的 data URL / markdown 图片链接。"""
+    支持：message.images[]、多模态 content 里的 image_url/inlineData、以及正文里的 data URL / markdown 图片链接。"""
     data = unwrap_apimart_response(data) if isinstance(data, dict) else data
     choices = data.get("choices") if isinstance(data, dict) else None
     text = ''
     if isinstance(choices, list) and choices:
         message = choices[0].get("message") if isinstance(choices[0], dict) else {}
         message = message or {}
-        for img in (message.get("images") or []):
-            if isinstance(img, dict):
-                url = img.get("image_url", {}).get("url") if isinstance(img.get("image_url"), dict) else img.get("url")
-                result = omnilojo_image_from_value(url)
-                if result:
-                    return result
+        result = extract_image_deep(message)
+        if result:
+            return result
         content = message.get("content", "")
-        if isinstance(content, list):
-            for part in content:
-                if not isinstance(part, dict):
-                    continue
-                image_url = part.get("image_url")
-                url = image_url.get("url") if isinstance(image_url, dict) else image_url
-                result = omnilojo_image_from_value(url)
-                if result:
-                    return result
         text = text_from_chat_response(data)
         for match in re.findall(r"!\[[^\]]*\]\(([^)]+)\)|(data:image/[^\s)\"']+)|(https?://[^\s)\"']+\.(?:png|jpe?g|webp|gif))", text or "", re.I):
             for candidate in match:
@@ -5439,23 +5596,13 @@ async def runninghub_query(taskId: str = ""):
         if response.status_code >= 400:
             raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
         code = raw.get("code") if isinstance(raw, dict) else None
-        status = "PENDING"
         urls = []
-        if code in (0, "0"):
-            status = "SUCCESS"
-            for remote in runninghub_extract_outputs(raw.get("data")):
-                try:
-                    urls.append(await runninghub_store_remote_output(client, remote))
-                except Exception:
-                    urls.append(remote)
-        elif code in (804, "804"):
-            status = "RUNNING"
-        elif code in (813, "813"):
-            status = "QUEUED"
-        elif code in (805, "805"):
-            status = "FAILED"
-        else:
-            status = "UNKNOWN"
+        for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw):
+            try:
+                urls.append(await runninghub_store_remote_output(client, remote))
+            except Exception:
+                urls.append(remote)
+        status = runninghub_normalized_status(raw, code, urls)
         return {"success": True, "data": {"status": status, "urls": urls, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
 
 @app.post("/api/runninghub/upload-asset")
@@ -6301,6 +6448,69 @@ async def build_online_image_result(payload: OnlineImageRequest):
 async def online_image(payload: OnlineImageRequest):
     return await build_online_image_result(payload)
 
+@app.post("/api/image-task-query")
+async def query_image_task(payload: ImageTaskQueryRequest):
+    provider = get_api_provider(payload.provider_id)
+    task_id = str(payload.task_id or "").strip()
+    timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            raw = await fetch_image_task_payload(client, task_id, provider)
+    except httpx.HTTPStatusError as exc:
+        log_net_error(f"查询生图任务 HTTP状态错误 provider={provider.get('id')} task_id={task_id}", exc)
+        text = exc.response.text or ""
+        raise HTTPException(status_code=exc.response.status_code, detail=f"查询上游生图任务失败：{text[:300]}") from exc
+    except httpx.HTTPError as exc:
+        log_net_error(f"查询生图任务 网络/TLS错误 provider={provider.get('id')} task_id={task_id}", exc)
+        raise HTTPException(status_code=502, detail=f"查询上游生图任务失败：{exc}") from exc
+
+    status = image_task_status(raw)
+    image_item = None
+    try:
+        image_item = extract_image(raw)
+    except HTTPException:
+        image_item = None
+    if image_item:
+        local_urls = []
+        local_url = await save_ai_image_to_output(image_item, prefix="online_")
+        if local_url:
+            local_urls.append(local_url)
+        result = {
+            "status": "succeeded",
+            "prompt": "",
+            "images": local_urls,
+            "timestamp": time.time(),
+            "type": "online",
+            "model": "",
+            "provider_id": provider["id"],
+            "provider_name": provider.get("name") or provider["id"],
+            "task_id": task_id,
+            "request_id": raw.get("id") if isinstance(raw, dict) else "",
+            "params": {"provider_id": provider["id"]},
+            "raw": raw,
+        }
+        save_to_history(result)
+        if GLOBAL_LOOP:
+            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
+        return result
+    if status in IMAGE_TASK_FAILED_STATUSES:
+        return {
+            "status": "failed",
+            "task_id": task_id,
+            "provider_id": provider["id"],
+            "provider_name": provider.get("name") or provider["id"],
+            "error": image_task_fail_reason(raw),
+            "raw": raw,
+        }
+    return {
+        "status": "running",
+        "task_id": task_id,
+        "provider_id": provider["id"],
+        "provider_name": provider.get("name") or provider["id"],
+        "message": "任务仍在生成中",
+        "raw": raw,
+    }
+
 async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     with CANVAS_TASK_LOCK:
         if task_id in CANVAS_TASKS:
@@ -6332,11 +6542,13 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
+        upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
         with CANVAS_TASK_LOCK:
             CANVAS_TASKS[task_id].update({
                 "status": "failed",
                 "error": str(detail),
                 "status_code": status_code,
+                "upstream_task_id": upstream_task_id,
                 "updated_at": time.time(),
             })
 
@@ -6352,6 +6564,8 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             "updated_at": time.time(),
             "result": None,
             "error": "",
+            "provider_id": payload.provider_id,
+            "model": payload.model,
         }
     asyncio.create_task(run_canvas_image_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
@@ -6362,6 +6576,58 @@ async def get_canvas_image_task(task_id: str):
         task = dict(CANVAS_TASKS.get(task_id) or {})
     if not task:
         raise HTTPException(status_code=404, detail="画布任务不存在，可能服务已重启或任务已过期")
+    return task
+
+async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
+    with CANVAS_TASK_LOCK:
+        if task_id in CANVAS_TASKS:
+            CANVAS_TASKS[task_id]["status"] = "running"
+            CANVAS_TASKS[task_id]["updated_at"] = time.time()
+    try:
+        result = await asyncio.to_thread(generate, payload)
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error") or "ComfyUI 生成失败"))
+        with CANVAS_TASK_LOCK:
+            CANVAS_TASKS[task_id].update({
+                "status": "succeeded",
+                "result": result,
+                "error": "",
+                "updated_at": time.time(),
+            })
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        status_code = getattr(exc, "status_code", 500)
+        with CANVAS_TASK_LOCK:
+            CANVAS_TASKS[task_id].update({
+                "status": "failed",
+                "error": str(detail),
+                "status_code": status_code,
+                "updated_at": time.time(),
+            })
+
+@app.post("/api/canvas-comfy-tasks")
+async def create_canvas_comfy_task(payload: GenerateRequest):
+    task_id = f"canvas_comfy_{uuid.uuid4().hex}"
+    with CANVAS_TASK_LOCK:
+        CANVAS_TASKS[task_id] = {
+            "id": task_id,
+            "type": "comfy",
+            "status": "queued",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "result": None,
+            "error": "",
+            "workflow_json": payload.workflow_json,
+        }
+    asyncio.create_task(run_canvas_comfy_task(task_id, payload))
+    return {"task_id": task_id, "status": "queued"}
+
+@app.get("/api/canvas-comfy-tasks/{task_id}")
+async def get_canvas_comfy_task(task_id: str):
+    with CANVAS_TASK_LOCK:
+        task = dict(CANVAS_TASKS.get(task_id) or {})
+    if not task:
+        raise HTTPException(status_code=404, detail="ComfyUI 任务不存在，可能服务已重启或任务已过期")
     return task
 
 # --- Canvas Video ---
@@ -7298,6 +7564,176 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
 
 # sanitize_export_filename 已迁移至 app/core/media.py（原样迁移），多域复用。
 from app.core.media import sanitize_export_filename
+
+
+def canvas_workflow_collect_resource_refs(value: Any, found: Optional[List[str]] = None) -> List[str]:
+    if found is None:
+        found = []
+    if isinstance(value, dict):
+        for item in value.values():
+            canvas_workflow_collect_resource_refs(item, found)
+    elif isinstance(value, list):
+        for item in value:
+            canvas_workflow_collect_resource_refs(item, found)
+    elif isinstance(value, str):
+        text = value.strip()
+        if (text.startswith("/assets/") or text.startswith("/output/")) and output_file_from_url(text):
+            found.append(text)
+    return found
+
+
+def canvas_workflow_unique_archive_name(base: str, used: set) -> str:
+    safe = sanitize_export_filename(base, "resource.bin")
+    name, ext = os.path.splitext(safe)
+    archive = safe
+    idx = 2
+    while archive in used:
+        archive = f"{name}-{idx}{ext}"
+        idx += 1
+    used.add(archive)
+    return archive
+
+
+def canvas_workflow_replace_strings(value: Any, mapping: Dict[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {k: canvas_workflow_replace_strings(v, mapping) for k, v in value.items()}
+    if isinstance(value, list):
+        return [canvas_workflow_replace_strings(item, mapping) for item in value]
+    if isinstance(value, str):
+        return mapping.get(value, value)
+    return value
+
+
+def canvas_workflow_payload(
+    nodes_payload: List[Dict[str, Any]],
+    connections_payload: List[Dict[str, Any]],
+    resources: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    return {
+        "format": "infinite-canvas-workflow",
+        "version": 1,
+        "exported_at": now_ms(),
+        "nodes": nodes_payload or [],
+        "connections": connections_payload or [],
+        "resources": resources or [],
+    }
+
+
+def build_canvas_workflow_archive(payload: CanvasWorkflowExportRequest) -> Tuple[bytes, Dict[str, Any]]:
+    nodes_payload = payload.nodes or []
+    connections_payload = payload.connections or []
+    if not nodes_payload:
+        raise HTTPException(status_code=400, detail="没有可导出的节点")
+    buffer = BytesIO()
+    resources: List[Dict[str, Any]] = []
+    used: set = set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        if payload.include_resources:
+            for url in canvas_workflow_collect_resource_refs(nodes_payload):
+                if any(item.get("url") == url for item in resources):
+                    continue
+                path = output_file_from_url(url)
+                if not path or not os.path.isfile(path):
+                    continue
+                archive_name = canvas_workflow_unique_archive_name(os.path.basename(path), used)
+                archive_path = f"resources/{archive_name}"
+                zf.write(path, archive_path)
+                resources.append({
+                    "url": url,
+                    "archive": archive_path,
+                    "name": os.path.basename(path),
+                    "size": os.path.getsize(path),
+                })
+        workflow = canvas_workflow_payload(nodes_payload, connections_payload, resources)
+        zf.writestr("workflow.json", json.dumps(workflow, ensure_ascii=False, indent=2))
+    buffer.seek(0)
+    return buffer.getvalue(), {
+        "resources": resources,
+        "node_count": len(nodes_payload),
+        "connection_count": len(connections_payload),
+    }
+
+
+@app.post("/api/canvas-workflows/export")
+async def export_canvas_workflow(payload: CanvasWorkflowExportRequest):
+    archive, _ = build_canvas_workflow_archive(payload)
+    filename = sanitize_export_filename(payload.filename or "canvas-workflow.zip", "canvas-workflow.zip")
+    if not filename.lower().endswith(".zip"):
+        filename += ".zip"
+    encoded = urllib.parse.quote(filename)
+    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"}
+    return Response(archive, media_type="application/zip", headers=headers)
+
+
+@app.post("/api/canvas-workflows/import")
+async def import_canvas_workflow(file: UploadFile = File(...)):
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="文件为空")
+    name = str(file.filename or "").lower()
+    resource_mapping: Dict[str, str] = {}
+    workflow: Any = None
+    try:
+        if name.endswith(".zip") or raw[:2] == b"PK":
+            with zipfile.ZipFile(BytesIO(raw), "r") as zf:
+                names = zf.namelist()
+                candidates = [n for n in names if n.lower().endswith("workflow.json")]
+                workflow_name = "workflow.json" if "workflow.json" in names else (candidates[0] if candidates else "")
+                if not workflow_name:
+                    raise HTTPException(status_code=400, detail="压缩包中没有 workflow.json")
+                workflow = json.loads(zf.read(workflow_name).decode("utf-8-sig"))
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                import_dir = os.path.join(OUTPUT_INPUT_DIR, f"workflow_import_{stamp}_{uuid.uuid4().hex[:6]}")
+                os.makedirs(import_dir, exist_ok=True)
+                for res in workflow.get("resources") or []:
+                    archive = str(res.get("archive") or "").replace("\\", "/").lstrip("/")
+                    if not archive or archive not in names:
+                        continue
+                    fallback_name = os.path.basename(archive) or "resource.bin"
+                    base = sanitize_export_filename(res.get("name") or fallback_name, fallback_name)
+                    target = os.path.join(import_dir, f"{uuid.uuid4().hex[:8]}_{base}")
+                    with zf.open(archive) as src, open(target, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    rel = os.path.relpath(target, ASSETS_DIR).replace("\\", "/")
+                    new_url = f"/assets/{rel}"
+                    old_url = str(res.get("url") or "").strip()
+                    if old_url:
+                        resource_mapping[old_url] = new_url
+                    resource_mapping[archive] = new_url
+                    resource_mapping[f"./{archive}"] = new_url
+                    resource_mapping[os.path.basename(archive)] = new_url
+        else:
+            workflow = json.loads(raw.decode("utf-8-sig"))
+    except HTTPException:
+        raise
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="无法读取压缩包") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"无法解析工作流文件：{exc}") from exc
+
+    if isinstance(workflow, list):
+        workflow = {"nodes": workflow, "connections": []}
+    if not isinstance(workflow, dict):
+        raise HTTPException(status_code=400, detail="工作流格式不正确")
+    nodes_payload = workflow.get("nodes")
+    connections_payload = workflow.get("connections")
+    if nodes_payload is None and isinstance(workflow.get("workflow"), dict):
+        nodes_payload = workflow["workflow"].get("nodes")
+        connections_payload = workflow["workflow"].get("connections")
+    if not isinstance(nodes_payload, list):
+        raise HTTPException(status_code=400, detail="工作流 JSON 缺少 nodes")
+    if not isinstance(connections_payload, list):
+        connections_payload = []
+    if resource_mapping:
+        nodes_payload = canvas_workflow_replace_strings(nodes_payload, resource_mapping)
+        connections_payload = canvas_workflow_replace_strings(connections_payload, resource_mapping)
+    return {
+        "workflow": canvas_workflow_payload(nodes_payload, connections_payload, workflow.get("resources") or []),
+        "nodes": nodes_payload,
+        "connections": connections_payload,
+        "resource_map": resource_mapping,
+    }
+
 
 def smart_group_export_folder(folder: str, group_name: str) -> str:
     text = str(folder or "").strip()
