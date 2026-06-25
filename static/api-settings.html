@@ -48,6 +48,7 @@
                             <div class="editor-sub" data-i18n="api.editorSub">配置基础信息、API Key 和可用模型</div>
                         </div>
                         <div class="content-actions">
+                            <label class="provider-enable-toggle" title="启用/禁用此平台"><input id="enabledToggle" type="checkbox" onchange="var p=provider(); if(p){p.enabled=this.checked; renderProviderList();}"><span class="toggle-track"><span class="toggle-thumb"></span></span><span class="toggle-label" data-i18n="api.enabled">启用</span></label>
                             <button id="deleteBtn" class="action-btn danger-btn api-page-delete-btn" type="button" onclick="deleteProvider()"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i><span data-i18n="api.delete">删除</span></button>
                             <button class="action-btn save-btn api-page-save-btn" type="button" onclick="saveProviders()"><i data-lucide="save" class="w-3.5 h-3.5"></i><span data-i18n="api.save">保存</span></button>
                         </div>

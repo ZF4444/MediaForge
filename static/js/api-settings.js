@@ -2138,6 +2138,8 @@ function renderEditor(){
     const item = provider();
     if(!item) return;
     editorTitle.textContent = item.name || item.id;
+    const enabledToggle = document.getElementById('enabledToggle');
+    if(enabledToggle) enabledToggle.checked = item.enabled !== false;
     nameInput.value = item.name || '';
     idInput.value = item.id || '';
     updateIdPreview();
