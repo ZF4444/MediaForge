@@ -601,8 +601,6 @@
         const PROTOCOL_LABEL = {
             api:'API',
             apimart:'API',
-            modelscope:'ModelScope',
-            runninghub:'RunningHub',
             jimeng:'即梦',
             volcengine:'火山',
             gemini:'Gemini'
@@ -640,8 +638,12 @@
         }
         function imageProviders(){
             const list = (apiProviders || []).filter(p => p.enabled !== false && (
-                (p.image_models || []).length || (p.rh_apps || []).length || (p.rh_workflows || []).length
-            ));
+                (p.image_models || []).length
+            )).filter(p => {
+                const proto = String(p.protocol || '').toLowerCase();
+                const pid = String(p.id || '').toLowerCase();
+                return proto !== 'modelscope' && proto !== 'runninghub' && pid !== 'modelscope' && pid !== 'runninghub';
+            });
             return list.length ? list : [{ id:'comfly', name:'Comfly', image_models:[models.gpt, models.nano] }];
         }
         function providerById(id){
@@ -655,26 +657,11 @@
             const proto = String(p.protocol || '').toLowerCase();
             const pid = String(p.id || '').toLowerCase();
             const base = String(p.base_url || '').toLowerCase();
-            if(proto === 'modelscope' || pid === 'modelscope') return 'modelscope';
-            if(proto === 'runninghub' || pid === 'runninghub') return 'runninghub';
             if(proto === 'jimeng' || pid === 'jimeng') return 'jimeng';
             if(proto === 'volcengine' || pid === 'volcengine') return 'volcengine';
             if(proto === 'gemini') return 'gemini';
             if(proto === 'apimart' || base.includes('apimart.ai')) return 'apimart';
             return 'api';
-        }
-        function runningHubEntryId(entry, kind){
-            if(!entry || typeof entry !== 'object') return '';
-            const raw = kind === 'workflow' ? (entry.workflowId || entry.id) : (entry.appId || entry.webappId || entry.id);
-            return String(raw || '').trim();
-        }
-        function runningHubEntries(id){
-            const p = providerById(id) || {};
-            const collect = (list, kind) => (list || [])
-                .filter(e => e && e.enabled !== false && e.hidden !== true)
-                .map(e => ({ kind, id:runningHubEntryId(e, kind), title:String(e.title || e.note || '').trim() }))
-                .filter(e => e.id);
-            return [...collect(p.rh_workflows, 'workflow'), ...collect(p.rh_apps, 'app')];
         }
         function renderProviderControls(){
             const providerSelect = document.getElementById('providerSelect');
@@ -683,22 +670,9 @@
             const providers = imageProviders();
             if(!providers.some(p => p.id === selectedProvider)) selectedProvider = providers[0]?.id || 'comfly';
             providerSelect.innerHTML = providers.map(p => `<option value="${escapeHtml(p.id)}" ${p.id === selectedProvider ? 'selected' : ''}>${escapeHtml(p.name || p.id)}</option>`).join('');
-            if(providerProtocol(selectedProvider) === 'runninghub'){
-                const entries = runningHubEntries(selectedProvider);
-                const keys = entries.map(e => `${e.kind}:${e.id}`);
-                if(!keys.includes(selectedModel)) selectedModel = keys[0] || '';
-                modelSelect.innerHTML = entries.length
-                    ? entries.map(e => {
-                        const key = `${e.kind}:${e.id}`;
-                        const tag = e.kind === 'workflow' ? '工作流' : '应用';
-                        return `<option value="${escapeHtml(key)}" ${key === selectedModel ? 'selected' : ''}>${escapeHtml(`[${tag}] ${e.title || e.id}`)}</option>`;
-                    }).join('')
-                    : '<option value="">未配置 RunningHub 模型</option>';
-            } else {
-                const modelList = providerModels(selectedProvider);
-                if(!modelList.includes(selectedModel)) selectedModel = modelList[0] || models.gpt;
-                modelSelect.innerHTML = modelList.map(m => `<option value="${escapeHtml(m)}" ${m === selectedModel ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
-            }
+            const modelList = providerModels(selectedProvider);
+            if(!modelList.includes(selectedModel)) selectedModel = modelList[0] || models.gpt;
+            modelSelect.innerHTML = modelList.map(m => `<option value="${escapeHtml(m)}" ${m === selectedModel ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
             const badge = document.getElementById('providerModeBadge');
             if(badge){
                 const proto = providerProtocol(selectedProvider);
