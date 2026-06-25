@@ -5304,7 +5304,6 @@ async def pose_studio_upload_fbx(file: UploadFile = File(...)):
     return register_uploaded_fbx_model(content, file.filename or "uploaded-model")
 
 async def _pose_studio_vnccs_route(path: str, request: Request):
-    ensure_same_origin_request(request)
     if path.startswith("/vnccs/character_studio/generated_model/") and request.method == "GET":
         return generated_model_preview(path.rsplit("/", 1)[-1])
 
