@@ -289,6 +289,7 @@
             letter-spacing:.16em;
             text-decoration:none;
         }
+<<<<<<< HEAD
         .help-panel {
             padding:18px 20px;
         }
@@ -324,6 +325,8 @@
             margin:4px 0 8px;
             padding-left:18px;
         }
+=======
+>>>>>>> 8631380e8a812df55f543d8790415c4d7c60eda2
         .media-row .size-row {
             grid-template-columns:1fr;
         }
@@ -332,7 +335,10 @@
             .studio-row { grid-template-columns:1fr; }
             .studio-side { display:flex; flex-direction:column; gap:12px; }
             .pose-frame { height:549px; min-height:549px; }
+<<<<<<< HEAD
             .help-grid { grid-template-columns:1fr; }
+=======
+>>>>>>> 8631380e8a812df55f543d8790415c4d7c60eda2
         }
         @media (max-width: 768px) {
             .container-box { padding:32px 18px 60px; }
@@ -483,6 +489,7 @@
                 </div>
             </section>
 
+<<<<<<< HEAD
             <section class="panel help-panel">
                 <div class="help-grid">
                     <div>
@@ -515,6 +522,8 @@
                 </div>
             </section>
 
+=======
+>>>>>>> 8631380e8a812df55f543d8790415c4d7c60eda2
             <div class="hidden" aria-hidden="true">
                 <div id="modelState"></div>
                 <span id="modelFileName">-</span>
@@ -1038,7 +1047,11 @@
             const m = event.data || {};
             if(m.type === 'page-leave-check' && m.from === 'pose-studio') {
                 const hadContent = !!(uploadedFile || modelUrl);
+<<<<<<< HEAD
                 if(hadContent && !confirm('确定离开「姿势编辑」页面吗？\n当前上传图与 FBX 结果将被清空。')) return;
+=======
+                if(hadContent && !confirm('确定离开「姿势生成」页面吗？\n当前上传图与 FBX 结果将被清空。')) return;
+>>>>>>> 8631380e8a812df55f543d8790415c4d7c60eda2
                 resetPage();
                 window.parent.postMessage({ type:'page-leave-allow', from:'pose-studio', target:m.target }, '*');
                 return;
