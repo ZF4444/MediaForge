@@ -1249,7 +1249,14 @@ async function touchCanvasOpened(id){
 function renderCanvasListInto(list){
     if(!list) return;
     refreshGateViewControls();
-    const items = trashMode ? deletedCanvases : canvases;
+    let items = trashMode ? deletedCanvases : canvases;
+    const kinds = window.__canvasAllowedKinds;
+    if(kinds && (!kinds.smart || !kinds.classic)){
+        items = items.filter(item => {
+            const isSmart = (item.kind || 'classic') === 'smart';
+            return isSmart ? kinds.smart : kinds.classic;
+        });
+    }
     list.innerHTML = '';
     if(!items.length){
         const empty = document.createElement('div');

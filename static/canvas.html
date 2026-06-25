@@ -381,6 +381,19 @@
             Object.keys(NODE_SELECTORS).forEach(function (id) {
                 if (!allowed.has(id)) hideNode(id);
             });
+            // 画布类型访问控制：隐藏创建按钮并过滤画布列表
+            var allowSmart = allowed.has('smart_canvas');
+            var allowClassic = allowed.has('classic_canvas');
+            if (!allowSmart) {
+                var smartBtn = document.getElementById('gateCreateSmartBtn');
+                if (smartBtn) smartBtn.style.display = 'none';
+            }
+            if (!allowClassic) {
+                var classicBtn = document.getElementById('gateCreateBtn');
+                if (classicBtn) classicBtn.style.display = 'none';
+            }
+            // 过滤画布列表：覆盖 renderCanvasListInto 的 items 过滤
+            window.__canvasAllowedKinds = { smart: allowSmart, classic: allowClassic };
         }
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', applyCanvasAccessControl, { once: true });

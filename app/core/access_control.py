@@ -49,6 +49,8 @@ ALL_PAGES: List[Dict[str, str]] = [
 
 # 无限画布可用节点（与 static/canvas.html 工具栏按钮对应）。
 ALL_NODES: List[Dict[str, str]] = [
+    {"id": "smart_canvas", "label": "智能画布"},
+    {"id": "classic_canvas", "label": "普通画布"},
     {"id": "image", "label": "图片"},
     {"id": "prompt", "label": "提示词"},
     {"id": "loop", "label": "循环"},
