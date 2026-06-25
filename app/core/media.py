@@ -172,10 +172,18 @@ def origin_from_url(value):
 
 def ensure_same_origin_request(request):
     host = str(request.headers.get("host") or "").lower()
-    expected = f"{request.url.scheme}://{host}".lower() if host else ""
+    # Support reverse proxy: prefer X-Forwarded-Proto/Host
+    scheme = (
+        str(request.headers.get("x-forwarded-proto") or "").lower()
+        or request.url.scheme
+    )
+    fwd_host = str(request.headers.get("x-forwarded-host") or "").lower() or host
+    expected = f"{scheme}://{fwd_host}".lower() if fwd_host else ""
     origin = origin_from_url(request.headers.get("origin", ""))
     referer = origin_from_url(request.headers.get("referer", ""))
     actual = origin or referer
+    if not actual:
+        return  # Allow requests without Origin/Referer (e.g. same-origin navigations)
     if expected and actual != expected:
         raise HTTPException(status_code=403, detail="只允许从当前页面导入本地图片")
 
