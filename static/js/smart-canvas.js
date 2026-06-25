@@ -6446,7 +6446,7 @@ function bindNodeEvents(){
                 openCreateMenu(e);
             }
         };
-        const uploadTrigger = el.querySelector('.upload-node-trigger');
+        const uploadTrigger = el.querySelector('.upload-node-main');
         uploadTrigger?.addEventListener('mousedown', e => {
             if(e.button !== 0) return;
             e.preventDefault();
