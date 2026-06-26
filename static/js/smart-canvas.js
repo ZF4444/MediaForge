@@ -9379,7 +9379,7 @@ function renderInputThumbsRow(node){
         const inner = isVid ? `<video src="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>` : `<img src="${escapeHtml(img.url)}" draggable="false">`;
         const label = `图${i + 1}`;
         const sourceUrl = img.originalLocalUrl || img.url || '';
-        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span></div>`;
+        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
     }).join('');
     inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}${dedup.length > 1 ? `<span class="input-thumb-count">${escapeHtml(tr('smart.inputCount').replace('{n}', String(dedup.length)))}</span>` : ''}</div>`;
     bindInputThumbsDrag(node, dedup);
@@ -9395,6 +9395,17 @@ function bindInputThumbsDrag(node, items){
             e.preventDefault();
             e.stopPropagation();
         });
+        const disconnectBtn = el.querySelector('.input-thumb-x');
+        if(disconnectBtn){
+            disconnectBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            disconnectBtn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                const fromId = disconnectBtn.dataset.disconnectFrom;
+                if(!fromId || !node || !canvas?.connections) return;
+                const connIdx = canvas.connections.findIndex(c => c.from === fromId && c.to === node.id);
+                if(connIdx >= 0) disconnectConnection(connIdx);
+            });
+        }
         if(!canReorder) return;
         el.addEventListener('dragstart', e => {
             e.stopPropagation();
