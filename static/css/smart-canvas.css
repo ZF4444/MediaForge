@@ -454,7 +454,7 @@ video.node-img { object-fit:cover; background:#0f172a; }
 .input-prompt-preview.has-text { display:flex; flex-direction:column; gap:4px; }
 .input-prompt-preview-label { color:var(--faint); font-size:9.5px; font-weight:850; line-height:1.2; }
 .input-prompt-preview-text { color:var(--muted); font-size:11px; line-height:1.42; max-height:148px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; scrollbar-width:thin; }
-.input-thumb-list { display:flex; align-items:center; gap:6px; min-width:0; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; padding:5px 0 0 5px; }
+.input-thumb-list { display:flex; align-items:center; gap:6px; min-width:0; overflow:visible; padding:5px 0 0 5px; }
 .input-thumb-actions { flex:0 0 auto; margin-left:auto; display:flex; align-items:center; gap:6px; }
 .input-thumb-actions .smart-pill { height:28px; white-space:nowrap; }
 .input-thumb { position:relative; width:42px; height:42px; flex:0 0 auto; border-radius:9px; overflow:visible; border:1px solid var(--line); background:var(--soft); cursor:pointer; transition:transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
