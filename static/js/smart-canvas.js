@@ -9319,7 +9319,7 @@ function renderRhInputThumb(ref, field, index, kind, node, sourceUrl){
         : `<img src="${escapeAttr(ref.url)}" draggable="false">`;
     const label = rhInputKindLabel(kind).slice(0, 3);
     const isSelf = node ? isSelfReferenceForNode(node, ref) : false;
-    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span></div>`;
+    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(ref.url || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
 }
 function renderRunningHubInputThumbsRow(node){
     const fields = rhActiveFields().filter(field => ['image','video','audio'].includes(rhFieldKind(field)));

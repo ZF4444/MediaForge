@@ -481,7 +481,7 @@ video.node-img { object-fit:cover; background:#0f172a; }
 .input-thumb.drop-before::before { left:-4px; }
 .input-thumb.drop-after::after { right:-4px; }
 .input-thumb-count { color:var(--faint); font-size:9.5px; font-weight:600; letter-spacing:.05em; padding:0 6px; flex:0 0 auto; }
-.rh-input-field-list { width:100%; min-width:0; display:flex; align-items:center; gap:6px; overflow-x:auto; overflow-y:hidden; padding:2px 2px 5px; scrollbar-width:thin; }
+.rh-input-field-list { width:100%; min-width:0; display:flex; align-items:center; gap:6px; overflow:visible; padding:2px 2px 5px; }
 .rh-input-field { flex:0 0 auto; min-width:118px; max-width:178px; min-height:44px; display:grid; grid-template-columns:32px minmax(0, 1fr); align-items:center; gap:7px; padding:6px 8px 6px 6px; border-radius:11px; border:1px solid var(--line); background:var(--card); color:var(--text); }
 .rh-input-field.empty { border-style:dashed; color:var(--muted); background:transparent; }
 .rh-input-field .input-thumb { width:32px; height:32px; border-radius:8px; }
