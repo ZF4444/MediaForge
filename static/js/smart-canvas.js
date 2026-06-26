@@ -522,7 +522,7 @@ function updateSmartWorkflowTransferMeta(){
     const connCount = payload.connections.length;
     smartWorkflowExportMeta?.classList.remove('busy', 'success');
     if(smartWorkflowExportMeta) smartWorkflowExportMeta.textContent = nodeCount ? `已选择 ${nodeCount} 个节点，${connCount} 条连线` : '未选择节点，请先选中要导出的组件';
-    if(smartWorkflowTransferSub) smartWorkflowTransferSub.textContent = nodeCount ? '导出当前选中内容，或把工作流导入到当前画布' : '请先选中节点再导出；导入会追加到当前画布';
+    if(smartWorkflowTransferSub) smartWorkflowTransferSub.textContent = nodeCount ? '导出当前选中内容，或把模板导入到当前画布' : '请先选中节点再导出；导入会追加到当前画布';
 }
 async function exportSelectedSmartWorkflow(includeResources=false){
     if(!canvas) return;
@@ -535,7 +535,7 @@ async function exportSelectedSmartWorkflow(includeResources=false){
     try {
         if(!includeResources){
             downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'}), smartWorkflowFilename('json'));
-            toast('已导出智能画布工作流 JSON');
+            toast('已导出智能画布模板 JSON');
             return;
         }
         if(smartWorkflowExportMeta){
@@ -548,26 +548,26 @@ async function exportSelectedSmartWorkflow(includeResources=false){
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({...payload, include_resources:true, filename})
         });
-        if(!res.ok) throw new Error(await responseErrorMessage(res, '导出工作流失败'));
+        if(!res.ok) throw new Error(await responseErrorMessage(res, '导出模板失败'));
         downloadBlob(await res.blob(), filename);
         if(smartWorkflowExportMeta){
             smartWorkflowExportMeta.classList.remove('busy');
             smartWorkflowExportMeta.classList.add('success');
             smartWorkflowExportMeta.textContent = `已导出 ${payload.nodes.length} 个节点，包含可找到的本地资源`;
         }
-        toast('已导出包含资源的智能画布工作流包');
+        toast('已导出包含资源的智能画布模板包');
         setTimeout(() => {
             if(smartWorkflowTransferModal?.classList.contains('open')) updateSmartWorkflowTransferMeta();
         }, 1600);
     } catch(err) {
         smartWorkflowExportMeta?.classList.remove('busy', 'success');
-        toast(err.message || '导出工作流失败');
+        toast(err.message || '导出模板失败');
     }
 }
 function insertSmartWorkflowIntoCanvas(imported){
     const srcNodes = (imported.nodes || []).filter(Boolean);
     const srcConnections = (imported.connections || []).filter(Boolean);
-    if(!canvas || !srcNodes.length) throw new Error('工作流中没有可导入的节点');
+    if(!canvas || !srcNodes.length) throw new Error('模板中没有可导入的节点');
     pushUndo();
     const minX = Math.min(...srcNodes.map(n => Number(n.x || 0)));
     const minY = Math.min(...srcNodes.map(n => Number(n.y || 0)));
@@ -601,17 +601,17 @@ function insertSmartWorkflowIntoCanvas(imported){
 async function importSmartWorkflowFile(file){
     if(!canvas || !file) return;
     try {
-        if(smartWorkflowTransferSub) smartWorkflowTransferSub.textContent = '正在导入工作流...';
+        if(smartWorkflowTransferSub) smartWorkflowTransferSub.textContent = '正在导入模板...';
         const form = new FormData();
         form.append('file', file);
         const res = await fetch('/api/canvas-workflows/import', {method:'POST', body:form});
-        if(!res.ok) throw new Error(await responseErrorMessage(res, '导入工作流失败'));
+        if(!res.ok) throw new Error(await responseErrorMessage(res, '导入模板失败'));
         const data = await res.json();
         insertSmartWorkflowIntoCanvas(normalizeImportedSmartWorkflow(data));
         closeSmartWorkflowTransferModal();
     } catch(err) {
         if(smartWorkflowTransferModal?.classList.contains('open')) updateSmartWorkflowTransferMeta();
-        toast(err.message || '导入工作流失败');
+        toast(err.message || '导入模板失败');
     }
 }
 const RECENT_SMART_SETTINGS_KEY = 'smart_canvas_recent_run_settings_v1';
@@ -13782,7 +13782,7 @@ smartWorkflowImportDropZone?.addEventListener('drop', event => {
     smartWorkflowImportDropZone.classList.remove('drag-over');
     const file = [...(event.dataTransfer?.files || [])].find(item => /\.(json|zip)$/i.test(item.name || ''));
     if(file) importSmartWorkflowFile(file);
-    else toast('请拖入 JSON 或 ZIP 工作流文件');
+    else toast('请拖入 JSON 或 ZIP 模板文件');
 });
 smartWorkflowTransferModal?.addEventListener('pointerdown', e => e.stopPropagation());
 smartWorkflowTransferModal?.addEventListener('mousedown', e => e.stopPropagation());
@@ -13809,7 +13809,7 @@ smartWorkflowTransferModal?.addEventListener('drop', event => {
     smartWorkflowImportDropZone?.classList.remove('drag-over');
     const file = [...(event.dataTransfer?.files || [])].find(item => /\.(json|zip)$/i.test(item.name || ''));
     if(file) importSmartWorkflowFile(file);
-    else toast('请拖入 JSON 或 ZIP 工作流文件');
+    else toast('请拖入 JSON 或 ZIP 模板文件');
 });
 assetPanel?.addEventListener('pointerdown', e => e.stopPropagation());
 assetPanel?.addEventListener('mousedown', e => e.stopPropagation());

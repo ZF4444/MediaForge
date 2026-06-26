@@ -136,22 +136,22 @@
                 <div id="minimapViewport" class="smart-minimap-viewport"></div>
             </div>
         </div>
-        <button id="smartWorkflowToggle" class="smart-workflow-toggle" type="button" title="导入导出工作流" aria-label="导入导出工作流"><i data-lucide="package-open"></i><span>工作流</span></button>
+        <button id="smartWorkflowToggle" class="smart-workflow-toggle" type="button" title="导入导出模板" aria-label="导入导出模板"><i data-lucide="package-open"></i><span>模板</span></button>
         <button id="smartShortcutToggle" class="smart-shortcut-toggle" type="button" onclick="openSmartCanvasShortcuts()" title="快捷键" aria-label="快捷键" data-i18n-title="smart.shortcuts"><i data-lucide="keyboard"></i><span data-i18n="smart.shortcuts">快捷键</span></button>
         <button id="smartLogToggle" class="smart-log-toggle" type="button" onclick="openSmartCanvasLog()" title="日志" aria-label="日志" data-i18n-title="canvas.logs"><i data-lucide="list-todo"></i><span data-i18n="canvas.logs">日志</span></button>
         <button id="assetToggle" class="asset-toggle" type="button"><i data-lucide="library"></i><span data-i18n="smart.assetLibrary">资产库</span></button>
         <aside id="smartWorkflowTransferModal" class="workflow-transfer-panel" hidden>
             <div class="workflow-transfer-head">
                 <div>
-                    <div class="workflow-transfer-title">导入导出工作流</div>
-                    <div id="smartWorkflowTransferSub" class="workflow-transfer-sub">导出选中节点，或把工作流导入到当前画布</div>
+                    <div class="workflow-transfer-title">导入导出模板</div>
+                    <div id="smartWorkflowTransferSub" class="workflow-transfer-sub">导出选中节点，或把模板导入到当前画布</div>
                 </div>
                 <button class="asset-mini-btn" type="button" onclick="closeSmartWorkflowTransferModal()" title="关闭"><i data-lucide="x"></i></button>
             </div>
             <div class="workflow-transfer-body">
                 <section class="workflow-transfer-card">
-                    <div class="workflow-transfer-card-head"><i data-lucide="upload"></i><strong>导出工作流</strong></div>
-                    <p>使用当前选中的节点和它们之间的连线生成工作流。</p>
+                    <div class="workflow-transfer-card-head"><i data-lucide="upload"></i><strong>导出模板</strong></div>
+                    <p>使用当前选中的节点和它们之间的连线生成模板。</p>
                     <div id="smartWorkflowExportMeta" class="workflow-transfer-meta">未选择节点</div>
                     <div class="workflow-transfer-actions workflow-export-actions">
                         <button class="workflow-transfer-btn secondary" type="button" onclick="exportSelectedSmartWorkflow(false)"><i data-lucide="file-json"></i><span>导出 JSON</span></button>
@@ -159,11 +159,11 @@
                     </div>
                 </section>
                 <section class="workflow-transfer-card">
-                    <div class="workflow-transfer-card-head"><i data-lucide="download"></i><strong>导入工作流</strong></div>
-                    <p>支持工作流 JSON，也支持包含资源的 ZIP 包。导入内容会追加到当前画布。</p>
+                    <div class="workflow-transfer-card-head"><i data-lucide="download"></i><strong>导入模板</strong></div>
+                    <p>支持模板 JSON，也支持包含资源的 ZIP 包。导入内容会追加到当前画布。</p>
                     <div id="smartWorkflowImportDropZone" class="workflow-import-drop">
                         <i data-lucide="file-up"></i>
-                        <span>拖入 JSON / ZIP 工作流</span>
+                        <span>拖入 JSON / ZIP 模板</span>
                         <small>或点击选择文件</small>
                     </div>
                     <input id="smartWorkflowImportInput" type="file" accept=".json,.zip,application/json,application/zip" hidden>
@@ -177,7 +177,7 @@
             </div>
             <div class="asset-tabs">
                 <button class="asset-tab active" type="button" data-asset-tab="image" data-i18n="smart.assetImages">图片资产</button>
-                <button class="asset-tab" type="button" data-asset-tab="workflow" data-i18n="smart.assetWorkflows">工作流</button>
+                <button class="asset-tab" type="button" data-asset-tab="workflow" data-i18n="smart.assetWorkflows">模板</button>
             </div>
             <div id="assetImageControls">
                 <select id="assetLibrarySelect" class="asset-category-select asset-library-select" title="选择资产库"></select>
@@ -189,7 +189,7 @@
             </div>
             <div id="assetDropZone" class="asset-drop-zone" data-i18n="smart.assetDropHint">把画布图片拖到这里保存到当前文件夹</div>
             <div id="assetGrid" class="asset-grid"></div>
-            <div id="workflowEmpty" class="workflow-empty" style="display:none" data-i18n="smart.assetWorkflowEmpty">工作流资产先预留在这里，后续接入。</div>
+            <div id="workflowEmpty" class="workflow-empty" style="display:none" data-i18n="smart.assetWorkflowEmpty">模板资产先预留在这里，后续接入。</div>
         </aside>
         <div id="assetDialogBackdrop" class="asset-dialog-backdrop" hidden>
             <div class="asset-dialog">
