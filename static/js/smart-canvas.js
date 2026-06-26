@@ -112,6 +112,7 @@ let imageClickTimer = null;
 let suppressImageClickUntil = 0;
 let candidatePanelNodeId = '';
 let candidatePanelIndex = 0;
+let expandedCandidateNodeIds = new Set();
 let suppressComposerForCandidateNodeId = '';
 let lastMouseWorld = null;
 let lastConfigRefreshAt = 0;
@@ -826,7 +827,7 @@ function candidateCountForNode(node){
     return nodeCandidateImages(node).length;
 }
 function isCandidatePanelInteractionTarget(target){
-    return Boolean(target?.closest?.('[data-candidate-toggle],[data-candidate-prev],[data-candidate-next],[data-candidate-set-main],.candidate-panel,.candidate-toggle'));
+    return Boolean(target?.closest?.('[data-candidate-toggle],[data-candidate-expand],[data-candidate-prev],[data-candidate-next],[data-candidate-set-main],[data-candidate-grid-item],.candidate-panel,.candidate-toggle,.candidate-grid'));
 }
 function closeCandidatePanel(options={}){
     if(!candidatePanelNodeId) return false;
@@ -902,7 +903,8 @@ function candidateControlHtml(node){
     const count = candidateCountForNode(node);
     if(count <= 1 || isHistoryGroupNode(node) || node.pending || node.queued || node.jimengPending) return '';
     const open = candidatePanelNodeId === node.id;
-    return `<button class="candidate-toggle ${open ? 'open' : ''}" type="button" data-candidate-toggle="${escapeAttr(node.id)}" title="候选图"><span class="candidate-count">${count}</span><i data-lucide="chevron-down"></i></button>`;
+    const expanded = expandedCandidateNodeIds.has(node.id);
+    return `<button class="candidate-expand ${expanded ? 'open' : ''}" type="button" data-candidate-expand="${escapeAttr(node.id)}" title="展开全部候选图"><i data-lucide="${expanded ? 'grid-2x2-x' : 'grid-2x2'}"></i></button><button class="candidate-toggle ${open ? 'open' : ''}" type="button" data-candidate-toggle="${escapeAttr(node.id)}" title="候选图"><span class="candidate-count">${count}</span><i data-lucide="chevron-down"></i></button>`;
 }
 function candidatePreviewIndexForNode(node, count){
     if(candidatePanelNodeId !== node?.id) return Math.max(0, Math.min(count - 1, Number(node?.candidateIndex) || 0));
@@ -926,6 +928,13 @@ function candidateOverlayHtml(node, layout){
         <div class="candidate-index">${escapeHtml(indexText)}</div>
         <div class="candidate-dots">${dots}</div>
     </div>`;
+}
+function expandedCandidateGridHtml(node){
+    if(!expandedCandidateNodeIds.has(node.id)) return '';
+    const pool = nodeCandidateImages(node);
+    if(pool.length <= 1) return '';
+    const current = Math.max(0, Math.min(pool.length - 1, Number(node.candidateIndex) || 0));
+    return `<div class="candidate-grid" data-candidate-grid="${escapeAttr(node.id)}">${pool.map((img, i) => `<div class="candidate-grid-item ${i === current ? 'is-main' : ''}" data-candidate-grid-item="${i}"><img src="${escapeAttr(img?.url || '')}" alt=""><span class="candidate-grid-idx">${i + 1}</span></div>`).join('')}</div>`;
 }
 function isSmartGroupNode(node){
     return Boolean(node && node.type === 'smart-group');
@@ -5923,6 +5932,7 @@ function render(){
             ${!isEmpty ? `<div class="floating-node-actions">${floatingActions}</div>` : ''}
             ${runTimePillHtml(node)}
             <div class="node-body">${body}</div>
+            ${expandedCandidateGridHtml(node)}
             <div class="node-hint">${hint}</div>
             <div class="node-port port-in" data-port="in" title="input"></div>
             <div class="node-port port-out" data-port="out" title="output"></div>
@@ -6520,6 +6530,27 @@ function bindNodeEvents(){
                 selectedImage = {nodeId:'', index:-1};
                 closeCandidatePanel({suppressComposer:false});
                 suppressComposerForCandidateNodeId = '';
+                render();
+                scheduleSave();
+            });
+        });
+        el.querySelectorAll('[data-candidate-expand]').forEach(btn => {
+            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            btn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                if(expandedCandidateNodeIds.has(id)) expandedCandidateNodeIds.delete(id);
+                else expandedCandidateNodeIds.add(id);
+                render();
+            });
+        });
+        el.querySelectorAll('[data-candidate-grid-item]').forEach(item => {
+            item.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            item.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                const node = nodes.find(n => n.id === id);
+                if(!node) return;
+                pushUndo();
+                setNodeMainCandidate(node, Number(item.dataset.candidateGridItem) || 0);
                 render();
                 scheduleSave();
             });
