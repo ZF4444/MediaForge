@@ -1148,10 +1148,9 @@ function applyTheme(theme){
 }
 function toast(text){
     const el = document.getElementById('toast');
-    el.textContent = text;
+    el.innerHTML = `<span class="toast-text">${escapeHtml(text)}</span><button class="toast-close" onclick="this.parentElement.classList.remove('show')">&times;</button>`;
     el.classList.add('show');
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => el.classList.remove('show'), 1800);
 }
 function selectedNode(){ return nodes.find(n => n.id === selectedId) || null; }
 function clearSelection(){
