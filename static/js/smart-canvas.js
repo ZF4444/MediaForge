@@ -136,6 +136,8 @@ const smartNodeRunTokens = new Map();
 let smartRhRandomValues = {};
 let lastImagePasteAt = 0;
 let lastNodePasteAt = 0;
+let lastNodeCopyAt = 0;
+let lastClipImageSig = null;
 let suppressNodeClickUntil = 0;
 let textSelectionGuard = null;
 const UNDO_LIMIT = 40;
@@ -4862,6 +4864,9 @@ function copySelectedNodes(){
         nodes:JSON.parse(JSON.stringify(copiedNodes)),
         connections:JSON.parse(JSON.stringify(copiedConnections))
     };
+    // 记录复制节点的时间。粘贴时据此判断：若复制节点发生在上次“因图片而消费
+    // 系统剪贴板”之后，则优先粘贴节点（即使系统剪贴板里还残留着外部复制的旧图片）。
+    lastNodeCopyAt = Date.now();
     toast(`已复制 ${copiedNodes.length} 个节点`);
 }
 function pasteNodes(){
@@ -13647,15 +13652,43 @@ shell.ondrop = async e => {
     await handleSmartImageDropPayload(payload, '', {point:p, forceNew:true});
 };
 window.addEventListener('paste', e => {
-    if(canvas && nodeClipboard?.nodes?.length && !isEditableTarget(e.target) && !isEditableTarget(document.activeElement)){
+    const editable = isEditableTarget(e.target) || isEditableTarget(document.activeElement);
+    const files = [...(e.clipboardData?.files || [])].filter(isSupportedUploadFile);
+    const hasNodeClip = !!(canvas && nodeClipboard?.nodes?.length);
+    // 浏览器无法用 JS 清空系统剪贴板，外部复制的图片会一直残留在 clipboardData 里，
+    // 因此用“图片签名(名称+大小+修改时间)”来区分这次剪贴板里的图片是新复制的还是旧残留。
+    const sig = files.length
+        ? files.map(f => `${f.name}|${f.size}|${f.lastModified}`).join('~')
+        : null;
+    const pasteImage = () => {
+        e.preventDefault();
+        lastImagePasteAt = Date.now();
+        lastClipImageSig = sig;
+        handleFiles(files, selectedId);
+    };
+    const pasteNodesNow = () => {
         e.preventDefault();
         if(Date.now() - lastNodePasteAt > 80) pasteNodes();
+    };
+
+    // 1) 剪贴板里有图片，且与上次粘贴过的图片不同 —— 这是用户新复制的图片，优先粘贴它。
+    if(files.length && sig !== lastClipImageSig){
+        pasteImage();
         return;
     }
-    const files = [...(e.clipboardData?.files || [])].filter(isSupportedUploadFile);
+    // 2) 自上次“因图片消费剪贴板”以来又在画布内复制过节点 —— 用户最新意图是粘贴节点，
+    //    即使剪贴板里还残留着同一张旧图片，也优先粘贴节点。
+    if(hasNodeClip && !editable && lastNodeCopyAt > lastImagePasteAt){
+        pasteNodesNow();
+        return;
+    }
+    // 3) 兜底：有图片就粘图片，否则有节点就粘节点。
     if(files.length){
-        lastImagePasteAt = Date.now();
-        handleFiles(files, selectedId);
+        pasteImage();
+        return;
+    }
+    if(hasNodeClip && !editable){
+        pasteNodesNow();
         return;
     }
 });
@@ -13692,11 +13725,8 @@ window.addEventListener('keydown', e => {
         copySelectedNodes();
         return;
     }
-    if((e.ctrlKey || e.metaKey) && key === 'v' && canvas && !isEditableTarget(e.target) && nodeClipboard?.nodes?.length){
-        e.preventDefault();
-        if(Date.now() - lastNodePasteAt > 80) pasteNodes();
-        return;
-    }
+    // 不在此处拦截 Ctrl+V：交给原生 'paste' 事件统一处理，
+    // 这样才能读取系统剪贴板里的图片文件并决定粘贴图片还是内部节点。
     if(e.key === 'Escape' && imageEditModal.classList.contains('open')){
         closeImageEditor();
         return;
