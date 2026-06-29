@@ -7244,7 +7244,11 @@ function setImageEditMode(mode, userTouched=false){
     if(userTouched) imageEditModeTouched = true;
     const prev = imageEditMode;
     if(mode !== 'brush') removeEditTextInlineEditor(true);
-    imageEditMode = ['preview','crop','outpaint','mask','brush','grid'].includes(mode) ? mode : 'preview';
+    imageEditMode = ['preview','crop','outpaint','mask','brush','grid','gridjoin'].includes(mode) ? mode : 'preview';
+    // 宫格拼接需要当前节点至少 2 张图;不满足则退回切分。
+    if(imageEditMode === 'gridjoin' && !canGridJoinCurrentNode()) imageEditMode = 'grid';
+    // gridOperationMode 作为内部派生状态跟随模式:拼接模式->join,其余->split。
+    gridOperationMode = imageEditMode === 'gridjoin' ? 'join' : 'split';
     const cropCanvasEl = document.getElementById('cropCanvas');
     const previewStageEl = document.getElementById('previewStage');
     const editStageEl = document.getElementById('imageEditStage');
@@ -7281,6 +7285,7 @@ function setImageEditMode(mode, userTouched=false){
     document.getElementById('imageMaskTools').classList.toggle('active', imageEditMode === 'mask');
     document.getElementById('imageBrushTools').classList.toggle('active', imageEditMode === 'brush');
     document.getElementById('imageGridTools').classList.toggle('active', imageEditMode === 'grid');
+    document.getElementById('imageGridJoinTools').classList.toggle('active', imageEditMode === 'gridjoin');
     syncGridGapValue();
     const applyBtn = document.getElementById('imageEditApplyBtn');
     document.getElementById('compareToggleBtn').style.display = isPreview && !isVideoPreview ? 'inline-flex' : 'none';
@@ -7296,10 +7301,10 @@ function setImageEditMode(mode, userTouched=false){
         ensureImageEditBaseSize(true);
         applyImageEditZoom();
         applyBtn.style.display = '';
-        const icon = imageEditMode === 'crop' ? 'crop' : imageEditMode === 'outpaint' ? 'expand' : imageEditMode === 'mask' ? 'brush' : imageEditMode === 'brush' ? 'paintbrush' : 'grid-3x3';
-        const labelKey = imageEditMode === 'crop' ? 'canvas.applyCrop' : imageEditMode === 'outpaint' ? 'canvas.applyOutpaint' : imageEditMode === 'mask' ? 'canvas.applyMask' : imageEditMode === 'brush' ? 'canvas.applyBrush' : 'canvas.applyGrid';
-        const titleKey = imageEditMode === 'crop' ? 'canvas.cropImage' : imageEditMode === 'outpaint' ? 'canvas.outpaintImage' : imageEditMode === 'mask' ? 'canvas.maskEdit' : imageEditMode === 'brush' ? 'canvas.brushEdit' : 'canvas.modeGrid';
-        const subKey = imageEditMode === 'crop' ? 'canvas.cropHint' : imageEditMode === 'outpaint' ? 'canvas.outpaintHint' : imageEditMode === 'mask' ? 'canvas.maskHint2' : imageEditMode === 'brush' ? 'canvas.brushHint' : 'canvas.gridHint';
+        const icon = imageEditMode === 'crop' ? 'crop' : imageEditMode === 'outpaint' ? 'expand' : imageEditMode === 'mask' ? 'brush' : imageEditMode === 'brush' ? 'paintbrush' : imageEditMode === 'gridjoin' ? 'layout-grid' : 'grid-3x3';
+        const labelKey = imageEditMode === 'crop' ? 'canvas.applyCrop' : imageEditMode === 'outpaint' ? 'canvas.applyOutpaint' : imageEditMode === 'mask' ? 'canvas.applyMask' : imageEditMode === 'brush' ? 'canvas.applyBrush' : imageEditMode === 'gridjoin' ? 'canvas.applyGridJoin' : 'canvas.applyGrid';
+        const titleKey = imageEditMode === 'crop' ? 'canvas.cropImage' : imageEditMode === 'outpaint' ? 'canvas.outpaintImage' : imageEditMode === 'mask' ? 'canvas.maskEdit' : imageEditMode === 'brush' ? 'canvas.brushEdit' : imageEditMode === 'gridjoin' ? 'canvas.modeGridJoin' : 'canvas.modeGrid';
+        const subKey = imageEditMode === 'crop' ? 'canvas.cropHint' : imageEditMode === 'outpaint' ? 'canvas.outpaintHint' : imageEditMode === 'mask' ? 'canvas.maskHint2' : imageEditMode === 'brush' ? 'canvas.brushHint' : imageEditMode === 'gridjoin' ? 'canvas.gridJoinHint' : 'canvas.gridHint';
         document.getElementById('imageEditTitle').textContent = tr(titleKey);
         document.getElementById('imageEditSub').textContent = tr(subKey);
         applyBtn.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4"></i><span>${tr(labelKey)}</span>`;
@@ -7316,8 +7321,8 @@ function setImageEditMode(mode, userTouched=false){
         }
     }
     resizeEditDrawCanvas();
-    if(imageEditMode === 'grid') refreshGridSplitPreview();
-    else if(imageEditMode === 'crop' || imageEditMode === 'outpaint' || prev === 'grid') clearEditDrawing(true);
+    if(imageEditMode === 'grid' || imageEditMode === 'gridjoin') refreshGridSplitPreview();
+    else if(imageEditMode === 'crop' || imageEditMode === 'outpaint' || prev === 'grid' || prev === 'gridjoin') clearEditDrawing(true);
     syncEditDrawingHistoryButtons();
     syncBrushToolButtons();
     syncTextToolState(true);
@@ -8189,7 +8194,7 @@ function drawNumberLabel(point){
 }
 function beginEditDraw(event){
     if(imageEditMode === 'crop') return;
-    if(imageEditMode === 'grid' && gridOperationMode === 'join') return;
+    if(imageEditMode === 'gridjoin') return;
     event.preventDefault(); event.stopPropagation();
     const canvasEl = editDrawCanvas();
     canvasEl.setPointerCapture?.(event.pointerId);
@@ -8212,7 +8217,7 @@ function beginEditDraw(event){
     normalizeMaskPreviewCanvas(canvasEl);
 }
 function moveEditDraw(event){
-    if(imageEditMode === 'grid' && gridOperationMode === 'join') return;
+    if(imageEditMode === 'gridjoin') return;
     if(imageEditMode === 'grid' && gridCustomMode && gridCustomDrag){ event.preventDefault(); event.stopPropagation(); setGridCustomLinePos(gridCustomDrag.index, editDrawPoint(event)); refreshGridSplitPreview(); return; }
     if(!editDrawState || imageEditMode === 'crop' || imageEditMode === 'grid') return;
     event.preventDefault(); event.stopPropagation();
@@ -8233,7 +8238,7 @@ function endEditDraw(event){
     editDrawState = null; gridCustomDrag = null; syncEditDrawingHistoryButtons();
 }
 function beginGridJoinDrag(event){
-    if(imageEditMode !== 'grid' || gridOperationMode !== 'join') return;
+    if(imageEditMode !== 'gridjoin') return;
     const itemEl = event.target?.closest?.('.grid-join-item');
     if(!itemEl) return;
     event.preventDefault();
@@ -8246,7 +8251,7 @@ function beginGridJoinDrag(event){
     itemEl.classList.add('dragging');
 }
 function moveGridJoinDrag(event){
-    if(!gridJoinDrag || imageEditMode !== 'grid' || gridOperationMode !== 'join') return;
+    if(!gridJoinDrag || imageEditMode !== 'gridjoin') return;
     event.preventDefault();
     event.stopPropagation();
     const item = gridJoinLayout?.items?.find(entry => Number(entry.index) === Number(gridJoinDrag.index));
@@ -8299,13 +8304,24 @@ function endGridJoinDrag(event){
     if(event?.pointerId != null) event.target?.releasePointerCapture?.(event.pointerId);
     gridJoinDrag = null;
 }
+function gridGapElIds(){
+    // 拼接与切分各有独立的间隔控件,按当前模式返回对应 id。
+    return imageEditMode === 'gridjoin'
+        ? {input:'gridJoinGapSize', label:'gridJoinGapValue'}
+        : {input:'gridGapSize', label:'gridGapValue'};
+}
+function gridGapInputValue(){
+    // 宫格拼接的间隔(布局 gap),读拼接行的间隔滑块。
+    return Math.max(0, Math.min(240, Number(document.getElementById('gridJoinGapSize')?.value || 0)));
+}
 function syncGridGapValue(){
-    const input = document.getElementById('gridGapSize');
+    const ids = gridGapElIds();
+    const input = document.getElementById(ids.input);
     const value = Math.max(0, Math.min(240, Number(input?.value || 0)));
     if(input) input.value = value;
-    const label = document.getElementById('gridGapValue');
+    const label = document.getElementById(ids.label);
     if(label) label.textContent = String(value);
-    if(gridJoinLayout && gridOperationMode === 'join'){
+    if(gridJoinLayout && imageEditMode === 'gridjoin'){
         const rows = gridJoinLayout.rows;
         const cols = gridJoinLayout.cols;
         const order = gridJoinVisualOrder();
@@ -8346,9 +8362,6 @@ function gridSplitRectsCustom(width, height){
     }
     return rects;
 }
-function gridLayoutFromRects(rects){
-    return {type:'grid-split', groupId:uid('grid'), rows:Math.max(1, ...rects.map(r => Number(r.row || 0) + 1)), cols:Math.max(1, ...rects.map(r => Number(r.col || 0) + 1))};
-}
 function applyGridPreset(rows, cols){
     gridCustomMode = false; gridCustomLines = []; gridCustomHistory = []; gridCustomDrag = null;
     const h = document.getElementById('gridHorizontalLines'), v = document.getElementById('gridVerticalLines');
@@ -8360,17 +8373,16 @@ function applyGridPreset(rows, cols){
     syncGridCustomCursor(); syncGridCustomUndoBtn(); refreshGridSplitPreview();
 }
 function syncGridCustomControls(){
-    const join = imageEditMode === 'grid' && gridOperationMode === 'join';
+    const join = imageEditMode === 'gridjoin';
     const custom = document.getElementById('gridCustomControls');
     if(custom) custom.style.display = (!join && gridCustomMode) ? 'flex' : 'none';
-    document.querySelectorAll('.grid-preset-row.grid-split-control').forEach(row => {
+    document.querySelectorAll('#imageGridTools .grid-preset-row').forEach(row => {
         row.style.display = (!join && !gridCustomMode) ? 'flex' : 'none';
     });
     const regular = document.getElementById('gridRegularControls');
     if(regular) regular.style.display = (!join && !gridCustomMode) ? 'contents' : 'none';
 }
 function toggleGridCustomMode(){
-    if(gridOperationMode === 'join') setGridOperationMode('split');
     gridCustomMode = !gridCustomMode;
     if(gridCustomMode){ gridCustomLines = []; gridCustomHistory = []; }
     gridCustomDrag = null;
@@ -8458,8 +8470,8 @@ function updateZoomLabel(){
 }
 function syncGridCustomCursor(){
     const el = document.getElementById('cropCanvas');
-    el.classList.toggle('grid-custom-h', imageEditMode === 'grid' && gridOperationMode !== 'join' && gridCustomMode && gridCustomOrientation === 'h');
-    el.classList.toggle('grid-custom-v', imageEditMode === 'grid' && gridOperationMode !== 'join' && gridCustomMode && gridCustomOrientation === 'v');
+    el.classList.toggle('grid-custom-h', imageEditMode === 'grid' && gridCustomMode && gridCustomOrientation === 'h');
+    el.classList.toggle('grid-custom-v', imageEditMode === 'grid' && gridCustomMode && gridCustomOrientation === 'v');
 }
 function currentGridJoinItems(){
     const node = currentEditImage().node;
@@ -8528,7 +8540,7 @@ function setGridJoinLayoutOrder(order, rows=null, cols=null, gapOverride=null){
     const nextRows = Math.max(1, Number(rows || gridJoinLayout?.rows || auto.rows) || auto.rows);
     const nextCols = Math.max(1, Number(cols || gridJoinLayout?.cols || auto.cols) || auto.cols);
     const cell = gridJoinBaseCellSize(ordered);
-    const gap = Math.max(0, Math.min(240, Number(gapOverride ?? document.getElementById('gridGapSize')?.value ?? 0)));
+    const gap = Math.max(0, Math.min(240, Number(gapOverride ?? document.getElementById('gridJoinGapSize')?.value ?? 0)));
     const layoutItems = ordered.map((entry, orderIndex) => {
         const row = Math.floor(orderIndex / nextCols);
         const col = orderIndex % nextCols;
@@ -8562,13 +8574,12 @@ function syncGridJoinSizeControls(){
     });
 }
 function setGridOperationMode(mode){
-    gridOperationMode = mode === 'join' && canGridJoinCurrentNode() ? 'join' : 'split';
-    if(mode === 'join' && gridOperationMode !== 'join') toast('当前节点至少需要 2 张图片才能宫格拼接');
-    syncGridOperationControls();
-    refreshGridSplitPreview();
+    // 兼容旧调用:宫格拼接已独立为一级模式,改为切换 imageEditMode。
+    if(mode === 'join') setImageEditMode('gridjoin', true);
+    else setImageEditMode('grid', true);
 }
 function syncGridOperationControls(){
-    const join = imageEditMode === 'grid' && gridOperationMode === 'join';
+    const join = imageEditMode === 'gridjoin';
     if(join){
         gridCustomDrag = null;
         gridCustomMode = false;
@@ -8576,16 +8587,9 @@ function syncGridOperationControls(){
         document.getElementById('gridCustomToggle')?.classList.add('secondary');
         ['gridHorizontalLines','gridVerticalLines'].forEach(id => { const el = document.getElementById(id); if(el) el.disabled = false; });
     }
-    document.getElementById('gridSplitModeBtn')?.classList.toggle('primary', !join);
-    document.getElementById('gridSplitModeBtn')?.classList.toggle('secondary', join);
+    // 入口条件:当前节点可用图 < 2 时禁用宫格拼接模式按钮。
     const joinBtn = document.getElementById('gridJoinModeBtn');
-    if(joinBtn){
-        joinBtn.disabled = !canGridJoinCurrentNode();
-        joinBtn.classList.toggle('primary', join);
-        joinBtn.classList.toggle('secondary', !join);
-    }
-    document.querySelectorAll('.grid-split-control').forEach(el => { el.style.display = join ? 'none' : (el.id === 'gridRegularControls' ? 'contents' : ''); });
-    document.querySelectorAll('.grid-join-control').forEach(el => { el.style.display = join ? 'flex' : 'none'; });
+    if(joinBtn) joinBtn.disabled = !canGridJoinCurrentNode();
     document.getElementById('cropCanvas')?.classList.toggle('grid-join-mode', join);
     document.getElementById('cropImage')?.classList.toggle('grid-join-hidden', join);
     syncGridCustomCursor();
@@ -8603,7 +8607,6 @@ function refreshGridSplitPreview(){
     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
     renderGridJoinPreview();
     if(imageEditMode !== 'grid') return;
-    if(gridOperationMode === 'join') return;
     const countEl = document.getElementById('gridSplitCount');
     const lineWidth = Math.max(2, Math.round(Math.min(canvasEl.width, canvasEl.height) / 320));
     const drawLine = (x1, y1, x2, y2) => {
@@ -8637,11 +8640,11 @@ function gridJoinCanvasSize(layout=gridJoinLayout){
 }
 function renderGridJoinPreview(){
     const host = document.getElementById('gridJoinCanvas');
-    const countEl = document.getElementById('gridSplitCount');
+    const countEl = document.getElementById('gridJoinCount');
     const cropCanvasEl = document.getElementById('cropCanvas');
     if(!host) return;
     host.innerHTML = '';
-    if(imageEditMode !== 'grid' || gridOperationMode !== 'join'){
+    if(imageEditMode !== 'gridjoin'){
         host.style.display = 'none';
         if(cropCanvasEl){ cropCanvasEl.style.width = ''; cropCanvasEl.style.height = ''; }
         return;
@@ -9079,7 +9082,6 @@ async function applyImageBrush(){
 }
 async function applyImageGridSplit(){
     if(!cropState) return;
-    if(gridOperationMode === 'join') return applyImageGridJoin();
     const {node, image} = currentEditImage();
     const img = document.getElementById('cropImage');
     if(!node || !image || !img.naturalWidth || !img.naturalHeight) return;
@@ -9099,13 +9101,12 @@ async function applyImageGridSplit(){
     }
     const files = await uploadImageBlobs(blobs);
     if(files.length){
-        const layout = gridLayoutFromRects(rects);
-        const outputNode = createNode((node.x || 0) + imageLayout(node.images || [], nodeScale(node), node).width + 40, node.y || 0, files.map((file, i) => ({
+        // 切分输出作为普通分组节点(smart-image,多图 title 自动为 'Group'),
+        // 不写入 grid 元数据,切片按分组节点的自适应网格排列。
+        createNode((node.x || 0) + imageLayout(node.images || [], nodeScale(node), node).width + 40, node.y || 0, files.map(file => ({
             url:file.url,
-            name:file.name,
-            grid:{...layout, row:rects[i]?.row || 0, col:rects[i]?.col || 0, w:rects[i]?.w || 1, h:rects[i]?.h || 1}
+            name:file.name
         })));
-        outputNode.title = 'Grid';
         closeImageEditor(); render(); scheduleSave();
     }
 }
@@ -9194,6 +9195,7 @@ function applyImageEdit(){
     if(imageEditMode === 'mask') return applyImageMask();
     if(imageEditMode === 'brush') return applyImageBrush();
     if(imageEditMode === 'grid') return applyImageGridSplit();
+    if(imageEditMode === 'gridjoin') return applyImageGridJoin();
     return applyImageCrop();
 }
 let lastComposerNodeId = '';
@@ -14234,6 +14236,7 @@ document.getElementById('cropImage').addEventListener('mousedown', event => {
 document.querySelectorAll('[data-image-edit-mode]').forEach(btn => {
     btn.addEventListener('click', event => {
         event.stopPropagation();
+        if(btn.disabled) return;
         setImageEditMode(btn.dataset.imageEditMode || 'crop', true);
     });
 });
@@ -14353,7 +14356,7 @@ document.getElementById('editTextCanvas')?.addEventListener('dblclick', event =>
     control.addEventListener('input', syncSelectedEditTextStyleFromBrush);
     control.addEventListener('change', () => { editTextDirty = false; });
 });
-['gridHorizontalLines','gridVerticalLines','gridGapSize'].forEach(id => {
+['gridHorizontalLines','gridVerticalLines','gridGapSize','gridJoinGapSize'].forEach(id => {
     document.getElementById(id).addEventListener('input', () => {
         syncGridGapValue();
         refreshGridSplitPreview();

@@ -251,6 +251,7 @@
                         <button type="button" data-image-edit-mode="mask"><i data-lucide="brush" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeMask">遮罩</span></button>
                         <button type="button" data-image-edit-mode="brush"><i data-lucide="paintbrush" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeBrush">画笔</span></button>
                         <button type="button" data-image-edit-mode="grid"><i data-lucide="grid-3x3" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeGrid">宫格切分</span></button>
+                        <button id="gridJoinModeBtn" type="button" data-image-edit-mode="gridjoin"><i data-lucide="layout-grid" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeGridJoin">宫格拼接</span></button>
                     </div>
                     <button class="preview-icon-btn" type="button" onclick="closeImageEditor()" title="关闭" data-i18n-title="common.close"><i data-lucide="x" class="w-4 h-4"></i></button>
                 </div>
@@ -299,12 +300,8 @@
                     <button class="image-edit-btn secondary" type="button" onclick="clearEditDrawing()"><i data-lucide="eraser" class="w-4 h-4"></i><span data-i18n="canvas.clear">清空</span></button>
                 </div>
                 <div id="imageGridTools" class="image-edit-tools">
-                    <div class="grid-operation-toggle">
-                        <button id="gridSplitModeBtn" class="image-edit-btn primary" type="button" onclick="setGridOperationMode('split')">宫格切分</button>
-                        <button id="gridJoinModeBtn" class="image-edit-btn secondary" type="button" onclick="setGridOperationMode('join')">宫格拼接</button>
-                    </div>
-                    <button id="gridCustomToggle" class="image-edit-btn secondary grid-split-control" type="button" onclick="toggleGridCustomMode()" data-i18n="canvas.gridCustom" data-i18n-title="canvas.gridCustomTitle" title="自由放置切割线">自定义</button>
-                    <div class="grid-preset-row grid-split-control">
+                    <button id="gridCustomToggle" class="image-edit-btn secondary" type="button" onclick="toggleGridCustomMode()" data-i18n="canvas.gridCustom" data-i18n-title="canvas.gridCustomTitle" title="自由放置切割线">自定义</button>
+                    <div class="grid-preset-row">
                         <span class="image-edit-sub" data-i18n="canvas.gridPresets">预设</span>
                         <button class="grid-preset-btn" type="button" onclick="applyGridPreset(1, 2)">1×2</button>
                         <button class="grid-preset-btn" type="button" onclick="applyGridPreset(2, 1)">2×1</button>
@@ -313,27 +310,11 @@
                         <button class="grid-preset-btn" type="button" onclick="applyGridPreset(3, 2)">3×2</button>
                         <button class="grid-preset-btn" type="button" onclick="applyGridPreset(3, 3)">3×3</button>
                     </div>
-                    <div id="gridJoinPresetRow" class="grid-preset-row grid-join-control" style="display:none">
-                        <span class="image-edit-sub">拼接</span>
-                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(1, 2)">1×2</button>
-                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 1)">2×1</button>
-                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 2)">2×2</button>
-                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 3)">2×3</button>
-                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(3, 2)">3×2</button>
-                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(3, 3)">3×3</button>
-                        <button class="grid-preset-btn" type="button" onclick="resetGridJoinLayout()">自动</button>
-                    </div>
-                    <div id="gridJoinSizeRow" class="grid-preset-row grid-join-control" style="display:none">
-                        <span class="image-edit-sub">尺寸</span>
-                        <button class="grid-preset-btn" type="button" data-grid-join-size="1024" onclick="setGridJoinOutputSize(1024)">1K</button>
-                        <button class="grid-preset-btn active" type="button" data-grid-join-size="2048" onclick="setGridJoinOutputSize(2048)">2K</button>
-                        <button class="grid-preset-btn" type="button" data-grid-join-size="4096" onclick="setGridJoinOutputSize(4096)">4K</button>
-                    </div>
-                    <span id="gridRegularControls" class="grid-split-control" style="display:contents">
+                    <span id="gridRegularControls" style="display:contents">
                         <label><span data-i18n="canvas.gridHLines">横向线</span> <input id="gridHorizontalLines" type="number" min="0" max="20" value="2"></label>
                         <label><span data-i18n="canvas.gridVLines">竖向线</span> <input id="gridVerticalLines" type="number" min="0" max="20" value="2"></label>
                     </span>
-                    <div id="gridCustomControls" class="grid-split-control" style="display:none;align-items:center;gap:6px">
+                    <div id="gridCustomControls" style="display:none;align-items:center;gap:6px">
                         <button id="gridOrientH" class="image-edit-btn primary" type="button" onclick="setGridCustomOrientation('h')" data-i18n="canvas.gridOrientH" data-i18n-title="canvas.gridOrientHTitle" title="点击图片放置水平线">水平</button>
                         <button id="gridOrientV" class="image-edit-btn secondary" type="button" onclick="setGridCustomOrientation('v')" data-i18n="canvas.gridOrientV" data-i18n-title="canvas.gridOrientVTitle" title="点击图片放置竖直线">垂直</button>
                         <button id="gridUndoBtn" class="image-edit-btn secondary" type="button" onclick="undoGridCustomLine()" data-i18n-title="canvas.gridUndo" title="撤销上一条线" disabled style="opacity:.4"><i data-lucide="undo-2" class="w-3.5 h-3.5"></i></button>
@@ -341,6 +322,26 @@
                     </div>
                     <label class="grid-gap-control"><span data-i18n="canvas.gridGap">间隔(px)</span> <input id="gridGapSize" type="range" min="0" max="240" step="1" value="0"><span id="gridGapValue" class="grid-gap-value">0</span></label>
                     <span id="gridSplitCount" class="image-edit-sub"></span>
+                </div>
+                <div id="imageGridJoinTools" class="image-edit-tools">
+                    <div class="grid-preset-row">
+                        <span class="image-edit-sub" data-i18n="canvas.gridJoinPresets">拼接</span>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(1, 2)">1×2</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 1)">2×1</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 2)">2×2</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 3)">2×3</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(3, 2)">3×2</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(3, 3)">3×3</button>
+                        <button class="grid-preset-btn" type="button" onclick="resetGridJoinLayout()" data-i18n="canvas.gridJoinAuto">自动</button>
+                    </div>
+                    <div class="grid-preset-row">
+                        <span class="image-edit-sub" data-i18n="canvas.gridJoinSize">尺寸</span>
+                        <button class="grid-preset-btn" type="button" data-grid-join-size="1024" onclick="setGridJoinOutputSize(1024)">1K</button>
+                        <button class="grid-preset-btn active" type="button" data-grid-join-size="2048" onclick="setGridJoinOutputSize(2048)">2K</button>
+                        <button class="grid-preset-btn" type="button" data-grid-join-size="4096" onclick="setGridJoinOutputSize(4096)">4K</button>
+                    </div>
+                    <label class="grid-gap-control"><span data-i18n="canvas.gridGap">间隔(px)</span> <input id="gridJoinGapSize" type="range" min="0" max="240" step="1" value="0"><span id="gridJoinGapValue" class="grid-gap-value">0</span></label>
+                    <span id="gridJoinCount" class="image-edit-sub"></span>
                 </div>
                 <div id="imageEditStage" class="image-edit-stage">
                     <button id="previewPrevBtn" class="preview-nav-btn prev" type="button" onclick="navigatePreviewImage(-1)" title="上一张"><i data-lucide="chevron-left"></i></button>
