@@ -14144,6 +14144,18 @@ promptInput.addEventListener('mouseup', saveMentionRange);
 promptInput.addEventListener('focus', saveMentionRange);
 promptInput.addEventListener('keydown', event => {
     if(event.key === 'Escape') closeMentionPicker();
+    if(event.key === 'Enter'){
+        // Shift+Enter 换行（保留默认行为）；输入法组合中（如中文候选词确认）不拦截。
+        if(event.shiftKey || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        // @提及候选框打开时，回车用于关闭候选框继续输入，不触发生成。
+        if(mentionPicker?.classList?.contains('open')){
+            closeMentionPicker();
+            return;
+        }
+        // 回车直接生成图片。
+        runGeneration();
+    }
 });
 promptInput.addEventListener('mouseover', event => {
     const token = event.target.closest?.('.mention-image-token');
