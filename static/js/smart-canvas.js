@@ -687,10 +687,14 @@ function clearVolcengineSelectionOutsideVolcengine(target=settings){
     return target;
 }
 function isSmartImageNode(node){
-    return Boolean(node && (node.type === 'smart-image' || !node.type));
+    return Boolean(node && (node.type === 'smart-image' || node.type === 'smart-asset-image' || !node.type));
+}
+function isSmartAssetImageNode(node){
+    return Boolean(node && (node.type === 'smart-asset-image' || node.assetOnly === true));
 }
 function isUploadedImageOnlyNode(node){
     if(!isSmartImageNode(node) || isHistoryGroupNode(node)) return false;
+    if(isSmartAssetImageNode(node)) return true;
     const images = (node.images || []).filter(img => img?.url);
     if(!images.length || node.pending || node.running || node.queued || node.jimengPending) return false;
     if(node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt || node.runFinishedAt || node.runElapsedMs) return false;
@@ -984,10 +988,11 @@ function normalizeLegacySmartNode(node){
         delete normalized.resultGrouping;
         return normalized;
     }
+    if(node.assetOnly === true && !node.type) node.type = 'smart-asset-image';
     if(!node.type) node.type = 'smart-image';
-    if(node.type === 'smart-image') delete node.imageMode;
+    if(node.type === 'smart-image' || node.type === 'smart-asset-image') delete node.imageMode;
     if(node.type === 'smart-image' && node.historyFor) node.isHistoryGroup = true;
-    if(node.type === 'smart-image'){
+    if(node.type === 'smart-image' || node.type === 'smart-asset-image'){
         delete node.scale;
         const keepPendingSize = Number(node.pending) > 0 || Boolean(node.queued || node.jimengPending || (Array.isArray(node.pendingTasks) && node.pendingTasks.length));
         if(!keepPendingSize){
@@ -1216,7 +1221,8 @@ function mediaNodeDefaultScale(node){
     return (node?.images || []).length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE;
 }
 function createImageNodeAt(point, images=[], options={}){
-    const layout = imageLayout(images || [], mediaNodeDefaultScale({type:'smart-image', images:images || []}), {type:'smart-image', images:images || []});
+    const nodeType = options.type || 'smart-image';
+    const layout = imageLayout(images || [], mediaNodeDefaultScale({type:nodeType, images:images || []}), {type:nodeType, images:images || []});
     return createNode((point?.x || 0) - Math.round(layout.width / 2), (point?.y || 0) - Math.round(layout.height / 2), images, options);
 }
 function smartGroupLayoutSize(node){
@@ -4780,7 +4786,7 @@ function inheritNodeMetaFromImage(node){
 function createNode(x, y, images=[], options={}){
     if(!options.skipUndo) pushUndo();
     const nodeImages = (images || []).map(img => ({...img}));
-    const node = {id:uid('smart'), type:'smart-image', x, y, title:nodeImages.length > 1 ? 'Group' : nodeImages.length ? 'Image' : tr('smart.createImportNode'), images:nodeImages, created_at:Date.now()};
+    const node = {id:uid('smart'), type:options.type || 'smart-image', x, y, title:nodeImages.length > 1 ? 'Group' : nodeImages.length ? 'Image' : tr('smart.createImportNode'), images:nodeImages, created_at:Date.now()};
     node.scale = nodeImages.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : mediaNodeDefaultScale(node);
     inheritNodeMetaFromImage(node);
     nodes.push(node);
@@ -7655,7 +7661,7 @@ async function exportPanoramaFrame(){
             ? {x:rect.x + rect.width + 240, y:rect.y + rect.height / 2}
             : viewportCenter();
         pushUndo();
-        const newNode = createImageNodeAt(point, [frame], {select:true, skipUndo:true});
+        const newNode = createImageNodeAt(point, [frame], {type:'smart-asset-image', select:true, skipUndo:true});
         selectedIds = [];
         selectedImage = {nodeId:newNode.id, index:0};
         render();
@@ -8007,7 +8013,7 @@ async function exportVideoFrame(which='current'){
             ? {x:rect.x + rect.width + 240, y:rect.y + rect.height / 2}
             : viewportCenter();
         pushUndo();
-        const newNode = createImageNodeAt(point, [frame], {select:true, skipUndo:true});
+        const newNode = createImageNodeAt(point, [frame], {type:'smart-asset-image', select:true, skipUndo:true});
         selectedIds = [];
         selectedImage = {nodeId:newNode.id, index:0};
         render();
@@ -9041,6 +9047,18 @@ function replaceEditedImage(file){
     selectedId = node.id; selectedImage = {nodeId:node.id, index};
     return true;
 }
+function createEditedResultNode(sourceNode, images, options={}){
+    if(!sourceNode || !Array.isArray(images) || !images.length) return null;
+    const rect = nodeRect(sourceNode);
+    const point = nextOutputPositionForSource(sourceNode, null);
+    const output = createImageNodeAt({
+        x:point.x + Math.round(rect.width / 2),
+        y:point.y + Math.round(rect.height / 2)
+    }, images, {type:'smart-asset-image', select:true, skipUndo:true});
+    if(options.title) output.title = options.title;
+    connectInputNode(sourceNode.id, output.id);
+    return output;
+}
 function applyOutpaintSizeToSmartParams(width, height){
     const w = Math.max(1, Math.round(Number(width) || 0));
     const h = Math.max(1, Math.round(Number(height) || 0));
@@ -9068,7 +9086,18 @@ async function applyImageCrop(){
     const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/png'));
     const base = (image.name || 'image').replace(/\.[^.]+$/, '');
     const file = blob ? await uploadCroppedBlob(blob, `${base}_crop.png`) : null;
-    if(file && replaceEditedImage(file)){ closeImageEditor(); render(); scheduleSave(); }
+    if(file){
+        createEditedResultNode(node, [{
+            url:file.url,
+            name:file.name,
+            kind:file.kind || 'image',
+            natural_w:sw,
+            natural_h:sh
+        }], {title:'Crop'});
+        closeImageEditor();
+        render();
+        scheduleSave();
+    }
 }
 async function applyImageOutpaint(){
     if(!cropState) return;
@@ -9090,7 +9119,14 @@ async function applyImageOutpaint(){
     const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/png'));
     const base = (image.name || 'image').replace(/\.[^.]+$/, '');
     const file = blob ? await uploadCroppedBlob(blob, `${base}_outpaint.png`) : null;
-    if(file && replaceEditedImage(file)){
+    if(file){
+        createEditedResultNode(node, [{
+            url:file.url,
+            name:file.name,
+            kind:file.kind || 'image',
+            natural_w:outW,
+            natural_h:outH
+        }], {title:'Outpaint'});
         applyOutpaintSizeToSmartParams(outW, outH);
         setPromptDraftForNode(node, 'Remove white area and fill the scene');
         promptInput.dataset.preserveDraftOnce = '1';
@@ -9146,7 +9182,18 @@ async function applyImageBrush(){
     const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/png'));
     const base = (image.name || 'image').replace(/\.[^.]+$/, '');
     const file = blob ? await uploadCroppedBlob(blob, `${base}_paint.png`) : null;
-    if(file && replaceEditedImage(file)){ closeImageEditor(); render(); scheduleSave(); }
+    if(file){
+        createEditedResultNode(node, [{
+            url:file.url,
+            name:file.name,
+            kind:file.kind || 'image',
+            natural_w:canvasEl.width,
+            natural_h:canvasEl.height
+        }], {title:'Paint'});
+        closeImageEditor();
+        render();
+        scheduleSave();
+    }
 }
 async function applyImageGridSplit(){
     if(!cropState) return;
@@ -9171,10 +9218,10 @@ async function applyImageGridSplit(){
     if(files.length){
         // 切分输出作为普通分组节点(smart-image,多图 title 自动为 'Group'),
         // 不写入 grid 元数据,切片按分组节点的自适应网格排列。
-        createNode((node.x || 0) + imageLayout(node.images || [], nodeScale(node), node).width + 40, node.y || 0, files.map(file => ({
+        createEditedResultNode(node, files.map(file => ({
             url:file.url,
             name:file.name
-        })));
+        })), {title:'Grid Split'});
         closeImageEditor(); render(); scheduleSave();
     }
 }
@@ -9242,15 +9289,13 @@ async function applyImageGridJoin(){
     const base = safeExportFileName((downloadNameForMediaItem(image || items[0]?.item, 'image') || 'image').replace(/\.[^.]+$/, ''), 'image');
     const file = blob ? await uploadCroppedBlob(blob, `${base}_join.png`) : null;
     if(file){
-        const rect = nodeRect(node);
-        const outputNode = createImageNodeAt({x:rect.x + rect.width + 240, y:rect.y + rect.height / 2}, [{
+        createEditedResultNode(node, [{
             url:file.url,
             name:file.name,
             kind:'image',
             natural_w:canvasEl.width,
             natural_h:canvasEl.height
-        }], {select:true, skipUndo:true});
-        outputNode.title = 'Grid Join';
+        }], {title:'Grid Join'});
         closeImageEditor();
         render();
         scheduleSave();
@@ -9878,7 +9923,7 @@ function appendImagesToSmartNode(uploaded, targetId='', opts={}){
     if(!node){
         const center = opts.point || viewportCenter();
         undoSuppressed = true;
-        node = createImageNodeAt(center, []);
+        node = createImageNodeAt(center, [], {type:'smart-asset-image'});
         undoSuppressed = false;
     }
     const previousCount = (node.images || []).length;
@@ -11114,7 +11159,7 @@ function directImageInputsFor(node){
         .filter(n => isSmartImageNode(n) && !isHistoryGroupNode(n) && (n.images || []).some(img => img?.url))
         .sort((a, b) => {
             const ax = Number(a.x) || 0, bx = Number(b.x) || 0;
-            if(ax !== bx) return bx - ax;
+            if(ax !== bx) return ax - bx;
             return (Number(a.y) || 0) - (Number(b.y) || 0);
         });
 }
@@ -11124,7 +11169,7 @@ function directImageInputsForKinds(node, kinds=['input']){
         .filter(n => isSmartImageNode(n) && !isHistoryGroupNode(n) && (n.images || []).some(img => img?.url))
         .sort((a, b) => {
             const ax = Number(a.x) || 0, bx = Number(b.x) || 0;
-            if(ax !== bx) return bx - ax;
+            if(ax !== bx) return ax - bx;
             return (Number(a.y) || 0) - (Number(b.y) || 0);
         });
 }
@@ -11249,15 +11294,25 @@ function smartCascadeGraphForTail(tail){
     const loop = resolveSmartCascadeLoop(tail?.id);
     const loopRoots = loop?.node?.id ? downstreamImageTargetsFor(loop.node) : [];
     const loopRoot = loopRoots.find(n => path.some(p => p.id === n.id));
-    const root = loopRoot || path[0];
+    const firstRunnableEdge = path.findIndex((node, index) => index < path.length - 1 && !isSmartAssetImageNode(path[index + 1]));
+    const pathRoot = firstRunnableEdge >= 0 ? path[firstRunnableEdge] : path[0];
+    const root = loopRoot || pathRoot;
+    const tailId = tail?.id || '';
+    const pathIds = new Set(path.map(n => n.id));
     const edges = [];
     const children = new Map();
     const seenEdges = new Set();
     const visiting = new Set();
+    const targetCanReachTail = target => {
+        if(!target?.id) return false;
+        if(target.id === tailId) return true;
+        if(pathIds.has(target.id)) return true;
+        return downstreamNodesForId(target.id).some(n => n.id === tailId || pathIds.has(n.id));
+    };
     const walk = node => {
         if(!node?.id || visiting.has(node.id)) return;
         visiting.add(node.id);
-        const targets = downstreamCascadeTargetsFor(node);
+        const targets = downstreamCascadeTargetsFor(node).filter(targetCanReachTail);
         children.set(node.id, targets);
         targets.forEach(target => {
             const key = `${node.id}->${target.id}`;
@@ -11694,16 +11749,15 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
 async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=smartLoopContext){
     const outputNode = targetNode || sourceNode;
     if(!sourceNode || !targetNode || !outputNode) return [];
-    const requestNode = sourceNode?.type === 'smart-loop' ? targetNode : sourceNode;
+    const requestNode = targetNode;
     const previousSettings = cloneSmartSettings(settings);
     const runSettings = {...cloneSmartSettings(settings), ...cloneSmartSettings(smartSettingsForNode(requestNode) || {})};
     settings = runSettings;
     const outpaintSize = validOutpaintSize(requestNode);
+    const incoming = (inputRefs || []).filter(img => img?.url);
     const selfRefs = sourceNode?.type === 'smart-loop' ? [] : selfReferenceImagesForNode(sourceNode, false, ctx).filter(img => img?.url);
-    const sourceRefs = (selfRefs.length ? selfRefs : defaultReferenceImagesFor(requestNode, false, ctx)).filter(img => img?.url);
-    const refsForRequest = sourceRefs.length
-        ? sourceRefs
-        : (inputRefs && inputRefs.length ? inputRefs : null);
+    const sourceRefs = (incoming.length ? incoming : (selfRefs.length ? selfRefs : defaultReferenceImagesFor(requestNode, false, ctx))).filter(img => img?.url);
+    const refsForRequest = sourceRefs.length ? sourceRefs : null;
     const request = buildPromptRequestForNode(
         requestNode,
         refsForRequest,
@@ -12100,7 +12154,7 @@ async function runSmartCascade(targetNode=null){
                             outputs = appendCascadeRefsToReceiver(target, sharedRefs, stepCtx);
                         }
                     } catch(err) {
-                        if(/缺少提示词|需要输入文本|need prompt/i.test(err.message || '') && incomingRefs.length){
+                        if(isSmartAssetImageNode(target) && /缺少提示词|需要输入文本|need prompt/i.test(err.message || '') && incomingRefs.length){
                             outputs = appendCascadeRefsToReceiver(target, incomingRefs, stepCtx);
                             if(index === 0){
                                 sharedRefs = cascadeRefsFromOutputs(outputs, target);
@@ -13518,7 +13572,7 @@ window.onmousemove = e => {
                     const point = screenToWorld(e);
                     selectedId = '';
                     selectedImage = {nodeId:'', index:-1};
-                    const newNode = createImageNodeAt(point, [img], {select:false, skipUndo:true});
+                    const newNode = createImageNodeAt(point, [img], {type:'smart-asset-image', select:false, skipUndo:true});
                     undoSuppressed = false;
                     dragState = {id:newNode.id, startX:e.clientX, startY:e.clientY, ox:newNode.x, oy:newNode.y, thumbDetached:true};
                     thumbDragState.detached = true;
@@ -13722,7 +13776,7 @@ shell.ondrop = async e => {
             const asset = JSON.parse(assetRaw);
             if(asset?.url) {
                 pushUndo();
-                createImageNodeAt(p, [{url:asset.url, name:asset.name || 'asset', kind:asset.kind || assetMediaKind(asset)}], {skipUndo:true});
+                createImageNodeAt(p, [{url:asset.url, name:asset.name || 'asset', kind:asset.kind || assetMediaKind(asset)}], {type:'smart-asset-image', skipUndo:true});
             }
             return;
         } catch {}

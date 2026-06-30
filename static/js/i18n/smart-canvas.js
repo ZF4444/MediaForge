@@ -49,7 +49,7 @@
         "smart.tplGroupNamePrompt": { zh: "分组名称", en: "Group name" },
         "smart.tplDeleteGroupConfirm": { zh: "删除分组？该分组里的我的模板会移动到“我的”。", en: "Delete this group? My templates in it will move to Mine." },
         "smart.promptResize": { zh: "拖拽调整文本框高度", en: "Drag to resize text box" },
-        "smart.run": { zh: "运行", en: "Run" },
+        "smart.run": { zh: "运行节点", en: "Run" },
         "smart.modePreview": { zh: "预览", en: "Preview" },
         "smart.previewImage": { zh: "预览图片", en: "Preview" },
         "smart.previewHint": { zh: "滚轮缩放，拖动查看，右下角可拉动对比原图", en: "Scroll to zoom, drag to pan. Use the bottom-right control to compare with source." },
