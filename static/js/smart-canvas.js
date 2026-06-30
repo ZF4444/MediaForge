@@ -2515,8 +2515,7 @@ function renderSizeControls(prefix='', includeSource=false){
 function ratioLabel(prefix=''){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     const customKey = prefix ? `${prefix}CustomRatio` : 'customRatio';
-    const sourceLabel = sourceImageRatioLabel(prefix) || tr('smart.imageRatio');
-    const map = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21', source:sourceLabel, custom:settings[customKey] || tr('smart.custom')};
+    const map = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21', source:tr('smart.imageRatio'), custom:settings[customKey] || tr('smart.custom')};
     return map[settings[ratioKey] || 'square'] || '1:1';
 }
 function gcdInt(a, b){
@@ -2539,6 +2538,13 @@ function sourceRatioImageForNode(node){
     }
     return images.find(img => imageSizeForRatio(img)) || images[0];
 }
+function sourceRatioCandidateImageForNode(node){
+    const self = sourceRatioImageForNode(node);
+    if(self) return self;
+    const refs = defaultReferenceImagesFor(node).filter(img => img?.url && !isAudioMediaItem(img));
+    if(!refs.length) return null;
+    return refs.find(img => imageSizeForRatio(img)) || refs[0];
+}
 function reducedRatioForImage(img){
     const size = imageSizeForRatio(img);
     if(!size) return null;
@@ -2547,21 +2553,22 @@ function reducedRatioForImage(img){
 }
 function sourceImageRatioLabel(prefix=''){
     const node = activeComposerNode() || selectedNode();
-    const ratio = reducedRatioForImage(sourceRatioImageForNode(node));
+    const ratio = reducedRatioForImage(sourceRatioCandidateImageForNode(node));
     if(!ratio) return '';
     return `${ratio.w}:${ratio.h}`;
 }
-function applySourceRatioToSettings(prefix=''){
+function applySourceRatioToSettings(prefix='', node=activeComposerNode() || selectedNode(), targetSettings=settings){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
-    if(settings[ratioKey] !== 'source') return;
-    const ratio = reducedRatioForImage(sourceRatioImageForNode(activeComposerNode() || selectedNode()));
-    if(!ratio) return;
+    if(targetSettings[ratioKey] !== 'source') return false;
+    const ratio = reducedRatioForImage(sourceRatioCandidateImageForNode(node));
+    if(!ratio) return false;
     const customKey = prefix ? `${prefix}CustomRatio` : 'customRatio';
     const wKey = prefix ? `${prefix}CustomRatioWidth` : 'customRatioWidth';
     const hKey = prefix ? `${prefix}CustomRatioHeight` : 'customRatioHeight';
-    settings[wKey] = ratio.w;
-    settings[hKey] = ratio.h;
-    settings[customKey] = `${ratio.w}:${ratio.h}`;
+    targetSettings[wKey] = ratio.w;
+    targetSettings[hKey] = ratio.h;
+    targetSettings[customKey] = `${ratio.w}:${ratio.h}`;
+    return true;
 }
 function resolutionLabel(prefix=''){
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';
@@ -11766,6 +11773,7 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
     const runSettings = {...cloneSmartSettings(settings), ...cloneSmartSettings(smartSettingsForNode(requestNode) || {})};
     settings = runSettings;
     const outpaintSize = validOutpaintSize(requestNode);
+    applySourceRatioToSettings('', requestNode, runSettings);
     const incoming = (inputRefs || []).filter(img => img?.url);
     const selfRefs = sourceNode?.type === 'smart-loop' ? [] : selfReferenceImagesForNode(sourceNode, false, ctx).filter(img => img?.url);
     const sourceRefs = (incoming.length ? incoming : (selfRefs.length ? selfRefs : defaultReferenceImagesFor(requestNode, false, ctx))).filter(img => img?.url);
@@ -12273,6 +12281,7 @@ async function runGeneration(){
             customSize:`${outpaintSize.width}x${outpaintSize.height}`
         };
     }
+    applySourceRatioToSettings('', node, settings);
     const meta = snapshotRunMeta(prompt, node.id, request.displayPrompt, refs);
     const logKind = isApiLikeEngine(settings.engine) && settings.apiKind === 'video' ? 'video' : 'image';
     const runLog = smartRunSnapshot(node, prompt, refs, logKind);

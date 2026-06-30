@@ -105,7 +105,7 @@
         "smart.qualityMid": { zh: "中", en: "Medium" },
         "smart.qualityHigh": { zh: "高", en: "High" },
         "smart.countUnit": { zh: "张", en: "" },
-        "smart.imageRatio": { zh: "图片比例", en: "Source ratio" },
+        "smart.imageRatio": { zh: "自动", en: "Auto" },
         "smart.custom": { zh: "自定义", en: "Custom" },
         "smart.apiPlatform": { zh: "API 平台", en: "API provider" },
         "smart.imageModel": { zh: "生图模型", en: "Image model" },
