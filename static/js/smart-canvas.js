@@ -11305,11 +11305,12 @@ function smartCascadeGraphForTail(tail){
     const loop = resolveSmartCascadeLoop(tail?.id);
     const loopRoots = loop?.node?.id ? downstreamImageTargetsFor(loop.node) : [];
     const loopRoot = loopRoots.find(n => path.some(p => p.id === n.id));
-    const firstRunnableEdge = path.findIndex((node, index) => index < path.length - 1 && !isSmartAssetImageNode(path[index + 1]));
-    const pathRoot = firstRunnableEdge >= 0 ? path[firstRunnableEdge] : path[0];
+    const lastAssetBeforeTail = path.slice(0, -1).findLastIndex(node => isSmartAssetImageNode(node));
+    const pathRootIndex = lastAssetBeforeTail >= 0 ? lastAssetBeforeTail : 0;
+    const pathRoot = path[pathRootIndex];
     const root = loopRoot || pathRoot;
     const tailId = tail?.id || '';
-    const pathIds = new Set(path.map(n => n.id));
+    const pathIds = new Set(path.slice(pathRootIndex).map(n => n.id));
     const edges = [];
     const children = new Map();
     const seenEdges = new Set();
