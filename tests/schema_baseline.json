@@ -1057,6 +1057,16 @@
     },
     "required": []
   },
+  "HelpMarkdownPayload": {
+    "properties": {
+      "content": {
+        "type": "string",
+        "default": "",
+        "maxLength": 100000
+      }
+    },
+    "required": []
+  },
   "ImageTaskQueryRequest": {
     "properties": {
       "provider_id": {

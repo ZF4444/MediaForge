@@ -461,3 +461,7 @@ class FeedbackCreatePayload(BaseModel):
 class FeedbackUpdatePayload(BaseModel):
     status: Optional[str] = Field(default=None, max_length=40)
     admin_note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class HelpMarkdownPayload(BaseModel):
+    content: str = Field(default="", max_length=100000)

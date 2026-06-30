@@ -716,10 +716,9 @@
             max-width: 0;
         }
 
-        .feedback-float {
+        .floating-action {
             position: fixed;
             right: 0;
-            top: 50%;
             transform: translateY(-50%);
             z-index: 120;
             width: 38px;
@@ -741,8 +740,10 @@
             font-weight: 700;
             transition: background-color .18s, transform .18s, box-shadow .18s;
         }
-        .feedback-float:hover,
-        .feedback-float:focus-visible {
+        .floating-action.feedback-float { top: calc(50% + 56px); }
+        .floating-action.help-float { top: calc(50% - 56px); }
+        .floating-action:hover,
+        .floating-action:focus-visible {
             background: var(--nav-hover-bg);
             transform: translateY(-50%) translateX(-2px);
             outline: none;
@@ -847,10 +848,152 @@
             cursor: pointer;
         }
         .feedback-submit:disabled { opacity: .55; cursor: not-allowed; }
+        .help-drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: min(480px, calc(100vw - 24px));
+            height: 100vh;
+            z-index: 125;
+            background: var(--sidebar-bg);
+            color: var(--text);
+            border-left: 1px solid var(--border);
+            box-shadow: -18px 0 50px rgba(15, 23, 42, .18);
+            transform: translateX(100%);
+            transition: transform .24s ease;
+            display: flex;
+            flex-direction: column;
+            pointer-events: auto;
+        }
+        .help-drawer.open { transform: translateX(0); }
+        .help-head {
+            min-height: 58px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+        .help-title { font-size: 16px; font-weight: 800; }
+        .help-head-actions { display: flex; align-items: center; gap: 8px; }
+        .help-close,
+        .help-mini-btn,
+        .help-save {
+            height: 32px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 0 10px;
+        }
+        .help-close {
+            width: 32px;
+            padding: 0;
+            font-size: 20px;
+            line-height: 1;
+        }
+        .help-mini-btn:hover,
+        .help-close:hover { background: var(--nav-hover-bg); }
+        .help-mini-btn.active {
+            background: var(--text);
+            border-color: var(--text);
+            color: var(--bg);
+        }
+        .help-save {
+            background: var(--text);
+            border-color: var(--text);
+            color: var(--bg);
+        }
+        .help-save:disabled { opacity: .55; cursor: not-allowed; }
+        .help-body {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            padding: 18px;
+        }
+        .help-editor {
+            width: 100%;
+            height: 100%;
+            min-height: calc(100vh - 116px);
+            resize: none;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--stage-bg);
+            color: var(--text);
+            font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            padding: 12px;
+            outline: none;
+        }
+        .help-editor:focus {
+            border-color: var(--text);
+            box-shadow: 0 0 0 3px rgba(148, 163, 184, .18);
+        }
+        .help-markdown {
+            font-size: 14px;
+            line-height: 1.7;
+            word-break: break-word;
+        }
+        .help-markdown h1,
+        .help-markdown h2,
+        .help-markdown h3 {
+            line-height: 1.3;
+            margin: 0 0 12px;
+        }
+        .help-markdown h1 { font-size: 22px; }
+        .help-markdown h2 { font-size: 18px; margin-top: 22px; }
+        .help-markdown h3 { font-size: 15px; margin-top: 18px; }
+        .help-markdown p,
+        .help-markdown ul,
+        .help-markdown ol,
+        .help-markdown blockquote,
+        .help-markdown pre { margin: 0 0 13px; }
+        .help-markdown ul,
+        .help-markdown ol { padding-left: 22px; }
+        .help-markdown li > ul,
+        .help-markdown li > ol {
+            margin: 6px 0 0;
+        }
+        .help-markdown code {
+            background: var(--stage-bg);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 1px 5px;
+            font-size: .92em;
+        }
+        .help-markdown pre {
+            overflow: auto;
+            background: var(--stage-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+        }
+        .help-markdown pre code {
+            border: 0;
+            padding: 0;
+            background: transparent;
+        }
+        .help-markdown blockquote {
+            border-left: 3px solid var(--border);
+            padding-left: 12px;
+            color: var(--muted);
+        }
+        .help-markdown a { color: #2563eb; text-decoration: none; }
+        .help-markdown a:hover { text-decoration: underline; }
+        .help-status {
+            min-height: 22px;
+            padding: 0 18px 12px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+        .help-status.ok { color: #16a34a; }
+        .help-status.err { color: #dc2626; }
         @media (max-width: 760px) {
-            .feedback-float {
+            .floating-action {
                 right: 12px;
-                bottom: 18px;
                 top: auto;
                 transform: none;
                 width: 44px;
@@ -860,9 +1003,14 @@
                 writing-mode: horizontal-tb;
                 font-size: 12px;
             }
-            .feedback-float:hover,
-            .feedback-float:focus-visible {
+            .floating-action.feedback-float { bottom: 18px; }
+            .floating-action.help-float { bottom: 72px; }
+            .floating-action:hover,
+            .floating-action:focus-visible {
                 transform: translateY(-2px);
+            }
+            .help-drawer {
+                width: min(420px, calc(100vw - 10px));
             }
         }
     </style>
@@ -1089,7 +1237,24 @@
         </main>
     </div>
 
-    <button class="feedback-float" id="feedbackOpenBtn" type="button" title="提交反馈">反馈</button>
+    <button class="floating-action help-float" id="helpOpenBtn" type="button" title="查看帮助">帮助</button>
+    <button class="floating-action feedback-float" id="feedbackOpenBtn" type="button" title="提交反馈">反馈</button>
+    <aside class="help-drawer" id="helpDrawer" aria-hidden="true">
+        <div class="help-head">
+            <div class="help-title">帮助</div>
+            <div class="help-head-actions">
+                <button class="help-mini-btn" id="helpPreviewBtn" type="button" style="display:none">预览</button>
+                <button class="help-mini-btn" id="helpEditBtn" type="button" style="display:none">编辑</button>
+                <button class="help-save" id="helpSaveBtn" type="button" style="display:none">保存</button>
+                <button class="help-close" id="helpCloseBtn" type="button" aria-label="关闭">×</button>
+            </div>
+        </div>
+        <div class="help-body">
+            <div class="help-markdown" id="helpPreview"></div>
+            <textarea class="help-editor" id="helpEditor" maxlength="100000" style="display:none"></textarea>
+        </div>
+        <div class="help-status" id="helpStatus"></div>
+    </aside>
     <div class="feedback-overlay" id="feedbackOverlay" aria-hidden="true">
         <div class="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle">
             <div class="feedback-head">
@@ -1401,6 +1566,219 @@
                 window.addEventListener('keydown', function(e){
                     if (e.key === 'Escape') closeFeedback();
                 });
+            }, { once:true });
+        })();
+
+        (function initHelpDrawer(){
+            const state = { loaded:false, isAdmin:false, mode:'preview', content:'' };
+            function escapeHtml(raw) {
+                return String(raw == null ? '' : raw)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+            function renderInline(text) {
+                let html = escapeHtml(text);
+                html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+                html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+                html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+                return html;
+            }
+            function renderMarkdown(markdown) {
+                const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n');
+                const out = [];
+                let inCode = false;
+                let code = [];
+                const listStack = [];
+                function closeListItem(list) {
+                    if (list && list.itemOpen) {
+                        out.push('</li>');
+                        list.itemOpen = false;
+                    }
+                }
+                function closeLists(targetIndent) {
+                    while (listStack.length && listStack[listStack.length - 1].indent > targetIndent) {
+                        closeListItem(listStack[listStack.length - 1]);
+                        out.push('</' + listStack.pop().type + '>');
+                    }
+                }
+                function closeAllLists() {
+                    closeLists(-1);
+                }
+                function ensureList(type, indent) {
+                    closeLists(indent);
+                    let top = listStack[listStack.length - 1];
+                    if (top && top.indent === indent && top.type !== type) {
+                        closeListItem(top);
+                        out.push('</' + listStack.pop().type + '>');
+                        top = listStack[listStack.length - 1];
+                    }
+                    if (!top || top.indent < indent) {
+                        out.push('<' + type + '>');
+                        listStack.push({ type, indent, itemOpen:false });
+                    }
+                }
+                function addListItem(type, indent, text) {
+                    ensureList(type, indent);
+                    const current = listStack[listStack.length - 1];
+                    closeListItem(current);
+                    out.push('<li>' + renderInline(text));
+                    current.itemOpen = true;
+                }
+                function closeCode() {
+                    if (inCode) {
+                        out.push('<pre><code>' + escapeHtml(code.join('\n')) + '</code></pre>');
+                        code = [];
+                        inCode = false;
+                    }
+                }
+                lines.forEach(line => {
+                    if (/^```/.test(line)) {
+                        if (inCode) closeCode();
+                        else {
+                            closeAllLists();
+                            inCode = true;
+                            code = [];
+                        }
+                        return;
+                    }
+                    if (inCode) {
+                        code.push(line);
+                        return;
+                    }
+                    if (!line.trim()) {
+                        closeAllLists();
+                        return;
+                    }
+                    let m = line.match(/^(#{1,3})\s+(.+)$/);
+                    if (m) {
+                        closeAllLists();
+                        out.push('<h' + m[1].length + '>' + renderInline(m[2]) + '</h' + m[1].length + '>');
+                        return;
+                    }
+                    m = line.match(/^>\s?(.*)$/);
+                    if (m) {
+                        closeAllLists();
+                        out.push('<blockquote>' + renderInline(m[1]) + '</blockquote>');
+                        return;
+                    }
+                    m = line.match(/^(\s*)[-*]\s+(.+)$/);
+                    if (m) {
+                        addListItem('ul', m[1].replace(/\t/g, '    ').length, m[2]);
+                        return;
+                    }
+                    m = line.match(/^(\s*)\d+\.\s+(.+)$/);
+                    if (m) {
+                        addListItem('ol', m[1].replace(/\t/g, '    ').length, m[2]);
+                        return;
+                    }
+                    closeAllLists();
+                    out.push('<p>' + renderInline(line) + '</p>');
+                });
+                closeCode();
+                closeAllLists();
+                return out.join('\n') || '<p>暂无帮助内容。</p>';
+            }
+            function setHelpStatus(msg, kind) {
+                const el = document.getElementById('helpStatus');
+                if (!el) return;
+                el.textContent = msg || '';
+                el.className = 'help-status' + (kind ? ' ' + kind : '');
+            }
+            function setMode(mode) {
+                if (mode === 'edit' && !state.isAdmin) mode = 'preview';
+                state.mode = mode;
+                const preview = document.getElementById('helpPreview');
+                const editor = document.getElementById('helpEditor');
+                const previewBtn = document.getElementById('helpPreviewBtn');
+                const editBtn = document.getElementById('helpEditBtn');
+                const saveBtn = document.getElementById('helpSaveBtn');
+                if (editor && mode === 'preview') state.content = editor.value;
+                if (preview) {
+                    preview.innerHTML = renderMarkdown(state.content);
+                    preview.style.display = mode === 'preview' ? '' : 'none';
+                }
+                if (editor) {
+                    editor.value = state.content;
+                    editor.style.display = mode === 'edit' ? '' : 'none';
+                }
+                if (previewBtn) previewBtn.classList.toggle('active', mode === 'preview');
+                if (editBtn) editBtn.classList.toggle('active', mode === 'edit');
+                if (saveBtn) saveBtn.style.display = state.isAdmin ? '' : 'none';
+            }
+            async function loadHelp() {
+                setHelpStatus('加载中...');
+                try {
+                    const res = await fetch('/api/help', { credentials:'same-origin' });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+                    state.loaded = true;
+                    state.isAdmin = !!data.is_admin;
+                    state.content = data.content || '';
+                    const previewBtn = document.getElementById('helpPreviewBtn');
+                    const editBtn = document.getElementById('helpEditBtn');
+                    if (previewBtn) previewBtn.style.display = state.isAdmin ? '' : 'none';
+                    if (editBtn) editBtn.style.display = state.isAdmin ? '' : 'none';
+                    setMode(state.isAdmin ? 'edit' : 'preview');
+                    setHelpStatus(state.isAdmin ? '管理员可编辑帮助内容。' : '');
+                } catch(e) {
+                    setHelpStatus('加载失败：' + e.message, 'err');
+                }
+            }
+            function openHelp() {
+                const drawer = document.getElementById('helpDrawer');
+                if (!drawer) return;
+                drawer.classList.add('open');
+                drawer.setAttribute('aria-hidden', 'false');
+                if (!state.loaded) loadHelp();
+            }
+            function closeHelp() {
+                const drawer = document.getElementById('helpDrawer');
+                if (!drawer) return;
+                drawer.classList.remove('open');
+                drawer.setAttribute('aria-hidden', 'true');
+            }
+            async function saveHelp() {
+                if (!state.isAdmin) return;
+                const editor = document.getElementById('helpEditor');
+                const btn = document.getElementById('helpSaveBtn');
+                state.content = editor ? editor.value : state.content;
+                btn.disabled = true;
+                setHelpStatus('保存中...');
+                try {
+                    const res = await fetch('/api/help', {
+                        method:'PUT',
+                        credentials:'same-origin',
+                        headers:{ 'Content-Type':'application/json' },
+                        body: JSON.stringify({ content: state.content })
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+                    state.content = data.content || '';
+                    setMode(state.mode);
+                    setHelpStatus('已保存。', 'ok');
+                } catch(e) {
+                    setHelpStatus('保存失败：' + e.message, 'err');
+                } finally {
+                    btn.disabled = false;
+                }
+            }
+            document.addEventListener('DOMContentLoaded', function(){
+                const openBtn = document.getElementById('helpOpenBtn');
+                const closeBtn = document.getElementById('helpCloseBtn');
+                const previewBtn = document.getElementById('helpPreviewBtn');
+                const editBtn = document.getElementById('helpEditBtn');
+                const saveBtn = document.getElementById('helpSaveBtn');
+                const editor = document.getElementById('helpEditor');
+                if (openBtn) openBtn.addEventListener('click', openHelp);
+                if (closeBtn) closeBtn.addEventListener('click', closeHelp);
+                if (previewBtn) previewBtn.addEventListener('click', () => setMode('preview'));
+                if (editBtn) editBtn.addEventListener('click', () => setMode('edit'));
+                if (saveBtn) saveBtn.addEventListener('click', saveHelp);
+                if (editor) editor.addEventListener('input', () => { state.content = editor.value; });
             }, { once:true });
         })();
 

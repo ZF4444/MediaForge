@@ -469,6 +469,20 @@
     "APIRoute"
   ],
   [
+    "/api/help",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/help",
+    [
+      "PUT"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/history",
     [
       "GET"

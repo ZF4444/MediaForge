@@ -174,6 +174,7 @@ from app.config import (
     SHARED_FOLDERS_FILE,
     GLOBAL_CONFIG_FILE,
     FEEDBACK_FILE,
+    HELP_MARKDOWN_FILE,
     CANVAS_TRASH_RETENTION_MS,
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
@@ -183,6 +184,7 @@ from app.config import (
     HISTORY_LOCK,
     GLOBAL_CONFIG_LOCK,
     FEEDBACK_LOCK,
+    HELP_LOCK,
     CONVERSATION_LOCK,
     CANVAS_LOCK,
     LOAD_LOCK,
@@ -9089,6 +9091,7 @@ from app.routers import workflows as workflows_router
 from app.routers import pages as pages_router
 from app.routers import access_control as access_control_router
 from app.routers import feedback as feedback_router
+from app.routers import help as help_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -9101,6 +9104,7 @@ app.include_router(workflows_router.router)
 app.include_router(pages_router.router)
 app.include_router(access_control_router.router)
 app.include_router(feedback_router.router)
+app.include_router(help_router.router)
 
 
 if __name__ == "__main__":
