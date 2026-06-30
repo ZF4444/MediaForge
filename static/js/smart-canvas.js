@@ -7326,6 +7326,7 @@ function setImageEditMode(mode, userTouched=false){
     syncEditDrawingHistoryButtons();
     syncBrushToolButtons();
     syncTextToolState(true);
+    if(imageEditMode !== 'mask' && imageEditMode !== 'brush') hideBrushCursor();
     refreshIcons();
 }
 let previewCompareOn = false;
@@ -8129,6 +8130,44 @@ const MASK_BRUSH_ALPHA = 115;
 const MASK_BRUSH_COLOR = `rgba(255,255,255,${MASK_BRUSH_ALPHA / 255})`;
 function editBrushSize(){ return Number(document.getElementById(imageEditMode === 'mask' ? 'maskBrushSize' : 'paintBrushSize')?.value || 20); }
 function brushColor(){ return document.getElementById('paintBrushColor')?.value || '#ff2d55'; }
+function updateBrushCursor(event){
+    // 仅在遮罩/画笔模式显示圆圈笔刷光标,圆圈直径反映实际笔刷大小(随画布缩放换算到屏幕)。
+    const cursor = document.getElementById('brushCursor');
+    if(!cursor) return;
+    if(imageEditMode !== 'mask' && imageEditMode !== 'brush'){ cursor.classList.remove('visible'); return; }
+    const cropCanvasEl = document.getElementById('cropCanvas');
+    const drawEl = editDrawCanvas();
+    if(!cropCanvasEl || !drawEl){ cursor.classList.remove('visible'); return; }
+    const hostRect = cropCanvasEl.getBoundingClientRect();
+    const drawRect = drawEl.getBoundingClientRect();
+    // 画布像素 -> 屏幕像素的缩放比。
+    const scale = drawRect.width / Math.max(1, drawEl.width || drawRect.width);
+    const diameter = Math.max(4, editBrushSize() * scale);
+    cursor.style.width = `${diameter}px`;
+    cursor.style.height = `${diameter}px`;
+    cursor.style.left = `${event.clientX - hostRect.left}px`;
+    cursor.style.top = `${event.clientY - hostRect.top}px`;
+    // 画笔模式用当前笔刷颜色描边,遮罩模式用白色。
+    cursor.style.borderColor = imageEditMode === 'brush' ? brushColor() : 'rgba(255,255,255,.95)';
+    cursor.classList.add('visible');
+}
+function hideBrushCursor(){
+    document.getElementById('brushCursor')?.classList.remove('visible');
+}
+function refreshBrushCursorSize(){
+    // 笔刷尺寸/颜色变化时,若圆圈正显示则同步更新(位置不变)。
+    const cursor = document.getElementById('brushCursor');
+    if(!cursor || !cursor.classList.contains('visible')) return;
+    if(imageEditMode !== 'mask' && imageEditMode !== 'brush') return;
+    const drawEl = editDrawCanvas();
+    if(!drawEl) return;
+    const drawRect = drawEl.getBoundingClientRect();
+    const scale = drawRect.width / Math.max(1, drawEl.width || drawRect.width);
+    const diameter = Math.max(4, editBrushSize() * scale);
+    cursor.style.width = `${diameter}px`;
+    cursor.style.height = `${diameter}px`;
+    cursor.style.borderColor = imageEditMode === 'brush' ? brushColor() : 'rgba(255,255,255,.95)';
+}
 function setupDrawStyle(ctx){
     ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = editBrushSize();
     ctx.strokeStyle = imageEditMode === 'mask' ? MASK_BRUSH_COLOR : brushColor();
@@ -14328,6 +14367,9 @@ document.getElementById('previewCompareHandle').addEventListener('pointercancel'
 });
 document.getElementById('editDrawCanvas').addEventListener('pointerdown', beginEditDraw);
 document.getElementById('editDrawCanvas').addEventListener('pointermove', moveEditDraw);
+document.getElementById('editDrawCanvas').addEventListener('pointermove', updateBrushCursor);
+document.getElementById('editDrawCanvas').addEventListener('pointerenter', updateBrushCursor);
+document.getElementById('editDrawCanvas').addEventListener('pointerleave', hideBrushCursor);
 document.getElementById('editDrawCanvas').addEventListener('pointerup', endEditDraw);
 document.getElementById('editDrawCanvas').addEventListener('pointercancel', endEditDraw);
 document.getElementById('editDrawCanvas').addEventListener('pointerleave', endEditDraw);
@@ -14355,6 +14397,9 @@ document.getElementById('editTextCanvas')?.addEventListener('dblclick', event =>
     if(!control) return;
     control.addEventListener('input', syncSelectedEditTextStyleFromBrush);
     control.addEventListener('change', () => { editTextDirty = false; });
+});
+['maskBrushSize','paintBrushSize','paintBrushColor'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', refreshBrushCursorSize);
 });
 ['gridHorizontalLines','gridVerticalLines','gridGapSize','gridJoinGapSize'].forEach(id => {
     document.getElementById(id).addEventListener('input', () => {
