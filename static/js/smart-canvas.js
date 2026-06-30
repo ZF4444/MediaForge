@@ -243,6 +243,8 @@ let imageEditBaseW = 0;
 let imageEditBaseH = 0;
 let previewZoom = 1.0;
 let previewPan = {x:0, y:0};
+let gridJoinZoom = 1.0;
+let gridJoinPan = {x:0, y:0};
 let previewPanDrag = null;
 let previewCompareDrag = false;
 let previewComparePos = 50;
@@ -7249,6 +7251,8 @@ function setImageEditMode(mode, userTouched=false){
     if(imageEditMode === 'gridjoin' && !canGridJoinCurrentNode()) imageEditMode = 'grid';
     // gridOperationMode 作为内部派生状态跟随模式:拼接模式->join,其余->split。
     gridOperationMode = imageEditMode === 'gridjoin' ? 'join' : 'split';
+    // 拼接预览尺寸由拼接结果决定,进入时重置独立缩放,避免沿用其它模式的滚动/缩放状态。
+    if(imageEditMode === 'gridjoin') resetGridJoinTransform();
     const cropCanvasEl = document.getElementById('cropCanvas');
     const previewStageEl = document.getElementById('previewStage');
     const editStageEl = document.getElementById('imageEditStage');
@@ -7264,6 +7268,7 @@ function setImageEditMode(mode, userTouched=false){
     cropCanvasEl.style.display = isPreview ? 'none' : '';
     previewStageEl.style.display = isPreview ? 'inline-flex' : 'none';
     editStageEl?.classList.toggle('preview-mode', isPreview);
+    editStageEl?.classList.toggle('gridjoin-mode', imageEditMode === 'gridjoin');
     editPanelEl?.classList.toggle('video-preview-mode', isVideoPreview);
     if(previewDownloadBtn) previewDownloadBtn.style.display = isPreview ? 'inline-flex' : 'none';
     if(previewDownloadAllBtn) previewDownloadAllBtn.style.display = isPreview && !isVideoPreview && previewDownloadGroupItems().length > 1 ? 'inline-flex' : 'none';
@@ -8481,6 +8486,10 @@ function syncImageEditOverflow(){
     const stage = document.getElementById('imageEditStage');
     const crop = document.getElementById('cropCanvas');
     if(!stage || !crop) return;
+    if(imageEditMode === 'gridjoin'){
+        stage.classList.remove('overflow-x', 'overflow-y');
+        return;
+    }
     const rect = crop.getBoundingClientRect(), pad = 36;
     stage.classList.toggle('overflow-x', rect.width + pad > stage.clientWidth);
     stage.classList.toggle('overflow-y', rect.height + pad > stage.clientHeight);
@@ -8505,7 +8514,12 @@ function updateZoomLabel(){
         el.textContent = Math.round((75 / Math.max(1, panoramaState.fov)) * 100) + '%';
         return;
     }
-    el.textContent = Math.round((imageEditMode === 'preview' ? previewZoom : imageEditZoom) * 100) + '%';
+    const zoom = imageEditMode === 'preview'
+        ? previewZoom
+        : imageEditMode === 'gridjoin'
+            ? gridJoinZoom
+            : imageEditZoom;
+    el.textContent = Math.round(zoom * 100) + '%';
 }
 function syncGridCustomCursor(){
     const el = document.getElementById('cropCanvas');
@@ -8677,6 +8691,20 @@ function gridJoinCanvasSize(layout=gridJoinLayout){
         h:Math.max(acc.h, Number(item.y || 0) + Number(item.h || 0))
     }), byGrid);
 }
+function applyGridJoinTransform(){
+    // 类似预览模式:容器固定尺寸,缩放/平移用 transform 实现,无滚动条。
+    const el = document.getElementById('cropCanvas');
+    if(!el) return;
+    el.style.transformOrigin = 'center center';
+    el.style.transform = `translate(${gridJoinPan.x}px, ${gridJoinPan.y}px) scale(${gridJoinZoom})`;
+    syncImageEditOverflow();
+    if(typeof updateZoomLabel === 'function') updateZoomLabel();
+}
+function resetGridJoinTransform(){
+    gridJoinZoom = 1.0;
+    gridJoinPan = {x:0, y:0};
+    applyGridJoinTransform();
+}
 function renderGridJoinPreview(){
     const host = document.getElementById('gridJoinCanvas');
     const countEl = document.getElementById('gridJoinCount');
@@ -8697,15 +8725,16 @@ function renderGridJoinPreview(){
     }
     const layout = ensureGridJoinLayout();
     const size = gridJoinCanvasSize(layout);
-    const zoom = Math.max(0.05, Number(imageEditZoom || 1));
     host.style.display = 'block';
     host.style.width = `${Math.max(1, Math.round(size.w))}px`;
     host.style.height = `${Math.max(1, Math.round(size.h))}px`;
-    host.style.transform = `scale(${zoom})`;
+    host.style.transform = '';
     host.style.transformOrigin = '0 0';
     if(cropCanvasEl){
-        cropCanvasEl.style.width = `${Math.max(1, Math.round(size.w * zoom))}px`;
-        cropCanvasEl.style.height = `${Math.max(1, Math.round(size.h * zoom))}px`;
+        // 容器尺寸固定为拼接结果尺寸,缩放/平移通过 transform 实现(类似预览模式,无滚动条)。
+        cropCanvasEl.style.width = `${Math.max(1, Math.round(size.w))}px`;
+        cropCanvasEl.style.height = `${Math.max(1, Math.round(size.h))}px`;
+        applyGridJoinTransform();
     }
     const byIndex = new Map(items.map(entry => [entry.index, entry]));
     (layout.items || []).forEach(item => {
@@ -8950,7 +8979,7 @@ function closeImageEditor(){
     imageEditZoom = 1.0; imageEditBaseW = 0; imageEditBaseH = 0; imageEditModeTouched = false;
     disposePanoramaPreview();
     previewPanDrag = null; previewCompareDrag = false; imageEditPanDrag = null; resetPreviewTransform();
-    document.getElementById('imageEditStage')?.classList.remove('overflow-x', 'overflow-y', 'preview-mode');
+    document.getElementById('imageEditStage')?.classList.remove('overflow-x', 'overflow-y', 'preview-mode', 'gridjoin-mode');
     const cropCanvasEl = document.getElementById('cropCanvas');
     cropCanvasEl?.classList.remove('grid-custom-h', 'grid-custom-v', 'grid-join-mode', 'outpaint-mode', 'outpaint-warning', 'dragging-image', 'text-mode');
     if(cropCanvasEl){ cropCanvasEl.style.width = ''; cropCanvasEl.style.height = ''; }
@@ -14448,6 +14477,22 @@ document.getElementById('imageEditStage').addEventListener('wheel', event => {
             previewPan.y -= originY * (ratio - 1);
         }
         applyPreviewTransform();
+        return;
+    }
+    if(imageEditMode === 'gridjoin'){
+        const oldZoom = gridJoinZoom;
+        const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+        gridJoinZoom = Math.max(0.05, Math.min(6.0, gridJoinZoom * factor));
+        const frame = document.getElementById('cropCanvas');
+        const rect = frame?.getBoundingClientRect();
+        if(rect){
+            const originX = event.clientX - rect.left - rect.width / 2;
+            const originY = event.clientY - rect.top - rect.height / 2;
+            const ratio = gridJoinZoom / oldZoom;
+            gridJoinPan.x -= originX * (ratio - 1);
+            gridJoinPan.y -= originY * (ratio - 1);
+        }
+        applyGridJoinTransform();
         return;
     }
     const stage = event.currentTarget;
