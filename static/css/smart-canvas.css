@@ -1036,6 +1036,7 @@ input[type=range].smart-range::-webkit-slider-thumb { -webkit-appearance:none; w
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto; }
 .toast-text { flex:1; }
 .toast-close { appearance:none; border:none; background:none; color:var(--muted); font-size:18px; line-height:1; cursor:pointer; padding:0 0 0 10px; font-weight:700; }
+.toast:not(.toast-persistent) .toast-close { display:none; }
 .toast-close:hover { color:var(--text); }
 .selection-box { position:absolute; z-index:18; border:1px solid var(--strong); background:rgba(15,23,42,.08); border-radius:10px; pointer-events:none; display:none; }
 .theme-dark .selection-box { background:rgba(248,250,252,.1); }

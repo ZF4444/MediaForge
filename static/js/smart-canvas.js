@@ -1155,11 +1155,22 @@ function applyTheme(theme){
     document.body?.classList.toggle('theme-dark', dark);
     document.body?.classList.toggle('studio-theme-dark', dark);
 }
-function toast(text){
+function toast(text, options={}){
     const el = document.getElementById('toast');
-    el.innerHTML = `<span class="toast-text">${escapeHtml(text)}</span><button class="toast-close" onclick="this.parentElement.classList.remove('show')">&times;</button>`;
-    el.classList.add('show');
+    const value = String(text || '');
+    const type = typeof options === 'string' ? options : (options.type || '');
+    const persistent = Boolean(options.persistent)
+        || ['warning', 'warn', 'error'].includes(type)
+        || /失败|错误|异常|缺少|请输入|请选择|请先|没有|无法|不能|不支持|超时|未|fail|failed|error|need|required|invalid/i.test(value);
     clearTimeout(toast._timer);
+    el.innerHTML = `<span class="toast-text">${escapeHtml(text)}</span><button class="toast-close" onclick="this.parentElement.classList.remove('show')">&times;</button>`;
+    el.classList.toggle('toast-persistent', persistent);
+    el.classList.add('show');
+    if(!persistent){
+        toast._timer = setTimeout(() => {
+            el.classList.remove('show');
+        }, Number(options.duration || 4000));
+    }
 }
 function selectedNode(){ return nodes.find(n => n.id === selectedId) || null; }
 function clearSelection(){
