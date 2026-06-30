@@ -449,3 +449,15 @@ class AccessControlConfigPayload(BaseModel):
     #   - 显式传 null：清除默认配置（新用户全开）
     #   - 传对象：作为新的默认配置
     default: Optional[AccessControlUserEntry] = None
+
+
+class FeedbackCreatePayload(BaseModel):
+    type: str = Field(default="issue", max_length=40)
+    content: str = Field(min_length=1, max_length=2000)
+    page: str = Field(default="", max_length=80)
+    user_agent: str = Field(default="", max_length=500)
+
+
+class FeedbackUpdatePayload(BaseModel):
+    status: Optional[str] = Field(default=None, max_length=40)
+    admin_note: Optional[str] = Field(default=None, max_length=1000)

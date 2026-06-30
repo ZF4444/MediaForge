@@ -189,6 +189,20 @@
     "APIRoute"
   ],
   [
+    "/api/canvas-comfy-tasks",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/canvas-comfy-tasks/{task_id}",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/canvas-image-tasks",
     [
       "POST"
@@ -211,6 +225,20 @@
   ],
   [
     "/api/canvas-video",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/canvas-workflows/export",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/canvas-workflows/import",
     [
       "POST"
     ],
@@ -406,6 +434,34 @@
     "APIRoute"
   ],
   [
+    "/api/feedback",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/feedback/admin",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/feedback/admin/{feedback_id}",
+    [
+      "DELETE"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/feedback/admin/{feedback_id}",
+    [
+      "PATCH"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/generate",
     [
       "POST"
@@ -428,6 +484,13 @@
   ],
   [
     "/api/history/save",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/image-task-query",
     [
       "POST"
     ],

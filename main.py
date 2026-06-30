@@ -173,6 +173,7 @@ from app.config import (
     RUNNINGHUB_WORKFLOW_STORE_FILE,
     SHARED_FOLDERS_FILE,
     GLOBAL_CONFIG_FILE,
+    FEEDBACK_FILE,
     CANVAS_TRASH_RETENTION_MS,
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
@@ -181,6 +182,7 @@ from app.config import (
     QUEUE_LOCK,
     HISTORY_LOCK,
     GLOBAL_CONFIG_LOCK,
+    FEEDBACK_LOCK,
     CONVERSATION_LOCK,
     CANVAS_LOCK,
     LOAD_LOCK,
@@ -9086,6 +9088,7 @@ from app.routers import local_assets as local_assets_router
 from app.routers import workflows as workflows_router
 from app.routers import pages as pages_router
 from app.routers import access_control as access_control_router
+from app.routers import feedback as feedback_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -9097,6 +9100,7 @@ app.include_router(local_assets_router.router)
 app.include_router(workflows_router.router)
 app.include_router(pages_router.router)
 app.include_router(access_control_router.router)
+app.include_router(feedback_router.router)
 
 
 if __name__ == "__main__":

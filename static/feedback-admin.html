@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反馈管理</title>
+    <script>
+        (function(){
+            try {
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                if(theme === 'dark') {
+                    document.documentElement.classList.add('studio-theme-dark');
+                    document.documentElement.classList.add('theme-dark');
+                }
+            } catch(e) {}
+        })();
+    </script>
+    <script src="/static/vendor/js/lucide.js"></script>
+    <script src="/static/js/theme.js"></script>
+    <link rel="stylesheet" href="/static/css/theme.css">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: var(--bg, #f5f6f8);
+            color: var(--text, #1a1f29);
+        }
+        .fb-wrap { max-width: 1180px; margin: 0 auto; padding: 28px 24px 60px; }
+        .fb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+        .fb-title { font-size: 20px; font-weight: 800; }
+        .fb-sub { font-size: 12.5px; color: var(--faint, #6b7280); margin-top: 6px; }
+        .fb-status { min-height: 18px; font-size: 12px; color: var(--faint, #6b7280); }
+        .fb-status.ok { color: #16a34a; }
+        .fb-status.err { color: #dc2626; }
+        .fb-toolbar {
+            display: grid;
+            grid-template-columns: 150px 150px 1fr auto;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .fb-select,
+        .fb-input,
+        .fb-textarea {
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 9px;
+            background: var(--panel, #fff);
+            color: var(--text, #1a1f29);
+            font: inherit;
+            outline: none;
+        }
+        .fb-select,
+        .fb-input { height: 38px; padding: 0 10px; }
+        .fb-select:focus,
+        .fb-input:focus,
+        .fb-textarea:focus {
+            border-color: var(--text, #1a1f29);
+            box-shadow: 0 0 0 3px rgba(148, 163, 184, .18);
+        }
+        .fb-btn {
+            height: 38px;
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 9px;
+            background: var(--panel, #fff);
+            color: var(--text, #1a1f29);
+            padding: 0 14px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .fb-btn:hover { background: var(--hover, #f3f4f6); }
+        .fb-btn.primary { border-color: var(--text, #1a1f29); background: var(--text, #1a1f29); color: var(--bg, #fff); }
+        .fb-btn.danger { color: #dc2626; border-color: #fecaca; }
+        .fb-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+        .fb-card {
+            background: var(--panel, #fff);
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 12px;
+            padding: 14px;
+        }
+        .fb-list { display: flex; flex-direction: column; gap: 8px; min-height: 360px; }
+        .fb-item {
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 10px;
+            padding: 12px;
+            cursor: pointer;
+            background: var(--panel, #fff);
+        }
+        .fb-item:hover { background: var(--hover, #f3f4f6); }
+        .fb-item.active { border-color: var(--text, #1a1f29); }
+        .fb-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .fb-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--faint, #6b7280); font-size: 11.5px; }
+        .fb-badge {
+            display: inline-flex;
+            align-items: center;
+            height: 20px;
+            padding: 0 8px;
+            border-radius: 999px;
+            background: var(--hover, #f3f4f6);
+            color: var(--faint, #6b7280);
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .fb-badge.open { background: #fee2e2; color: #b91c1c; }
+        .fb-badge.reviewing { background: #dbeafe; color: #1d4ed8; }
+        .fb-badge.resolved { background: #dcfce7; color: #15803d; }
+        .fb-badge.ignored { background: #e5e7eb; color: #4b5563; }
+        .fb-content { margin-top: 9px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+        .fb-empty { padding: 60px 12px; text-align: center; color: var(--faint, #6b7280); font-size: 13px; }
+        .fb-detail-title { font-size: 15px; font-weight: 800; margin-bottom: 12px; }
+        .fb-kv { display: grid; grid-template-columns: 72px 1fr; gap: 7px 10px; font-size: 12.5px; margin-bottom: 14px; }
+        .fb-kv-label { color: var(--faint, #6b7280); }
+        .fb-detail-content {
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 9px;
+            padding: 11px;
+            font-size: 13px;
+            line-height: 1.65;
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin-bottom: 12px;
+            background: var(--bg, #f5f6f8);
+        }
+        .fb-textarea {
+            width: 100%;
+            min-height: 96px;
+            resize: vertical;
+            padding: 10px;
+            line-height: 1.5;
+        }
+        .fb-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .fb-forbidden { display: none; padding: 60px 20px; text-align: center; color: var(--faint, #6b7280); font-size: 14px; }
+        @media (max-width: 900px) {
+            .fb-toolbar { grid-template-columns: 1fr 1fr; }
+            .fb-layout { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 620px) {
+            .fb-toolbar { grid-template-columns: 1fr; }
+            .fb-wrap { padding: 20px 14px 50px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="fb-wrap" id="fbRoot">
+        <div class="fb-head">
+            <div>
+                <div class="fb-title">反馈管理</div>
+                <div class="fb-sub">查看用户提交的反馈，更新处理状态并记录管理员备注。</div>
+            </div>
+            <div id="fbStatus" class="fb-status"></div>
+        </div>
+
+        <div id="fbMain">
+            <div class="fb-toolbar">
+                <select id="fbStatusFilter" class="fb-select">
+                    <option value="">全部状态</option>
+                    <option value="open">未处理</option>
+                    <option value="reviewing">处理中</option>
+                    <option value="resolved">已解决</option>
+                    <option value="ignored">已关闭</option>
+                </select>
+                <select id="fbTypeFilter" class="fb-select">
+                    <option value="">全部类型</option>
+                    <option value="issue">问题反馈</option>
+                    <option value="idea">功能建议</option>
+                    <option value="question">使用疑问</option>
+                    <option value="other">其他</option>
+                </select>
+                <input id="fbSearch" class="fb-input" type="search" placeholder="搜索内容、用户或页面">
+                <button id="fbRefreshBtn" class="fb-btn" type="button">刷新</button>
+            </div>
+
+            <div class="fb-layout">
+                <div class="fb-card">
+                    <div id="fbList" class="fb-list"></div>
+                </div>
+                <div class="fb-card" id="fbDetail">
+                    <div class="fb-empty">从左侧选择一条反馈。</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="fbForbidden" class="fb-forbidden">仅管理员（用户名 admin）可访问此页面。</div>
+    </div>
+
+    <script src="/static/feedback-admin.page.js"></script>
+</body>
+</html>

@@ -715,6 +715,156 @@
             opacity: 0;
             max-width: 0;
         }
+
+        .feedback-float {
+            position: fixed;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 120;
+            width: 38px;
+            min-height: 92px;
+            border: 1px solid var(--border);
+            border-right: 0;
+            border-radius: 12px 0 0 12px;
+            background: var(--sidebar-bg);
+            color: var(--text);
+            box-shadow: -8px 12px 30px rgba(15, 23, 42, .08);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            writing-mode: vertical-rl;
+            letter-spacing: 0;
+            font-size: 13px;
+            font-weight: 700;
+            transition: background-color .18s, transform .18s, box-shadow .18s;
+        }
+        .feedback-float:hover,
+        .feedback-float:focus-visible {
+            background: var(--nav-hover-bg);
+            transform: translateY(-50%) translateX(-2px);
+            outline: none;
+            box-shadow: -10px 14px 36px rgba(15, 23, 42, .12);
+        }
+        .feedback-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 130;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: rgba(15, 23, 42, .36);
+        }
+        .feedback-overlay.open { display: flex; }
+        .feedback-modal {
+            width: min(520px, 100%);
+            background: var(--sidebar-bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 24px 70px rgba(15, 23, 42, .28);
+            padding: 18px;
+        }
+        .feedback-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .feedback-title { font-size: 16px; font-weight: 800; }
+        .feedback-close {
+            width: 32px;
+            height: 32px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 20px;
+            line-height: 1;
+        }
+        .feedback-close:hover { background: var(--nav-hover-bg); }
+        .feedback-field { margin-bottom: 12px; }
+        .feedback-label {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 7px;
+            color: var(--muted);
+        }
+        .feedback-select,
+        .feedback-textarea {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--stage-bg);
+            color: var(--text);
+            font: inherit;
+            outline: none;
+        }
+        .feedback-select {
+            height: 38px;
+            padding: 0 10px;
+        }
+        .feedback-textarea {
+            min-height: 150px;
+            resize: vertical;
+            padding: 11px 12px;
+            line-height: 1.55;
+        }
+        .feedback-textarea:focus,
+        .feedback-select:focus {
+            border-color: var(--text);
+            box-shadow: 0 0 0 3px rgba(148, 163, 184, .18);
+        }
+        .feedback-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 14px;
+        }
+        .feedback-status {
+            min-height: 18px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+        .feedback-status.ok { color: #16a34a; }
+        .feedback-status.err { color: #dc2626; }
+        .feedback-submit {
+            height: 38px;
+            border: 1px solid var(--text);
+            border-radius: 9px;
+            background: var(--text);
+            color: var(--bg);
+            padding: 0 18px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .feedback-submit:disabled { opacity: .55; cursor: not-allowed; }
+        @media (max-width: 760px) {
+            .feedback-float {
+                right: 12px;
+                bottom: 18px;
+                top: auto;
+                transform: none;
+                width: 44px;
+                min-height: 44px;
+                border-radius: 999px;
+                border-right: 1px solid var(--border);
+                writing-mode: horizontal-tb;
+                font-size: 12px;
+            }
+            .feedback-float:hover,
+            .feedback-float:focus-visible {
+                transform: translateY(-2px);
+            }
+        }
     </style>
 </head>
 
@@ -881,6 +1031,14 @@
                     </svg>
                     <span class="side-pill-text">访问控制</span>
                 </button>
+                <button class="side-pill" id="nav-feedback-admin" onclick="switchUI(this, 'feedback-admin')" type="button" title="反馈管理" style="display:none">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        <path d="M8 9h8"></path>
+                        <path d="M8 13h5"></path>
+                    </svg>
+                    <span class="side-pill-text">反馈管理</span>
+                </button>
             </div>
         </aside>
         <script>
@@ -913,6 +1071,7 @@
             <iframe id="frame-api-settings" data-src="/static/api-settings.html" scrolling="yes"></iframe>
             <iframe id="frame-comfyui-settings" data-src="/static/comfyui-settings.html" scrolling="yes"></iframe>
             <iframe id="frame-access-control" data-src="/static/access-control.html" scrolling="yes"></iframe>
+            <iframe id="frame-feedback-admin" data-src="/static/feedback-admin.html" scrolling="yes"></iframe>
 
             <div class="nano-monitor" id="nano-monitor">
                 <div class="stat-group">
@@ -928,6 +1087,33 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <button class="feedback-float" id="feedbackOpenBtn" type="button" title="提交反馈">反馈</button>
+    <div class="feedback-overlay" id="feedbackOverlay" aria-hidden="true">
+        <div class="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle">
+            <div class="feedback-head">
+                <div class="feedback-title" id="feedbackTitle">提交反馈</div>
+                <button class="feedback-close" id="feedbackCloseBtn" type="button" aria-label="关闭">×</button>
+            </div>
+            <div class="feedback-field">
+                <label class="feedback-label" for="feedbackType">类型</label>
+                <select class="feedback-select" id="feedbackType">
+                    <option value="issue">问题反馈</option>
+                    <option value="idea">功能建议</option>
+                    <option value="question">使用疑问</option>
+                    <option value="other">其他</option>
+                </select>
+            </div>
+            <div class="feedback-field">
+                <label class="feedback-label" for="feedbackContent">内容</label>
+                <textarea class="feedback-textarea" id="feedbackContent" maxlength="2000" placeholder="请描述你遇到的问题或建议。"></textarea>
+            </div>
+            <div class="feedback-footer">
+                <div class="feedback-status" id="feedbackStatus"></div>
+                <button class="feedback-submit" id="feedbackSubmitBtn" type="button">发送</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -946,7 +1132,7 @@
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_PINNED_KEY = 'studio_sidebar_pinned';
         const DEFAULT_PAGE_ID = 'canvas';
-        const PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','pose-studio','online','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings','access-control'];
+        const PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','pose-studio','online','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings','access-control','feedback-admin'];
         const LOCAL_PAGE_IDS = ['zimage','enhance','klein','angle','gaussian','pose-studio'];
 
         function setSidebarPinned(pinned, options = {}) {
@@ -1112,6 +1298,8 @@
             // 仅 admin 显示访问控制入口
             const acNav = document.getElementById('nav-access-control');
             if (acNav) acNav.style.display = isAdmin ? '' : 'none';
+            const feedbackAdminNav = document.getElementById('nav-feedback-admin');
+            if (feedbackAdminNav) feedbackAdminNav.style.display = isAdmin ? '' : 'none';
             // 仅 admin 显示 online/queue 监控
             const nanoMon = document.getElementById('nano-monitor');
             if (nanoMon) nanoMon.style.display = isAdmin ? '' : 'none';
@@ -1120,7 +1308,7 @@
             const allowed = new Set(me && Array.isArray(me.pages) ? me.pages : PAGE_IDS);
             let hidActive = false;
             PAGE_IDS.forEach(pid => {
-                if (pid === 'access-control') return;   // 该入口仅 admin，已在上面处理
+                if (pid === 'access-control' || pid === 'feedback-admin') return;   // 该入口仅 admin，已在上面处理
                 if (allowed.has(pid)) return;
                 // 隐藏对应导航入口（nav-item 或 side-pill）
                 document.querySelectorAll(`[onclick*="'${pid}'"],[onclick*='"${pid}"']`).forEach(el => {
@@ -1130,12 +1318,91 @@
             });
             // 若当前激活页被裁剪，回退到第一个允许的页面
             if (hidActive) {
-                const fallback = PAGE_IDS.find(p => p !== 'access-control' && allowed.has(p)) || DEFAULT_PAGE_ID;
+                const fallback = PAGE_IDS.find(p => p !== 'access-control' && p !== 'feedback-admin' && allowed.has(p)) || DEFAULT_PAGE_ID;
                 const trigger = document.querySelector(`[onclick*="'${fallback}'"],[onclick*='"${fallback}"']`);
                 switchUI(trigger, fallback);
             }
         }
         document.addEventListener('DOMContentLoaded', applyAccessControl, { once:true });
+
+        (function initFeedbackWidget(){
+            function activePageId() {
+                const frame = document.querySelector('.stage iframe.active');
+                return frame ? frame.id.replace('frame-', '') : '';
+            }
+            function setFeedbackStatus(msg, kind) {
+                const el = document.getElementById('feedbackStatus');
+                if (!el) return;
+                el.textContent = msg || '';
+                el.className = 'feedback-status' + (kind ? ' ' + kind : '');
+            }
+            function openFeedback() {
+                const overlay = document.getElementById('feedbackOverlay');
+                const input = document.getElementById('feedbackContent');
+                if (!overlay) return;
+                overlay.classList.add('open');
+                overlay.setAttribute('aria-hidden', 'false');
+                setFeedbackStatus('');
+                window.setTimeout(() => input && input.focus(), 0);
+            }
+            function closeFeedback() {
+                const overlay = document.getElementById('feedbackOverlay');
+                if (!overlay) return;
+                overlay.classList.remove('open');
+                overlay.setAttribute('aria-hidden', 'true');
+            }
+            async function submitFeedback() {
+                const type = document.getElementById('feedbackType');
+                const content = document.getElementById('feedbackContent');
+                const btn = document.getElementById('feedbackSubmitBtn');
+                const text = (content && content.value || '').trim();
+                if (!text) {
+                    setFeedbackStatus('请输入反馈内容。', 'err');
+                    return;
+                }
+                btn.disabled = true;
+                setFeedbackStatus('发送中...');
+                try {
+                    const res = await fetch('/api/feedback', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            type: type ? type.value : 'issue',
+                            content: text,
+                            page: activePageId(),
+                            user_agent: navigator.userAgent || ''
+                        })
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+                    if (content) content.value = '';
+                    setFeedbackStatus('已提交。', 'ok');
+                    window.setTimeout(closeFeedback, 700);
+                } catch(e) {
+                    setFeedbackStatus('提交失败：' + e.message, 'err');
+                } finally {
+                    btn.disabled = false;
+                }
+            }
+            document.addEventListener('DOMContentLoaded', function(){
+                const openBtn = document.getElementById('feedbackOpenBtn');
+                const closeBtn = document.getElementById('feedbackCloseBtn');
+                const submitBtn = document.getElementById('feedbackSubmitBtn');
+                const overlay = document.getElementById('feedbackOverlay');
+                if (openBtn) openBtn.addEventListener('click', openFeedback);
+                if (closeBtn) closeBtn.addEventListener('click', closeFeedback);
+                if (submitBtn) submitBtn.addEventListener('click', submitFeedback);
+                if (overlay) {
+                    overlay.addEventListener('click', function(e){
+                        if (e.target === overlay) closeFeedback();
+                    });
+                }
+                window.addEventListener('keydown', function(e){
+                    if (e.key === 'Escape') closeFeedback();
+                });
+            }, { once:true });
+        })();
 
         async function syncStatus() {
             try {

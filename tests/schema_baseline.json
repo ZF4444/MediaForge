@@ -374,6 +374,26 @@
     },
     "required": []
   },
+  "Body_import_canvas_workflow_api_canvas_workflows_import_post": {
+    "properties": {
+      "file": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "file"
+    ]
+  },
+  "Body_pose_studio_generate_fbx_api_pose_studio_generate_fbx_post": {
+    "properties": {
+      "file": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "file"
+    ]
+  },
   "Body_pose_studio_upload_fbx_api_pose_studio_upload_fbx_post": {
     "properties": {
       "file": {
@@ -736,6 +756,35 @@
       "prompt"
     ]
   },
+  "CanvasWorkflowExportRequest": {
+    "properties": {
+      "nodes": {
+        "type": "array",
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "default": []
+      },
+      "connections": {
+        "type": "array",
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "default": []
+      },
+      "filename": {
+        "type": "string",
+        "default": "canvas-workflow.zip"
+      },
+      "include_resources": {
+        "type": "boolean",
+        "default": false
+      }
+    },
+    "required": []
+  },
   "ChatRequest": {
     "properties": {
       "conversation_id": {
@@ -906,6 +955,60 @@
       "timestamp"
     ]
   },
+  "FeedbackCreatePayload": {
+    "properties": {
+      "type": {
+        "type": "string",
+        "default": "issue",
+        "maxLength": 40
+      },
+      "content": {
+        "type": "string",
+        "maxLength": 2000,
+        "minLength": 1
+      },
+      "page": {
+        "type": "string",
+        "default": "",
+        "maxLength": 80
+      },
+      "user_agent": {
+        "type": "string",
+        "default": "",
+        "maxLength": 500
+      }
+    },
+    "required": [
+      "content"
+    ]
+  },
+  "FeedbackUpdatePayload": {
+    "properties": {
+      "status": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 40
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "admin_note": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 1000
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": []
+  },
   "GenerateRequest": {
     "properties": {
       "prompt": {
@@ -953,6 +1056,22 @@
       }
     },
     "required": []
+  },
+  "ImageTaskQueryRequest": {
+    "properties": {
+      "provider_id": {
+        "type": "string",
+        "default": "comfly"
+      },
+      "task_id": {
+        "type": "string",
+        "maxLength": 240,
+        "minLength": 1
+      }
+    },
+    "required": [
+      "task_id"
+    ]
   },
   "JimengHelpRequest": {
     "properties": {
@@ -1609,16 +1728,6 @@
     "required": [
       "name",
       "workflow"
-    ]
-  },
-  "Body_pose_studio_generate_fbx_api_pose_studio_generate_fbx_post": {
-    "properties": {
-      "file": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "file"
     ]
   }
 }
