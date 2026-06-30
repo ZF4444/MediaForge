@@ -372,12 +372,13 @@ video.node-img { object-fit:cover; background:#0f172a; }
 .image-node.selected:not(.smart-group-node) { z-index:10; }
 .image-node.dragging:not(.smart-group-node) { z-index:12; }
 .image-node.smart-group-node.dragging { z-index:3; }
-.node-port { position:absolute; top:50%; width:14px; height:14px; border-radius:50%; background:var(--card); border:1.8px solid var(--strong); transform:translateY(-50%); z-index:6; cursor:crosshair; opacity:0; pointer-events:none; transition:opacity .15s ease, background .15s ease, transform .15s ease, box-shadow .15s ease; box-shadow:0 4px 10px rgba(15,23,42,.18); }
-.node-port.port-in { left:-8px; }
-.node-port.port-out { right:-8px; }
-.image-node:hover .node-port, .image-node.selected .node-port, .image-node.port-hover .node-port { opacity:1; pointer-events:auto; }
+.node-port { position:absolute; top:50%; width:28px; height:28px; border-radius:50%; background:var(--card); border:3.6px solid var(--strong); transform:translateY(-50%); z-index:6; cursor:crosshair; opacity:0; pointer-events:auto; transition:opacity .15s ease, background .15s ease, transform .15s ease, box-shadow .15s ease; box-shadow:0 8px 20px rgba(15,23,42,.18); }
+.node-port::before { content:""; position:absolute; inset:-14px; border-radius:50%; }
+.node-port.port-in { left:-16px; }
+.node-port.port-out { right:-16px; }
+.image-node:hover .node-port, .image-node.selected .node-port, .image-node.port-hover .node-port, .node-port:hover { opacity:1; pointer-events:auto; }
 .shell.port-dragging .node-port { opacity:1; pointer-events:auto; }
-.node-port:hover, .node-port.is-active { background:var(--strong); transform:translateY(-50%) scale(1.22); box-shadow:0 6px 14px rgba(15,23,42,.26); }
+.node-port:hover, .node-port.is-active { background:var(--strong); transform:translateY(-50%) scale(1.22); box-shadow:0 12px 28px rgba(15,23,42,.26); }
 .image-node.dragging .node-port { opacity:0 !important; pointer-events:none !important; }
 .shell.port-dragging { cursor:crosshair !important; }
 .image-node.drop-target { outline:2px dashed var(--strong); outline-offset:4px; border-radius:18px; }
