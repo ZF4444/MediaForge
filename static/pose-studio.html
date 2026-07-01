@@ -289,41 +289,6 @@
             letter-spacing:.16em;
             text-decoration:none;
         }
-        .help-panel {
-            padding:18px 20px;
-        }
-        .help-grid {
-            display:grid;
-            grid-template-columns:minmax(0, .9fr) minmax(0, 1.6fr);
-            gap:18px;
-            align-items:start;
-        }
-        .help-title {
-            margin:0 0 10px;
-            font-size:12px;
-            font-weight:900;
-            color:var(--accent);
-            letter-spacing:.08em;
-        }
-        .help-flow {
-            margin:0;
-            color:var(--muted);
-            font-size:12px;
-            line-height:1.8;
-            font-weight:700;
-        }
-        .help-list {
-            margin:0;
-            padding-left:18px;
-            color:var(--muted);
-            font-size:12px;
-            line-height:1.8;
-            font-weight:700;
-        }
-        .help-list ul {
-            margin:4px 0 8px;
-            padding-left:18px;
-        }
         .media-row .size-row {
             grid-template-columns:1fr;
         }
@@ -332,7 +297,6 @@
             .studio-row { grid-template-columns:1fr; }
             .studio-side { display:flex; flex-direction:column; gap:12px; }
             .pose-frame { height:549px; min-height:549px; }
-            .help-grid { grid-template-columns:1fr; }
         }
         @media (max-width: 768px) {
             .container-box { padding:32px 18px 60px; }
@@ -479,38 +443,6 @@
                     <h3 class="stage-label">Pose Studio</h3>
                     <div class="panel overflow-hidden">
                         <iframe id="poseFrame" class="pose-frame" src="/static/vnccs-pose-studio-embed.html" title="VNCCS 姿势工作室"></iframe>
-                    </div>
-                </div>
-            </section>
-
-            <section class="panel help-panel">
-                <div class="help-grid">
-                    <div>
-                        <h3 class="help-title">流程</h3>
-                        <p class="help-flow">上传图片/FBX -&gt; 生成模型 -&gt; 编辑模型 -&gt; 导出姿势 -&gt; 姿势迁移</p>
-                    </div>
-                    <div>
-                        <h3 class="help-title">模型编辑说明</h3>
-                        <ol class="help-list">
-                            <li>
-                                视角操作：在 3D 画布里拖拽/滚轮，走的是 OrbitControls 默认交互。
-                                <ul>
-                                    <li>左键拖拽：旋转视角</li>
-                                    <li>滚轮：缩放</li>
-                                    <li>右键拖拽：平移</li>
-                                </ul>
-                            </li>
-                            <li>
-                                骨骼移动
-                                <ul>
-                                    <li>骨骼节点选择：单击关节点进行选中。</li>
-                                    <li>骨骼节点编辑：选中关节点后直接拖动，走 IK 约束调整。</li>
-                                </ul>
-                            </li>
-                            <li>骨骼节点旋转：双击关节点，会弹出旋转控件。</li>
-                            <li>画布空白处双击/取消选择：会退出旋转控件显示。</li>
-                            <li>UI 按钮：撤销、重做、重置姿势、背景开关等都在编辑器按钮区。</li>
-                        </ol>
                     </div>
                 </div>
             </section>
