@@ -852,7 +852,7 @@
             position: fixed;
             top: 0;
             right: 0;
-            width: min(480px, calc(100vw - 24px));
+            width: min(var(--help-drawer-width, 480px), calc(100vw - 24px));
             height: 100vh;
             z-index: 125;
             background: var(--sidebar-bg);
@@ -866,6 +866,36 @@
             pointer-events: auto;
         }
         .help-drawer.open { transform: translateX(0); }
+        .help-drawer.resizing { transition: none; }
+        .help-resize-handle {
+            position: absolute;
+            top: 0;
+            left: -5px;
+            width: 10px;
+            height: 100%;
+            cursor: ew-resize;
+            touch-action: none;
+            z-index: 2;
+        }
+        .help-resize-handle::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 4px;
+            width: 1px;
+            height: 100%;
+            background: transparent;
+            transition: background-color .16s;
+        }
+        .help-resize-handle:hover::after,
+        .help-resize-handle:focus-visible::after,
+        .help-drawer.resizing .help-resize-handle::after {
+            background: var(--text);
+        }
+        body.help-resizing {
+            cursor: ew-resize;
+            user-select: none;
+        }
         .help-head {
             min-height: 58px;
             display: flex;
@@ -1012,6 +1042,7 @@
             .help-drawer {
                 width: min(420px, calc(100vw - 10px));
             }
+            .help-resize-handle { display: none; }
         }
     </style>
 </head>
@@ -1240,6 +1271,7 @@
     <button class="floating-action help-float" id="helpOpenBtn" type="button" title="查看帮助">帮助</button>
     <button class="floating-action feedback-float" id="feedbackOpenBtn" type="button" title="提交反馈">反馈</button>
     <aside class="help-drawer" id="helpDrawer" aria-hidden="true">
+        <div class="help-resize-handle" id="helpResizeHandle" role="separator" aria-orientation="vertical" tabindex="0" title="调整宽度"></div>
         <div class="help-head">
             <div class="help-title">帮助</div>
             <div class="help-head-actions">
@@ -1688,6 +1720,86 @@
                 el.textContent = msg || '';
                 el.className = 'help-status' + (kind ? ' ' + kind : '');
             }
+            const HELP_WIDTH_KEY = 'mediaforge_help_drawer_width';
+            const HELP_DEFAULT_WIDTH = 480;
+            const HELP_MIN_WIDTH = 360;
+            function getHelpMaxWidth() {
+                return Math.max(HELP_MIN_WIDTH, window.innerWidth - 24);
+            }
+            function clampHelpWidth(width) {
+                return Math.min(getHelpMaxWidth(), Math.max(HELP_MIN_WIDTH, Math.round(width)));
+            }
+            function setHelpWidth(width, persist) {
+                const drawer = document.getElementById('helpDrawer');
+                if (!drawer) return;
+                const next = clampHelpWidth(width);
+                drawer.style.setProperty('--help-drawer-width', next + 'px');
+                if (persist) {
+                    try { localStorage.setItem(HELP_WIDTH_KEY, String(next)); } catch(e) {}
+                }
+            }
+            function getHelpWidth() {
+                const drawer = document.getElementById('helpDrawer');
+                if (!drawer) return HELP_DEFAULT_WIDTH;
+                return drawer.getBoundingClientRect().width || HELP_DEFAULT_WIDTH;
+            }
+            function resetHelpWidth() {
+                try { localStorage.removeItem(HELP_WIDTH_KEY); } catch(e) {}
+                setHelpWidth(HELP_DEFAULT_WIDTH, false);
+            }
+            function initHelpResize() {
+                const drawer = document.getElementById('helpDrawer');
+                const handle = document.getElementById('helpResizeHandle');
+                if (!drawer || !handle) return;
+                try {
+                    const saved = Number(localStorage.getItem(HELP_WIDTH_KEY));
+                    setHelpWidth(Number.isFinite(saved) && saved > 0 ? saved : HELP_DEFAULT_WIDTH, false);
+                } catch(e) {
+                    setHelpWidth(HELP_DEFAULT_WIDTH, false);
+                }
+                let resizing = false;
+                function stopResize() {
+                    if (!resizing) return;
+                    resizing = false;
+                    drawer.classList.remove('resizing');
+                    document.body.classList.remove('help-resizing');
+                    setHelpWidth(getHelpWidth(), true);
+                }
+                handle.addEventListener('pointerdown', function(e){
+                    if (window.matchMedia('(max-width: 760px)').matches) return;
+                    resizing = true;
+                    drawer.classList.add('resizing');
+                    document.body.classList.add('help-resizing');
+                    handle.setPointerCapture(e.pointerId);
+                    e.preventDefault();
+                });
+                handle.addEventListener('pointermove', function(e){
+                    if (!resizing) return;
+                    setHelpWidth(window.innerWidth - e.clientX, false);
+                });
+                handle.addEventListener('pointerup', stopResize);
+                handle.addEventListener('pointercancel', stopResize);
+                handle.addEventListener('dblclick', resetHelpWidth);
+                handle.addEventListener('keydown', function(e){
+                    const current = getHelpWidth();
+                    if (e.key === 'ArrowLeft') {
+                        setHelpWidth(current + 24, true);
+                        e.preventDefault();
+                    } else if (e.key === 'ArrowRight') {
+                        setHelpWidth(current - 24, true);
+                        e.preventDefault();
+                    } else if (e.key === 'Home') {
+                        setHelpWidth(HELP_MIN_WIDTH, true);
+                        e.preventDefault();
+                    } else if (e.key === 'End') {
+                        setHelpWidth(getHelpMaxWidth(), true);
+                        e.preventDefault();
+                    }
+                });
+                window.addEventListener('resize', function(){
+                    setHelpWidth(getHelpWidth(), false);
+                });
+            }
             function setMode(mode) {
                 if (mode === 'edit' && !state.isAdmin) mode = 'preview';
                 state.mode = mode;
@@ -1773,6 +1885,7 @@
                 const editBtn = document.getElementById('helpEditBtn');
                 const saveBtn = document.getElementById('helpSaveBtn');
                 const editor = document.getElementById('helpEditor');
+                initHelpResize();
                 if (openBtn) openBtn.addEventListener('click', openHelp);
                 if (closeBtn) closeBtn.addEventListener('click', closeHelp);
                 if (previewBtn) previewBtn.addEventListener('click', () => setMode('preview'));
