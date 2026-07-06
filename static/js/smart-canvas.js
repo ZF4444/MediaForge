@@ -2202,10 +2202,16 @@ function parseRatioValue(value){
     const h = Number(parts[1]);
     return w > 0 && h > 0 ? w / h : 0;
 }
-function apiImageSize(ratioValue, resolutionValue, customRatioValue='', customSizeValue=''){
+function apiImageSize(ratioValue, resolutionValue, customRatioValue='', customSizeValue='', matchedRatioKey=''){
     if(resolutionValue === 'custom') return String(customSizeValue || '').trim();
     const resolutionKey = resolutionValue || '1k';
-    if(ratioValue === 'custom' || ratioValue === 'source'){
+    if(ratioValue === 'source'){
+        // 适配比例：已在 applySourceRatioToSettings 里用原图宽高比匹配好最接近的标准比例档位，
+        // 直接取该档位在当前分辨率下的预设尺寸，不再做任何和分辨率相关的比例计算。
+        const key = matchedRatioKey && SIZE_MAP[matchedRatioKey] ? matchedRatioKey : 'square';
+        return SIZE_MAP[key]?.[resolutionKey] || SIZE_MAP.square[resolutionKey] || SIZE_MAP.square['1k'];
+    }
+    if(ratioValue === 'custom'){
         const parsed = parseRatioValue(customRatioValue);
         const longSide = RES_LONG_SIDE[resolutionKey] || 1024;
         if(parsed){
@@ -2571,6 +2577,25 @@ function sourceRatioCandidateImageForNode(node){
     if(!refs.length) return null;
     return refs.find(img => imageSizeForRatio(img)) || refs[0];
 }
+// 标准比例表：与 SIZE_MAP / renderRatioControl 保持一致的 9 个预设档位
+const STANDARD_RATIO_CHOICES = [
+    ['square', 1, 1], ['portrait', 2, 3], ['landscape', 3, 2], ['portrait43', 3, 4], ['landscape43', 4, 3],
+    ['story', 9, 16], ['wide', 16, 9], ['ultrawide', 21, 9], ['ultratall', 9, 21]
+];
+// 直接用原图宽高比匹配最接近的标准比例档位（不经过任何分辨率相关的计算），
+// 避免比例匹配结果随所选分辨率（1K/2K/4K）漂移。
+function closestStandardRatioKey(width, height){
+    const w = Number(width) || 0, h = Number(height) || 0;
+    if(!w || !h) return 'square';
+    const ratio = w / h;
+    let best = STANDARD_RATIO_CHOICES[0];
+    let bestDiff = Infinity;
+    for(const item of STANDARD_RATIO_CHOICES){
+        const diff = Math.abs(ratio - item[1] / item[2]);
+        if(diff < bestDiff){ bestDiff = diff; best = item; }
+    }
+    return best[0];
+}
 function reducedRatioForImage(img){
     const size = imageSizeForRatio(img);
     if(!size) return null;
@@ -2586,14 +2611,16 @@ function sourceImageRatioLabel(prefix=''){
 function applySourceRatioToSettings(prefix='', node=activeComposerNode() || selectedNode(), targetSettings=settings){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     if(targetSettings[ratioKey] !== 'source') return false;
-    const ratio = reducedRatioForImage(sourceRatioCandidateImageForNode(node));
-    if(!ratio) return false;
+    const size = imageSizeForRatio(sourceRatioCandidateImageForNode(node));
+    if(!size) return false;
+    const matchedKey = closestStandardRatioKey(size.w, size.h);
     const customKey = prefix ? `${prefix}CustomRatio` : 'customRatio';
     const wKey = prefix ? `${prefix}CustomRatioWidth` : 'customRatioWidth';
     const hKey = prefix ? `${prefix}CustomRatioHeight` : 'customRatioHeight';
-    targetSettings[wKey] = ratio.w;
-    targetSettings[hKey] = ratio.h;
-    targetSettings[customKey] = `${ratio.w}:${ratio.h}`;
+    targetSettings[wKey] = '';
+    targetSettings[hKey] = '';
+    targetSettings[customKey] = '';
+    targetSettings[`${ratioKey}Matched`] = matchedKey;
     return true;
 }
 function resolutionLabel(prefix=''){
@@ -10040,7 +10067,7 @@ async function handleSmartImageDropPayload(payload, targetId='', opts={}){
     }
 }
 function sizeForRun(sourceSettings=settings){
-    return apiImageSize(sourceSettings.ratio || 'square', sourceSettings.resolution || '1k', sourceSettings.customRatio || '', sourceSettings.customSize || '') || '1024x1024';
+    return apiImageSize(sourceSettings.ratio || 'square', sourceSettings.resolution || '1k', sourceSettings.customRatio || '', sourceSettings.customSize || '', sourceSettings.ratioMatched || '') || '1024x1024';
 }
 function expectedOutputSize(){
     if(settings.engine === 'comfy'){
@@ -10053,7 +10080,7 @@ function expectedOutputSize(){
     }
     if(settings.engine === 'runninghub') return {w:1024, h:1024};
     const sizeStr = settings.engine === 'modelscope'
-        ? apiImageSize(settings.msRatio || 'square', settings.msResolution || '1k', settings.msCustomRatio || '', settings.msCustomSize || '')
+        ? apiImageSize(settings.msRatio || 'square', settings.msResolution || '1k', settings.msCustomRatio || '', settings.msCustomSize || '', settings.msRatioMatched || '')
         : sizeForRun();
     const parsed = parseSizeValue(sizeStr);
     if(parsed){
@@ -10067,7 +10094,7 @@ function explicitRequestOutputSizeForPending(){
         if(parsed) return {w:Number(parsed.width) || 1024, h:Number(parsed.height) || 1024};
     }
     if(settings.engine === 'modelscope'){
-        const sizeStr = apiImageSize(settings.msRatio || 'square', settings.msResolution || '1k', settings.msCustomRatio || '', settings.msCustomSize || '');
+        const sizeStr = apiImageSize(settings.msRatio || 'square', settings.msResolution || '1k', settings.msCustomRatio || '', settings.msCustomSize || '', settings.msRatioMatched || '');
         const parsed = parseSizeValue(sizeStr);
         if(parsed) return {w:Number(parsed.width) || 1024, h:Number(parsed.height) || 1024};
     }
@@ -12702,7 +12729,7 @@ async function runModelscopeGeneration(prompt, refs, runSettings=settings){
     const modelKey = runSettings.msgenModel || 'zimage';
     const msModel = MS_GEN_MODELS[modelKey] || MS_GEN_MODELS.zimage;
     if(msModel.supportsImage && !refs.length) throw new Error(tr('smart.errMsNeedRefs'));
-    const size = apiImageSize(runSettings.msRatio || 'square', runSettings.msResolution || '1k', runSettings.msCustomRatio || '', runSettings.msCustomSize || '');
+    const size = apiImageSize(runSettings.msRatio || 'square', runSettings.msResolution || '1k', runSettings.msCustomRatio || '', runSettings.msCustomSize || '', runSettings.msRatioMatched || '');
     const parsed = parseSizeValue(size);
     const width = Number(parsed?.width) || 1024;
     const height = Number(parsed?.height) || 1024;
