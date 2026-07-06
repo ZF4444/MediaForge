@@ -7371,9 +7371,7 @@ async def save_expand_rules(payload: dict):
 @app.post("/api/canvas-llm")
 async def canvas_llm(payload: CanvasLLMRequest):
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
-    # 判断协议：APIMart 异步 vs 标准 OpenAI
     _llm_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
-    _is_apimart = is_apimart_provider(_llm_provider)
     system_prompt = (payload.system_prompt or "").strip()
     upstream_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
     for item in payload.messages[-MAX_HISTORY_MESSAGES:]:
@@ -7415,21 +7413,37 @@ async def canvas_llm(payload: CanvasLLMRequest):
         upstream_messages.append({"role": "user", "content": content_parts})
     else:
         upstream_messages.append({"role": "user", "content": payload.message})
-    raw = None
+    content_parts_acc = []
+    raw_usage = None
     try:
         async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
-            req_body = {"model": model, "messages": upstream_messages}
-            if _is_apimart:
-                req_body["stream"] = False   # APIMart 默认流式，强制关闭
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 f"{chat_base}/chat/completions",
                 headers=chat_hdrs,
-                json=req_body,
-            )
-            response.raise_for_status()
-            if not response.content:
-                raise HTTPException(status_code=502, detail="上游接口返回了空响应")
-            raw = response.json()
+                json={"model": model, "messages": upstream_messages, "stream": True},
+            ) as response:
+                if response.status_code >= 400:
+                    detail = await response.aread()
+                    body = detail.decode("utf-8", errors="ignore")
+                    friendly = friendly_chat_error_detail(body, model, _llm_provider)
+                    raise HTTPException(status_code=response.status_code, detail=friendly or f"上游接口错误：{body}")
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("data:"):
+                        line = line[5:].strip()
+                    if line == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(chunk, dict) and chunk.get("usage"):
+                        raw_usage = chunk.get("usage")
+                    delta = text_delta_from_chat_chunk(chunk)
+                    if delta:
+                        content_parts_acc.append(delta)
     except httpx.HTTPStatusError as exc:
         body = exc.response.text or ""
         friendly = friendly_chat_error_detail(body, model, _llm_provider)
@@ -7440,13 +7454,8 @@ async def canvas_llm(payload: CanvasLLMRequest):
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"解析上游响应失败：{exc}") from exc
-    try:
-        text = text_from_chat_response(raw).strip() if isinstance(raw, dict) else ""
-        text = text or "接口返回了空回复。"
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"解析回复内容失败：{exc}") from exc
-    raw_data = unwrap_apimart_response(raw) if isinstance(raw, dict) else {}
-    return {"text": text, "model": model, "raw_usage": raw_data.get("usage")}
+    text = "".join(content_parts_acc).strip() or "接口返回了空回复。"
+    return {"text": text, "model": model, "raw_usage": raw_usage}
 
 # --- 对话管理 ---
 # 路由已迁移至 app/routers/conversations.py，通过 app.include_router 注册。
