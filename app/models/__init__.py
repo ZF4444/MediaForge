@@ -117,19 +117,16 @@ class RunningHubSubmitRequest(BaseModel):
     webappId: str = ""
     nodeInfoList: List[Dict[str, Any]] = []
     instanceType: str = ""
-    useWallet: bool = False
 
 
 class RunningHubWorkflowSubmitRequest(BaseModel):
     workflowId: str = ""
     nodeInfoList: List[Dict[str, Any]] = []
     workflow: Any = None
-    useWallet: bool = False
 
 
 class RunningHubUploadAssetRequest(BaseModel):
     url: str = ""
-    useWallet: bool = False
 
 
 class JimengHelpRequest(BaseModel):
@@ -194,9 +191,7 @@ class ApiProviderPayload(BaseModel):
     volcengine_access_key_id: Optional[str] = None
     volcengine_secret_access_key: Optional[str] = None
     api_key: Optional[str] = None
-    wallet_api_key: Optional[str] = None
     clear_key: bool = False
-    clear_wallet_key: bool = False
     clear_volcengine_access_key_id: bool = False
     clear_volcengine_secret_access_key: bool = False
 

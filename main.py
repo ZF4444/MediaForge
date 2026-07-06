@@ -575,9 +575,6 @@ def provider_key_env(provider_id):
         return "ARK_API_KEY"
     return f"API_PROVIDER_{re.sub(r'[^A-Za-z0-9]', '_', provider_id).upper()}_KEY"
 
-def runninghub_wallet_key_env():
-    return "RUNNINGHUB_WALLET_API_KEY"
-
 def volcengine_access_key_env():
     return "VOLCENGINE_ACCESS_KEY_ID"
 
@@ -610,10 +607,6 @@ def provider_env_key_value(provider_id: str) -> str:
     if provider_id == "modelscope":
         return MODELSCOPE_API_KEY or ""
     return ""
-
-def runninghub_wallet_key_value() -> str:
-    env_key = runninghub_wallet_key_env()
-    return os.getenv(env_key, "") or read_api_env_value(env_key)
 
 def volcengine_access_key_value() -> str:
     env_key = volcengine_access_key_env()
@@ -1119,13 +1112,6 @@ def public_provider(provider):
         "key_preview": mask_secret(key),
         "key_env": provider_key_env(provider["id"]),
     }
-    if provider.get("id") == "runninghub":
-        wallet_key = runninghub_wallet_key_value()
-        item.update({
-            "has_wallet_key": bool(wallet_key),
-            "wallet_key_preview": mask_secret(wallet_key),
-            "wallet_key_env": runninghub_wallet_key_env(),
-        })
     if provider.get("id") == "volcengine":
         ak = volcengine_access_key_value()
         sk = volcengine_secret_key_value()
@@ -4168,22 +4154,18 @@ def runninghub_api_headers(provider):
 def runninghub_provider():
     return get_api_provider_exact("runninghub")
 
-def runninghub_api_key(provider=None, use_wallet=False, prefer_wallet=False):
+def runninghub_api_key(provider=None):
     provider = provider or runninghub_provider()
-    free_key = os.getenv(provider_key_env(provider["id"]), "")
-    wallet_key = os.getenv(runninghub_wallet_key_env(), "")
-    api_key = wallet_key if (use_wallet or prefer_wallet) and wallet_key else free_key
+    api_key = os.getenv(provider_key_env(provider["id"]), "")
     if not api_key:
-        raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 RH 设置中填写。")
+        raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     return api_key
 
-def runninghub_app_headers(json_body=True, use_wallet=False):
+def runninghub_app_headers(json_body=True):
     headers = {"Host": "www.runninghub.cn"}
     provider = runninghub_provider()
     if provider:
-        free_key = os.getenv(provider_key_env(provider["id"]), "")
-        wallet_key = os.getenv(runninghub_wallet_key_env(), "")
-        api_key = wallet_key if use_wallet and wallet_key else free_key
+        api_key = os.getenv(provider_key_env(provider["id"]), "")
         if api_key:
             headers["Authorization"] = bearer_auth_value(api_key)
     if json_body:
@@ -4697,7 +4679,7 @@ def runninghub_entry_config_from_model(provider, model):
         "workflowJson": {},
     }
 
-async def runninghub_upload_local_to_filename(client, provider, url, use_wallet=False):
+async def runninghub_upload_local_to_filename(client, provider, url):
     """把本地/远程素材上传到 RunningHub /task/openapi/upload，返回 fileName（供 nodeInfoList 使用）。"""
     text = str(url or "").strip()
     if not text:
@@ -4718,11 +4700,11 @@ async def runninghub_upload_local_to_filename(client, provider, url, use_wallet=
         return ""
     if not content:
         return ""
-    api_key = runninghub_api_key(provider, use_wallet=use_wallet)
+    api_key = runninghub_api_key(provider)
     upload_url = runninghub_endpoint_url(provider, "/task/openapi/upload")
     files = {"file": (filename, content, content_type)}
     data = {"apiKey": api_key, "fileType": "input"}
-    response = await client.post(upload_url, headers=runninghub_app_headers(False, use_wallet), data=data, files=files)
+    response = await client.post(upload_url, headers=runninghub_app_headers(False), data=data, files=files)
     raw = response.json()
     if isinstance(raw, dict) and raw.get("code") in (0, "0") and isinstance(raw.get("data"), dict) and raw["data"].get("fileName"):
         return raw["data"]["fileName"]
@@ -4734,7 +4716,6 @@ async def generate_runninghub_entry_image(prompt, model, reference_images, provi
     entry_id = entry["id"]
     fields = rh_sort_fields([f for f in (entry.get("fields") or []) if isinstance(f, dict) and f.get("enabled") is True])
     idx_map = rh_field_indexes(fields)
-    use_wallet = False
     timeout = httpx.Timeout(connect=20.0, read=1800.0, write=240.0, pool=20.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         uploaded = []
@@ -4742,7 +4723,7 @@ async def generate_runninghub_entry_image(prompt, model, reference_images, provi
             ref_url = ref.get("url") if isinstance(ref, dict) else ref
             if not ref_url:
                 continue
-            file_name = await runninghub_upload_local_to_filename(client, provider, ref_url, use_wallet)
+            file_name = await runninghub_upload_local_to_filename(client, provider, ref_url)
             if file_name:
                 uploaded.append(file_name)
 
@@ -4776,7 +4757,7 @@ async def generate_runninghub_entry_image(prompt, model, reference_images, provi
             else:
                 node_info_list.append({"nodeId": node_id, "fieldName": field_name, "fieldValue": rh_default_value(field)})
 
-        api_key = runninghub_api_key(provider, use_wallet=use_wallet)
+        api_key = runninghub_api_key(provider)
         if kind == "workflow":
             submit_url = runninghub_endpoint_url(provider, "/task/openapi/create")
             body = {"apiKey": api_key, "workflowId": entry_id, "addMetadata": True}
@@ -4786,7 +4767,7 @@ async def generate_runninghub_entry_image(prompt, model, reference_images, provi
             submit_url = runninghub_endpoint_url(provider, "/task/openapi/ai-app/run")
             body = {"apiKey": api_key, "webappId": entry_id, "nodeInfoList": node_info_list}
 
-        response = await client.post(submit_url, headers=runninghub_app_headers(True, use_wallet), json=body)
+        response = await client.post(submit_url, headers=runninghub_app_headers(True), json=body)
         raw = response.json()
         if not (isinstance(raw, dict) and raw.get("code") in (0, "0")):
             raise HTTPException(status_code=502, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
@@ -5373,7 +5354,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = runninghub_provider()
-    api_key = runninghub_api_key(provider, use_wallet=payload.useWallet)
+    api_key = runninghub_api_key(provider)
     body = {
         "apiKey": api_key,
         "webappId": webapp_id,
@@ -5385,7 +5366,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     url = runninghub_endpoint_url(provider, "/task/openapi/ai-app/run")
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0)) as client:
         try:
-            response = await client.post(url, headers=runninghub_app_headers(True, payload.useWallet), json=body)
+            response = await client.post(url, headers=runninghub_app_headers(True), json=body)
             raw = response.json()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"提交 RunningHub 任务失败：{exc}") from exc
@@ -5404,7 +5385,7 @@ async def runninghub_workflow_submit(payload: RunningHubWorkflowSubmitRequest):
     if not workflow_id:
         raise HTTPException(status_code=400, detail="workflowId 必填")
     provider = runninghub_provider()
-    api_key = runninghub_api_key(provider, use_wallet=payload.useWallet)
+    api_key = runninghub_api_key(provider)
     body = {
         "apiKey": api_key,
         "workflowId": workflow_id,
@@ -5421,7 +5402,7 @@ async def runninghub_workflow_submit(payload: RunningHubWorkflowSubmitRequest):
     url = runninghub_endpoint_url(provider, "/task/openapi/create")
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0)) as client:
         try:
-            response = await client.post(url, headers=runninghub_app_headers(True, payload.useWallet), json=body)
+            response = await client.post(url, headers=runninghub_app_headers(True), json=body)
             raw = response.json()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"提交 RunningHub 工作流失败：{exc}") from exc
@@ -5614,7 +5595,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     if not source_url:
         raise HTTPException(status_code=400, detail="url 必填")
     provider = runninghub_provider()
-    api_key = runninghub_api_key(provider, use_wallet=payload.useWallet)
+    api_key = runninghub_api_key(provider)
     filename = "asset.bin"
     content_type = "application/octet-stream"
     content = b""
@@ -5640,7 +5621,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
         files = {"file": (filename, content, content_type)}
         data = {"apiKey": api_key, "fileType": "input"}
         try:
-            response = await client.post(upload_url, headers=runninghub_app_headers(False, payload.useWallet), data=data, files=files)
+            response = await client.post(upload_url, headers=runninghub_app_headers(False), data=data, files=files)
             raw = response.json()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"上传素材到 RunningHub 失败：{exc}") from exc
@@ -5835,12 +5816,6 @@ async def save_providers(payload: List[ApiProviderPayload]):
             env_updates[key_env] = ""
         elif item.api_key is not None and item.api_key.strip():
             env_updates[key_env] = item.api_key.strip()
-        if provider["id"] == "runninghub":
-            wallet_env = runninghub_wallet_key_env()
-            if item.clear_wallet_key:
-                env_updates[wallet_env] = ""
-            elif item.wallet_api_key is not None and item.wallet_api_key.strip():
-                env_updates[wallet_env] = item.wallet_api_key.strip()
         if provider["id"] == "volcengine":
             ak_env = volcengine_access_key_env()
             sk_env = volcengine_secret_key_env()
@@ -5915,10 +5890,6 @@ def api_key_from_payload(payload, protocol: str = ""):
     if explicit:
         return explicit
     if provider_id:
-        if provider_id == "runninghub":
-            value = os.getenv(runninghub_wallet_key_env(), "")
-            if value:
-                return value
         value = os.getenv(provider_key_env(provider_id), "")
         if value:
             return value
@@ -6396,9 +6367,7 @@ async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
 async def fetch_upstream_models(provider_id: str):
     """从已保存的上游 OpenAI 兼容接口拉取 /v1/models 列表，按名称智能分类为 image/chat/video。"""
     provider = get_api_provider_exact(provider_id)
-    api_key = os.getenv(runninghub_wallet_key_env(), "") if provider["id"] == "runninghub" else ""
-    if not api_key:
-        api_key = os.getenv(provider_key_env(provider["id"]), "")
+    api_key = os.getenv(provider_key_env(provider["id"]), "")
     if not api_key:
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider_id} 未配置 API Key")
     return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, provider_protocol(provider))

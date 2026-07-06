@@ -10,9 +10,7 @@ const protocolInput = document.getElementById('protocolInput');
 const keyInput = document.getElementById('keyInput');
 const keyHint = document.getElementById('keyHint');
 const rhFreeKeyInput = document.getElementById('rhFreeKeyInput');
-const rhWalletKeyInput = document.getElementById('rhWalletKeyInput');
 const rhFreeKeyHint = document.getElementById('rhFreeKeyHint');
-const rhWalletKeyHint = document.getElementById('rhWalletKeyHint');
 const volcArkKeyHint = document.getElementById('volcArkKeyHint');
 const volcAkInput = document.getElementById('volcAkInput');
 const volcSkInput = document.getElementById('volcSkInput');
@@ -94,11 +92,7 @@ const ONBOARDING_GUIDES = {
         primaryLabelKey:'api.rhGetKeyCn',
         secondaryLabelKey:'api.rhGetKeyGlobal',
         primaryUrl:'https://www.runninghub.cn/enterprise-api/consumerApi?inviteCode=rh-v1331',
-        secondaryUrl:'https://www.runninghub.ai/enterprise-api/consumerApi?inviteCode=rh-v1331',
-        walletPrimaryLabelKey:'api.rhGetWalletKeyCn',
-        walletSecondaryLabelKey:'api.rhGetWalletKeyGlobal',
-        walletPrimaryUrl:'https://www.runninghub.cn/enterprise-api/sharedApi?inviteCode=rh-v1331',
-        walletSecondaryUrl:'https://www.runninghub.ai/enterprise-api/sharedApi?inviteCode=rh-v1331'
+        secondaryUrl:'https://www.runninghub.ai/enterprise-api/consumerApi?inviteCode=rh-v1331'
     }
 };
 let rhWorkflowEditorState = { open:false, index:-1, entry:null, config:null, expanded:{}, activeNodeId:'', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
@@ -403,10 +397,7 @@ function rhEditorSortedFields(fields){
     });
 }
 function rhFreeKeyHintText(item){
-    return item?.has_key ? `${tr('api.rhCoinKeySaved')}${item.key_env || 'API/.env'} ${item.key_preview || ''}` : tr('api.rhNoCoinKey');
-}
-function rhWalletKeyHintText(item){
-    return item?.has_wallet_key ? `${tr('api.rhWalletKeySaved')}${item.wallet_key_env || 'API/.env'} ${item.wallet_key_preview || ''}` : tr('api.rhNoWalletKey');
+    return item?.has_key ? `${tr('api.rhKeySaved')}${item.key_env || 'API/.env'} ${item.key_preview || ''}` : tr('api.rhNoKey');
 }
 function volcengineArkKeyHintText(item){
     return item?.has_key ? `方舟 API Key 已保存：${item.key_env || 'API/.env'} ${item.key_preview || ''}` : '还没有保存方舟 API Key。';
@@ -419,7 +410,7 @@ function volcengineAssetKeyHintText(item){
 function isNewUserProvider(item){
     if(!item) return false;
     if(item.id === 'modelscope') return !item.has_key;
-    if(item.id === 'runninghub') return !item.has_key && !item.has_wallet_key;
+    if(item.id === 'runninghub') return !item.has_key;
     return false;
 }
 function renderProviderOnboarding(item){
@@ -491,7 +482,7 @@ function renderProviderOnboarding(item){
                 <div class="onboarding-rh-linear-rows">
                     <div class="onboarding-rh-linear-row">
                         <div class="onboarding-rh-source-group">
-                            <div class="onboarding-rh-source-label">${escapeHtml(tr('api.rhCoinKey'))}</div>
+                            <div class="onboarding-rh-source-label">API Key</div>
                             <div class="onboarding-key-actions onboarding-rh-key-actions">
                                 <a class="onboarding-key-btn" href="${escapeAttr(guide.primaryUrl)}" target="_blank" rel="noopener noreferrer"><i data-lucide="coins" class="w-3.5 h-3.5"></i><span>${escapeHtml(tr(guide.primaryLabelKey))}</span></a>
                                 <a class="onboarding-key-btn" href="${escapeAttr(guide.secondaryUrl)}" target="_blank" rel="noopener noreferrer"><i data-lucide="globe-2" class="w-3.5 h-3.5"></i><span>${escapeHtml(tr(guide.secondaryLabelKey))}</span></a>
@@ -499,22 +490,8 @@ function renderProviderOnboarding(item){
                         </div>
                         <div class="recommend-flow-arrow onboarding-flow-arrow onboarding-rh-row-arrow" aria-hidden="true"><span></span><b></b></div>
                         <label class="onboarding-key-field onboarding-rh-row-field">
-                            <span>${escapeHtml(tr('api.rhCoinApiKeyRequired'))}</span>
-                            <input type="password" value="${escapeAttr(rhFreeKeyInput?.value || '')}" placeholder="${escapeAttr(tr('api.rhCoinPlaceholder'))}" oninput="syncOnboardingKeyInput('free', this.value)">
-                        </label>
-                    </div>
-                    <div class="onboarding-rh-linear-row">
-                        <div class="onboarding-rh-source-group">
-                            <div class="onboarding-rh-source-label">${escapeHtml(tr('api.rhWalletKey'))}</div>
-                            <div class="onboarding-key-actions onboarding-rh-key-actions">
-                                <a class="onboarding-key-btn" href="${escapeAttr(guide.walletPrimaryUrl)}" target="_blank" rel="noopener noreferrer"><i data-lucide="wallet" class="w-3.5 h-3.5"></i><span>${escapeHtml(tr(guide.walletPrimaryLabelKey))}</span></a>
-                                <a class="onboarding-key-btn" href="${escapeAttr(guide.walletSecondaryUrl)}" target="_blank" rel="noopener noreferrer"><i data-lucide="globe-2" class="w-3.5 h-3.5"></i><span>${escapeHtml(tr(guide.walletSecondaryLabelKey))}</span></a>
-                            </div>
-                        </div>
-                        <div class="recommend-flow-arrow onboarding-flow-arrow onboarding-rh-row-arrow" aria-hidden="true"><span></span><b></b></div>
-                        <label class="onboarding-key-field onboarding-rh-row-field">
-                            <span>${escapeHtml(tr('api.rhWalletApiKeyOptional'))}</span>
-                            <input type="password" value="${escapeAttr(rhWalletKeyInput?.value || '')}" placeholder="${escapeAttr(tr('api.rhWalletPlaceholder'))}" oninput="syncOnboardingKeyInput('wallet', this.value)">
+                            <span>API Key</span>
+                            <input type="password" value="${escapeAttr(rhFreeKeyInput?.value || '')}" placeholder="${escapeAttr(tr('api.rhPlaceholder'))}" oninput="syncOnboardingKeyInput('runninghub', this.value)">
                         </label>
                     </div>
                 </div>
@@ -527,21 +504,17 @@ function renderProviderOnboarding(item){
     }
 }
 function syncOnboardingKeyInput(kind, value){
-    if(kind === 'free' && rhFreeKeyInput) rhFreeKeyInput.value = value || '';
-    else if(kind === 'wallet' && rhWalletKeyInput) rhWalletKeyInput.value = value || '';
+    if(kind === 'runninghub' && rhFreeKeyInput) rhFreeKeyInput.value = value || '';
     else if(keyInput) keyInput.value = value || '';
 }
 async function saveOnboardingRunningHubKey(){
     const freeKey = rhFreeKeyInput?.value.trim() || '';
-    if(!freeKey){ alert(tr('api.rhEnterCoinAlert')); return; }
+    if(!freeKey){ alert(tr('api.rhEnterAlert')); return; }
     const item = provider();
     if(!item || item.id !== 'runninghub') return;
     syncEditor();
     const ok = await saveProviders();
-    if(ok){
-        if(rhFreeKeyInput) rhFreeKeyInput.value = '';
-        if(rhWalletKeyInput) rhWalletKeyInput.value = '';
-    }
+    if(ok && rhFreeKeyInput) rhFreeKeyInput.value = '';
 }
 function applyProviderOnboardingDefaults(id){
     const item = providers.find(provider => provider.id === id);
@@ -599,9 +572,7 @@ function syncEditor(){
     if(key) item.api_key = key;
     if(item.id === 'runninghub'){
         const freeKey = rhFreeKeyInput?.value.trim() || '';
-        const walletKey = rhWalletKeyInput?.value.trim() || '';
         if(freeKey) item.api_key = freeKey;
-        if(walletKey) item.wallet_api_key = walletKey;
     }
     if(item.id === 'volcengine'){
         const ak = volcAkInput?.value.trim() || '';
@@ -2034,7 +2005,7 @@ function providerDragAttrs(item){
 function renderProviderList(){
     providerList.innerHTML = sortedProviders().map(item => {
         const active = item.id === selectedId ? 'active' : '';
-        const stateClass = item.enabled === false ? 'is-disabled' : (item.has_key || item.has_wallet_key ? 'has-key' : 'missing-key');
+        const stateClass = item.enabled === false ? 'is-disabled' : (item.has_key ? 'has-key' : 'missing-key');
         const protocolLabel = item.id === 'runninghub' ? 'RH' : String(item.protocol || 'openai').toUpperCase();
         if(item.id === 'modelscope'){
             return `
@@ -2159,14 +2130,9 @@ function renderEditor(){
         ensureRunningHubLists(item);
         if(rhFreeKeyInput){
             rhFreeKeyInput.value = '';
-            rhFreeKeyInput.placeholder = item.has_key ? `${tr('api.rhKeepCoinKey')} ${item.key_preview || ''}` : tr('api.rhEnterCoinKey');
-        }
-        if(rhWalletKeyInput){
-            rhWalletKeyInput.value = '';
-            rhWalletKeyInput.placeholder = item.has_wallet_key ? `${tr('api.rhKeepWalletKey')} ${item.wallet_key_preview || ''}` : tr('api.rhEnterWalletKey');
+            rhFreeKeyInput.placeholder = item.has_key ? `${tr('api.rhKeepKey')} ${item.key_preview || ''}` : tr('api.rhEnterKey');
         }
         if(rhFreeKeyHint) rhFreeKeyHint.textContent = rhFreeKeyHintText(item);
-        if(rhWalletKeyHint) rhWalletKeyHint.textContent = rhWalletKeyHintText(item);
         renderRunningHubCards();
     }
     if(isVolcengine){
@@ -2385,7 +2351,7 @@ async function loadJimengHelp(){
 }
 function currentProviderApiKey(item){
     if(item?.id === 'runninghub'){
-        return rhWalletKeyInput?.value.trim() || rhFreeKeyInput?.value.trim() || '';
+        return rhFreeKeyInput?.value.trim() || '';
     }
     return keyInput.value.trim();
 }
@@ -2825,27 +2791,23 @@ function deleteProvider(){
     renderEditor();
     saveProviders();
 }
-async function saveRhKeyOnly(kind){
+async function saveRhKeyOnly(){
     const item = provider();
     if(!item || item.id !== 'runninghub') return;
-    const input = kind === 'wallet' ? rhWalletKeyInput : rhFreeKeyInput;
+    const input = rhFreeKeyInput;
     const key = input?.value.trim() || '';
     if(!key){ alert('请输入 Key'); return; }
     syncEditor();
     const ok = await saveProviders();
     if(ok && input) input.value = '';
 }
-async function clearRhKeyOnly(kind){
+async function clearRhKeyOnly(){
     const item = provider();
     if(!item || item.id !== 'runninghub') return;
     if(!confirm(tr('api.confirmClearKey') || '确认清除当前 Key？')) return;
-    if(kind === 'wallet') item._clearWalletKey = true;
-    else item._clearKey = true;
+    item._clearKey = true;
     const ok = await saveProviders();
-    if(ok){
-        if(kind === 'wallet' && rhWalletKeyInput) rhWalletKeyInput.value = '';
-        if(kind !== 'wallet' && rhFreeKeyInput) rhFreeKeyInput.value = '';
-    }
+    if(ok && rhFreeKeyInput) rhFreeKeyInput.value = '';
 }
 async function saveVolcengineAssetKeys(){
     const item = provider();
@@ -3056,9 +3018,7 @@ async function saveProviders(){
                 volcengine_access_key_id:item.volcengine_access_key_id || undefined,
                 volcengine_secret_access_key:item.volcengine_secret_access_key || undefined,
                 api_key:item.api_key || undefined,
-                wallet_api_key:item.wallet_api_key || undefined,
                 clear_key:item._clearKey === true,
-                clear_wallet_key:item._clearWalletKey === true,
                 clear_volcengine_access_key_id:item._clearVolcengineAccessKey === true,
                 clear_volcengine_secret_access_key:item._clearVolcengineSecretKey === true
             })))
@@ -3068,11 +3028,9 @@ async function saveProviders(){
         providers = data.providers || providers;
         providers.forEach(item => {
             delete item.api_key;
-            delete item.wallet_api_key;
             delete item.volcengine_access_key_id;
             delete item.volcengine_secret_access_key;
             delete item._clearKey;
-            delete item._clearWalletKey;
             delete item._clearVolcengineAccessKey;
             delete item._clearVolcengineSecretKey;
         });
@@ -3129,7 +3087,7 @@ window.onload = () => {
     // 平台名输入时实时预览生成的 ID
     if(nameInput) nameInput.addEventListener('input', updateIdPreview);
     if(protocolInput) protocolInput.addEventListener('change', updateProtocolFromInput);
-    [keyInput, rhFreeKeyInput, rhWalletKeyInput].forEach(input => {
+    [keyInput, rhFreeKeyInput].forEach(input => {
         if(input) input.addEventListener('input', refreshProviderOnboarding);
     });
 };

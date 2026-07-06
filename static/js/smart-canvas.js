@@ -329,7 +329,6 @@ let settings = {
     comfyWorkflow:'',
     comfyParams:{},
     rhConfigKey:'',
-    rhPayment:'free',
     rhInstanceType:'',
     rhParams:{},
     rhRandomActive:{},
@@ -2344,13 +2343,11 @@ function renderVolcengineVideoParams(){
 function renderRunningHubParams(){
     const ref = selectedRunningHubRef();
     const fields = rhActiveFields();
-    settings.rhPayment = settings.rhPayment === 'wallet' ? 'wallet' : 'free';
     settings.rhParams = settings.rhParams || {};
     settings.rhRandomActive = settings.rhRandomActive || {};
     if(composerHeadParams){
         composerHeadParams.innerHTML = `
             ${renderRhConfigControl(ref)}
-            ${renderRhPaymentControl()}
             ${renderRhMachineControl()}
         `;
     }
@@ -2384,19 +2381,6 @@ function renderRhConfigControl(ref){
             <div class="smart-popover-title">${escapeHtml(tr('smart.rhConfig'))}</div>
             <div class="model-list rh-config-list">
                 ${groupHtml('app', apps, 'AI 应用')}${groupHtml('workflow', workflows, '工作流') || ''}
-            </div>
-        </div>
-    </div>`;
-}
-function renderRhPaymentControl(){
-    const value = settings.rhPayment === 'wallet' ? 'wallet' : 'free';
-    const labels = {free:tr('smart.rhFreeKey'), wallet:tr('smart.rhWalletKey')};
-    return `<div class="smart-control rh-payment-control">
-        <button class="smart-pill" type="button"><i data-lucide="key-round"></i><span>${escapeHtml(labels[value])}</span><i data-lucide="chevron-down" class="pill-caret"></i></button>
-        <div class="smart-popover compact-popover rh-picker-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.rhKey'))}</div>
-            <div class="model-list">
-                ${Object.entries(labels).map(([key, label]) => `<button type="button" class="direct-option ${key === value ? 'active' : ''}" data-smart-param="rhPayment" data-smart-value="${escapeHtml(key)}"><span>${escapeHtml(label)}</span></button>`).join('')}
             </div>
         </div>
     </div>`;
@@ -3204,7 +3188,7 @@ async function rhUploadValueIfNeeded(value, sourceSettings=settings){
     const res = await fetch('/api/runninghub/upload-asset', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({url:text, useWallet:(sourceSettings || settings).rhPayment === 'wallet'})
+        body:JSON.stringify({url:text})
     });
     const data = await res.json();
     if(!res.ok || data.success === false) throw new Error(data.detail || data.error || tr('smart.rhUploadFailed'));
@@ -3311,7 +3295,7 @@ function smartComfyRandomValue(field){
 }
 function setDynamicSetting(key, value){
     const numericKeys = new Set(['count','width','height','videoDuration','enhanceStrength','enhanceUpscaleRes','editUpscaleRes','customRatioWidth','customRatioHeight','customWidth','customHeight','msCustomRatioWidth','msCustomRatioHeight','msCustomWidth','msCustomHeight']);
-    const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','comfyMode','comfyWorkflow','quality','count','enhanceUpscaleRes','editUpscaleRes','rhConfigKey','rhPayment','rhInstanceType']);
+    const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','comfyMode','comfyWorkflow','quality','count','enhanceUpscaleRes','editUpscaleRes','rhConfigKey','rhInstanceType']);
     settings[key] = numericKeys.has(key) && value !== '' ? Number(value) : value;
     if(key === 'provider_id') settings.model = '';
     if(key === 'videoProvider') settings.videoModel = '';
@@ -12538,8 +12522,8 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const workflowExtras = mode === 'workflow' ? await rhBuildWorkflowRequestExtras(media, nodeInfoList, runSettings) : {};
     const endpoint = mode === 'workflow' ? '/api/runninghub/workflow-submit' : '/api/runninghub/submit';
     const body = mode === 'workflow'
-        ? {workflowId:ref.id, nodeInfoList, useWallet:runSettings.rhPayment === 'wallet', ...workflowExtras}
-        : {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || '', useWallet:runSettings.rhPayment === 'wallet'};
+        ? {workflowId:ref.id, nodeInfoList, ...workflowExtras}
+        : {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || ''};
     const submit = await fetch(endpoint, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
