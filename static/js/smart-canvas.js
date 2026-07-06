@@ -2032,6 +2032,16 @@ function syncJimengVideoModelPillForRefs(){
     _jimengModelRefreshing = true;
     try { renderDynamicParams(); } finally { _jimengModelRefreshing = false; }
 }
+let _rhLastAttachedKindsKey = null;
+// 接入素材的类型（图片/视频/音频）变化时，重新渲染 RunningHub 应用/工作流选择列表，
+// 以便按新的素材类型过滤掉不支持的条目。
+function syncRhConfigForRefs(){
+    if(settings.engine !== 'runninghub') { _rhLastAttachedKindsKey = null; return; }
+    const key = Array.from(rhAttachedRefKinds()).sort().join(',');
+    if(key === _rhLastAttachedKindsKey) return;
+    _rhLastAttachedKindsKey = key;
+    renderDynamicParams();
+}
 function sanitizeSmartApiSelection(target=settings){
     if(!target || typeof target !== 'object') return target;
     if(target.engine === 'volcengine'){
@@ -2363,9 +2373,41 @@ function renderRunningHubParams(){
         ${params.length ? params.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(fields.length ? tr('smart.rhNoParams') : tr('smart.rhNeedFields'))}</div>`}
     `;
 }
+function rhEntryMediaFields(entry, kind){
+    let fields = rhEntryFields(entry);
+    if(kind === 'workflow' && !fields.length){
+        const id = runningHubEntryId(entry, 'workflow');
+        const cached = runningHubWorkflowCache[id];
+        if(Array.isArray(cached?.fields)) fields = cached.fields;
+    }
+    return fields.filter(f => f.enabled === true);
+}
+// 根据当前生成节点已接入的素材类型（图片/视频），过滤掉不支持该素材类型输入的 AI 应用/工作流。
+// 若素材类型信息不足（字段未加载）则不过滤，避免误隐藏。
+function rhEntrySupportsAttachedRefs(entry, kind, attachedKinds){
+    if(!attachedKinds.size) return true;
+    const fields = rhEntryMediaFields(entry, kind);
+    if(!fields.length) return true; // 字段未知（可能未加载），不做过滤
+    const supported = new Set(fields.map(f => rhFieldRole(f)).filter(role => ['image', 'video', 'audio'].includes(role)));
+    if(!supported.size) return true; // 该应用/工作流不接受任何媒体输入字段，保留（比如纯文本参数）
+    for(const kindNeeded of attachedKinds){
+        if(supported.has(kindNeeded)) return true;
+    }
+    return false;
+}
+function rhAttachedRefKinds(){
+    const node = activeComposerNode() || selectedNode();
+    const refs = node ? visibleReferenceImagesFor(node) : [];
+    const kinds = new Set();
+    if(imageRefsOnly(refs).length) kinds.add('image');
+    if(videoRefsOnly(refs).length) kinds.add('video');
+    if(audioRefsOnly(refs).length) kinds.add('audio');
+    return kinds;
+}
 function renderRhConfigControl(ref){
-    const apps = runningHubEntries('app');
-    const workflows = runningHubEntries('workflow');
+    const attachedKinds = rhAttachedRefKinds();
+    const apps = runningHubEntries('app').filter(entry => rhEntrySupportsAttachedRefs(entry, 'app', attachedKinds));
+    const workflows = runningHubEntries('workflow').filter(entry => rhEntrySupportsAttachedRefs(entry, 'workflow', attachedKinds));
     const selected = ref ? runningHubEntryKey(ref.kind, ref.id) : '';
     const groupHtml = (kind, entries, label) => entries.length ? `
         <div class="model-list-label rh-list-label">${escapeHtml(label)}<span class="count">${entries.length}</span></div>
@@ -9061,6 +9103,23 @@ function createEditedResultNode(sourceNode, images, options={}){
     connectInputNode(sourceNode.id, output.id);
     return output;
 }
+const OUTPAINT_FILL_PROMPT = '请只对白色空白区域进行图像扩展和环境补全。白色区域是需要生成的新内容，非白色区域是原始图像，必须完全保持不变，不允许重绘、修改、移动、缩放、裁剪、变形或改变任何颜色、纹理、细节、光影和边缘。\n请根据原始图像的画风、透视、构图、光照方向、材质、色彩、清晰度和细节密度，自然延展画面内容，使新生成区域与原图无缝衔接。扩展内容应看起来像原图本来就存在的一部分，保持一致的艺术风格、镜头视角、比例关系和空间逻辑。\n重点：只填充白色区域；原始非白色图像区域必须保持100%不变。';
+// 扩图完成后，在扩图结果节点后自动接一个空白生成节点，预置为 AI生成(api引擎) 并填入扩图专用提示词，
+// 用户只需确认后点击运行即可对白色留白区域进行智能补全。
+function chainOutpaintGenerationNode(outpaintNode){
+    if(!outpaintNode) return null;
+    const rect = nodeRect(outpaintNode);
+    const point = nextOutputPositionForSource(outpaintNode, null);
+    const genNode = createImageNodeAt({
+        x:point.x + Math.round(rect.width / 2),
+        y:point.y + Math.round(rect.height / 2)
+    }, [], {select:true, skipUndo:true});
+    genNode.title = 'AI生成';
+    genNode.runSettings = {...(genNode.runSettings || {}), engine:'api'};
+    connectInputNode(outpaintNode.id, genNode.id);
+    setPromptDraftForNode(genNode, OUTPAINT_FILL_PROMPT);
+    return genNode;
+}
 function applyOutpaintSizeToSmartParams(width, height){
     const w = Math.max(1, Math.round(Number(width) || 0));
     const h = Math.max(1, Math.round(Number(height) || 0));
@@ -9122,7 +9181,7 @@ async function applyImageOutpaint(){
     const base = (image.name || 'image').replace(/\.[^.]+$/, '');
     const file = blob ? await uploadCroppedBlob(blob, `${base}_outpaint.png`) : null;
     if(file){
-        createEditedResultNode(node, [{
+        const outpaintNode = createEditedResultNode(node, [{
             url:file.url,
             name:file.name,
             kind:file.kind || 'image',
@@ -9132,6 +9191,7 @@ async function applyImageOutpaint(){
         applyOutpaintSizeToSmartParams(outW, outH);
         setPromptDraftForNode(node, 'Remove white area and fill the scene');
         promptInput.dataset.preserveDraftOnce = '1';
+        if(outpaintNode) chainOutpaintGenerationNode(outpaintNode);
         closeImageEditor();
         render();
         scheduleSave();
@@ -9494,6 +9554,7 @@ function renderInputThumbsRow(node){
     if(!inputThumbsRow) return;
     syncJimengModelPillForRefs();
     syncJimengVideoModelPillForRefs();
+    syncRhConfigForRefs();
     inputThumbsRow.classList.remove('runninghub-inputs');
     if(settings.engine === 'runninghub') return renderRunningHubInputThumbsRow(node);
     const dedup = node ? visibleReferenceImagesFor(node) : [];
