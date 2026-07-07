@@ -417,12 +417,20 @@ function isRunningHubProvider(provider){
     const name = String(provider?.name || '').trim().toLowerCase();
     return id === 'runninghub' || protocol === 'runninghub' || name === 'runninghub' || id === 'rh';
 }
+// RunningHub 标准模型 API：目前只把 GPT-Image2（rhart-image-g-2-official）暴露给通用「AI 生成」模型下拉，
+// 不影响 rh_apps / rh_workflows 专属的应用/工作流引擎逻辑。
+const RUNNINGHUB_STANDARD_IMAGE_MODELS = ['rhart-image-g-2-official'];
+function runningHubStandardImageModels(provider){
+    const models = Array.isArray(provider?.image_models) ? provider.image_models : [];
+    return models.filter(m => RUNNINGHUB_STANDARD_IMAGE_MODELS.includes(String(m || '').trim()));
+}
 function normalizeProviderId(value){
     return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').slice(0, 40);
 }
 function imageApiProviders(){
     const providers = (apiProviders.length ? apiProviders : defaultApiProviders())
-        .filter(p => p.id !== 'modelscope' && !isRunningHubProvider(p) && p.enabled !== false && (p.image_models || []).length);
+        .filter(p => p.id !== 'modelscope' && p.enabled !== false
+            && (isRunningHubProvider(p) ? runningHubStandardImageModels(p).length : (p.image_models || []).length));
     return providers;
 }
 function providerById(id){
@@ -461,6 +469,7 @@ function providerOptions(selectedId){
 function providerImageModels(providerId){
     // 不走 providerById（会 fallback 到第一个 provider，造成串台），直接查精确匹配
     const provider = apiProviders.find(p => p.id === providerId);
+    if(isRunningHubProvider(provider)) return runningHubStandardImageModels(provider);
     return uniqueModels(provider?.image_models || []);
 }
 function sanitizeImageNodeProviderModel(node){

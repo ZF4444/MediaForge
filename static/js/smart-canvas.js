@@ -1834,8 +1834,16 @@ function syncEngineOptionsVisibility(){
         if(visible) { settings.engine = visible.value; engineSelect.value = visible.value; }
     }
 }
+// RunningHub 标准模型 API：目前只把 GPT-Image2（rhart-image-g-2-official）暴露给通用「AI 生成」模型下拉，
+// 不影响 rh_apps / rh_workflows 专属的应用/工作流引擎逻辑。
+const RUNNINGHUB_STANDARD_IMAGE_MODELS = ['rhart-image-g-2-official'];
+function runningHubStandardImageModels(provider){
+    const models = Array.isArray(provider?.image_models) ? provider.image_models : [];
+    return models.filter(m => RUNNINGHUB_STANDARD_IMAGE_MODELS.includes(String(m || '').trim()));
+}
 function imageProviders(){
-    return (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'runninghub' && p.id !== 'volcengine' && (p.image_models || []).length);
+    return (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'volcengine'
+        && (p.id === 'runninghub' ? runningHubStandardImageModels(p).length : (p.image_models || []).length));
 }
 function volcengineProvider(){
     return (apiProviders || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
@@ -1966,6 +1974,7 @@ function videoProviderPlatform(providerId){
 }
 function providerImageModels(providerId){
     if(providerId === 'volcengine') return volcengineProvider().image_models || [];
+    if(providerId === 'runninghub') return runningHubStandardImageModels(runningHubProvider());
     return (apiProviders || []).find(p => p.id === providerId)?.image_models || [];
 }
 // 即梦图生图（挂了参考图）不支持 3.0/3.1，此时从模型下拉里隐藏它们。
@@ -2286,10 +2295,8 @@ function renderApiParams(){
     dynamicParams.innerHTML = `
         ${renderProviderControl(providers)}
         ${renderModelControl(models)}
-        ${renderResolutionControl('')}
-        ${outpaintLocked ? '' : renderRatioControl('', true)}
-        ${outpaintLocked ? '' : renderInlineCustomSizeFields('')}
-        ${outpaintLocked ? '' : renderInlineCustomRatioFields('')}
+        ${renderResolutionControl('', false)}
+        ${outpaintLocked ? '' : renderRatioControl('', true, false)}
         ${renderQualityControl()}
         ${renderCountVisualControl()}
     `;
@@ -2700,14 +2707,15 @@ function renderMsCustomModelPill(){
         </div>
     </div>`;
 }
-function renderRatioControl(prefix='', includeSource=false){
+function renderRatioControl(prefix='', includeSource=false, allowCustom=true){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';
+    if(!allowCustom && settings[ratioKey] === 'custom') settings[ratioKey] = 'square';
     const ratios = [
         ['square','1:1'], ['portrait','2:3'], ['landscape','3:2'], ['portrait43','3:4'], ['landscape43','4:3'],
         ['story','9:16'], ['wide','16:9'], ['ultrawide','21:9'], ['ultratall','9:21'],
         ...(includeSource ? [['source', tr('smart.imageRatio')]] : []),
-        ['custom', tr('smart.custom')]
+        ...(allowCustom ? [['custom', tr('smart.custom')]] : [])
     ];
     return `<div class="smart-control ratio-control">
         <button class="smart-pill" type="button"><i data-lucide="scan"></i><span>${escapeHtml(ratioLabel(prefix))}</span></button>
@@ -2719,14 +2727,16 @@ function renderRatioControl(prefix='', includeSource=false){
         </div>
     </div>`;
 }
-function renderResolutionControl(prefix=''){
+function renderResolutionControl(prefix='', allowCustom=true){
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';
+    const options = allowCustom ? ['1k','2k','4k','custom'] : ['1k','2k','4k'];
+    if(!allowCustom && settings[resKey] === 'custom') settings[resKey] = '1k';
     return `<div class="smart-control resolution-control">
         <button class="smart-pill" type="button"><i data-lucide="monitor"></i><span>${escapeHtml(resolutionLabel(prefix))}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.resolution'))}</div>
             <div class="seg-row">
-                ${['1k','2k','4k','custom'].map(value => `<button type="button" class="${value === (settings[resKey] || '1k') ? 'active' : ''}" data-smart-param="${resKey}" data-smart-value="${value}">${value === 'custom' ? escapeHtml(tr('smart.custom')) : value.toUpperCase()}</button>`).join('')}
+                ${options.map(value => `<button type="button" class="${value === (settings[resKey] || '1k') ? 'active' : ''}" data-smart-param="${resKey}" data-smart-value="${value}">${value === 'custom' ? escapeHtml(tr('smart.custom')) : value.toUpperCase()}</button>`).join('')}
             </div>
         </div>
     </div>`;
@@ -12887,7 +12897,10 @@ function smartPendingTasks(node){
 }
 function isRunningHubPendingTask(task){
     const provider = String(task?.providerId || task?.provider || task?.engine || '').toLowerCase();
-    return provider === 'runninghub';
+    if(provider !== 'runninghub') return false;
+    // RunningHub 标准模型 API（如 GPT-Image2）走通用 /api/canvas-image-tasks 流程，
+    // 只有 App/工作流引擎提交的任务才带 mode 标记，需要走 /api/runninghub/query 轮询。
+    return task?.mode === 'app' || task?.mode === 'workflow';
 }
 class JimengPendingSignal extends Error {
     constructor(info){

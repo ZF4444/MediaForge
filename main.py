@@ -276,7 +276,11 @@ VOLCENGINE_DEFAULT_VIDEO_MODELS = [
 RUNNINGHUB_DEFAULT_IMAGE_MODELS = [
     "seedream-v5-lite/text-to-image",
     "seedream-v5-lite/image-to-image",
+    "rhart-image-g-2-official",
 ]
+# RunningHub 标准模型 API：GPT-Image2（rhart-image-g-2-official），文生图/图生图共用一个模型条目，
+# 由是否附带参考图自动判断调用 /text-to-image 还是 /image-to-image。
+RHART_GPT_IMAGE2_MODEL_ID = "rhart-image-g-2-official"
 RUNNINGHUB_DEFAULT_APPS = [
     {
         "id": "2058517022748798977",
@@ -673,6 +677,7 @@ def default_api_providers():
             "ms_defaults_version": 0,
             "rh_apps": RUNNINGHUB_DEFAULT_APPS,
             "rh_workflows": RUNNINGHUB_DEFAULT_WORKFLOWS,
+            "model_aliases": {RHART_GPT_IMAGE2_MODEL_ID: "GPT-Image2"},
         },
         {
             "id": "volcengine",
@@ -726,6 +731,9 @@ def merge_default_api_providers(providers):
             current["image_models"] = model_list_from_values([*(current.get("image_models") or []), *(rh_default.get("image_models") or [])])
             current["rh_apps"] = merge_runninghub_system_entries(rh_default.get("rh_apps") or [], current.get("rh_apps") or [], "app")
             current["rh_workflows"] = merge_runninghub_system_entries(rh_default.get("rh_workflows") or [], current.get("rh_workflows") or [], "workflow")
+            merged_aliases = dict(rh_default.get("model_aliases") or {})
+            merged_aliases.update(current.get("model_aliases") or {})
+            current["model_aliases"] = merged_aliases
     volc_default = next((d for d in default_api_providers() if d["id"] == "volcengine"), None)
     if volc_default:
         current = next((item for item in merged if item.get("id") == "volcengine"), None)
@@ -4397,6 +4405,51 @@ def runninghub_task_endpoint(provider, model):
         return runninghub_endpoint_url(provider, f"/{model_path}")
     return runninghub_endpoint_url(provider, f"/openapi/v2/{model_path}")
 
+def is_rhart_gpt_image2_model(model):
+    """识别 RunningHub 标准模型 API 的 GPT-Image2（rhart-image-g-2-official）。"""
+    raw = str(model or "").strip().lower()
+    normalized = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    compact = re.sub(r"[^a-z0-9]+", "", raw)
+    return (
+        normalized == "rhart-image-g-2-official"
+        or normalized.startswith("rhart-image-g-2-official/")
+        or compact.startswith("rhartimageg2official")
+        or compact == "gptimage2"
+    )
+
+RHART_GPT_IMAGE2_RATIO_CHOICES = [
+    (1, 1, "1:1"), (1, 2, "1:2"), (2, 1, "2:1"), (1, 3, "1:3"), (3, 1, "3:1"),
+    (2, 3, "2:3"), (3, 2, "3:2"), (3, 4, "3:4"), (4, 3, "4:3"), (4, 5, "4:5"),
+    (5, 4, "5:4"), (9, 16, "9:16"), (21, 9, "21:9"), (9, 21, "9:21"), (16, 9, "16:9"),
+]
+
+def rhart_gpt_image2_aspect_resolution(size):
+    """把通用 size（WxH / 1k/2k/4k / auto）换算成 GPT-Image2 接口要求的 aspectRatio + resolution。"""
+    width, height = parse_size_pair(size)
+    if not width or not height:
+        raw = str(size or "").strip().lower()
+        if raw in {"1k", "2k", "4k"}:
+            return "16:9", raw
+        return "16:9", "2k"
+    long_edge = max(width, height)
+    pixels = width * height
+    if long_edge >= 3000 or pixels > 4_500_000:
+        resolution = "4k"
+    elif long_edge >= 1800 or pixels > 1_800_000:
+        resolution = "2k"
+    else:
+        resolution = "1k"
+    ratio = width / height
+    best = min(RHART_GPT_IMAGE2_RATIO_CHOICES, key=lambda item: abs(ratio - item[0] / item[1]))
+    return best[2], resolution
+
+def rhart_gpt_image2_quality(quality):
+    """RunningHub GPT-Image2 仅支持 low/medium/high，auto（或未识别值）映射为 medium。"""
+    value = str(quality or "").strip().lower()
+    if value in {"low", "medium", "high"}:
+        return value
+    return "medium"
+
 def runninghub_query_status(raw):
     if not isinstance(raw, dict):
         return ""
@@ -4510,15 +4563,28 @@ async def wait_for_runninghub_image_task(client, provider, task_id):
         response.raise_for_status()
         raw = response.json()
         last_payload = raw
-        status = runninghub_query_status(raw)
-        if status in {"success", "succeeded", "completed", "complete", "finished", "finish", "done", "3"}:
-            return raw
-        if status in {"failed", "fail", "error", "canceled", "cancelled", "4"}:
-            raise HTTPException(status_code=502, detail=f"RunningHub 任务失败：{raw}")
+        # 优先判断是否已经有实际结果数据，不完全依赖 status 文案匹配
+        # （不同模型/接口版本返回的 status 措辞可能不一致，只靠字符串匹配容易导致轮询卡死不返回）。
         try:
             return {"data": {"results": [runninghub_extract_image(raw)]}}
         except HTTPException:
             pass
+        status = runninghub_query_status(raw)
+        if status in {"success", "succeeded", "completed", "complete", "finished", "finish", "done", "3"}:
+            return raw
+        error_message = ""
+        if isinstance(raw, dict):
+            error_message = str(raw.get("errorMessage") or raw.get("error_message") or "").strip()
+            error_code = raw.get("errorCode") or raw.get("error_code")
+            data = raw.get("data")
+            if not error_message and isinstance(data, dict):
+                error_message = str(data.get("errorMessage") or data.get("error_message") or "").strip()
+            if not error_code and isinstance(data, dict):
+                error_code = data.get("errorCode") or data.get("error_code")
+            if error_message or (error_code and str(error_code).strip() not in ("", "0")):
+                raise HTTPException(status_code=502, detail=f"RunningHub 任务失败：{error_message or raw}")
+        if status in {"failed", "fail", "error", "canceled", "cancelled", "4"}:
+            raise HTTPException(status_code=502, detail=f"RunningHub 任务失败：{raw}")
     raise HTTPException(status_code=504, detail=f"RunningHub 生图任务超时：{last_payload}")
 
 RUNNINGHUB_ENTRY_MODEL_RE = re.compile(r"^(app|workflow):(.+)$")
@@ -4795,10 +4861,12 @@ async def generate_runninghub_entry_image(prompt, model, reference_images, provi
             # 804 运行中 / 813 排队中 / 其他状态继续轮询
         raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{last_payload}")
 
-async def generate_runninghub_provider_image(prompt, size, model, reference_images=None, provider=None):
+async def generate_runninghub_provider_image(prompt, size, model, reference_images=None, provider=None, quality=""):
     entry = runninghub_entry_config_from_model(provider, model)
     if entry:
         return await generate_runninghub_entry_image(prompt, model, reference_images, provider, entry)
+    if is_rhart_gpt_image2_model(model):
+        return await generate_rhart_gpt_image2(prompt, size, reference_images, provider, quality)
     endpoint = runninghub_task_endpoint(provider, model)
     width, height = parse_size_pair(size)
     body = {"prompt": prompt}
@@ -4812,6 +4880,46 @@ async def generate_runninghub_provider_image(prompt, size, model, reference_imag
                 image_urls.append(url)
         if image_urls:
             body["imageUrls"] = image_urls
+        response = await client.post(endpoint, headers=runninghub_api_headers(provider), json=body)
+        response.raise_for_status()
+        raw = response.json()
+        try:
+            return runninghub_extract_image(raw), raw
+        except HTTPException:
+            task_id = runninghub_extract_task_id(raw)
+            if not task_id:
+                raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId 或图片结果：{raw}")
+        result = await wait_for_runninghub_image_task(client, provider, task_id)
+        return runninghub_extract_image(result), result
+
+async def generate_rhart_gpt_image2(prompt, size, reference_images, provider, quality=""):
+    """RunningHub 标准模型 API：GPT-Image2（rhart-image-g-2-official）。
+    根据是否带参考图，自动在 text-to-image / image-to-image 两个端点之间切换。"""
+    aspect_ratio, resolution = rhart_gpt_image2_aspect_resolution(size)
+    body_quality = rhart_gpt_image2_quality(quality)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=180.0, pool=20.0)) as client:
+        image_urls = []
+        for ref in (reference_images or [])[:10]:
+            url = await runninghub_upload_reference(client, provider, ref)
+            if url:
+                image_urls.append(url)
+        if image_urls:
+            endpoint = runninghub_endpoint_url(provider, "/openapi/v2/rhart-image-g-2-official/image-to-image")
+            body = {
+                "prompt": prompt,
+                "imageUrls": image_urls,
+                "aspectRatio": aspect_ratio,
+                "resolution": resolution,
+                "quality": body_quality,
+            }
+        else:
+            endpoint = runninghub_endpoint_url(provider, "/openapi/v2/rhart-image-g-2-official/text-to-image")
+            body = {
+                "prompt": prompt,
+                "aspectRatio": aspect_ratio,
+                "resolution": resolution,
+                "quality": body_quality,
+            }
         response = await client.post(endpoint, headers=runninghub_api_headers(provider), json=body)
         response.raise_for_status()
         raw = response.json()
@@ -4947,7 +5055,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
     if is_jimeng_provider(provider):
         return await generate_jimeng_provider_image(prompt, size, model, reference_images, provider)
     if is_runninghub_provider(provider):
-        return await generate_runninghub_provider_image(prompt, size, model, reference_images, provider)
+        return await generate_runninghub_provider_image(prompt, size, model, reference_images, provider, quality)
     if is_omnilojo_provider(provider):
         return await generate_omnilojo_provider_image(prompt, size, model, reference_images, provider)
     if effective_protocol(provider, model) == "gemini":
