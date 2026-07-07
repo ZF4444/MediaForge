@@ -409,5 +409,34 @@
         <div id="mentionPreview" class="mention-preview"><img alt="preview"></div>
     </div>
     <script src="/static/js/smart-canvas.js"></script>
+    <script>
+    /* 访问控制：按当前用户权限限制智能画布「AI生成」引擎（engine=api）下可选的模型。
+       - 暴露 window.__smartCanvasAllowedModels（Set<"provider_id::model"> 或 null=全部放开）。
+       - smart-canvas.js 的 imageProviders()/providerImageModels()/videoApiProviders()/
+         providerVideoModels() 会读取该 Set 过滤掉不允许的 provider/模型。
+       - 真正的强制生效点在后端 /api/canvas-image-tasks、/api/canvas-video（403 拦截），
+         这里只是同步隐藏 UI，避免用户看到选不了/选了也会被拒绝的模型。 */
+    (function () {
+        async function applySmartCanvasAccessControl() {
+            var me;
+            try {
+                var res = await fetch('/api/access-control/me', { credentials: 'same-origin' });
+                if (!res.ok) return;
+                me = await res.json();
+            } catch (e) { return; }
+            if (!me || me.is_admin) {
+                window.__smartCanvasAllowedModels = null;   // 全部放开
+                return;
+            }
+            window.__smartCanvasAllowedModels = new Set(Array.isArray(me.nodes) ? me.nodes : []);
+            try { if (typeof window.renderDynamicParams === 'function') window.renderDynamicParams(); } catch (e) {}
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', applySmartCanvasAccessControl, { once: true });
+        } else {
+            applySmartCanvasAccessControl();
+        }
+    })();
+    </script>
 </body>
 </html>

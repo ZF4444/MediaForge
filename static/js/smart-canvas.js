@@ -1841,9 +1841,17 @@ function runningHubStandardImageModels(provider){
     const models = Array.isArray(provider?.image_models) ? provider.image_models : [];
     return models.filter(m => RUNNINGHUB_STANDARD_IMAGE_MODELS.includes(String(m || '').trim()));
 }
+// 访问控制：window.__smartCanvasAllowedModels 为 Set<"provider_id::model"> 时按白名单过滤；
+// null/未设置（未登录探测失败、admin、或用户未被限制）时视为全部放开。
+function smartModelAllowed(providerId, model){
+    const allowed = window.__smartCanvasAllowedModels;
+    if(!allowed) return true;
+    return allowed.has(`${providerId}::${model}`);
+}
 function imageProviders(){
     return (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'volcengine'
-        && (p.id === 'runninghub' ? runningHubStandardImageModels(p).length : (p.image_models || []).length));
+        && (p.id === 'runninghub' ? runningHubStandardImageModels(p).length : (p.image_models || []).length))
+        .map(p => p.id === 'runninghub' ? {...p, image_models: runningHubStandardImageModels(p)} : p);
 }
 function volcengineProvider(){
     return (apiProviders || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
@@ -2102,25 +2110,31 @@ function volcengineVideoModels(){
     const provider = (apiProviders || []).find(p => p.id === 'volcengine');
     return [...new Set(provider?.video_models || DEFAULT_VIDEO_MODELS)];
 }
-function renderVideoProviderControl(providers){
+function renderVideoProviderControl(providers, restricted){
     const current = (providers || []).find(p => p.id === settings.videoProvider) || videoProviderById(settings.videoProvider);
     return `<div class="smart-control provider-control">
         <button class="smart-pill" type="button"><i data-lucide="plug-zap"></i><span class="sub">${escapeHtml(current?.name || settings.videoProvider || tr('smart.platform'))}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.videoPlatform'))}</div>
             <div class="model-list">
-                ${providers.map(p => `<button type="button" class="direct-option ${p.id === settings.videoProvider ? 'active' : ''}" data-smart-param="videoProvider" data-smart-value="${escapeHtml(p.id)}"><span>${escapeHtml(p.name || p.id)}</span></button>`).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoPlatform'))}</div>`}
+                ${providers.map(p => {
+                    const locked = restricted && (p.video_models || []).length > 0 && !(p.video_models || []).some(m => smartModelAllowed(p.id, m));
+                    return `<button type="button" class="direct-option ${p.id === settings.videoProvider ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoProvider" data-smart-value="${escapeHtml(p.id)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(p.name || p.id)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoPlatform'))}</div>`}
             </div>
         </div>
     </div>`;
 }
-function renderVideoModelControl(models){
+function renderVideoModelControl(models, restricted){
     return `<div class="smart-control model-control">
         <button class="smart-pill" type="button"><i data-lucide="film"></i><span class="sub">${escapeHtml(settings.videoModel ? modelDisplayName(settings.videoModel, settings.videoProvider) : tr('smart.model'))}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.videoModel'))}</div>
             <div class="model-list">
-                ${models.map(m => `<button type="button" class="direct-option ${m === settings.videoModel ? 'active' : ''}" data-smart-param="videoModel" data-smart-value="${escapeHtml(m)}"><span>${escapeHtml(modelDisplayName(m, settings.videoProvider))}</span></button>`).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
+                ${models.map(m => {
+                    const locked = restricted && !smartModelAllowed(settings.videoProvider, m);
+                    return `<button type="button" class="direct-option ${m === settings.videoModel ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoModel" data-smart-value="${escapeHtml(m)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(modelDisplayName(m, settings.videoProvider))}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
             </div>
         </div>
     </div>`;
@@ -2293,8 +2307,8 @@ function renderApiParams(){
     normalizeApiSizeSettings('');
     const outpaintLocked = settings.outpaintResolutionLocked === true;
     dynamicParams.innerHTML = `
-        ${renderProviderControl(providers)}
-        ${renderModelControl(models)}
+        ${renderProviderControl(providers, true)}
+        ${renderModelControl(models, true)}
         ${renderResolutionControl('', false)}
         ${outpaintLocked ? '' : renderRatioControl('', true, false)}
         ${renderQualityControl()}
@@ -2307,8 +2321,8 @@ function renderApiVideoParams(){
     const models = filterJimengVideoModels(providerVideoModels(settings.videoProvider));
     if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || 'veo3-fast';
     dynamicParams.innerHTML = `
-        ${renderVideoProviderControl(providers)}
-        ${renderVideoModelControl(models)}
+        ${renderVideoProviderControl(providers, true)}
+        ${renderVideoModelControl(models, true)}
         ${renderVideoResolutionControl()}
         ${renderVideoAspectControl()}
         ${renderVideoDurationControl()}
@@ -2655,25 +2669,31 @@ function videoAspectIconClass(value){
     if(value === 'keep_ratio' || value === 'adaptive') return 'r-source';
     return '';
 }
-function renderProviderControl(providers){
+function renderProviderControl(providers, restricted){
     const current = (providers || []).find(p => p.id === settings.provider_id) || apiProviderById(settings.provider_id);
     return `<div class="smart-control provider-control">
         <button class="smart-pill" type="button"><i data-lucide="plug-zap"></i><span class="sub">${escapeHtml(current?.name || settings.provider_id || tr('smart.platform'))}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.apiPlatform'))}</div>
             <div class="model-list">
-                ${providers.map(p => `<button type="button" class="direct-option ${p.id === settings.provider_id ? 'active' : ''}" data-smart-param="provider_id" data-smart-value="${escapeHtml(p.id)}"><span>${escapeHtml(p.name || p.id)}</span></button>`).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noApiPlatform'))}</div>`}
+                ${providers.map(p => {
+                    const locked = restricted && (p.image_models || []).length > 0 && !(p.image_models || []).some(m => smartModelAllowed(p.id, m));
+                    return `<button type="button" class="direct-option ${p.id === settings.provider_id ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="provider_id" data-smart-value="${escapeHtml(p.id)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(p.name || p.id)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noApiPlatform'))}</div>`}
             </div>
         </div>
     </div>`;
 }
-function renderModelControl(models){
+function renderModelControl(models, restricted){
     return `<div class="smart-control model-control">
         <button class="smart-pill" type="button"><i data-lucide="sparkles"></i><span class="sub">${escapeHtml(settings.model ? modelDisplayName(settings.model, settings.provider_id) : tr('smart.model'))}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.imageModel'))}</div>
             <div class="model-list">
-                ${models.map(m => `<button type="button" class="direct-option ${m === settings.model ? 'active' : ''}" data-smart-param="model" data-smart-value="${escapeHtml(m)}"><span>${escapeHtml(modelDisplayName(m, settings.provider_id))}</span></button>`).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noImageModel'))}</div>`}
+                ${models.map(m => {
+                    const locked = restricted && !smartModelAllowed(settings.provider_id, m);
+                    return `<button type="button" class="direct-option ${m === settings.model ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="model" data-smart-value="${escapeHtml(m)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(modelDisplayName(m, settings.provider_id))}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noImageModel'))}</div>`}
             </div>
         </div>
     </div>`;
@@ -3437,6 +3457,10 @@ function bindDynamicParams(){
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
+            if(btn.classList.contains('is-locked')){
+                toast(tr('smart.modelLocked'));
+                return;
+            }
             setDynamicSetting(btn.dataset.smartParam, btn.dataset.smartValue);
             if(btn.dataset.smartParam === 'videoDuration') renderDynamicParams();
         };

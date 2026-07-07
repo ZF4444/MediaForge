@@ -18,8 +18,8 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.access_control import (
     ADMIN_USER_ID,
-    ALL_NODES,
-    ALL_PAGES,
+    all_nodes,
+    all_pages,
     effective_permissions,
     is_admin,
     load_config,
@@ -69,8 +69,8 @@ async def access_control_get_config():
     _require_admin()
     config = load_config()
     return {
-        "all_pages": ALL_PAGES,
-        "all_nodes": ALL_NODES,
+        "all_pages": all_pages(),
+        "all_nodes": all_nodes(),
         "users": _registered_users(),
         "config": config.get("users", {}),
         "default": config.get("default"),

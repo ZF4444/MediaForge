@@ -1107,6 +1107,12 @@ def save_api_providers(providers):
         with open(API_PROVIDERS_FILE, "w", encoding="utf-8") as f:
             json.dump(providers, f, ensure_ascii=False, indent=2)
 
+# 依赖注入：把 load_api_providers 交给 access_control 模块，用于动态枚举
+# 智能画布「AI生成」引擎下的可选模型清单（画布节点访问控制）。避免 access_control
+# 反向 import main.py 造成循环依赖。
+import app.core.access_control as access_control
+access_control.set_image_models_provider(load_api_providers)
+
 def public_provider(provider):
     if provider.get("id") == "runninghub":
         try:
@@ -6634,6 +6640,9 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
+    uid = current_user_id()
+    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, payload.provider_id, payload.model):
+        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员在访问控制中开放。")
     task_id = f"canvas_img_{uuid.uuid4().hex}"
     with CANVAS_TASK_LOCK:
         CANVAS_TASKS[task_id] = {
@@ -7019,6 +7028,9 @@ def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
 
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
+    uid = current_user_id()
+    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, payload.provider_id, payload.model):
+        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员在访问控制中开放。")
     provider = get_api_provider(payload.provider_id)
     if is_jimeng_provider(provider):
         return await generate_jimeng_video(payload, provider)

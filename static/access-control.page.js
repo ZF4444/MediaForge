@@ -133,6 +133,9 @@
     $('acDetailTitle').textContent = id === DEFAULT_ID ? '默认（新用户）配置' : '用户配置';
     // 仅默认条目显示「清除默认」按钮
     $('acClearDefaultWrap').style.display = id === DEFAULT_ID ? '' : 'none';
+    // 仅已被单独限制的具体用户显示「恢复默认」按钮（把该用户的独立配置清除，重新跟随默认/全开）
+    var restoreWrap = $('acRestoreDefaultWrap');
+    if (restoreWrap) restoreWrap.style.display = (id !== DEFAULT_ID && isRestricted(id)) ? '' : 'none';
 
     renderUsers();
     buildChecks('acPages', state.allPages, state.draftPages);
@@ -195,6 +198,41 @@
     }
   }
 
+  // 恢复某用户为默认配置：清除其独立配置（config 中的记录），使其重新跟随
+  // 「默认（新用户）」配置（或默认未设置时全开）。立即持久化，无需再点「保存配置」。
+  async function restoreUserDefault(uid) {
+    if (!uid || uid === DEFAULT_ID) return;
+    var btn = $('acRestoreDefaultBtn');
+    if (btn) btn.disabled = true;
+    setStatus('恢复中...');
+
+    var usersPayload = {};
+    Object.keys(state.config).forEach(function (id) {
+      if (id === uid) return;   // 从 payload 中剔除该用户 => 后端保存后其记录消失
+      usersPayload[id] = {
+        pages: (state.config[id].pages || []).slice(),
+        nodes: (state.config[id].nodes || []).slice(),
+      };
+    });
+    var body = { users: usersPayload };
+    try {
+      var res = await fetchJSON('/api/access-control/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      state.config = res.config || {};
+      state.default = res.default || null;
+      renderUsers();
+      if (state.selected === uid) selectUser(uid);
+      setStatus('已恢复为默认配置。', 'ok');
+    } catch (e) {
+      setStatus(e.code === 403 ? '无权限。' : '恢复失败：' + e.message, 'err');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   async function init() {
     try {
       var data = await fetchJSON('/api/access-control/config');
@@ -221,6 +259,8 @@
     $('acSaveBtn').addEventListener('click', function () { persist(false); });
     var clearBtn = $('acClearDefaultBtn');
     if (clearBtn) clearBtn.addEventListener('click', function () { persist(true); });
+    var restoreBtn = $('acRestoreDefaultBtn');
+    if (restoreBtn) restoreBtn.addEventListener('click', function () { restoreUserDefault(state.selected); });
 
     try { if (window.lucide) window.lucide.createIcons(); } catch (e) {}
   }
