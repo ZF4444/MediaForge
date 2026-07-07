@@ -2786,13 +2786,13 @@ function renderCountVisualControl(){
         <div class="smart-popover compact-popover" style="min-width:170px">
             <div class="smart-popover-title">${escapeHtml(tr('smart.count'))}</div>
             <div class="count-grid">
-                ${[1,2,3,4,5,6,7,8].map(n => `<button type="button" class="count-cell ${n === value ? 'active' : ''}" data-smart-param="count" data-smart-value="${n}">${n}</button>`).join('')}
+                ${[1,2,3,4].map(n => `<button type="button" class="count-cell ${n === value ? 'active' : ''}" data-smart-param="count" data-smart-value="${n}">${n}</button>`).join('')}
             </div>
         </div>
     </div>`;
 }
 function renderCountControl(){
-    return `<select data-param="count">${[1,2,3,4,5,6,7,8].map(n => optionHtml(n, `${n} 张`, Number(settings.count || 1))).join('')}</select>`;
+    return `<select data-param="count">${[1,2,3,4].map(n => optionHtml(n, `${n} 张`, Number(settings.count || 1))).join('')}</select>`;
 }
 function renderCustomRatioControls(prefix=''){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
@@ -11972,7 +11972,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         const runLog = smartRunSnapshot(rootNode, prompt, request.refs || [], logKind);
         const runLogStart = nowMs();
         const expectedCount = isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'
-            ? Math.max(1, Math.min(8, Number(runSettings.count || 1)))
+            ? Math.max(1, Math.min(4, Number(runSettings.count || 1)))
             : 1;
         outputSlot.queued = false;
         outputSlot.running = true;
@@ -12373,7 +12373,7 @@ async function runGeneration(){
         ? 1
         : settings.engine === 'comfy'
         ? (settings.comfyMode === 'text' || settings.comfyMode === 'enhance' || settings.comfyMode === 'edit' || settings.comfyMode === 'custom' ? 1 : 1)
-        : Math.max(1, Math.min(8, Number(settings.count || 1)));
+        : Math.max(1, Math.min(4, Number(settings.count || 1)));
     const apiConcurrentRun = isApiLikeEngine(settings.engine) || settings.engine === 'runninghub' || settings.engine === 'modelscope';
     const nodeHasImages = (node.images || []).some(img => img?.url);
     const workflowModeRun = smartImageUsesWorkflowInput(node, smartLoopContext);

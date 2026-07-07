@@ -7845,15 +7845,15 @@ function renderGeneratorBody(node){
     countInput.onmousedown = e => e.stopPropagation();
     countInput.onclick = e => e.stopPropagation();
     countInput.oninput = e => {
-        const value = Math.max(1, Math.min(8, Number(e.target.value) || 1));
+        const value = Math.max(1, Math.min(4, Number(e.target.value) || 1));
         node.count = value;
         scheduleSave();
     };
-    countInput.onblur = e => { e.target.value = String(Math.max(1, Math.min(8, Number(node.count || 1)))); };
+    countInput.onblur = e => { e.target.value = String(Math.max(1, Math.min(4, Number(node.count || 1)))); };
     wrap.querySelectorAll('[data-step]').forEach(btn => {
         btn.onclick = e => {
             e.stopPropagation();
-            const next = Math.max(1, Math.min(8, Number(node.count || 1) + Number(btn.dataset.step || 0)));
+            const next = Math.max(1, Math.min(4, Number(node.count || 1) + Number(btn.dataset.step || 0)));
             node.count = next;
             countInput.value = String(next);
             scheduleSave();
