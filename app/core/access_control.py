@@ -4,7 +4,7 @@
 - 配置文件：data/access_control.json，结构：
     {
       "users": {
-        "<user_id>": {"pages": ["zimage", ...], "nodes": ["image", ...]}
+        "<user_id>": {"pages": ["canvas", ...], "nodes": ["image", ...]}
       }
     }
 - 语义：
@@ -33,13 +33,9 @@ ACCESS_CONTROL_LOCK = Lock()
 # 侧边栏可访问页面（与 static/index.html 的 PAGE_IDS 对应）。
 # access-control 自身不在此清单内：它仅对 admin 可见，不参与按用户裁剪。
 ALL_PAGES: List[Dict[str, str]] = [
-    {"id": "zimage", "label": "文生图"},
-    {"id": "enhance", "label": "细节增强"},
-    {"id": "klein", "label": "图片编辑"},
     {"id": "angle", "label": "视角粗调"},
     {"id": "gaussian", "label": "视角微调"},
     {"id": "pose-studio", "label": "姿势编辑"},
-    {"id": "online", "label": "在线生图"},
     {"id": "gpt-chat", "label": "GPT 对话"},
     {"id": "canvas", "label": "无限画布"},
     {"id": "asset-manager", "label": "素材库"},
