@@ -63,6 +63,27 @@
     "APIRoute"
   ],
   [
+    "/api/announcement",
+    [
+      "DELETE"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/announcement",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/announcement/latest",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/asset-library",
     [
       "GET"

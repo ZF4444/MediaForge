@@ -460,3 +460,7 @@ class FeedbackUpdatePayload(BaseModel):
 
 class HelpMarkdownPayload(BaseModel):
     content: str = Field(default="", max_length=100000)
+
+
+class AnnouncementPayload(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)

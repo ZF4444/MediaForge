@@ -99,6 +99,18 @@ class ConnectionManager:
                 except ValueError:
                     pass
 
+    async def broadcast_announcement(self, announcement: dict):
+        data = json.dumps({"type": "announcement", "data": announcement})
+        for connection in self.active_connections[:]:
+            try:
+                await connection.send_text(data)
+            except Exception as e:
+                print(f"Broadcast announcement error: {e}")
+                try:
+                    self.active_connections.remove(connection)
+                except ValueError:
+                    pass
+
     async def send_personal_message(self, message: dict, client_id: str):
         ws = self.user_connections.get(client_id)
         if ws:

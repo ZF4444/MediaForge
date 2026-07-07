@@ -14,7 +14,6 @@
 """
 import os
 import re
-import time
 import urllib.parse
 
 from fastapi import APIRouter, HTTPException, Request
@@ -46,10 +45,8 @@ def current_app_version():
                     return version
     except Exception:
         pass
-    try:
-        return time.strftime("%Y.%m.%d", time.localtime())
-    except Exception:
-        return ""
+    # 回退值需保持 a.b.c 语义化版本格式，供前端解析大版本(a/b)与小版本(c)变化。
+    return "0.0.0"
 
 
 def versioned_static_html(html: str) -> str:

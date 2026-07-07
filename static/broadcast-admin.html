@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全局广播</title>
+    <script>
+        (function(){
+            try {
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                if(theme === 'dark') {
+                    document.documentElement.classList.add('studio-theme-dark');
+                    document.documentElement.classList.add('theme-dark');
+                }
+            } catch(e) {}
+        })();
+    </script>
+    <script src="/static/vendor/js/lucide.js"></script>
+    <script src="/static/js/theme.js"></script>
+    <link rel="stylesheet" href="/static/css/theme.css">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: var(--bg, #f5f6f8);
+            color: var(--text, #1a1f29);
+        }
+        .ba-wrap { max-width: 720px; margin: 0 auto; padding: 28px 24px 60px; }
+        .ba-head { margin-bottom: 18px; }
+        .ba-title { font-size: 20px; font-weight: 800; }
+        .ba-sub { font-size: 12.5px; color: var(--faint, #6b7280); margin-top: 6px; line-height: 1.6; }
+        .ba-status { min-height: 18px; font-size: 12px; color: var(--faint, #6b7280); margin-top: 8px; }
+        .ba-status.ok { color: #16a34a; }
+        .ba-status.err { color: #dc2626; }
+        .ba-card {
+            background: var(--panel, #fff);
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .ba-card-title { font-size: 13.5px; font-weight: 700; margin-bottom: 10px; }
+        .ba-textarea {
+            width: 100%;
+            min-height: 140px;
+            resize: vertical;
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 9px;
+            background: var(--bg, #f5f6f8);
+            color: var(--text, #1a1f29);
+            font: inherit;
+            padding: 12px;
+            line-height: 1.6;
+            outline: none;
+        }
+        .ba-textarea:focus {
+            border-color: var(--text, #1a1f29);
+            box-shadow: 0 0 0 3px rgba(148, 163, 184, .18);
+        }
+        .ba-counter { text-align: right; font-size: 11.5px; color: var(--faint, #6b7280); margin-top: 6px; }
+        .ba-actions { display: flex; gap: 10px; margin-top: 14px; }
+        .ba-btn {
+            height: 38px;
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 9px;
+            background: var(--panel, #fff);
+            color: var(--text, #1a1f29);
+            padding: 0 16px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .ba-btn:hover { background: var(--hover, #f3f4f6); }
+        .ba-btn:disabled { opacity: .5; cursor: not-allowed; }
+        .ba-btn.primary { border-color: var(--text, #1a1f29); background: var(--text, #1a1f29); color: var(--bg, #fff); }
+        .ba-btn.danger { color: #dc2626; border-color: #fecaca; }
+        .ba-current-empty { font-size: 12.5px; color: var(--faint, #6b7280); }
+        .ba-current-content { font-size: 13px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+        .ba-current-meta { font-size: 11.5px; color: var(--faint, #6b7280); margin-top: 8px; }
+        .ba-forbidden { display: none; padding: 60px 20px; text-align: center; color: var(--faint, #6b7280); font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="ba-wrap" id="baRoot">
+        <div class="ba-head">
+            <div class="ba-title">全局广播</div>
+            <div class="ba-sub">发送后，所有在线用户无论当前处于哪个页面，都会立即收到一个弹窗通知；用户可手动关闭。刷新页面或重新登录的用户也会看到尚未清空的最新公告。</div>
+            <div id="baStatus" class="ba-status"></div>
+        </div>
+
+        <div id="baMain">
+            <div class="ba-card">
+                <div class="ba-card-title">发送新公告</div>
+                <textarea id="baContent" class="ba-textarea" maxlength="2000" placeholder="输入要广播给所有用户的内容..."></textarea>
+                <div class="ba-counter"><span id="baCount">0</span> / 2000</div>
+                <div class="ba-actions">
+                    <button id="baSendBtn" class="ba-btn primary" type="button">立即发送</button>
+                </div>
+            </div>
+
+            <div class="ba-card">
+                <div class="ba-card-title">当前生效的公告</div>
+                <div id="baCurrent"></div>
+                <div class="ba-actions">
+                    <button id="baClearBtn" class="ba-btn danger" type="button">清空当前公告</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="baForbidden" class="ba-forbidden">仅管理员（用户名 admin）可访问此页面。</div>
+    </div>
+
+    <script src="/static/broadcast-admin.page.js"></script>
+</body>
+</html>

@@ -9178,6 +9178,7 @@ from app.routers import pages as pages_router
 from app.routers import access_control as access_control_router
 from app.routers import feedback as feedback_router
 from app.routers import help as help_router
+from app.routers import announcement as announcement_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -9191,6 +9192,7 @@ app.include_router(pages_router.router)
 app.include_router(access_control_router.router)
 app.include_router(feedback_router.router)
 app.include_router(help_router.router)
+app.include_router(announcement_router.router)
 
 
 if __name__ == "__main__":

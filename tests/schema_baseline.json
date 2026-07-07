@@ -51,6 +51,18 @@
     },
     "required": []
   },
+  "AnnouncementPayload": {
+    "properties": {
+      "content": {
+        "type": "string",
+        "maxLength": 2000,
+        "minLength": 1
+      }
+    },
+    "required": [
+      "content"
+    ]
+  },
   "ApiProviderPayload": {
     "properties": {
       "id": {
