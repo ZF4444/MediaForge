@@ -1075,6 +1075,11 @@
         "type": "string",
         "default": "",
         "maxLength": 100000
+      },
+      "page": {
+        "type": "string",
+        "default": "index",
+        "maxLength": 64
       }
     },
     "required": []
