@@ -5918,6 +5918,49 @@ function thumbMediaUrl(itemOrUrl, size=320){
     if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
     return fileThumbnailUrl(itemOrUrl, size);
 }
+function renderedThumbSrcForRef(ref, size=160){
+    if(!ref || !world) return thumbMediaUrl(ref, size);
+    try {
+        const nodeId = String(ref.nodeId || '').trim();
+        const rawImageIndex = ref.imageIndex;
+        const imageIndex = rawImageIndex === '' || rawImageIndex == null ? null : Number(rawImageIndex);
+        const fileId = String(ref.file_id || '').trim();
+        const url = String(ref.url || '').trim();
+        if(nodeId){
+            const nodeEl = [...world.querySelectorAll('.image-node')].find(el => el.dataset.id === nodeId);
+            if(nodeEl){
+                const itemEls = [...nodeEl.querySelectorAll('[data-image-index], [data-ref-node-id][data-ref-image-index]')];
+                const exact = itemEls.find(el => {
+                    if(el.dataset.refNodeId && el.dataset.refNodeId !== nodeId) return false;
+                    const idx = el.dataset.refImageIndex ?? el.dataset.imageIndex ?? '';
+                    return imageIndex != null ? Number(idx) === imageIndex : true;
+                });
+                const img = exact?.querySelector?.('img');
+                const src = img?.currentSrc || img?.getAttribute?.('src') || '';
+                if(src) return src;
+                const fallbackImg = nodeEl.querySelector('img');
+                const fallbackSrc = fallbackImg?.currentSrc || fallbackImg?.getAttribute?.('src') || '';
+                if(fallbackSrc) return fallbackSrc;
+            }
+        }
+        const allImgs = [...world.querySelectorAll('img')];
+        if(fileId){
+            const byFile = allImgs.find(img => String(img.getAttribute('src') || '').includes(`/api/files/${fileId}/thumb`));
+            const src = byFile?.currentSrc || byFile?.getAttribute?.('src') || '';
+            if(src) return src;
+        }
+        if(url){
+            const byUrl = allImgs.find(img => {
+                const src = String(img.getAttribute('src') || '');
+                const original = String(img.dataset.originalSrc || '');
+                return src === url || original === url;
+            });
+            const src = byUrl?.currentSrc || byUrl?.getAttribute?.('src') || '';
+            if(src) return src;
+        }
+    } catch(e) {}
+    return thumbMediaUrl(ref, size);
+}
 function videoPosterHtml(item, size=256, extraClass='', style=''){
     const cls = extraClass ? ` class="${extraClass}"` : '';
     const styleAttr = style ? ` style="${style}"` : '';
@@ -10044,9 +10087,10 @@ function rhInputKindIcon(kind){
 function renderRhInputThumb(ref, field, index, kind, node, sourceUrl){
     const isVid = kind === 'video' || isVideoMediaItem(ref);
     const title = `${field.label || field.fieldName || rhInputKindLabel(kind)} · ${ref?.name || tr('smart.inputNum').replace('{n}', String(index + 1))}`;
+    const visibleUrl = renderedThumbSrcForRef(ref, 160);
     const inner = isVid
         ? `<div class="input-thumb-video">${videoPosterHtml(ref, 160)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
-        : `<img src="${escapeAttr(thumbMediaUrl(ref, 160))}" draggable="false">`;
+        : `<img src="${escapeAttr(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
     const label = rhInputKindLabel(kind).slice(0, 3);
     const isSelf = node ? isSelfReferenceForNode(node, ref) : false;
     return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(thumbMediaUrl(ref, 160) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
@@ -10107,9 +10151,10 @@ function renderInputThumbsRow(node){
         const title = isSelf
             ? tr('smart.inputSelf')
             : (smartImageMode(node) === 'workflow' ? tr('smart.inputUpstreamWorkflow') : tr('smart.inputUpstream'));
+        const visibleUrl = renderedThumbSrcForRef(img, 160);
         const inner = isVid
             ? `<div class="input-thumb-video">${videoPosterHtml(img, 160)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
-            : `<img src="${escapeHtml(thumbMediaUrl(img, 160))}" draggable="false">`;
+            : `<img src="${escapeHtml(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
         const label = `图${i + 1}`;
         const sourceUrl = img.originalLocalUrl || img.url || '';
         return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}" style="--preview-url:url('${escapeHtml(thumbMediaUrl(img, 160) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
