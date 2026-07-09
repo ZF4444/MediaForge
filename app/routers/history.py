@@ -21,34 +21,30 @@ from app.config import HISTORY_LOCK
 from app.core.auth import history_file
 from app.core.media import output_file_from_url
 from app.models import DeleteHistoryRequest, SaveHistoryRequest
-from app.services.history import save_to_history
+from app.services.history import delete_history_files, load_history_records, normalize_history_record, save_to_history
 
 router = APIRouter()
 
 
 @router.get("/api/history")
 async def get_history_api(type: str = None):
-    hist_path = history_file()
-    if os.path.exists(hist_path):
-        try:
-            with open(hist_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if type:
-                    data = [item for item in data if item.get("type", "zimage") == type]
-                data = [item for item in data if item.get("images") and len(item["images"]) > 0]
+    try:
+        data = load_history_records()
+        if type:
+            data = [item for item in data if item.get("type", "zimage") == type]
+        data = [item for item in data if item.get("images") and len(item["images"]) > 0]
 
-                def sort_key(item):
-                    ts = item.get("timestamp", 0)
-                    if isinstance(ts, (int, float)):
-                        return float(ts)
-                    return 0
+        def sort_key(item):
+            ts = item.get("timestamp", 0)
+            if isinstance(ts, (int, float)):
+                return float(ts)
+            return 0
 
-                data.sort(key=sort_key, reverse=True)
-                return data
-        except Exception as e:
-            print(f"读取历史文件失败: {e}")
-            return []
-    return []
+        data.sort(key=sort_key, reverse=True)
+        return data
+    except Exception as e:
+        print(f"读取历史文件失败: {e}")
+        return []
 
 
 @router.post("/api/history/save")
@@ -64,7 +60,7 @@ async def save_history_api(req: SaveHistoryRequest):
         "is_cloud": bool(req.is_cloud),
     }
     save_to_history(record)
-    return {"success": True, "record": record}
+    return {"success": True, "record": normalize_history_record(record)}
 
 
 @router.post("/api/history/delete")
@@ -75,7 +71,8 @@ async def delete_history(req: DeleteHistoryRequest):
     try:
         with HISTORY_LOCK:
             with open(hist_path, 'r', encoding='utf-8') as f:
-                history = json.load(f)
+                raw_history = json.load(f)
+            history = [normalize_history_record(item) for item in raw_history if isinstance(item, dict)]
             target_record = None
             new_history = []
             for item in history:
@@ -95,6 +92,7 @@ async def delete_history(req: DeleteHistoryRequest):
                     json.dump(new_history, f, ensure_ascii=False, indent=4)
 
         if target_record:
+            delete_history_files(target_record)
             for img_url in target_record.get("images", []):
                 file_path = output_file_from_url(img_url)
                 if file_path and os.path.exists(file_path):

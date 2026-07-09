@@ -20,8 +20,43 @@ from app.config import CONVERSATION_LOCK
 from app.core.auth import safe_user_id, user_dir
 from app.core.utils import now_ms
 from app.models import ConversationCreateRequest
+from app.services.storage import compact_media_refs, normalize_media_refs
 
 router = APIRouter()
+
+
+def hydrate_conversation(conversation):
+    if not isinstance(conversation, dict):
+        return conversation
+    normalized = dict(conversation)
+    messages = []
+    for message in normalized.get("messages", []) if isinstance(normalized.get("messages"), list) else []:
+        if not isinstance(message, dict):
+            continue
+        msg = dict(message)
+        attachments = msg.get("attachments")
+        if isinstance(attachments, list):
+            msg["attachments"] = normalize_media_refs(attachments)
+        messages.append(msg)
+    normalized["messages"] = messages
+    return normalized
+
+
+def compact_conversation(conversation):
+    if not isinstance(conversation, dict):
+        return conversation
+    compacted = dict(conversation)
+    messages = []
+    for message in compacted.get("messages", []) if isinstance(compacted.get("messages"), list) else []:
+        if not isinstance(message, dict):
+            continue
+        msg = dict(message)
+        attachments = msg.get("attachments")
+        if isinstance(attachments, list):
+            msg["attachments"] = compact_media_refs(attachments)
+        messages.append(msg)
+    compacted["messages"] = messages
+    return compacted
 
 
 def conversation_path(user_id, conversation_id):
@@ -32,10 +67,12 @@ def conversation_path(user_id, conversation_id):
 
 
 def save_conversation(user_id, conversation):
+    conversation = hydrate_conversation(conversation)
+    persisted = compact_conversation(conversation)
     with CONVERSATION_LOCK:
         path = conversation_path(user_id, conversation["id"])
         with open(path, 'w', encoding='utf-8') as f:
-            json.dump(conversation, f, ensure_ascii=False, indent=2)
+            json.dump(persisted, f, ensure_ascii=False, indent=2)
 
 
 def new_conversation(user_id, title="新对话"):
@@ -56,7 +93,7 @@ def load_conversation(user_id, conversation_id):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="对话不存在")
     with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        return hydrate_conversation(json.load(f))
 
 
 def list_conversations(user_id):
@@ -67,7 +104,7 @@ def list_conversations(user_id):
         path = os.path.join(user_dir(user_id), filename)
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+                data = hydrate_conversation(json.load(f))
         except Exception:
             continue
         messages = data.get("messages", [])

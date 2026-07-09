@@ -6,7 +6,7 @@
 
 依赖：
 - app.services.assets：素材库数据与规范化逻辑
-- app.core.media：output_file_from_url（本地媒体路径解析）
+- app.core.media：output_file_from_url（媒体路径物化）
 - app.core.shared：sanitize_asset_name
 - app.config：ASSET_LIBRARY_DIR
 - app.models：素材库相关请求模型
@@ -38,8 +38,18 @@ from app.services.assets import (
     make_asset_library_item,
     save_asset_library,
 )
+from app.services.storage import resolve_file_reference
 
 router = APIRouter()
+
+
+def _materialize_asset_source(file_id: str = ""):
+    if not str(file_id or "").strip():
+        return None
+    entry = resolve_file_reference(file_id=file_id)
+    if not entry:
+        return None
+    return output_file_from_url(entry.get("url") or "")
 
 
 @router.get("/api/asset-library")
@@ -131,9 +141,9 @@ async def add_asset_library_item(payload: AssetLibraryAddRequest):
         raise HTTPException(status_code=404, detail="分类不存在")
     if cat.get("type") != "image":
         raise HTTPException(status_code=400, detail="该分类暂不支持添加媒体")
-    src = output_file_from_url(payload.url)
+    src = _materialize_asset_source(payload.file_id)
     if not src:
-        raise HTTPException(status_code=400, detail="只支持保存本地 /assets 或 /output 媒体")
+        raise HTTPException(status_code=400, detail="file_id 无效或源文件不存在")
     _, item = make_asset_library_item(src, payload.name or os.path.basename(src))
     cat.setdefault("items", []).append(item)
     save_asset_library(lib)
@@ -150,7 +160,7 @@ async def batch_add_asset_library_items(payload: AssetLibraryBatchAddRequest):
     for entry in (payload.items or [])[:200]:
         entry.category_id = payload.category_id
         entry.library_id = payload.library_id
-        src = output_file_from_url(entry.url)
+        src = _materialize_asset_source(entry.file_id)
         if not src:
             continue
         _, item = make_asset_library_item(src, entry.name or os.path.basename(src))

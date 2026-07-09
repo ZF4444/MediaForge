@@ -1117,10 +1117,10 @@ async function uploadFiles(files){
     const form = new FormData();
     [...files].forEach(file => form.append('files', file));
     const uploaded = await apiJson('/api/ai/upload', {method:'POST', body:form});
-    const items = (uploaded.files || []).filter(file => file?.url).map(file => ({
+    const items = (uploaded.files || []).filter(file => file?.file_id).map(file => ({
         library_id:activeAssetLibraryId,
         category_id:activeAssetCategoryId,
-        url:file.url,
+        file_id:file.file_id,
         name:file.name || 'asset'
     }));
     if(!items.length) throw new Error('没有可保存的素材');
@@ -1824,7 +1824,7 @@ async function pasteAssetClipboard(){
         assetLibrary = data.library || assetLibrary;
         setStatus(`已移动 ${data.moved || 0} 个素材`);
     } else {
-        const items = (assetClipboard.items || []).map(item => ({url:item.url, name:item.name || 'asset'})).filter(item => item.url);
+        const items = (assetClipboard.items || []).map(item => ({file_id:item.file_id, name:item.name || 'asset'})).filter(item => item.file_id);
         const data = await apiJson('/api/asset-library/items/batch', {
             method:'POST',
             headers:{'Content-Type':'application/json'},

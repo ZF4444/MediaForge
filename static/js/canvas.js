@@ -6048,13 +6048,14 @@ function toggleCanvasAssetLibrary(open=!canvasAssetLibraryOpen){
     if(!canvasAssetLibraryOpen) hideCanvasAssetHoverPreview();
     if(canvasAssetLibraryOpen) loadCanvasAssetLibrary();
 }
-async function addUrlToCanvasAssetLibrary(url, name=''){
+async function addFileToCanvasAssetLibrary(fileId, name=''){
     const cat = activeCanvasAssetCategory();
     if(!cat){ setStatus('请先创建资产分组'); return; }
+    if(!fileId){ throw new Error('缺少 file_id，无法保存到资产库'); }
     const data = await fetch('/api/asset-library/items', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({library_id:activeCanvasAssetLibraryId, category_id:cat.id, url, name})
+        body:JSON.stringify({library_id:activeCanvasAssetLibraryId, category_id:cat.id, file_id:fileId, name})
     }).then(async r => {
         if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '保存失败');
         return r.json();
@@ -6067,7 +6068,7 @@ async function uploadFilesToLibrary(files, libraryId, categoryId){
     const form = new FormData();
     [...files].forEach(file => form.append('files', file));
     const uploaded = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r => r.json());
-    const items = (uploaded.files || []).filter(file => file?.url).map(file => ({library_id:libraryId, category_id:categoryId, url:file.url, name:file.name || 'asset'}));
+    const items = (uploaded.files || []).filter(file => file?.file_id).map(file => ({library_id:libraryId, category_id:categoryId, file_id:file.file_id, name:file.name || 'asset'}));
     if(!items.length) return null;
     return fetch('/api/asset-library/items/batch', {
         method:'POST',
@@ -12108,7 +12109,7 @@ canvasAssetDropZone?.addEventListener('drop', async event => {
     canvasAssetDropZone.classList.remove('drag-over');
     try {
         if(hasOutputImageDrag(event.dataTransfer)){
-            await addUrlToCanvasAssetLibrary(event.dataTransfer.getData('application/x-canvas-output-image'), 'output');
+            throw new Error('画布输出拖入资产库尚未切到 file_id，请先使用上传入口');
             return;
         }
         const payload = await resolveImageDropPayload(event.dataTransfer);
@@ -12121,7 +12122,7 @@ canvasAssetDropZone?.addEventListener('drop', async event => {
                 setStatus('已保存到资产库');
             }
         } else if(payload.type === 'url') {
-            await addUrlToCanvasAssetLibrary(payload.url, outputImageName(payload.url));
+            throw new Error('外部 URL 不能直接保存到资产库，请先上传为文件');
         }
     } catch(err) {
         showErrorModal(err.message || '保存资产失败', '保存资产失败');

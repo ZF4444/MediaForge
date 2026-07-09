@@ -3096,6 +3096,7 @@ function manualSmartMediaLinks(sourceSettings=settings){
 function renderedInputMediaRefs(){
     if(!inputThumbsRow) return [];
     return [...inputThumbsRow.querySelectorAll('.input-thumb')].map((el, index) => ({
+        file_id:el.dataset.fileId || '',
         url:el.dataset.url || '',
         sourceUrl:el.dataset.sourceUrl || el.dataset.url || '',
         nodeId:el.dataset.nodeId || '',
@@ -4355,6 +4356,8 @@ function handleAssetLibraryUpdatedMessage(data={}){
 // 服务器广播 canvas_updated 时带回 client_id，自己发的就忽略，避免自我刷新。
 const smartClientId = `canvas_smart_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
 let canvasSyncInFlight = false;
+let canvasSaveDirty = false;
+let canvasSaveAgain = false;
 let canvasSyncTimer = null;
 let canvasMetaPollTimer = null;
 function mergeSmartImageLists(localImgs, remoteImgs){
@@ -4581,7 +4584,7 @@ function renderAssetLibrary(){
     const cat = activeAssetCategory();
     const items = cat?.items || [];
     assetGrid.innerHTML = items.length ? items.map(item => `
-        <div class="asset-item" draggable="true" data-asset-id="${escapeHtml(item.id)}" data-url="${escapeHtml(item.url)}" data-name="${escapeHtml(item.name || 'asset')}" data-kind="${escapeHtml(assetMediaKind(item))}">
+        <div class="asset-item" draggable="true" data-asset-id="${escapeHtml(item.id)}" data-file-id="${escapeHtml(item.file_id || '')}" data-url="${escapeHtml(item.url)}" data-name="${escapeHtml(item.name || 'asset')}" data-kind="${escapeHtml(assetMediaKind(item))}">
             ${assetThumbHtml(item)}
             <div class="asset-meta">
                 <span class="asset-name" title="${escapeHtml(item.name || '')}">${escapeHtml(item.name || 'asset')}</span>
@@ -4743,7 +4746,7 @@ function bindAssetItemEvents(){
         el.addEventListener('dragstart', e => {
             hideAssetHoverPreview();
             e.dataTransfer.effectAllowed = 'copy';
-            e.dataTransfer.setData('application/x-smart-asset', JSON.stringify({url:el.dataset.url, name:el.dataset.name, kind:el.dataset.kind}));
+            e.dataTransfer.setData('application/x-smart-asset', JSON.stringify({file_id:el.dataset.fileId || '', url:el.dataset.url, name:el.dataset.name, kind:el.dataset.kind}));
             e.dataTransfer.setData('text/plain', el.dataset.url || '');
         });
     });
@@ -4767,10 +4770,11 @@ function bindAssetItemEvents(){
         };
     });
 }
-async function addUrlToAssetLibrary(url, name=''){
+async function addFileToAssetLibrary(fileId, name=''){
     const cat = activeAssetCategory();
     if(!cat){ toast(tr('smart.assetNoFolder')); return; }
-    const data = await fetch('/api/asset-library/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:activeAssetLibraryId, category_id:cat.id, url, name})}).then(async r => {
+    if(!fileId) throw new Error(tr('smart.assetAddFail'));
+    const data = await fetch('/api/asset-library/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:activeAssetLibraryId, category_id:cat.id, file_id:fileId, name})}).then(async r => {
         if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || tr('smart.assetAddFail'));
         return r.json();
     });
@@ -4780,13 +4784,18 @@ async function addUrlToAssetLibrary(url, name=''){
 function canvasImageDragPayload(node, index=0){
     const img = node?.images?.[index];
     if(!img?.url) return null;
-    return {url:img.url, name:img.name || node.title || 'image'};
+    return {
+        file_id: img.file_id || '',
+        url: img.url,
+        name: img.name || node.title || 'image',
+        kind: img.kind || assetMediaKind(img) || 'image'
+    };
 }
 async function loadCanvas(){
     if(!canvasId) return;
     try {
         const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
-        if(!res.ok) return;
+        if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.toastCanvasFail')));
         const data = await res.json();
         canvas = data.canvas;
         document.title = canvas.title || tr('canvas.smartCanvas');
@@ -4817,14 +4826,27 @@ async function loadCanvas(){
         resumeSmartPendingTasks();
         resumeJimengPendingNodes();
         startCanvasMetaPoll();
-    } catch(e) { toast(tr('smart.toastCanvasFail')); }
+    } catch(e) { toast(e.message || tr('smart.toastCanvasFail')); }
 }
 function scheduleSave(){
+    if(!canvasId || !canvas) return;
+    canvasSaveDirty = true;
     clearTimeout(saveTimer);
+    if(canvasSyncInFlight){
+        canvasSaveAgain = true;
+        return;
+    }
     saveTimer = setTimeout(saveCanvas, 450);
 }
 async function saveCanvas(){
     if(!canvasId || !canvas) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if(canvasSyncInFlight){
+        canvasSaveAgain = true;
+        canvasSaveDirty = true;
+        return;
+    }
     savePromptDraftForCurrent();
     nodes.forEach(node => {
         node.images = (node.images || []).map(mediaItemForStorage);
@@ -4836,6 +4858,7 @@ async function saveCanvas(){
     canvas.viewport = {...viewport};
     const storageCanvas = canvasForStorage();
     canvasSyncInFlight = true;
+    canvasSaveAgain = false;
     try {
         const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`, {
             method:'PUT',
@@ -4855,11 +4878,16 @@ async function saveCanvas(){
         if(res.ok){
             const data = await res.json();
             if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
+            canvasSaveDirty = Boolean(canvasSaveAgain);
         } else if(res.status === 409) {
-            // 冲突：别人先保存了。合并对方的状态（节点 id 合并、图片取并集，谁都不丢），
-            // 然后用对方最新的 updated_at 作为基底重存，把合并结果落盘——而不是直接覆盖对方。
             const data = await res.json().catch(() => ({}));
             const serverCanvas = data.detail?.canvas;
+            const remoteUpdatedAt = Number(data.detail?.updated_at || serverCanvas?.updated_at || 0);
+            if(canvasSaveDirty || canvasSaveAgain){
+                if(remoteUpdatedAt) canvas.updated_at = remoteUpdatedAt;
+                canvasSaveAgain = true;
+                return;
+            }
             if(serverCanvas){
                 applyMergedServerCanvas(serverCanvas);
                 nodes.forEach(node => {
@@ -4868,14 +4896,18 @@ async function saveCanvas(){
                     if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
                 });
                 canvas.nodes = nodes;
-            } else if(data.detail?.updated_at) {
-                canvas.updated_at = data.detail.updated_at;
+            } else if(remoteUpdatedAt) {
+                canvas.updated_at = remoteUpdatedAt;
             }
-            clearTimeout(saveTimer);
-            saveTimer = setTimeout(saveCanvas, 300);
+            canvasSaveDirty = false;
         }
     } catch(e) {} finally {
         canvasSyncInFlight = false;
+        if(canvasSaveAgain){
+            canvasSaveAgain = false;
+            canvasSaveDirty = true;
+            setTimeout(saveCanvas, 0);
+        }
     }
 }
 function imageMetaFromNode(node){
@@ -5213,6 +5245,7 @@ function normalizeOutputMediaItems(items=[], fallbackKind='image', meta=null){
         const image = {
             ...source,
             url,
+            file_id:source.file_id || fileIdFromUrl(url),
             name:source.name || source.filename || `output-${i + 1}.${ext}`,
             kind,
             generatedResult:true
@@ -5276,9 +5309,9 @@ function resultMediaUrls(result){
         if(typeof value === 'object'){
             if(value.url || value.path || value.src || value.uri){
                 const url = value.url || value.path || value.src || value.uri;
-                if(url) urls.push({url, kind:value.kind || value.type || value.mediaKind || '', name:value.name || value.filename || ''});
+                if(url) urls.push({url, file_id:value.file_id || value.fileId || '', kind:value.kind || value.type || value.mediaKind || '', name:value.name || value.filename || ''});
             }
-            ['items','outputs','videos','audios','texts','files','images','urls','data','result','output','url'].forEach(key => add(value[key]));
+            ['items','outputs','videos','audios','texts','files','images','image_items','imageItems','urls','data','result','output','url'].forEach(key => add(value[key]));
             ['path','src','uri','output_url','outputUrl','video','video_url','videoUrl','mp4_url','mp4Url','download_url','downloadUrl','preview_url','previewUrl'].forEach(key => add(value[key]));
         }
     };
@@ -5478,23 +5511,27 @@ function smartRunTaskLabel(run){
 function outputUrlLooksVideo(url){
     return /\.(mp4|webm|mov|m4v)(\?|$)/.test(String(url || '').toLowerCase());
 }
+function filePreviewUrl(item){
+    const fileId = String(item?.file_id || '').trim();
+    const explicit = String(item?.preview_url || item?.previewUrl || '').trim();
+    if(explicit) return explicit;
+    if(fileId) return `/api/files/${encodeURIComponent(fileId)}/preview`;
+    return String(item?.url || '');
+}
 function proxiedMediaUrl(itemOrUrl, name=''){
-    const url = typeof itemOrUrl === 'string' ? itemOrUrl : (itemOrUrl?.url || '');
-    if(!url || String(url).startsWith('/assets/') || String(url).startsWith('/output/') || String(url).startsWith('data:') || String(url).startsWith('blob:')) return url;
-    const filename = name || (typeof itemOrUrl === 'object' ? (itemOrUrl.name || '') : '') || fileNameFromUrl(url) || 'preview';
-    return `/api/download-output?inline=1&url=${encodeURIComponent(url)}&name=${encodeURIComponent(filename)}`;
+    if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
+    return filePreviewUrl(itemOrUrl);
 }
 function displayMediaUrl(itemOrUrl, name=''){
-    const url = typeof itemOrUrl === 'string' ? itemOrUrl : (itemOrUrl?.url || '');
-    if(/^https?:\/\//i.test(String(url || ''))) return proxiedMediaUrl(itemOrUrl, name);
-    return url;
+    if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
+    return proxiedMediaUrl(itemOrUrl, name);
 }
 function bindImageProxyFallback(imgEl, itemOrUrl){
     if(!imgEl || imgEl.dataset.proxyFallbackBound === '1') return;
     imgEl.dataset.proxyFallbackBound = '1';
     imgEl.addEventListener('error', () => {
         if(imgEl.dataset.proxyFallbackTried === '1') return;
-        const fallback = proxiedMediaUrl(itemOrUrl);
+        const fallback = typeof itemOrUrl === 'object' && itemOrUrl ? filePreviewUrl(itemOrUrl) : String(itemOrUrl || '');
         if(!fallback || fallback === imgEl.getAttribute('src')) return;
         imgEl.dataset.proxyFallbackTried = '1';
         imgEl.src = fallback;
@@ -5511,6 +5548,18 @@ function fileNameFromUrl(url=''){
     } catch(e) {
         return decodeURIComponent(String(url || '').split('?')[0].split('#')[0].split('/').filter(Boolean).pop() || '');
     }
+}
+function fileIdFromUrl(url=''){
+    const text = String(url || '').trim();
+    const match = text.match(/^\/api\/files\/([^/?#]+)\/(?:preview|download)(?:[/?#]|$)/);
+    return match ? decodeURIComponent(match[1]) : '';
+}
+function fileDownloadUrl(item){
+    const fileId = String(item?.file_id || '').trim();
+    const explicit = String(item?.download_url || item?.downloadUrl || '').trim();
+    if(explicit) return explicit;
+    if(fileId) return `/api/files/${encodeURIComponent(fileId)}/download`;
+    return String(item?.url || '');
 }
 function extensionForMediaItem(item, fallback='.png'){
     const source = [item?.name, item?.url].map(value => String(value || '').split('?')[0].split('#')[0]).find(value => /\.[a-z0-9]{2,8}$/i.test(value));
@@ -5536,7 +5585,7 @@ function downloadPreviewImage(){
     if(!image?.url) return;
     const name = downloadNameForMediaItem(image, 'image');
     const link = document.createElement('a');
-    link.href = `/api/download-output?url=${encodeURIComponent(image.url)}&name=${encodeURIComponent(name)}`;
+    link.href = fileDownloadUrl(image);
     link.download = name;
     document.body.appendChild(link);
     link.click();
@@ -5546,7 +5595,7 @@ function downloadPreviewFile(item){
     if(!item?.url) return;
     const name = downloadNameForMediaItem(item, 'output');
     const link = document.createElement('a');
-    link.href = `/api/download-output?url=${encodeURIComponent(item.url)}&name=${encodeURIComponent(name)}`;
+    link.href = fileDownloadUrl(item);
     link.download = name;
     document.body.appendChild(link);
     link.click();
@@ -5577,8 +5626,8 @@ async function downloadPreviewGroup(){
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
                 filename,
-                urls:items.map(item => item.url).filter(Boolean),
-                items:items.map((item, index) => ({url:item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))
+                urls:items.map(item => fileDownloadUrl(item) || item.url).filter(Boolean),
+                items:items.map((item, index) => ({url:fileDownloadUrl(item) || item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))
             })
         });
         if(!response.ok) throw new Error((await response.text()) || '批量下载失败');
@@ -5617,7 +5666,7 @@ function smartRunSnapshot(node, prompt, refs=[], kind='image'){
         kind,
         settings:settingsSnapshot,
         prompt:prompt || '',
-        refs:(refs || []).map(ref => ({url:ref.url || '', name:ref.name || 'image', kind:ref.kind || ''})).filter(ref => ref.url),
+        refs:(refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || 'image', kind:ref.kind || ''})).filter(ref => ref.url),
         size: kind === 'image' && isApiLikeEngine(settingsSnapshot.engine) ? sizeForRun(settingsSnapshot) : ''
     };
 }
@@ -6701,9 +6750,22 @@ function bindNodeEvents(){
             });
         });
         el.querySelectorAll('.thumb-item,.image-wrap').forEach(item => {
-            item.setAttribute('draggable', 'false');
+            const refNodeId = item.dataset.refNodeId || id;
+            const refIndex = Number(item.dataset.refImageIndex ?? item.dataset.imageIndex ?? 0);
+            const refNode = nodes.find(n => n.id === refNodeId);
+            const dragPayload = canvasImageDragPayload(refNode, refIndex);
+            item.setAttribute('draggable', dragPayload?.file_id ? 'true' : 'false');
             item.addEventListener('dragstart', e => {
-                e.preventDefault();
+                const latestNode = nodes.find(n => n.id === refNodeId);
+                const latestPayload = canvasImageDragPayload(latestNode, refIndex);
+                if(!latestPayload?.file_id){
+                    e.preventDefault();
+                    return;
+                }
+                e.stopPropagation();
+                e.dataTransfer.effectAllowed = 'copy';
+                e.dataTransfer.setData('application/x-smart-canvas-image', JSON.stringify(latestPayload));
+                e.dataTransfer.setData('text/plain', latestPayload.url || '');
             });
             item.addEventListener('mousedown', e => {
                 if(isCandidatePanelInteractionTarget(e.target)) return;
@@ -9147,7 +9209,7 @@ async function uploadImageBlobs(blobs){
 function replaceEditedImage(file){
     const {node, index} = currentEditImage();
     if(!node || !file) return false;
-    node.images[index] = {...(node.images[index] || {}), url:file.url, name:file.name, kind:file.kind || mediaKindForItem(file), natural_w:0, natural_h:0};
+    node.images[index] = {...(node.images[index] || {}), url:file.url, file_id:file.file_id || '', name:file.name, kind:file.kind || mediaKindForItem(file), natural_w:0, natural_h:0};
     if((node.images || []).length === 1){ delete node.w; delete node.h; }
     selectedId = node.id; selectedImage = {nodeId:node.id, index};
     return true;
@@ -9211,6 +9273,7 @@ async function applyImageCrop(){
     if(file){
         createEditedResultNode(node, [{
             url:file.url,
+            file_id:file.file_id || '',
             name:file.name,
             kind:file.kind || 'image',
             natural_w:sw,
@@ -9244,6 +9307,7 @@ async function applyImageOutpaint(){
     if(file){
         const outpaintNode = createEditedResultNode(node, [{
             url:file.url,
+            file_id:file.file_id || '',
             name:file.name,
             kind:file.kind || 'image',
             natural_w:outW,
@@ -9267,7 +9331,7 @@ async function applyImageMask(){
     const base = (image.name || 'image').replace(/\.[^.]+$/, '');
     const file = blob ? await uploadCroppedBlob(blob, `${base}_mask.png`) : null;
     if(file){
-        node.images.push({url:file.url, name:file.name, role:'mask'});
+        node.images.push({url:file.url, file_id:file.file_id || '', name:file.name, role:'mask'});
         selectedId = node.id; selectedImage = {nodeId:node.id, index:node.images.length - 1};
         closeImageEditor(); render(); scheduleSave();
     }
@@ -9308,6 +9372,7 @@ async function applyImageBrush(){
     if(file){
         createEditedResultNode(node, [{
             url:file.url,
+            file_id:file.file_id || '',
             name:file.name,
             kind:file.kind || 'image',
             natural_w:canvasEl.width,
@@ -9343,6 +9408,7 @@ async function applyImageGridSplit(){
         // 不写入 grid 元数据,切片按分组节点的自适应网格排列。
         createEditedResultNode(node, files.map(file => ({
             url:file.url,
+            file_id:file.file_id || '',
             name:file.name
         })), {title:'Grid Split'});
         closeImageEditor(); render(); scheduleSave();
@@ -9414,6 +9480,7 @@ async function applyImageGridJoin(){
     if(file){
         createEditedResultNode(node, [{
             url:file.url,
+            file_id:file.file_id || '',
             name:file.name,
             kind:'image',
             natural_w:canvasEl.width,
@@ -9569,7 +9636,7 @@ function renderRhInputThumb(ref, field, index, kind, node, sourceUrl){
         : `<img src="${escapeAttr(ref.url)}" draggable="false">`;
     const label = rhInputKindLabel(kind).slice(0, 3);
     const isSelf = node ? isSelfReferenceForNode(node, ref) : false;
-    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(ref.url || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(ref.url || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
 }
 function renderRunningHubInputThumbsRow(node){
     const fields = rhActiveFields().filter(field => ['image','video','audio'].includes(rhFieldKind(field)));
@@ -9630,7 +9697,7 @@ function renderInputThumbsRow(node){
         const inner = isVid ? `<video src="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>` : `<img src="${escapeHtml(img.url)}" draggable="false">`;
         const label = `图${i + 1}`;
         const sourceUrl = img.originalLocalUrl || img.url || '';
-        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}" style="--preview-url:url('${escapeHtml(img.url || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}" style="--preview-url:url('${escapeHtml(img.url || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
     }).join('');
     inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}${dedup.length > 1 ? `<span class="input-thumb-count">${escapeHtml(tr('smart.inputCount').replace('{n}', String(dedup.length)))}</span>` : ''}</div>`;
     bindInputThumbsDrag(node, dedup);
@@ -10093,8 +10160,7 @@ async function handleSmartImageDropPayload(payload, targetId='', opts={}){
             if(!opts.skipUndo) pushUndo();
             appendImagesToSmartNode(await importSmartLocalImages(payload.localPaths), targetId, opts);
         } else if(payload.type === 'url') {
-            if(!opts.skipUndo) pushUndo();
-            appendImagesToSmartNode([{url:payload.url, name:smartImageNameFromUrl(payload.url), kind:'image'}], targetId, opts);
+            throw new Error('外部 URL 不能直接进入智能画布，请先上传或导入为文件');
         }
     } catch(e) {
         toast(e.message || tr('smart.toastUploadFail'));
@@ -10234,8 +10300,8 @@ function snapshotRunMeta(prompt, sourceId, displayPrompt='', refs=[]){
         displayPrompt:displayPrompt || promptPlainText() || prompt,
         promptHtml: promptInput ? promptInput.innerHTML : '',
         promptText: promptPlainText(),
-        promptRefs:(refs || []).map(ref => ({url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? ''})).filter(ref => ref.url),
-        inputRefs:(refs || []).map(ref => ({url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? '', kind:ref.kind || ''})).filter(ref => ref.url),
+        promptRefs:(refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? ''})).filter(ref => ref.url),
+        inputRefs:(refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? '', kind:ref.kind || ''})).filter(ref => ref.url),
         sourceNodeId:sourceId,
         settings:JSON.parse(JSON.stringify(settings)),
         createdAt:Date.now()
@@ -10954,7 +11020,7 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
         }
         if(!refMap.has(part.url)){
             refMap.set(part.url, refs.length + 1);
-            refs.push({url:part.url, name:part.name || `图${refs.length + 1}`, nodeId:part.nodeId, imageIndex:part.imageIndex, role:`image_${refs.length + 1}`});
+            refs.push({file_id:part.file_id || '', url:part.url, name:part.name || `图${refs.length + 1}`, nodeId:part.nodeId, imageIndex:part.imageIndex, role:`image_${refs.length + 1}`, kind:part.kind || ''});
         }
         body += `图${refMap.get(part.url)}`;
     });
@@ -10970,14 +11036,14 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
         return {
             prompt:`${tr('smart.refMapHeader')}\n${mapText}\n\n${tr('smart.refUserNeed')}\n${body}`,
             displayPrompt,
-            refs:refs.map((img, index) => ({url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`})),
+            refs:refs.map((img, index) => ({file_id:img.file_id || '', url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`, kind:img.kind || ''})),
             mentioned:true
         };
     }
     return {
         prompt:body,
         displayPrompt,
-        refs:refs.map((img, index) => ({url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`})),
+        refs:refs.map((img, index) => ({file_id:img.file_id || '', url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`, kind:img.kind || ''})),
         mentioned:false
     };
 }
@@ -11898,8 +11964,8 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
     const meta = {
         prompt,
         displayPrompt:request.displayPrompt || '',
-        promptRefs:(request.refs || []).map(ref => ({url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? ''})).filter(ref => ref.url),
-        inputRefs:(request.refs || []).map(ref => ({url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? '', kind:ref.kind || ''})).filter(ref => ref.url),
+        promptRefs:(request.refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? ''})).filter(ref => ref.url),
+        inputRefs:(request.refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? '', kind:ref.kind || ''})).filter(ref => ref.url),
         sourceNodeId:sourceNode.id,
         settings:JSON.parse(JSON.stringify(runSettings)),
         createdAt:Date.now()
@@ -11938,7 +12004,7 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
         const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
         const additions = result.urls.map((item, i) => {
             const url = typeof item === 'string' ? item : item?.url || '';
-            const image = {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true};
+            const image = {url, file_id:(typeof item === 'object' && item.file_id) || '', name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true};
             return result.kind === 'image' ? generatedImageWithRunMeta(image, meta) : stripImageGenerationMeta(image);
         }).filter(item => item.url);
         replaceOutputsToNodeWithHistory(outputNode, additions, result.kind, null, {skipShift:Boolean(ctx?.nodeId)});
@@ -11986,8 +12052,8 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         const meta = {
             prompt,
             displayPrompt:request.displayPrompt || '',
-            promptRefs:(request.refs || []).map(ref => ({url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? ''})).filter(ref => ref.url),
-            inputRefs:(request.refs || []).map(ref => ({url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? '', kind:ref.kind || ''})).filter(ref => ref.url),
+            promptRefs:(request.refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? ''})).filter(ref => ref.url),
+            inputRefs:(request.refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? '', kind:ref.kind || ''})).filter(ref => ref.url),
             sourceNodeId:rootNode.id,
             settings:JSON.parse(JSON.stringify(runSettings)),
             createdAt:Date.now()
@@ -12028,7 +12094,6 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             outputSlot.pendingCandidatePool = true;
             outputSlot.running = false;
             render();
-            scheduleSave();
             await saveCanvas();
             await resumeSmartPendingNode(outputSlot);
             if(outputSlot.jimengPending){
@@ -12048,7 +12113,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
             additions = result.urls.map((item, i) => {
                 const url = typeof item === 'string' ? item : item?.url || '';
-                const image = {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true};
+                const image = {url, file_id:(typeof item === 'object' && item.file_id) || '', name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true};
                 return result.kind === 'image' ? generatedImageWithRunMeta(image, meta) : stripImageGenerationMeta(image);
             }).filter(item => item.url);
             replaceOutputsToNodeWithHistory(outputSlot, additions, result.kind, meta, {skipShift:Boolean(ctx?.nodeId)});
@@ -12078,6 +12143,7 @@ function appendCascadeRefsToReceiver(node, refs, ctx=smartLoopContext){
     const additions = refs
         .filter(ref => ref?.url)
         .map((ref, i) => stripImageGenerationMeta({
+            file_id:ref.file_id || '',
             url:ref.url,
             name:ref.name || `output-${i + 1}.png`,
             kind:ref.kind || (isVideoMediaItem(ref) ? 'video' : 'image')
@@ -12089,6 +12155,7 @@ function appendCascadeRefsToReceiver(node, refs, ctx=smartLoopContext){
 }
 function cascadeRefsFromOutputs(outputs, targetNode){
     return (outputs || []).filter(img => img?.url).map((img, index) => ({
+        file_id:img.file_id || '',
         url:img.url,
         name:img.name || `图${index + 1}`,
         kind:img.kind || 'image',
@@ -12478,7 +12545,6 @@ async function runGeneration(){
             pendingNode.runTimerHidden = false;
             pendingNode.running = false;
             render();
-            scheduleSave();
             await saveCanvas();
             await resumeSmartPendingNode(pendingNode);
             if(!(pendingNode.images || []).length) throw new Error(tr('smart.errNoOutImages'));
@@ -12503,7 +12569,6 @@ async function runGeneration(){
             pendingNode.runTimerHidden = false;
             pendingNode.running = false;
             render();
-            scheduleSave();
             await saveCanvas();
             await resumeSmartPendingNode(pendingNode);
             if(pendingNode.jimengPending){
@@ -12770,7 +12835,7 @@ async function runModelscopeGeneration(prompt, refs, runSettings=settings){
     const imageUrls = [];
     if(msModel.supportsImage || msModel.acceptsImage){
         for(const ref of refs.slice(0, 3)){
-            if(ref.url) imageUrls.push(await urlToBase64(ref.url).catch(() => ref.url));
+            if(ref.url) imageUrls.push(await urlToBase64(ref).catch(() => ref.url));
         }
     }
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
@@ -12788,8 +12853,11 @@ async function runModelscopeGeneration(prompt, refs, runSettings=settings){
     const results = await Promise.all(Array.from({length:count}, submit));
     return results.filter(Boolean);
 }
-async function urlToBase64(url){
-    const res = await fetch(url);
+async function urlToBase64(itemOrUrl){
+    const target = typeof itemOrUrl === 'string'
+        ? String(itemOrUrl || '')
+        : (fileDownloadUrl(itemOrUrl) || filePreviewUrl(itemOrUrl) || itemOrUrl?.url || '');
+    const res = await fetch(target);
     if(!res.ok) throw new Error(tr('smart.errImageRead'));
     const blob = await res.blob();
     return new Promise((resolve, reject) => {
@@ -12858,7 +12926,7 @@ async function runComfyText(node, prompt, pendingNode, meta){
     if(pendingNode){
         finalizePendingNode(pendingNode, out, meta);
     } else {
-        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, name:`comfy-${i + 1}.png`})));
+        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, file_id:fileIdFromUrl(url), name:`comfy-${i + 1}.png`})));
         attachRunMeta(created, meta);
         addConnection(node.id, created.id);
     }
@@ -12874,7 +12942,7 @@ async function runComfyEnhance(node, refs, pendingNode, meta){
     if(pendingNode){
         finalizePendingNode(pendingNode, out, meta);
     } else {
-        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, name:`enhance-${i + 1}.png`})));
+        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, file_id:fileIdFromUrl(url), name:`enhance-${i + 1}.png`})));
         attachRunMeta(created, meta);
         addConnection(node.id, created.id);
     }
@@ -12890,7 +12958,7 @@ async function runComfyEdit(node, prompt, refs, pendingNode, meta){
     if(pendingNode){
         finalizePendingNode(pendingNode, out, meta);
     } else {
-        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, name:`edit-${i + 1}.png`})));
+        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, file_id:fileIdFromUrl(url), name:`edit-${i + 1}.png`})));
         attachRunMeta(created, meta);
         addConnection(node.id, created.id);
     }
@@ -12998,8 +13066,8 @@ function finalizeJimengPending(node, urls, kind='image'){
         const url = typeof item === 'string' ? item : item?.url || '';
         const itemKind = (typeof item === 'object' && item.kind) || kind;
         return kind === 'image'
-            ? generatedImageWithRunMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}, imageRunMetaForNodeFallback(node))
-            : stripImageGenerationMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
+            ? generatedImageWithRunMeta({url, file_id:(typeof item === 'object' && item.file_id) || '', name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}, imageRunMetaForNodeFallback(node))
+            : stripImageGenerationMeta({url, file_id:(typeof item === 'object' && item.file_id) || '', name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
     }).filter(item => item.url);
     if(!additions.length) return false;
     delete node.jimengPending;
@@ -13800,8 +13868,8 @@ window.onmouseup = e => {
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         const droppedOnAssetPanel = assetLibraryOpen && hit && assetPanel?.contains(hit);
         if(droppedOnAssetPanel && draggedNode && (draggedNode.images || []).length){
-            const imagesToSave = (draggedNode.images || []).filter(img => img?.url);
-            imagesToSave.forEach(img => addUrlToAssetLibrary(img.url, img.name || draggedNode.title || 'image'));
+            const imagesToSave = (draggedNode.images || []).filter(img => img?.file_id);
+            imagesToSave.forEach(img => { void addFileToAssetLibrary(img.file_id, img.name || draggedNode.title || 'image'); });
             (dragState.group || [{id:dragState.id, ox:dragState.ox, oy:dragState.oy}]).forEach(item => {
                 const n = nodes.find(x => x.id === item.id);
                 if(n){ n.x = item.ox; n.y = item.oy; }
@@ -13906,7 +13974,7 @@ shell.ondrop = async e => {
             const asset = JSON.parse(assetRaw);
             if(asset?.url) {
                 pushUndo();
-                createImageNodeAt(p, [{url:asset.url, name:asset.name || 'asset', kind:asset.kind || assetMediaKind(asset)}], {type:'smart-asset-image', skipUndo:true});
+                createImageNodeAt(p, [{file_id:asset.file_id || '', url:asset.url, name:asset.name || 'asset', kind:asset.kind || assetMediaKind(asset)}], {type:'smart-asset-image', skipUndo:true});
             }
             return;
         } catch {}
@@ -14350,7 +14418,7 @@ async function handleAssetPanelDrop(e){
     if(raw){
         try {
             const payload = JSON.parse(raw);
-            if(payload?.url) await addUrlToAssetLibrary(payload.url, payload.name || '');
+            if(payload?.file_id) await addFileToAssetLibrary(payload.file_id, payload.name || '');
             return;
         } catch(e) {
             toast(tr('smart.assetAddFail'));
@@ -14361,12 +14429,12 @@ async function handleAssetPanelDrop(e){
         const payload = await resolveSmartImageDropPayload(e.dataTransfer);
         if(payload.type === 'files') {
             const uploaded = await uploadFiles(payload.files);
-            for(const file of uploaded) if(file?.url) await addUrlToAssetLibrary(file.url, file.name || '');
+            for(const file of uploaded) if(file?.file_id) await addFileToAssetLibrary(file.file_id, file.name || '');
         } else if(payload.type === 'localPaths') {
             const imported = await importSmartLocalImages(payload.localPaths);
-            for(const file of imported) if(file?.url) await addUrlToAssetLibrary(file.url, file.name || '');
+            for(const file of imported) if(file?.file_id) await addFileToAssetLibrary(file.file_id, file.name || '');
         } else if(payload.type === 'url') {
-            await addUrlToAssetLibrary(payload.url, smartImageNameFromUrl(payload.url));
+            throw new Error('外部 URL 不能直接保存到资产库，请先上传为文件');
         }
     } catch(err) {
         toast(err.message || tr('smart.assetAddFail'));

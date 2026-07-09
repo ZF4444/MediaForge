@@ -6,6 +6,7 @@
 因此用 dirname(dirname(__file__)) 还原出与原 main.py 相同的 BASE_DIR。
 """
 import os
+import tempfile
 import uuid
 from threading import Lock
 
@@ -48,6 +49,27 @@ CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 LOCAL_IMAGE_IMPORT_MAX_BYTES = int(os.getenv("LOCAL_IMAGE_IMPORT_MAX_BYTES", str(50 * 1024 * 1024)))
 LOCAL_IMAGE_IMPORT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 RUNNINGHUB_THUMBNAIL_EXTS = (".jpg",)
+
+# --- 对象存储配置 ---
+DATABASE_URL = str(os.getenv("DATABASE_URL", "")).strip()
+MINIO_ENDPOINT = str(os.getenv("MINIO_ENDPOINT", "")).strip()
+MINIO_ACCESS_KEY = str(os.getenv("MINIO_ACCESS_KEY", "")).strip()
+MINIO_SECRET_KEY = str(os.getenv("MINIO_SECRET_KEY", "")).strip()
+MINIO_SECURE = str(os.getenv("MINIO_SECURE", "false")).strip().lower() in {"1", "true", "yes", "on"}
+MINIO_BUCKET_PRIVATE = str(os.getenv("MINIO_BUCKET_PRIVATE", "mediaforge-private")).strip() or "mediaforge-private"
+MINIO_BUCKET_PUBLIC = str(os.getenv("MINIO_BUCKET_PUBLIC", "mediaforge-public")).strip() or "mediaforge-public"
+MINIO_BUCKET_TEMP = str(os.getenv("MINIO_BUCKET_TEMP", "mediaforge-temp")).strip() or "mediaforge-temp"
+STORAGE_CACHE_DIR = os.path.join(tempfile.gettempdir(), "mediaforge-storage-cache")
+STORAGE_OBJECT_INDEX_FILE = "storage_objects.json"
+STORAGE_QUOTA_ENABLED = str(os.getenv("STORAGE_QUOTA_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_USER_QUOTA_BYTES = int(os.getenv("STORAGE_USER_QUOTA_BYTES", str(10 * 1024 * 1024 * 1024)))
+STORAGE_CLEANUP_ENABLED = str(os.getenv("STORAGE_CLEANUP_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("STORAGE_CLEANUP_INTERVAL_SECONDS", "3600"))
+STORAGE_CLEANUP_BATCH_SIZE = int(os.getenv("STORAGE_CLEANUP_BATCH_SIZE", "500"))
+STORAGE_INPUT_RETENTION_DAYS = int(os.getenv("STORAGE_INPUT_RETENTION_DAYS", "30"))
+STORAGE_UPLOAD_RETENTION_DAYS = int(os.getenv("STORAGE_UPLOAD_RETENTION_DAYS", "30"))
+STORAGE_OUTPUT_RETENTION_DAYS = int(os.getenv("STORAGE_OUTPUT_RETENTION_DAYS", "30"))
+STORAGE_TEMP_RETENTION_DAYS = int(os.getenv("STORAGE_TEMP_RETENTION_DAYS", "3"))
 
 # --- 模型字段默认值/校验所需常量 ---
 VOLCENGINE_DEFAULT_PROJECT_NAME = "default"

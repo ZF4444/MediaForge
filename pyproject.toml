@@ -12,6 +12,8 @@ dependencies = [
     "python-multipart>=0.0.28",
     "httpx>=0.28.1",
     "pillow>=12.2.0",
+    "minio>=7.2.18",
+    "psycopg[binary]>=3.2.12",
 ]
 
 [dependency-groups]

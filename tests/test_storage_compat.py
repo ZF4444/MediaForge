@@ -1,0 +1,109 @@
+import asyncio
+import os
+
+from app.core.media import import_local_image_file, output_file_from_url, save_ai_image_to_output
+from app.routers import local_assets
+from app.services import storage
+from PIL import Image
+
+
+def test_output_file_from_url_materializes_registered_storage_object(monkeypatch, tmp_path):
+    index_file = tmp_path / "storage_objects.json"
+    cache_dir = tmp_path / "cache"
+
+    monkeypatch.setattr(storage, "_index_path", lambda: str(index_file))
+    monkeypatch.setattr(storage, "STORAGE_CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(storage, "get_object_bytes", lambda bucket, object_key: b"hello-minio")
+
+    storage.register_media_url(
+        "/assets/input/test.png",
+        "mediaforge-private",
+        "users/anonymous/inputs/2026/07/test.png",
+        filename="test.png",
+        category="input",
+        original_name="test.png",
+        content_type="image/png",
+        kind="image",
+        size=11,
+    )
+
+    path = output_file_from_url("/assets/input/test.png")
+
+    assert path is not None
+    assert os.path.isfile(path)
+    with open(path, "rb") as f:
+        assert f.read() == b"hello-minio"
+
+
+def test_upload_ai_reference_uses_storage_service_when_enabled(monkeypatch):
+    saved = []
+
+    class DummyUploadFile:
+        def __init__(self, filename: str, content: bytes, content_type: str):
+            self.filename = filename
+            self._content = content
+            self.content_type = content_type
+
+        async def read(self):
+            return self._content
+
+    monkeypatch.setattr(local_assets, "storage_enabled", lambda: True)
+    monkeypatch.setattr(
+        local_assets,
+        "save_compat_media_bytes",
+        lambda category, filename, content, **kwargs: saved.append((category, filename, content, kwargs)) or {
+            "url": f"/assets/{category}/{filename}",
+            "entry": {"url": f"/assets/{category}/{filename}"},
+            "file_id": "file-123",
+        },
+    )
+
+    upload = DummyUploadFile("demo.png", b"png-bytes", "image/png")
+
+    result = asyncio.run(local_assets.upload_ai_reference([upload]))
+
+    assert len(saved) == 1
+    assert saved[0][0] == "input"
+    assert result["files"][0]["url"].startswith("/assets/input/ai_ref_")
+    assert result["files"][0]["file_id"] == "file-123"
+    assert result["files"][0]["kind"] == "image"
+
+
+def test_file_refs_from_api_file_preview_uses_file_id(monkeypatch):
+    monkeypatch.setattr(
+        storage,
+        "get_file_by_id",
+        lambda file_id: {"file_id": file_id, "url": f"/api/files/{file_id}/preview"},
+    )
+    refs = storage.file_refs_from_urls(["/api/files/file-9/preview"])
+    assert refs == [{"file_id": "file-9"}]
+
+
+def test_save_ai_image_to_output_registers_generated_file(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.core.media.OUTPUT_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.core.media.storage_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.core.media.save_compat_media_bytes",
+        lambda category, filename, content, **kwargs: {"url": f"/api/files/generated-1/preview"},
+    )
+
+    url = asyncio.run(save_ai_image_to_output({"type": "b64", "value": "aGVsbG8=", "mime_type": "image/png"}, prefix="gen_"))
+
+    assert url == "/api/files/generated-1/preview"
+
+
+def test_import_local_image_file_uses_storage_without_assets_dir(monkeypatch, tmp_path):
+    src = tmp_path / "demo.png"
+    Image.new("RGB", (1, 1), (120, 80, 160)).save(src)
+
+    monkeypatch.setattr("app.core.media.storage_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.core.media.save_compat_media_bytes",
+        lambda category, filename, content, **kwargs: {"url": "/api/files/file-77/preview", "file_id": "file-77"},
+    )
+
+    result = import_local_image_file(str(src))
+
+    assert result["url"] == "/api/files/file-77/preview"
+    assert result["file_id"] == "file-77"
+    assert result["name"] == "demo.png"

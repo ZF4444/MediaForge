@@ -21,8 +21,37 @@ from app.core.auth import canvas_dir
 from app.core.utils import now_ms
 from app.core.ws import manager
 from app.models import CanvasCreateRequest, CanvasMetaUpdate, CanvasSaveRequest
+from app.services.storage import compact_media_refs, normalize_media_refs
 
 router = APIRouter()
+
+
+def _map_canvas_value(value, media_mapper):
+    if isinstance(value, list):
+        if value and all(isinstance(item, dict) and (("url" in item) or ("file_id" in item)) for item in value):
+            return media_mapper(value)
+        return [_map_canvas_value(item, media_mapper) for item in value]
+    if isinstance(value, dict):
+        normalized = {}
+        for key, item in value.items():
+            if key == "images" and isinstance(item, list):
+                normalized[key] = media_mapper(item)
+            else:
+                normalized[key] = _map_canvas_value(item, media_mapper)
+        return normalized
+    return value
+
+
+def hydrate_canvas(canvas):
+    if not isinstance(canvas, dict):
+        return canvas
+    return _map_canvas_value(dict(canvas), normalize_media_refs)
+
+
+def compact_canvas(canvas):
+    if not isinstance(canvas, dict):
+        return canvas
+    return _map_canvas_value(dict(canvas), compact_media_refs)
 
 
 def canvas_path(canvas_id):
@@ -33,10 +62,12 @@ def canvas_path(canvas_id):
 
 
 def save_canvas(canvas):
+    canvas = hydrate_canvas(canvas)
     canvas["updated_at"] = now_ms()
+    persisted = compact_canvas(canvas)
     with CANVAS_LOCK:
         with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
-            json.dump(canvas, f, ensure_ascii=False, indent=2)
+            json.dump(persisted, f, ensure_ascii=False, indent=2)
 
 
 def normalize_canvas_kind(kind="classic"):
@@ -68,8 +99,11 @@ def load_canvas(canvas_id):
     path = canvas_path(canvas_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="画布不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        canvas = json.load(f)
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            canvas = hydrate_canvas(json.load(f))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if canvas.get("deleted_at"):
         raise HTTPException(status_code=404, detail="画布已在回收站")
     return canvas
@@ -79,8 +113,11 @@ def load_canvas_any(canvas_id):
     path = canvas_path(canvas_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="画布不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return hydrate_canvas(json.load(f))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 CANVAS_COLORS = {"", "red", "orange", "amber", "green", "teal", "blue", "violet", "pink", "slate"}
@@ -117,7 +154,7 @@ def cleanup_expired_canvas_trash():
             path = os.path.join(cdir, filename)
             try:
                 with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                    data = hydrate_canvas(json.load(f))
                 deleted_at = int(data.get("deleted_at") or 0)
                 if deleted_at and deleted_at < cutoff:
                     os.remove(path)
@@ -134,7 +171,7 @@ def iter_canvas_records(include_deleted=False):
             continue
         try:
             with open(os.path.join(cdir, filename), 'r', encoding='utf-8') as f:
-                data = json.load(f)
+                data = hydrate_canvas(json.load(f))
         except Exception:
             continue
         is_deleted = bool(data.get("deleted_at"))
@@ -224,7 +261,10 @@ async def touch_canvas(canvas_id: str):
 async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
     canvas = load_canvas(canvas_id)
     current_updated_at = int(canvas.get("updated_at") or 0)
-    if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at:
+    last_client_id = str(canvas.get("last_client_id") or "")
+    incoming_client_id = str(payload.client_id or "")
+    same_client_retry = bool(incoming_client_id and incoming_client_id == last_client_id)
+    if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at and not same_client_retry:
         raise HTTPException(status_code=409, detail={
             "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
             "canvas": canvas,
@@ -241,6 +281,8 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
         canvas["viewport"] = canvas.get("viewport") or {"x": 0, "y": 0, "scale": 1}
     canvas["logs"] = payload.logs[-500:]
     canvas["settings"] = payload.settings or {}
+    if incoming_client_id:
+        canvas["last_client_id"] = incoming_client_id
     save_canvas(canvas)
     await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
     return {"canvas": canvas}

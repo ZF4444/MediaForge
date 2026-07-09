@@ -119,16 +119,21 @@ async def auth_middleware(request: Request, call_next):
 from app.core.ws import ConnectionManager, manager
 
 GLOBAL_LOOP = None
+STORAGE_CLEANUP_TASK = None
 APP_VERSION = "2026.05.19"
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
+from app.services.storage import StorageQuotaExceeded, storage_cleanup_loop, verify_storage_startup
 
 @app.on_event("startup")
 async def startup_event():
-    global GLOBAL_LOOP
+    global GLOBAL_LOOP, STORAGE_CLEANUP_TASK
+    await asyncio.to_thread(verify_storage_startup)
     GLOBAL_LOOP = asyncio.get_running_loop()
     shared_state.set_global_loop(GLOBAL_LOOP)
+    if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
+        STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
@@ -179,6 +184,7 @@ from app.config import (
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
     RUNNINGHUB_THUMBNAIL_EXTS,
+    STORAGE_CLEANUP_ENABLED,
     QUEUE,
     QUEUE_LOCK,
     HISTORY_LOCK,
@@ -506,6 +512,20 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
     return JSONResponse(
         status_code=422,
         content={"detail": friendly_validation_error(exc.errors()), "errors": exc.errors()},
+    )
+
+
+@app.exception_handler(StorageQuotaExceeded)
+async def storage_quota_exception_handler(request: Request, exc: StorageQuotaExceeded):
+    return JSONResponse(
+        status_code=413,
+        content={
+            "detail": exc.message,
+            "error": "storage_quota_exceeded",
+            "quota_bytes": exc.quota_bytes,
+            "used_bytes": exc.used_bytes,
+            "incoming_bytes": exc.incoming_bytes,
+        },
     )
 
 def model_list(env_name, primary, defaults):
@@ -1234,11 +1254,6 @@ def update_env_values(updates):
 BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(ASSETS_DIR, exist_ok=True)
-os.makedirs(OUTPUT_INPUT_DIR, exist_ok=True)
-os.makedirs(OUTPUT_OUTPUT_DIR, exist_ok=True)
-os.makedirs(ASSET_LIBRARY_DIR, exist_ok=True)
-os.makedirs(LOCAL_UPLOAD_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(WORKFLOW_DIR, exist_ok=True)
 os.makedirs(USERS_DIR, exist_ok=True)
@@ -1266,9 +1281,26 @@ async def static_html_page(page: str):
         raise HTTPException(status_code=404)
     return static_html_response(file_name)
 
+
+@app.get("/assets/{category}/{filename}")
+async def assets_compat_file(category: str, filename: str):
+    from app.core.media import content_type_for_path as _content_type_for_path
+    from app.core.media import output_file_from_url as _output_file_from_url
+
+    safe_category = os.path.basename(category or "")
+    safe_filename = os.path.basename(filename or "")
+    if not safe_category or not safe_filename:
+        raise HTTPException(status_code=404)
+    path = _output_file_from_url(f"/assets/{safe_category}/{safe_filename}")
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404)
+    return FileResponse(path, media_type=_content_type_for_path(path))
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
-app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+if os.path.isdir(ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 # --- Pydantic 模型 ---
 
@@ -1456,7 +1488,7 @@ def download_image(comfy_address, comfy_url_path, prefix="studio_"):
     try:
         with urllib.request.urlopen(full_url) as response, open(local_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
-        return output_url_for(filename, "output")
+        return _register_output_file(local_path, filename, "output", kind="image")
     except Exception as e:
         print(f"下载图片失败: {e}")
         if comfy_url_path.startswith("/view"):
@@ -1526,7 +1558,7 @@ def download_comfy_output(comfy_address, item, prefix="studio_"):
     try:
         with urllib.request.urlopen(full_url) as response, open(local_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
-        return output_url_for(filename, "output")
+        return _register_output_file(local_path, filename, "output", kind=comfy_output_kind(item))
     except Exception as e:
         print(f"下载 ComfyUI 输出失败: {e}")
         if comfy_url_path.startswith("/view"):
@@ -1545,7 +1577,16 @@ def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_
     full_url = f"http://{comfy_address}/view?{query}"
     with urllib.request.urlopen(full_url, timeout=30) as response, open(local_path, 'wb') as out_file:
         shutil.copyfileobj(response, out_file)
-    return output_url_for(filename, "output")
+    kind = "file"
+    if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}:
+        kind = "image"
+    elif ext in {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}:
+        kind = "video"
+    elif ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}:
+        kind = "audio"
+    elif ext in {".txt", ".json", ".csv", ".srt", ".vtt", ".md"}:
+        kind = "text"
+    return _register_output_file(local_path, filename, "output", kind=kind)
 
 def save_comfy_text_output(value, prefix="studio_", name=""):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
@@ -1557,7 +1598,7 @@ def save_comfy_text_output(value, prefix="studio_", name=""):
     path = output_path_for(filename, "output")
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    return output_url_for(filename, "output")
+    return _register_output_file(path, filename, "output", kind="text")
 
 def comfy_text_values_from_output(node_output):
     values = []
@@ -2406,7 +2447,7 @@ def jimeng_local_output_url(path, kind="image"):
     output_root = os.path.abspath(OUTPUT_OUTPUT_DIR)
     try:
         if os.path.commonpath([output_root, path]) == output_root:
-            return output_url_for(os.path.basename(path), "output")
+            return _register_output_file(path, os.path.basename(path), "output", kind=kind)
     except Exception:
         pass
     ext = os.path.splitext(path)[1].lower()
@@ -2418,7 +2459,7 @@ def jimeng_local_output_url(path, kind="image"):
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
     dest = output_path_for(filename, "output")
     shutil.copyfile(path, dest)
-    return output_url_for(filename, "output")
+    return _register_output_file(dest, filename, "output", kind=kind)
 
 async def jimeng_store_output_value(value, kind="image"):
     text = str(value or "").strip()
@@ -2664,7 +2705,7 @@ async def generate_jimeng_video(payload: CanvasVideoRequest, provider):
                 args.append(f"--model_version={model_version}")
         raw = await run_jimeng_cli(args, timeout=jimeng_poll_seconds() + 180)
         urls = await jimeng_store_outputs(raw, "video")
-        return {"videos": urls, "task_id": jimeng_submit_id(raw) or None, "raw": raw}
+        return {"videos": urls, "video_items": media_response_items(urls, kind="video"), "task_id": jimeng_submit_id(raw) or None, "raw": raw}
     finally:
         for path in temp_paths:
             try:
@@ -2743,7 +2784,9 @@ from app.core.media import (
     output_path_for,
     output_file_from_url,
     sanitize_export_filename,
+    _register_output_file,
 )
+from app.services.storage import save_compat_media_bytes, storage_enabled
 
 # --- 媒体文件/远程下载/本地导入工具 ---
 # 已迁移至 app/core/media.py（原样迁移），多域复用。此处导入以保持原模块级名称可用。
@@ -2756,6 +2799,22 @@ from app.core.media import (
     normalize_local_image_path,
     import_local_image_file,
 )
+from app.services.storage import resolve_file_reference
+
+
+def media_response_item(url: str = "", name: str = "", kind: str = "") -> Dict[str, Any]:
+    item = {"url": url or "", "name": name or "", "kind": kind or ""}
+    entry = resolve_file_reference(url=url) if url else None
+    if entry:
+        item["url"] = entry.get("url") or item["url"]
+        item["file_id"] = entry.get("file_id") or ""
+        item["name"] = item["name"] or entry.get("original_name") or entry.get("filename") or ""
+        item["kind"] = item["kind"] or entry.get("kind") or ""
+    return item
+
+
+def media_response_items(urls: List[str], kind: str = "") -> List[Dict[str, Any]]:
+    return [media_response_item(url, kind=kind) for url in (urls or []) if url]
 
 # --- 素材库数据逻辑 ---
 # 已迁移至 app/services/assets.py（原样迁移），数据 CRUD 路由迁移至 app/routers/assets.py。
@@ -4329,7 +4388,8 @@ async def runninghub_store_remote_output(client, remote):
     path = output_path_for(filename, "output")
     with open(path, "wb") as f:
         f.write(response.content)
-    return output_url_for(filename, "output")
+    kind = "video" if ext in {"mp4", "webm", "mov", "m4v"} else "image"
+    return _register_output_file(path, filename, "output", kind=kind)
 
 def runninghub_fail_reason(raw):
     data = raw.get("data") if isinstance(raw, dict) else None
@@ -5233,8 +5293,8 @@ def view_image(filename: str, type: str = "input", subfolder: str = ""):
     if not subfolder and type in ("input", "output"):
         safe_name = os.path.basename(filename or "")
         if safe_name:
-            local_path = output_path_for(safe_name, "input" if type == "input" else "output")
-            if os.path.isfile(local_path):
+            local_path = output_file_from_url(f"/assets/{'input' if type == 'input' else 'output'}/{safe_name}")
+            if local_path and os.path.isfile(local_path):
                 return FileResponse(local_path, media_type=content_type_for_path(local_path))
     raise HTTPException(status_code=404, detail="Image not found on any available backend")
 
@@ -5701,7 +5761,8 @@ async def runninghub_query(taskId: str = ""):
             except Exception:
                 urls.append(remote)
         status = runninghub_normalized_status(raw, code, urls)
-        return {"success": True, "data": {"status": status, "urls": urls, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
+        media_items = [media_response_item(url, kind="image") for url in urls if url]
+        return {"success": True, "data": {"status": status, "urls": urls, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
 
 @app.post("/api/runninghub/upload-asset")
 async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
@@ -5880,7 +5941,15 @@ async def jimeng_query_media(payload: JimengQueryMediaRequest):
     queried = await jimeng_query_result(submit_id, kind)
     try:
         urls = await jimeng_store_outputs(queried, kind, allow_query=False)
-        return {"status": "succeeded", "submit_id": submit_id, "kind": kind, "urls": urls}
+        payload = {"status": "succeeded", "submit_id": submit_id, "kind": kind, "urls": urls}
+        items = media_response_items(urls, kind=kind)
+        if kind == "video":
+            payload["video_items"] = items
+        elif kind == "audio":
+            payload["audio_items"] = items
+        else:
+            payload["image_items"] = items
+        return payload
     except JimengPendingError as exc:
         return {"status": "pending", "submit_id": submit_id, "kind": kind, "queue_info": exc.queue_info, "message": jimeng_pending_payload(exc)["message"]}
     except HTTPException as exc:
@@ -6506,7 +6575,8 @@ async def build_online_image_result(payload: OnlineImageRequest):
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游生图接口失败：{exc}") from exc
 
-    local_urls = [url for url, _raw in generated if url]
+    media_items = [media_response_item(url, kind="image") for url, _raw in generated if url]
+    local_urls = [item["url"] for item in media_items if item.get("url")]
     raw = generated[0][1] if generated else {}
     if not local_urls:
         provider_name = provider.get("name") or provider["id"]
@@ -6515,6 +6585,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
     result = {
         "prompt": payload.prompt,
         "images": local_urls,
+        "image_items": media_items,
         "timestamp": time.time(),
         "type": "online",
         "model": model,
@@ -6561,10 +6632,12 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         local_url = await save_ai_image_to_output(image_item, prefix="online_")
         if local_url:
             local_urls.append(local_url)
+        media_items = [media_response_item(url, kind="image") for url in local_urls if url]
         result = {
             "status": "succeeded",
             "prompt": "",
             "images": local_urls,
+            "image_items": media_items,
             "timestamp": time.time(),
             "type": "online",
             "model": "",
@@ -7013,7 +7086,7 @@ async def generate_yuli_openai_video(client, payload, provider, base_url, reques
     if not urls:
         raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
     local_urls = [await save_remote_video_to_output(url) for url in urls]
-    return {"videos": local_urls, "task_id": task_id, "raw": result}
+    return {"videos": local_urls, "video_items": media_response_items(local_urls, kind="video"), "task_id": task_id, "raw": result}
 
 def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
     text = str(prompt or "").strip()
@@ -7363,7 +7436,7 @@ async def canvas_video(payload: CanvasVideoRequest):
             if not urls:
                 raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
             local_urls = [await save_remote_video_to_output(url) for url in urls]
-            return {"videos": local_urls, "task_id": task_id, "raw": result}
+            return {"videos": local_urls, "video_items": media_response_items(local_urls, kind="video"), "task_id": task_id, "raw": result}
     except httpx.HTTPStatusError as exc:
         text = exc.response.text
         try:
@@ -8233,7 +8306,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
                                 file_path = output_path_for(filename, "output")
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
-                                local_path = output_url_for(filename, "output")
+                                local_path = _register_output_file(file_path, filename, "output", kind="image")
                             else:
                                 local_path = img_url
                     except Exception:
@@ -8243,7 +8316,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
                     save_to_history(record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
-                    return {"url": local_path}
+                    return media_response_item(local_path, kind="image")
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     if req.client_id:
@@ -8323,7 +8396,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
                                 file_path = output_path_for(filename, "output")
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
-                                local_path = output_url_for(filename, "output")
+                                local_path = _register_output_file(file_path, filename, "output", kind="image")
                             else:
                                 local_path = img_url
                     except Exception:
@@ -8335,7 +8408,9 @@ async def generate_angle_cloud(req: CloudGenRequest):
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
                     if GLOBAL_LOOP:
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
-                    return {"url": local_path, "task_id": task_id}
+                    item = media_response_item(local_path, kind="image")
+                    item["task_id"] = task_id
+                    return item
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     if req.client_id:
@@ -8421,7 +8496,7 @@ async def generate_cloud(req: CloudGenRequest):
                                 file_path = output_path_for(filename, "output")
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
-                                local_path = output_url_for(filename, "output")
+                                local_path = _register_output_file(file_path, filename, "output", kind="image")
                             else:
                                 local_path = img_url
                     except Exception as dl_e:
@@ -8434,7 +8509,7 @@ async def generate_cloud(req: CloudGenRequest):
                         await manager.broadcast_new_image(record)
                     except Exception:
                         pass
-                    return {"url": local_path}
+                    return media_response_item(local_path, kind="image")
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
@@ -8517,7 +8592,7 @@ async def ms_generate(req: MsGenerateRequest):
                                     file_path = output_path_for(filename, "output")
                                     with open(file_path, "wb") as f:
                                         f.write(img_res.content)
-                                    local_path = output_url_for(filename, "output")
+                                    local_path = _register_output_file(file_path, filename, "output", kind="image")
                                 else:
                                     local_path = img_url
                         except Exception:
@@ -8533,7 +8608,9 @@ async def ms_generate(req: MsGenerateRequest):
                         save_to_history(record)
                         if GLOBAL_LOOP:
                             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
-                        return {"url": local_path, "task_id": task_id}
+                        item = media_response_item(local_path, kind="image")
+                        item["task_id"] = task_id
+                        return item
 
                     elif status in TERMINAL_FAILED_STATUSES:
                         error_info = data.get("error_info") or data.get("message") or data.get("detail") or str(data)
@@ -8691,6 +8768,7 @@ def generate(req: GenerateRequest):
                         "node_id": str(node_id),
                         "output_key": str(output_key),
                     }
+                    entry.update(media_response_item(local_path, name=name, kind=kind))
                     if kind == "image":
                         local_images.append(local_path)
                     elif kind == "video":
@@ -8713,17 +8791,28 @@ def generate(req: GenerateRequest):
                         "node_id": str(node_id),
                         "output_key": "text",
                     }
+                    entry.update(media_response_item(local_path, name=entry["name"], kind="text"))
                     local_texts.append(local_path)
                     local_items.append(entry)
                     local_urls.append(local_path)
 
+        image_items = [item for item in local_items if item.get("kind") == "image"]
+        video_items = [item for item in local_items if item.get("kind") == "video"]
+        audio_items = [item for item in local_items if item.get("kind") == "audio"]
+        text_items = [item for item in local_items if item.get("kind") == "text"]
+        file_items = [item for item in local_items if item.get("kind") == "file"]
         result = {
             "prompt": req.prompt if req.prompt else req.workflow_json or "Detail Enhance",
             "images": local_images,
+            "image_items": image_items,
             "videos": local_videos,
+            "video_items": video_items,
             "audios": local_audios,
+            "audio_items": audio_items,
             "texts": local_texts,
+            "text_items": text_items,
             "files": local_files,
+            "file_items": file_items,
             "items": local_items,
             "outputs": local_urls,
             "seed": seed,
@@ -9185,6 +9274,7 @@ from app.routers import assets as assets_router
 from app.routers import shared_folders as shared_folders_router
 from app.routers import history as history_router
 from app.routers import local_assets as local_assets_router
+from app.routers import files as files_router
 from app.routers import workflows as workflows_router
 from app.routers import pages as pages_router
 from app.routers import access_control as access_control_router
@@ -9199,6 +9289,7 @@ app.include_router(assets_router.router)
 app.include_router(shared_folders_router.router)
 app.include_router(history_router.router)
 app.include_router(local_assets_router.router)
+app.include_router(files_router.router)
 app.include_router(workflows_router.router)
 app.include_router(pages_router.router)
 app.include_router(access_control_router.router)

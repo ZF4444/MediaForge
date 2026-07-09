@@ -24,6 +24,7 @@ from app.core.auth import asset_library_path, user_data_dir
 from app.core.shared import sanitize_asset_name
 from app.core.shared_state import get_global_loop
 from app.core.utils import now_ms
+from app.services.storage import compact_media_ref, resolve_file_reference, resolve_url_for_file_id, save_compat_media_bytes, storage_enabled
 from app.core.ws import manager
 import re
 
@@ -63,6 +64,7 @@ def normalize_asset_library(lib):
         for cat in cats:
             for item in (cat.get("items") or []):
                 migrate_asset_item_registrations(item)
+                normalize_asset_item_reference(item)
         library["categories"] = cats
     active = str(lib.get("active_library_id") or libraries[0].get("id") or "default")
     if not any(item.get("id") == active for item in libraries):
@@ -102,6 +104,38 @@ def migrate_asset_item_registrations(item):
     item["registrations"] = regs if isinstance(regs, dict) else {}
     for key in AVATAR_LEGACY_FLAT_FIELDS:
         item.pop(key, None)
+
+
+def normalize_asset_item_reference(item):
+    if not isinstance(item, dict):
+        return item
+    file_id = str(item.get("file_id") or "").strip()
+    url = str(item.get("url") or "").strip()
+    entry = resolve_file_reference(url=url, file_id=file_id)
+    if entry:
+        item["file_id"] = entry.get("file_id") or file_id
+        item["url"] = entry.get("url") or url
+        item["kind"] = item.get("kind") or entry.get("kind") or "image"
+        if not item.get("created_at"):
+            item["created_at"] = entry.get("created_at") or now_ms()
+    elif file_id and not url:
+        item["url"] = resolve_url_for_file_id(file_id, "")
+    return item
+
+
+def compact_asset_item_reference(item):
+    if not isinstance(item, dict):
+        return item
+    compacted = dict(item)
+    media_ref = compact_media_ref({
+        "file_id": compacted.get("file_id") or "",
+        "url": compacted.get("url") or "",
+        "name": compacted.get("name") or "",
+        "kind": compacted.get("kind") or "",
+    })
+    compacted["file_id"] = media_ref.get("file_id", "")
+    compacted.pop("url", None)
+    return compacted
 
 
 def load_asset_library():
@@ -167,12 +201,34 @@ def make_asset_library_item(src: str, name: str = "") -> Tuple[str, Dict[str, An
     if not os.path.splitext(safe_name)[1]:
         safe_name += ext
     dest_name = f"lib_{uuid.uuid4().hex[:12]}_{safe_name}"
+    if storage_enabled():
+        with open(src, "rb") as f:
+            stored = save_compat_media_bytes(
+                "library",
+                dest_name,
+                f.read(),
+                original_name=safe_name,
+                content_type="",
+                kind=kind,
+                source="imported",
+            )
+        item = {
+            "id": f"asset_{uuid.uuid4().hex[:12]}",
+            "name": os.path.splitext(safe_name)[0][:120],
+            "url": stored["url"],
+            "file_id": stored.get("file_id", ""),
+            "kind": kind,
+            "created_at": now_ms(),
+        }
+        return dest_name, item
+    os.makedirs(ASSET_LIBRARY_DIR, exist_ok=True)
     dest_path = os.path.join(ASSET_LIBRARY_DIR, dest_name)
     shutil.copy2(src, dest_path)
     item = {
         "id": f"asset_{uuid.uuid4().hex[:12]}",
         "name": os.path.splitext(safe_name)[0][:120],
         "url": f"/assets/library/{dest_name}",
+        "file_id": "",
         "kind": kind,
         "created_at": now_ms(),
     }
@@ -183,9 +239,14 @@ def save_asset_library(lib):
     lib = normalize_asset_library(lib)
     sort_asset_library_items(lib)
     lib["updated_at"] = now_ms()
+    persisted = json.loads(json.dumps(lib, ensure_ascii=False))
+    for library in persisted.get("libraries", []) if isinstance(persisted.get("libraries"), list) else []:
+        for cat in library.get("categories", []) if isinstance(library.get("categories"), list) else []:
+            for index, item in enumerate(cat.get("items", []) if isinstance(cat.get("items"), list) else []):
+                cat["items"][index] = compact_asset_item_reference(item)
     os.makedirs(user_data_dir(), exist_ok=True)
     with open(asset_library_path(), "w", encoding="utf-8") as f:
-        json.dump(lib, f, ensure_ascii=False, indent=2)
+        json.dump(persisted, f, ensure_ascii=False, indent=2)
     loop = get_global_loop()
     if loop:
         asyncio.run_coroutine_threadsafe(manager.broadcast_asset_library_updated(int(lib["updated_at"])), loop)

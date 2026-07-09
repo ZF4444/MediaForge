@@ -62,6 +62,7 @@ class CloudPollRequest(BaseModel):
 
 
 class AIReference(BaseModel):
+    file_id: str = ""
     url: str = ""
     name: str = ""
     role: str = ""
@@ -309,7 +310,7 @@ class AssetLibraryRequest(BaseModel):
 
 class AssetLibraryAddRequest(BaseModel):
     category_id: str = ""
-    url: str = ""
+    file_id: str = ""
     name: str = ""
     library_id: str = ""
 

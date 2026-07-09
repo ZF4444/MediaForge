@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app.config import DATA_DIR
 from app.core.media import output_path_for, output_url_for, sanitize_export_filename
+from app.services.storage import save_compat_media_bytes, storage_enabled
 
 
 POSE_STUDIO_DIR = os.path.join(DATA_DIR, "pose_studio")
@@ -928,16 +929,33 @@ def register_uploaded_fbx_model(content: bytes, filename_hint: str = "uploaded-m
 
     stem = sanitize_export_filename(os.path.splitext(filename_hint or "uploaded-model")[0], "uploaded-model")
     fbx_name = f"{stem}_{model_id}.fbx"
-    fbx_path = output_path_for(fbx_name, "output")
-    with open(fbx_path, "wb") as f:
-        f.write(content)
+    fbx_url = output_url_for(fbx_name, "output")
+    file_id = ""
+    if storage_enabled():
+        stored = save_compat_media_bytes(
+            "output",
+            fbx_name,
+            content,
+            original_name=fbx_name,
+            content_type="application/octet-stream",
+            kind="model",
+            source="generated",
+        )
+        fbx_url = stored["url"]
+        file_id = stored.get("file_id", "")
+    else:
+        fbx_path = output_path_for(fbx_name, "output")
+        os.makedirs(os.path.dirname(fbx_path), exist_ok=True)
+        with open(fbx_path, "wb") as f:
+            f.write(content)
 
     return {
         "success": True,
         "model_id": model_id,
         "model_url": f"/vnccs/character_studio/generated_model/{model_id}",
-        "fbx_url": output_url_for(fbx_name, "output"),
-        "url": output_url_for(fbx_name, "output"),
+        "fbx_url": fbx_url,
+        "url": fbx_url,
+        "file_id": file_id,
         "filename": fbx_name,
         "vertices": len(model_data.get("vertices") or []) // 3,
         "triangles": len(model_data.get("indices") or []) // 3,
