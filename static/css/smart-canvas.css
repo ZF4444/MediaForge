@@ -14,9 +14,25 @@ body { margin:0; height:100vh; overflow:hidden; color:var(--text); font-family:'
 button,input,select,textarea { font:inherit; }
 button { border:0; cursor:pointer; }
 .shell { position:relative; width:100vw; height:100vh; overflow:hidden; background-color:var(--page); background-image:radial-gradient(var(--grid) 1px, transparent 1px); background-size:24px 24px; cursor:grab; }
+.shell.boot-loading { cursor:wait; }
+.shell.boot-loading > :not(.boot-loading-overlay) { pointer-events:none !important; user-select:none !important; }
 .shell.panning { cursor:grabbing; }
 .shell.zoom-preview { cursor:crosshair; }
 .world { position:absolute; left:0; top:0; width:6000px; height:4000px; transform-origin:0 0; }
+.boot-loading-overlay { position:fixed; left:0; top:0; width:100vw; height:100vh; z-index:120; display:flex; align-items:center; justify-content:center; padding:24px; pointer-events:auto; touch-action:none; background:rgba(248,250,252,.26); backdrop-filter:blur(22px) saturate(1.08); -webkit-backdrop-filter:blur(22px) saturate(1.08); opacity:1; visibility:visible; transition:opacity .28s ease, visibility .28s ease; }
+.theme-dark .boot-loading-overlay { background:rgba(15,23,42,.30); }
+.boot-loading-overlay.is-fading { opacity:0; visibility:visible; pointer-events:auto; }
+.boot-loading-overlay.is-hidden { opacity:0; visibility:hidden; pointer-events:none; }
+.boot-loading-card { width:min(420px, calc(100vw - 48px)); min-width:280px; padding:28px 28px 24px; border-radius:28px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center; background:linear-gradient(180deg, rgba(255,255,255,.68), rgba(255,255,255,.46)); border:1px solid rgba(255,255,255,.58); box-shadow:0 24px 80px rgba(15,23,42,.14); }
+.theme-dark .boot-loading-card { background:linear-gradient(180deg, rgba(15,23,42,.74), rgba(15,23,42,.58)); border-color:rgba(148,163,184,.18); box-shadow:0 28px 90px rgba(0,0,0,.34); }
+.boot-loading-visual { position:relative; width:88px; height:88px; margin-bottom:6px; }
+.boot-loading-ring { position:absolute; inset:0; border-radius:50%; border:1.5px solid transparent; }
+.boot-loading-ring.ring-a { border-top-color:rgba(14,165,233,.92); border-right-color:rgba(14,165,233,.42); animation:bootSpin 1.4s linear infinite; }
+.boot-loading-ring.ring-b { inset:11px; border-bottom-color:rgba(16,185,129,.86); border-left-color:rgba(16,185,129,.36); animation:bootSpinReverse 1.1s linear infinite; }
+.boot-loading-core { position:absolute; left:50%; top:50%; width:22px; height:22px; border-radius:50%; background:radial-gradient(circle at 30% 30%, #fff, #cbd5e1 55%, #94a3b8 100%); transform:translate(-50%, -50%); box-shadow:0 0 0 10px rgba(255,255,255,.18), 0 0 24px rgba(14,165,233,.26); animation:bootPulse 1.3s ease-in-out infinite; }
+.theme-dark .boot-loading-core { background:radial-gradient(circle at 30% 30%, #f8fafc, #94a3b8 58%, #475569 100%); box-shadow:0 0 0 10px rgba(148,163,184,.08), 0 0 24px rgba(56,189,248,.2); }
+.boot-loading-title { display:block; width:100%; color:var(--text); font-size:16px; font-weight:900; letter-spacing:.04em; text-align:center; }
+.boot-loading-sub { display:block; width:100%; color:var(--muted); font-size:12px; font-weight:700; text-align:center; }
 .smart-back { position:absolute; left:22px; top:22px; z-index:20; height:40px; padding:0 14px; border-radius:999px; display:flex; align-items:center; gap:8px; color:var(--text); background:var(--panel); border:1px solid var(--line); box-shadow:0 16px 40px var(--shadow); backdrop-filter:blur(16px); font-size:12px; font-weight:850; cursor:pointer; }
 .smart-back:hover { transform:translateY(-1px); }
 .smart-back i { width:16px; height:16px; }
@@ -233,6 +249,9 @@ body.smart-node-drag .image-wrap:hover .image-resolution-badge { opacity:0 !impo
     .create-menu { width:min(360px, calc(100vw - 28px)); }
     .create-menu-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
 }
+@keyframes bootSpin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+@keyframes bootSpinReverse { from { transform:rotate(360deg); } to { transform:rotate(0deg); } }
+@keyframes bootPulse { 0%, 100% { transform:translate(-50%, -50%) scale(.92); } 50% { transform:translate(-50%, -50%) scale(1.08); } }
 .node-head { height:38px; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0 10px 0 12px; border-bottom:1px solid var(--line); cursor:move; }
 .image-node:not(.empty-node) .node-head { display:none; }
 .image-node:not(.empty-node) .node-title { display:none; }

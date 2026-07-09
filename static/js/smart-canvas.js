@@ -1,6 +1,7 @@
 const params = new URLSearchParams(location.search);
 const canvasId = params.get('id') || '';
 const shell = document.getElementById('shell');
+const bootLoadingOverlay = document.getElementById('bootLoadingOverlay');
 const world = document.getElementById('world');
 const composer = document.getElementById('composer');
 const nodeShortcutOverlay = document.getElementById('nodeShortcutOverlay');
@@ -70,6 +71,94 @@ const promptTemplateLibrarySelect = document.getElementById('promptTemplateLibra
 const promptTemplateCats = document.getElementById('promptTemplateCats');
 const promptTemplateBody = document.getElementById('promptTemplateBody');
 const composerTemplateBtn = document.getElementById('composerTemplateBtn');
+function showBootLoadingOverlay(){
+    if(shell) shell.classList.add('boot-loading');
+    if(!bootLoadingOverlay) return;
+    bootLoadingOverlay.classList.remove('is-hidden', 'is-fading');
+    bootLoadingOverlay.setAttribute('aria-busy', 'true');
+}
+function hideBootLoadingOverlay(){
+    if(!bootLoadingOverlay) return;
+    bootLoadingOverlay.classList.add('is-fading');
+    bootLoadingOverlay.setAttribute('aria-busy', 'false');
+    const finalize = () => {
+        bootLoadingOverlay.removeEventListener('transitionend', finalize);
+        bootLoadingOverlay.classList.add('is-hidden');
+        bootLoadingOverlay.classList.remove('is-fading');
+        if(shell) shell.classList.remove('boot-loading');
+    };
+    bootLoadingOverlay.addEventListener('transitionend', finalize, {once:true});
+}
+function isBootLoadingActive(){
+    return Boolean(shell?.classList.contains('boot-loading') && bootLoadingOverlay && !bootLoadingOverlay.classList.contains('is-hidden'));
+}
+function nextFrame(){
+    return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+function visibleWorldBounds(){
+    return {
+        left:(-viewport.x) / viewport.scale,
+        top:(-viewport.y) / viewport.scale,
+        right:(-viewport.x + shell.clientWidth) / viewport.scale,
+        bottom:(-viewport.y + shell.clientHeight) / viewport.scale
+    };
+}
+function rectIntersects(a, b){
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+function bootVisibleNodeIds(){
+    if(!shell || !nodes.length) return [];
+    const view = visibleWorldBounds();
+    return nodes.filter(node => {
+        const rect = nodeRect(node);
+        return rectIntersects(
+            {left:rect.x, top:rect.y, right:rect.x + rect.width, bottom:rect.y + rect.height},
+            view
+        );
+    }).map(node => node.id);
+}
+function mediaReadyPromise(el){
+    if(!el) return Promise.resolve();
+    if(el.tagName?.toLowerCase() === 'img'){
+        if(el.complete && (el.naturalWidth > 0 || !el.currentSrc)) return Promise.resolve();
+        return new Promise(resolve => {
+            const done = () => {
+                el.removeEventListener('load', done);
+                el.removeEventListener('error', done);
+                resolve();
+            };
+            el.addEventListener('load', done, {once:true});
+            el.addEventListener('error', done, {once:true});
+        });
+    }
+    if(el.tagName?.toLowerCase() === 'video'){
+        if((el.readyState || 0) >= 1) return Promise.resolve();
+        return new Promise(resolve => {
+            const done = () => {
+                el.removeEventListener('loadedmetadata', done);
+                el.removeEventListener('error', done);
+                resolve();
+            };
+            el.addEventListener('loadedmetadata', done, {once:true});
+            el.addEventListener('error', done, {once:true});
+        });
+    }
+    return Promise.resolve();
+}
+async function waitForVisibleBootMedia(timeoutMs=2500){
+    await nextFrame();
+    const idSet = new Set(bootVisibleNodeIds());
+    if(!idSet.size) return;
+    const media = [...world.querySelectorAll('.image-node img, .image-node video')].filter(el => {
+        const nodeEl = el.closest('.image-node');
+        return nodeEl?.dataset?.id && idSet.has(nodeEl.dataset.id);
+    });
+    if(!media.length) return;
+    await Promise.race([
+        Promise.all(media.map(mediaReadyPromise)),
+        new Promise(resolve => setTimeout(resolve, timeoutMs))
+    ]);
+}
 let minimapViewport = document.getElementById('minimapViewport');
 let canvas = null;
 let nodes = [];
@@ -14415,6 +14504,11 @@ window.onmouseup = e => {
     }
 };
 shell.addEventListener('wheel', e => {
+    if(isBootLoadingActive()){
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     if(e.target.closest('.composer,.smart-back,.image-edit-modal,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal')) return;
     e.preventDefault();
     viewportInteractionActive = true;
@@ -14455,6 +14549,11 @@ shell.ondrop = async e => {
     await handleSmartImageDropPayload(payload, '', {point:p, forceNew:true});
 };
 window.addEventListener('paste', e => {
+    if(isBootLoadingActive()){
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     const editable = isEditableTarget(e.target) || isEditableTarget(document.activeElement);
     const files = [...(e.clipboardData?.files || [])].filter(isSupportedUploadFile);
     const hasNodeClip = !!(canvas && nodeClipboard?.nodes?.length);
@@ -14496,6 +14595,11 @@ window.addEventListener('paste', e => {
     }
 });
 window.addEventListener('keydown', e => {
+    if(isBootLoadingActive()){
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     const key = String(e.key || '').toLowerCase();
     if(key === 'r' && !isEditableTarget(e.target)) isRKeyDown = true;
     if(imageEditModal.classList.contains('open') && !isEditableTarget(e.target)){
@@ -14559,6 +14663,10 @@ window.addEventListener('keydown', e => {
     }
 });
 window.addEventListener('keyup', e => {
+    if(isBootLoadingActive()){
+        e.stopPropagation();
+        return;
+    }
     if(String(e.key || '').toLowerCase() === 'r') isRKeyDown = false;
 });
 window.addEventListener('blur', () => {
@@ -15342,6 +15450,7 @@ window.addEventListener('studio-lang-change', () => {
     render();
 });
 window.onload = async () => {
+    showBootLoadingOverlay();
     applyTheme(localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light');
     bindNodeShortcutOverlayEvents();
     loadPromptPresets();
@@ -15357,4 +15466,6 @@ window.onload = async () => {
     await Promise.allSettled([configPromise, assetLibraryPromise]);
     syncApiKindToggleVisibility();
     render();
+    await waitForVisibleBootMedia();
+    requestAnimationFrame(() => hideBootLoadingOverlay());
 };
