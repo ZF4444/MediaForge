@@ -1877,10 +1877,30 @@ function smartModelAllowed(providerId, model){
     if(!allowed) return true;
     return allowed.has(`${providerId}::${model}`);
 }
+function providerHasAllowedImageModel(provider){
+    const models = provider?.id === 'runninghub' ? runningHubStandardImageModels(provider) : (provider?.image_models || []);
+    if(!models.length) return true;
+    return models.some(model => smartModelAllowed(provider?.id || '', model));
+}
+function providerHasAllowedVideoModel(provider){
+    const models = provider?.video_models || [];
+    if(!models.length) return true;
+    return models.some(model => smartModelAllowed(provider?.id || '', model));
+}
+function sortProvidersByPermission(providers, kind='image'){
+    const list = [...(providers || [])];
+    const hasAccess = kind === 'video' ? providerHasAllowedVideoModel : providerHasAllowedImageModel;
+    return list.sort((a, b) => {
+        const aAllowed = hasAccess(a) ? 0 : 1;
+        const bAllowed = hasAccess(b) ? 0 : 1;
+        if(aAllowed !== bAllowed) return aAllowed - bAllowed;
+        return String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, {numeric:true, sensitivity:'base'});
+    });
+}
 function imageProviders(){
-    return (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'volcengine'
+    return sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'volcengine'
         && (p.id === 'runninghub' ? runningHubStandardImageModels(p).length : (p.image_models || []).length))
-        .map(p => p.id === 'runninghub' ? {...p, image_models: runningHubStandardImageModels(p)} : p);
+        .map(p => p.id === 'runninghub' ? {...p, image_models: runningHubStandardImageModels(p)} : p), 'image');
 }
 function volcengineProvider(){
     return (apiProviders || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
@@ -2121,7 +2141,7 @@ function modelscopeImageModels(){
 }
 const DEFAULT_VIDEO_MODELS = ['veo3-fast','veo3','sora','runway','kling','pika','minimax-video','wan-v2','seedance-1.0-pro','jimeng-vide-3.0','jimeng-video-3.0-pro'];
 function videoApiProviders(){
-    const fromConfig = (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && p.id !== 'volcengine' && (p.video_models || []).length);
+    const fromConfig = sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && p.id !== 'volcengine' && (p.video_models || []).length), 'video');
     if(fromConfig.length) return fromConfig;
     return [{id:'comfly', name:'Comfly', video_models:DEFAULT_VIDEO_MODELS, enabled:true}];
 }
@@ -2330,7 +2350,9 @@ function renderDynamicParams(){
 }
 function renderApiParams(){
     const providers = imageProviders();
-    if(!settings.provider_id || !providers.some(p => p.id === settings.provider_id)) settings.provider_id = providers[0]?.id || '';
+    const preferredProvider = providers.find(providerHasAllowedImageModel) || providers[0] || null;
+    if(!settings.provider_id || !providers.some(p => p.id === settings.provider_id)) settings.provider_id = preferredProvider?.id || '';
+    else if(!providerHasAllowedImageModel(providers.find(p => p.id === settings.provider_id)) && preferredProvider) settings.provider_id = preferredProvider.id;
     const models = filterJimengImageModels(providerImageModels(settings.provider_id));
     if(!settings.model || !models.includes(settings.model)) settings.model = models[0] || '';
     normalizeApiSizeSettings('');
@@ -2346,7 +2368,9 @@ function renderApiParams(){
 }
 function renderApiVideoParams(){
     const providers = videoApiProviders();
-    if(!settings.videoProvider || !providers.some(p => p.id === settings.videoProvider)) settings.videoProvider = providers[0]?.id || 'comfly';
+    const preferredProvider = providers.find(providerHasAllowedVideoModel) || providers[0] || null;
+    if(!settings.videoProvider || !providers.some(p => p.id === settings.videoProvider)) settings.videoProvider = preferredProvider?.id || 'comfly';
+    else if(!providerHasAllowedVideoModel(providers.find(p => p.id === settings.videoProvider)) && preferredProvider) settings.videoProvider = preferredProvider.id;
     const models = filterJimengVideoModels(providerVideoModels(settings.videoProvider));
     if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || 'veo3-fast';
     dynamicParams.innerHTML = `
