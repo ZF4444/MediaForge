@@ -61,6 +61,7 @@
                 </div>
             </div>
         </div>
+        <div id="nodeShortcutOverlay" class="node-shortcut-overlay"></div>
         <button class="smart-back" type="button" onclick="backToCanvasList()"><i data-lucide="arrow-left"></i><span data-i18n="canvas.backToList">返回画布列表</span></button>
         <div id="smartTitle" class="smart-title" data-i18n="smart.title">智能画布</div>
         <div id="createMenu" class="create-menu">
@@ -198,6 +199,27 @@
                 <div class="asset-dialog-actions">
                     <button id="assetDialogCancel" class="asset-dialog-btn secondary" type="button" data-i18n="common.cancel">取消</button>
                     <button id="assetDialogOk" class="asset-dialog-btn primary" type="button" data-i18n="common.confirm">确定</button>
+                </div>
+            </div>
+        </div>
+        <div id="nodeAssetSaveModal" class="node-asset-save-backdrop" hidden>
+            <div class="node-asset-save-modal">
+                <div class="node-asset-save-head">
+                    <div class="node-asset-save-title"><i data-lucide="library"></i><span>保存到资产库</span></div>
+                    <button id="nodeAssetSaveClose" class="asset-mini-btn" type="button" title="关闭"><i data-lucide="x"></i></button>
+                </div>
+                <div class="node-asset-save-toolbar">
+                    <div id="nodeAssetSaveLibraries" class="node-asset-save-libraries"></div>
+                    <button id="nodeAssetSaveNewFolder" class="node-asset-save-new-folder" type="button"><i data-lucide="folder-plus"></i><span>新建文件夹</span></button>
+                </div>
+                <div id="nodeAssetSaveFolders" class="node-asset-save-folders"></div>
+                <label class="node-asset-save-field">
+                    <span>资产名称</span>
+                    <input id="nodeAssetSaveName" type="text" autocomplete="off" placeholder="输入资产名称">
+                </label>
+                <div class="node-asset-save-actions">
+                    <button id="nodeAssetSaveCancel" class="asset-dialog-btn secondary" type="button" data-i18n="common.cancel">取消</button>
+                    <button id="nodeAssetSaveConfirm" class="asset-dialog-btn primary" type="button">保存</button>
                 </div>
             </div>
         </div>

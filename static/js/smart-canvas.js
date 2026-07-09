@@ -3,6 +3,7 @@ const canvasId = params.get('id') || '';
 const shell = document.getElementById('shell');
 const world = document.getElementById('world');
 const composer = document.getElementById('composer');
+const nodeShortcutOverlay = document.getElementById('nodeShortcutOverlay');
 const createMenu = document.getElementById('createMenu');
 const promptInput = document.getElementById('promptInput');
 const mentionPicker = document.getElementById('mentionPicker');
@@ -43,6 +44,14 @@ const assetDialogTitle = document.getElementById('assetDialogTitle');
 const assetDialogInput = document.getElementById('assetDialogInput');
 const assetDialogCancel = document.getElementById('assetDialogCancel');
 const assetDialogOk = document.getElementById('assetDialogOk');
+const nodeAssetSaveModal = document.getElementById('nodeAssetSaveModal');
+const nodeAssetSaveClose = document.getElementById('nodeAssetSaveClose');
+const nodeAssetSaveLibraries = document.getElementById('nodeAssetSaveLibraries');
+const nodeAssetSaveNewFolder = document.getElementById('nodeAssetSaveNewFolder');
+const nodeAssetSaveFolders = document.getElementById('nodeAssetSaveFolders');
+const nodeAssetSaveName = document.getElementById('nodeAssetSaveName');
+const nodeAssetSaveCancel = document.getElementById('nodeAssetSaveCancel');
+const nodeAssetSaveConfirm = document.getElementById('nodeAssetSaveConfirm');
 const assetHoverPreview = document.getElementById('assetHoverPreview');
 const promptPresetPanel = document.getElementById('promptPresetPanel');
 const promptPresetClose = document.getElementById('promptPresetClose');
@@ -102,6 +111,7 @@ let mentionSource = 'input';
 let mentionAssetCategoryId = '';
 let assetLibraryUpdatedAt = 0;
 let assetLibraryRefreshTimer = null;
+let nodeAssetSaveState = {open:false, fileId:'', name:'', libraryId:'', categoryId:''};
 const PROMPT_PRESETS_KEY = 'smart_canvas_prompt_presets_v1';
 const PROMPT_TEMPLATE_GROUPS_KEY = 'smart_canvas_prompt_template_groups_v1';
 const PROMPT_TEMPLATE_OVERRIDES_KEY = 'smart_canvas_prompt_template_overrides_v1';
@@ -1687,6 +1697,7 @@ function applyViewport(){
     shell.style.backgroundPosition = '0 0';
     const active = selectedNode();
     if(active && composer?.classList?.contains('open')) positionComposerForNode(active);
+    updateNodeShortcutBar();
     requestRenderMinimap();
 }
 function screenToWorld(event){
@@ -4386,6 +4397,195 @@ function activeAssetCategory(){
     if(!cats.length) return null;
     return cats.find(cat => cat.id === activeAssetCategoryId) || cats[0];
 }
+function assetCategoriesForLibrary(libraryId='', type='image'){
+    const lib = assetLibraries().find(entry => entry.id === libraryId) || null;
+    return (lib?.categories || []).filter(cat => (cat.type || 'image') === type);
+}
+function nodeShortcutTargetFor(node=selectedNode()){
+    if(!node) return null;
+    const refs = imagesForNode(node).filter(item => item?.url);
+    if(!refs.length) return null;
+    let target = null;
+    if(selectedImage.nodeId && selectedImage.index >= 0){
+        target = refs.find(item => item.nodeId === selectedImage.nodeId && Number(item.imageIndex) === Number(selectedImage.index)) || null;
+    }
+    if(!target) target = refs[0];
+    const targetNode = nodes.find(entry => entry.id === target.nodeId) || node;
+    return {
+        ownerNode: node,
+        node: targetNode,
+        image: target,
+        index: Number(target.imageIndex || 0),
+        kind: mediaKindForItem(target)
+    };
+}
+function shouldShowNodeShortcutBar(node){
+    if(!node || !isNodeSelected(node.id)) return false;
+    if(selectedIds.length) return false;
+    if(selectedId !== node.id) return false;
+    if(node.type === 'smart-prompt' || node.type === 'smart-loop') return false;
+    if(dragState || thumbDragState) return false;
+    return Boolean(nodeShortcutTargetFor(node));
+}
+function nodeShortcutBarHtml(node){
+    const target = nodeShortcutTargetFor(node);
+    if(!shouldShowNodeShortcutBar(node) || !target) return '';
+    const isImage = target.kind === 'image';
+    const items = [
+        {action:'crop', icon:'crop', label:'裁剪', disabled:!isImage},
+        {action:'outpaint', icon:'expand', label:'扩图', disabled:!isImage},
+        {action:'mask', icon:'brush', label:'遮罩', disabled:!isImage},
+        {action:'brush', icon:'paintbrush', label:'画笔', disabled:!isImage},
+        {action:'grid', icon:'grid-3x3', label:'宫格切分', disabled:!isImage},
+        {action:'save', icon:'library', label:'加入资产', disabled:!target.image?.file_id},
+        {action:'download', icon:'download', label:'下载', disabled:false},
+        {action:'fullscreen', icon:'maximize', label:'全屏', disabled:false}
+    ];
+    return `<div class="node-shortcut-bar" data-node-shortcut-bar="${escapeAttr(node.id)}">
+        ${items.map(item => `<button class="node-shortcut-btn" type="button" data-node-shortcut="${item.action}" data-node-id="${escapeAttr(node.id)}" title="${escapeAttr(item.label)}" ${item.disabled ? 'disabled' : ''}>
+            <i data-lucide="${item.icon}"></i><span>${escapeHtml(item.label)}</span>
+        </button>`).join('')}
+    </div>`;
+}
+function positionNodeShortcutForNode(node){
+    if(!nodeShortcutOverlay || !node) return;
+    const bar = nodeShortcutOverlay.querySelector('.node-shortcut-bar');
+    if(!bar) return;
+    const rect = nodeRect(node);
+    const gap = 14;
+    const cardW = Math.min(680, Math.max(320, shell.clientWidth - 48));
+    const centerX = viewport.x + (rect.x + rect.width / 2) * viewport.scale;
+    const desiredLeft = centerX - cardW / 2;
+    const minLeft = 24;
+    const maxLeft = Math.max(minLeft, shell.clientWidth - cardW - 24);
+    const left = Math.max(minLeft, Math.min(maxLeft, desiredLeft));
+    const top = viewport.y + rect.y * viewport.scale - 46 - gap;
+    bar.style.width = `${cardW}px`;
+    bar.style.left = `${Math.round(left)}px`;
+    bar.style.top = `${Math.round(Math.max(12, top))}px`;
+}
+function bindNodeShortcutOverlayEvents(){
+    if(!nodeShortcutOverlay || nodeShortcutOverlay.dataset.bound === '1') return;
+    nodeShortcutOverlay.dataset.bound = '1';
+    nodeShortcutOverlay.addEventListener('pointerdown', event => {
+        const btn = event.target.closest?.('[data-node-shortcut]');
+        if(!btn) return;
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+    nodeShortcutOverlay.addEventListener('mousedown', event => {
+        const btn = event.target.closest?.('[data-node-shortcut]');
+        if(!btn) return;
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+    nodeShortcutOverlay.addEventListener('click', event => {
+        const btn = event.target.closest?.('[data-node-shortcut]');
+        if(!btn) return;
+        event.preventDefault();
+        event.stopPropagation();
+        triggerNodeShortcutAction(btn.dataset.nodeShortcut || '', btn.dataset.nodeId || '');
+    });
+}
+function updateNodeShortcutBar(){
+    if(!nodeShortcutOverlay) return;
+    const node = selectedNode();
+    if(!shouldShowNodeShortcutBar(node)){
+        nodeShortcutOverlay.innerHTML = '';
+        return;
+    }
+    nodeShortcutOverlay.innerHTML = nodeShortcutBarHtml(node);
+    positionNodeShortcutForNode(node);
+    if(window.lucide) lucide.createIcons();
+}
+function renderNodeAssetSaveModal(){
+    if(!nodeAssetSaveModal || !nodeAssetSaveLibraries || !nodeAssetSaveFolders || !nodeAssetSaveName || !nodeAssetSaveConfirm) return;
+    const libs = assetLibraries();
+    if(!nodeAssetSaveState.libraryId || !libs.some(lib => lib.id === nodeAssetSaveState.libraryId)){
+        nodeAssetSaveState.libraryId = activeAssetLibraryId || libs[0]?.id || '';
+    }
+    const folders = assetCategoriesForLibrary(nodeAssetSaveState.libraryId, 'image');
+    if(!nodeAssetSaveState.categoryId || !folders.some(cat => cat.id === nodeAssetSaveState.categoryId)){
+        nodeAssetSaveState.categoryId = folders[0]?.id || '';
+    }
+    nodeAssetSaveLibraries.innerHTML = libs.map(lib => `<button class="node-asset-save-library ${lib.id === nodeAssetSaveState.libraryId ? 'active' : ''}" type="button" data-node-asset-library="${escapeAttr(lib.id)}">${escapeHtml(lib.name || '资产库')}</button>`).join('');
+    nodeAssetSaveFolders.innerHTML = folders.length ? folders.map(cat => {
+        const count = Array.isArray(cat.items) ? cat.items.length : 0;
+        return `<button class="node-asset-save-folder ${cat.id === nodeAssetSaveState.categoryId ? 'active' : ''}" type="button" data-node-asset-folder="${escapeAttr(cat.id)}">
+            <span class="node-asset-save-folder-main">
+                <i data-lucide="folder"></i>
+                <span class="node-asset-save-folder-text">
+                    <span class="node-asset-save-folder-name">${escapeHtml(cat.name || '未命名文件夹')}</span>
+                    <span class="node-asset-save-folder-meta">${count} 项</span>
+                </span>
+            </span>
+            <span class="node-asset-save-folder-check"><i data-lucide="check"></i></span>
+        </button>`;
+    }).join('') : `<div class="node-asset-save-empty">当前资产库还没有文件夹，先新建一个文件夹再保存。</div>`;
+    nodeAssetSaveName.value = nodeAssetSaveState.name || '';
+    nodeAssetSaveConfirm.disabled = !nodeAssetSaveState.fileId || !nodeAssetSaveState.categoryId;
+    refreshIcons();
+}
+function closeNodeAssetSaveModal(){
+    if(!nodeAssetSaveModal) return;
+    nodeAssetSaveState = {open:false, fileId:'', name:'', libraryId:'', categoryId:''};
+    nodeAssetSaveModal.classList.remove('open');
+    nodeAssetSaveModal.hidden = true;
+}
+async function openNodeAssetSaveModal(node=selectedNode()){
+    const target = nodeShortcutTargetFor(node);
+    if(!target?.image?.file_id) throw new Error('当前节点没有 file_id，无法保存到资产库');
+    await loadAssetLibrary();
+    nodeAssetSaveState = {
+        open:true,
+        fileId:target.image.file_id,
+        name:String(target.image.name || target.ownerNode?.title || 'asset').trim(),
+        libraryId:activeAssetLibraryId || assetLibraries()[0]?.id || '',
+        categoryId:activeAssetCategoryId || activeAssetCategory()?.id || ''
+    };
+    renderNodeAssetSaveModal();
+    nodeAssetSaveModal.hidden = false;
+    nodeAssetSaveModal.classList.add('open');
+    nodeAssetSaveName?.focus();
+    nodeAssetSaveName?.select();
+}
+async function saveFileToAssetLibrarySelection(fileId, name='', libraryId='', categoryId=''){
+    if(!fileId) throw new Error('缺少 file_id，无法保存到资产库');
+    if(!libraryId || !categoryId) throw new Error('请选择资产库文件夹');
+    const data = await fetch('/api/asset-library/items', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({library_id:libraryId, category_id:categoryId, file_id:fileId, name})
+    }).then(async r => {
+        if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || tr('smart.assetAddFail'));
+        return r.json();
+    });
+    activeAssetLibraryId = libraryId;
+    activeAssetCategoryId = categoryId;
+    setAssetLibraryFromResponse(data);
+    toast(tr('smart.assetSaved'));
+    return data;
+}
+function triggerNodeShortcutAction(action, nodeId=''){
+    const node = nodes.find(entry => entry.id === (nodeId || selectedId)) || selectedNode();
+    const target = nodeShortcutTargetFor(node);
+    if(!node || !target) return;
+    if(action === 'save'){
+        openNodeAssetSaveModal(node).catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
+        return;
+    }
+    if(action === 'download'){
+        downloadPreviewFile(target.image);
+        return;
+    }
+    if(action === 'fullscreen'){
+        openImagePreview(target.node.id, target.index);
+        return;
+    }
+    if(target.kind !== 'image') return;
+    openImageEditor(target.node.id, target.index);
+    setImageEditMode(action, true);
+}
 async function loadAssetLibrary(){
     try {
         const data = await fetch('/api/asset-library').then(r => r.json());
@@ -4580,6 +4780,7 @@ function setAssetLibraryFromResponse(data, options={}){
         renderAssetLibrary();
         if(mentionPicker?.classList?.contains('open') && mentionSource === 'asset') renderMentionPicker('asset');
     }
+    if(nodeAssetSaveState.open) renderNodeAssetSaveModal();
 }
 function toggleAssetLibrary(open=!assetLibraryOpen){
     if(!assetPanel || !assetToggle) return;
@@ -4828,13 +5029,7 @@ function bindAssetItemEvents(){
 async function addFileToAssetLibrary(fileId, name=''){
     const cat = activeAssetCategory();
     if(!cat){ toast(tr('smart.assetNoFolder')); return; }
-    if(!fileId) throw new Error(tr('smart.assetAddFail'));
-    const data = await fetch('/api/asset-library/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:activeAssetLibraryId, category_id:cat.id, file_id:fileId, name})}).then(async r => {
-        if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || tr('smart.assetAddFail'));
-        return r.json();
-    });
-    setAssetLibraryFromResponse(data);
-    toast(tr('smart.assetSaved'));
+    await saveFileToAssetLibrarySelection(fileId, name, activeAssetLibraryId, cat.id);
 }
 function canvasImageDragPayload(node, index=0){
     const img = node?.images?.[index];
@@ -5470,8 +5665,7 @@ function imageResolutionLabel(img){
     return w > 0 && h > 0 ? `${Math.round(w)} x ${Math.round(h)}` : '';
 }
 function imageResolutionBadgeHtml(img){
-    const label = imageResolutionLabel(img);
-    return label ? `<span class="image-resolution-badge">${escapeHtml(label)}</span>` : '';
+    return '';
 }
 function thumbDisplaySize(img, maxSize){
     const limit = Math.max(28, Math.round(Number(maxSize) || 96));
@@ -9774,6 +9968,7 @@ function updateComposer(){
     const node = selectedNode();
     if(node?.id && suppressComposerForCandidateNodeId === node.id){
         composer.classList.remove('open');
+        updateNodeShortcutBar();
         if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
         activeComposerSubject = null;
         lastComposerNodeId = '';
@@ -9782,12 +9977,14 @@ function updateComposer(){
     }
     if(smartCascadeSilentSelection && !activeComposerSubject){
         composer.classList.remove('open');
+        updateNodeShortcutBar();
         if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
         activeComposerSubject = null;
         lastComposerNodeId = '';
         return;
     }
     composer.classList.toggle('open', !!node);
+    updateNodeShortcutBar();
     if(!isSmartImageNode(node) || isUploadedImageOnlyNode(node)){
         if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
         savePromptDraftForCurrent();
@@ -14681,6 +14878,76 @@ assetDropZone?.addEventListener('drop', handleAssetPanelDrop);
 assetPanel?.addEventListener('dragover', handleAssetPanelDragOver);
 assetPanel?.addEventListener('dragleave', e => { if(!assetPanel?.contains(e.relatedTarget)) setAssetDragOver(false); });
 assetPanel?.addEventListener('drop', handleAssetPanelDrop);
+nodeAssetSaveModal?.addEventListener('pointerdown', event => event.stopPropagation());
+nodeAssetSaveModal?.addEventListener('mousedown', event => event.stopPropagation());
+nodeAssetSaveModal?.addEventListener('click', event => {
+    event.stopPropagation();
+    if(event.target === nodeAssetSaveModal) closeNodeAssetSaveModal();
+});
+nodeAssetSaveClose?.addEventListener('click', closeNodeAssetSaveModal);
+nodeAssetSaveCancel?.addEventListener('click', closeNodeAssetSaveModal);
+nodeAssetSaveLibraries?.addEventListener('click', event => {
+    const btn = event.target.closest('[data-node-asset-library]');
+    if(!btn) return;
+    nodeAssetSaveState.libraryId = btn.dataset.nodeAssetLibrary || '';
+    nodeAssetSaveState.categoryId = assetCategoriesForLibrary(nodeAssetSaveState.libraryId, 'image')[0]?.id || '';
+    renderNodeAssetSaveModal();
+});
+nodeAssetSaveFolders?.addEventListener('click', event => {
+    const btn = event.target.closest('[data-node-asset-folder]');
+    if(!btn) return;
+    nodeAssetSaveState.categoryId = btn.dataset.nodeAssetFolder || '';
+    renderNodeAssetSaveModal();
+});
+nodeAssetSaveName?.addEventListener('input', () => {
+    nodeAssetSaveState.name = nodeAssetSaveName.value;
+});
+nodeAssetSaveName?.addEventListener('keydown', event => {
+    if(event.key === 'Escape'){
+        event.preventDefault();
+        closeNodeAssetSaveModal();
+    }
+    if(event.key === 'Enter'){
+        event.preventDefault();
+        nodeAssetSaveConfirm?.click();
+    }
+});
+nodeAssetSaveNewFolder?.addEventListener('click', async () => {
+    const libraryId = nodeAssetSaveState.libraryId || assetLibraries()[0]?.id || '';
+    if(!libraryId) return;
+    const name = await openAssetNameDialog({title:'新建文件夹', value:'', placeholder:'输入文件夹名称', cancelValue:''});
+    if(!String(name || '').trim()) return;
+    try {
+        const data = await fetch('/api/asset-library/categories', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({library_id:libraryId, name:String(name).trim(), type:'image'})
+        }).then(async r => {
+            if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '新建文件夹失败');
+            return r.json();
+        });
+        nodeAssetSaveState.libraryId = libraryId;
+        nodeAssetSaveState.categoryId = data.category?.id || nodeAssetSaveState.categoryId;
+        setAssetLibraryFromResponse(data);
+    } catch(err) {
+        showErrorModal(err.message || '新建文件夹失败', '新建文件夹失败');
+    }
+});
+nodeAssetSaveConfirm?.addEventListener('click', async () => {
+    try {
+        nodeAssetSaveConfirm.disabled = true;
+        await saveFileToAssetLibrarySelection(
+            nodeAssetSaveState.fileId,
+            String(nodeAssetSaveName?.value || nodeAssetSaveState.name || '').trim(),
+            nodeAssetSaveState.libraryId,
+            nodeAssetSaveState.categoryId
+        );
+        closeNodeAssetSaveModal();
+    } catch(err) {
+        showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败');
+        renderNodeAssetSaveModal();
+    }
+});
 createMenu?.addEventListener('mousedown', event => event.stopPropagation());
 createMenu?.addEventListener('click', event => {
     event.stopPropagation();
@@ -14766,7 +15033,7 @@ document.addEventListener('click', event => {
     if(!event.target.closest('.prompt-template-panel') && !event.target.closest('.prompt-preset-edit') && !event.target.closest('#composerTemplateBtn')) closePromptTemplatePanel();
 });
 document.addEventListener('keydown', event => {
-    if(event.key === 'Escape') { closeAllSmartPopovers(); closeCreateMenu(); closeSmartCanvasLog(); closeSmartCanvasShortcuts(); closePromptPresetPanel(); closePromptTemplatePanel(); }
+    if(event.key === 'Escape') { closeAllSmartPopovers(); closeCreateMenu(); closeSmartCanvasLog(); closeSmartCanvasShortcuts(); closePromptPresetPanel(); closePromptTemplatePanel(); closeNodeAssetSaveModal(); }
 });
 document.getElementById('cropBox').addEventListener('mousedown', event => beginCropDrag(event, 'move'));
 document.getElementById('cropHandle').addEventListener('mousedown', event => beginCropDrag(event, 'resize'));
@@ -14993,6 +15260,7 @@ document.getElementById('imageEditStage').addEventListener('wheel', event => {
 window.addEventListener('resize', () => {
     if(cropState) syncImageEditOverflow();
     if(panoramaState.enabled) resizePanoramaViewer();
+    updateNodeShortcutBar();
 });
 window.addEventListener('studio-theme-change', event => applyTheme(event.detail?.theme || 'light'));
 try {
@@ -15030,6 +15298,7 @@ window.addEventListener('studio-lang-change', () => {
 });
 window.onload = async () => {
     applyTheme(localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light');
+    bindNodeShortcutOverlayEvents();
     loadPromptPresets();
     loadPromptTemplateGroups();
     loadPromptTemplateOverrides();
