@@ -7,6 +7,8 @@ import hashlib
 import json
 import mimetypes
 import os
+import shutil
+import subprocess
 import tempfile
 import urllib.parse
 import uuid
@@ -14,6 +16,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from threading import Lock
 from typing import Any, BinaryIO, Dict, List, Optional
+from PIL import Image
 
 from app.config import (
     ASSET_LIBRARY_DIR,
@@ -50,6 +53,7 @@ _BUCKETS_LOCK = Lock()
 _DB_READY = False
 _DB_LOCK = Lock()
 _INDEX_LOCK = Lock()
+THUMB_SIZE_DEFAULT = 320
 
 
 class StorageQuotaExceeded(RuntimeError):
@@ -488,6 +492,14 @@ def get_object_bytes(bucket: str, object_key: str) -> bytes:
     finally:
         response.close()
         response.release_conn()
+
+
+def object_exists(bucket: str, object_key: str) -> bool:
+    try:
+        stat_object(bucket, object_key)
+        return True
+    except Exception:
+        return False
 
 
 def _index_path() -> str:
@@ -1106,6 +1118,104 @@ def build_object_key(category: str, file_id: str, ext: str = "", *, user_id: str
     return f"users/{uid}/{folder}/{year}/{month}/{file_id}{suffix}"
 
 
+def build_derived_object_key(file_id: str, variant: str, ext: str, *, user_id: str = "") -> str:
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
+    suffix = ext if str(ext or "").startswith(".") else f".{ext}" if ext else ""
+    return f"users/{uid}/derived/{variant}/{file_id}{suffix}"
+
+
+def media_thumb_object_key(entry_or_file_id: Any, *, user_id: str = "") -> str:
+    file_id = entry_or_file_id.get("file_id") if isinstance(entry_or_file_id, dict) else entry_or_file_id
+    uid = user_id or (entry_or_file_id.get("user_id") if isinstance(entry_or_file_id, dict) else "")
+    return build_derived_object_key(str(file_id or "").strip(), f"thumbs/s{THUMB_SIZE_DEFAULT}", ".webp", user_id=uid)
+
+
+def media_poster_object_key(entry_or_file_id: Any, *, user_id: str = "") -> str:
+    file_id = entry_or_file_id.get("file_id") if isinstance(entry_or_file_id, dict) else entry_or_file_id
+    uid = user_id or (entry_or_file_id.get("user_id") if isinstance(entry_or_file_id, dict) else "")
+    return build_derived_object_key(str(file_id or "").strip(), f"posters/s{THUMB_SIZE_DEFAULT}", ".jpg", user_id=uid)
+
+
+def _generate_image_thumb_bytes(payload: bytes, size: int = THUMB_SIZE_DEFAULT) -> bytes:
+    with Image.open(BytesIO(payload)) as img:
+        frame = img.convert("RGB")
+        frame.thumbnail((size, size), Image.Resampling.LANCZOS)
+        out = BytesIO()
+        frame.save(out, format="WEBP", quality=76, method=6)
+        return out.getvalue()
+
+
+def _generate_video_poster_bytes(payload: bytes, size: int = THUMB_SIZE_DEFAULT, suffix: str = ".mp4") -> bytes:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return b""
+    tmp_in = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+    tmp_in_path = tmp_in.name
+    tmp_out_path = tmp_out.name
+    tmp_in.close()
+    tmp_out.close()
+    try:
+        with open(tmp_in_path, "wb") as f:
+            f.write(payload)
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            tmp_in_path,
+            "-vf",
+            f"thumbnail,scale='min({size},iw)':-2",
+            "-frames:v",
+            "1",
+            tmp_out_path,
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(tmp_out_path, "rb") as f:
+            return f.read()
+    except Exception:
+        return b""
+    finally:
+        for path in (tmp_in_path, tmp_out_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def ensure_media_derivatives(entry: Dict[str, Any], *, payload: bytes = b"") -> None:
+    if not storage_enabled() or not isinstance(entry, dict):
+        return
+    file_id = str(entry.get("file_id") or "").strip()
+    bucket = str(entry.get("bucket") or "").strip()
+    kind = str(entry.get("kind") or "").strip().lower()
+    if not file_id or not bucket or kind not in {"image", "video"}:
+        return
+    blob = payload if isinstance(payload, bytes) else b""
+    if not blob:
+        try:
+            blob = get_object_bytes(bucket, str(entry.get("object_key") or ""))
+        except Exception:
+            return
+    if kind == "image":
+        object_key = media_thumb_object_key(entry)
+        if object_exists(bucket, object_key):
+            return
+        thumb = _generate_image_thumb_bytes(blob, THUMB_SIZE_DEFAULT)
+        if thumb:
+            save_bytes(thumb, object_key, content_type="image/webp", bucket=bucket)
+        return
+    object_key = media_poster_object_key(entry)
+    if object_exists(bucket, object_key):
+        return
+    ext = str(entry.get("ext") or ".mp4") or ".mp4"
+    poster = _generate_video_poster_bytes(blob, THUMB_SIZE_DEFAULT, suffix=ext)
+    if poster:
+        save_bytes(poster, object_key, content_type="image/jpeg", bucket=bucket)
+
+
 def save_compat_media_bytes(
     category: str,
     filename: str,
@@ -1144,4 +1254,5 @@ def save_compat_media_bytes(
             else None
         ),
     )
+    ensure_media_derivatives(entry, payload=payload)
     return {**stored, "url": url, "entry": entry, "file_id": file_id}

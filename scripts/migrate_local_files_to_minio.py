@@ -70,8 +70,10 @@ def main() -> int:
         "dry_run": bool(args.dry_run),
         "scanned": summary.get("scanned", 0),
         "migrated": summary.get("migrated", 0),
+        "repaired": summary.get("repaired", 0),
         "planned": summary.get("planned", 0),
         "skipped": summary.get("skipped", 0),
+        "errors": summary.get("errors", 0),
         "metadata": summary.get("metadata", {}),
         "report": report_path,
     }, ensure_ascii=False, indent=2))

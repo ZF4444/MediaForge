@@ -5437,8 +5437,8 @@ function thumbMediaHtml(img){
         return `<div class="media-thumb file-thumb" data-media-url="${escapeAttr(img.url || '')}" data-media-kind="${escapeAttr(mediaKindForItem(img))}"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i><span>${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</span></div>`;
     }
     if(isAudioMediaItem(img)) return `<div class="media-thumb audio-thumb" data-media-url="${escapeAttr(img.url || '')}" data-media-kind="audio"><i data-lucide="file-audio"></i><span>${escapeHtml(img.name || 'Audio')}</span></div>`;
-    if(isVideoMediaItem(img)) return `<div class="media-thumb video-thumb"><video src="${escapeHtml(img.url)}" data-url="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video></div>`;
-    return `<img src="${escapeHtml(displayMediaUrl(img))}" data-original-src="${escapeAttr(img.url || '')}" draggable="false">`;
+    if(isVideoMediaItem(img)) return `<div class="media-thumb video-thumb" data-video-preview-container="1">${videoPosterHtml(img, 256, 'video-poster is-blurred')}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`;
+    return `<img src="${escapeHtml(thumbMediaUrl(img, 256))}" data-original-src="${escapeAttr(img.url || '')}" draggable="false">`;
 }
 function imageResolutionLabel(img){
     const w = Number(img?.natural_w || img?.width || img?.w || 0);
@@ -5486,8 +5486,8 @@ function singleMediaHtml(img, w, h){
         return `<div class="node-img media-card media-file-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i></div><div class="media-card-title">${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</div><div class="media-card-sub">${isTextMediaItem(img) ? 'TEXT' : 'FILE'}</div></div>`;
     }
     if(isAudioMediaItem(img)) return `<div class="node-img media-card media-audio-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="file-audio"></i></div><div class="media-card-title">${escapeHtml(img.name || 'Audio')}</div><div class="media-card-sub">AUDIO</div><audio src="${escapeAttr(img.url || '')}" data-url="${escapeAttr(img.url || '')}" controls preload="metadata"></audio></div>`;
-    if(isVideoMediaItem(img)) return `<div class="node-img media-card media-video-card" style="width:${w}px;height:${h}px"><video src="${escapeHtml(img.url)}" data-url="${escapeHtml(img.url)}" controls muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video></div>`;
-    return `<img class="node-img" src="${escapeHtml(displayMediaUrl(img))}" data-original-src="${escapeAttr(img.url || '')}" draggable="false" style="width:${w}px;height:${h}px">`;
+    if(isVideoMediaItem(img)) return `<div class="node-img media-card media-video-card" data-video-preview-container="1" style="width:${w}px;height:${h}px">${videoPosterHtml(img, Math.max(192, Math.round(Math.max(w, h) * 1.25)), 'node-img video-poster is-blurred', `width:${w}px;height:${h}px`)}<span class="smart-video-badge large"><i data-lucide="play"></i></span></div>`;
+    return `<img class="node-img" src="${escapeHtml(thumbMediaUrl(img, Math.max(192, Math.round(Math.max(w, h) * 1.25))))}" data-original-src="${escapeAttr(img.url || '')}" draggable="false" style="width:${w}px;height:${h}px">`;
 }
 function smartNodeHasLiveMedia(node){
     return Boolean(!node?.pending && (node?.images || []).some(img => isVideoMediaItem(img) || isAudioMediaItem(img)));
@@ -5570,6 +5570,82 @@ function restoreMediaPlaybackStates(states){
         restoreMediaPlaybackState(media, states.get(`${tag}:${url}`));
     });
 }
+function captureVideoPreviewFrame(video){
+    if(!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return '';
+    try {
+        const maxEdge = 640;
+        const scale = Math.min(1, maxEdge / Math.max(video.videoWidth, video.videoHeight));
+        const width = Math.max(1, Math.round(video.videoWidth * scale));
+        const height = Math.max(1, Math.round(video.videoHeight * scale));
+        const canvasEl = document.createElement('canvas');
+        canvasEl.width = width;
+        canvasEl.height = height;
+        const ctx = canvasEl.getContext('2d');
+        if(!ctx) return '';
+        ctx.drawImage(video, 0, 0, width, height);
+        return canvasEl.toDataURL('image/jpeg', 0.76);
+    } catch(e) {
+        return '';
+    }
+}
+function deactivateCanvasVideoPreview(itemEl){
+    const container = itemEl?.querySelector?.('[data-video-preview-container="1"]');
+    const video = container?.querySelector?.('video[data-video-preview="1"]');
+    if(!container || !video) return;
+    const posterSrc = video.dataset.posterSrc || '';
+    const frameSrc = captureVideoPreviewFrame(video) || posterSrc;
+    container.dataset.previewTime = Number.isFinite(video.currentTime) ? String(video.currentTime) : '';
+    try { video.pause?.(); } catch(e) {}
+    const img = document.createElement('img');
+    img.className = `${video.className || ''} is-blurred`.trim();
+    img.src = frameSrc || posterSrc;
+    img.dataset.originalSrc = video.dataset.originalSrc || '';
+    img.dataset.posterSrc = posterSrc;
+    img.dataset.videoSrc = video.dataset.url || '';
+    img.draggable = false;
+    if(video.style?.cssText) img.style.cssText = video.style.cssText;
+    video.replaceWith(img);
+}
+function activateCanvasVideoPreview(itemEl){
+    const container = itemEl?.querySelector?.('[data-video-preview-container="1"]');
+    const poster = container?.querySelector?.('img.video-poster');
+    if(!container || !poster) return;
+    const src = poster.dataset.videoSrc || poster.dataset.originalSrc || '';
+    if(!src) return;
+    const video = document.createElement('video');
+    video.className = String(poster.className || '').replace(/\bis-blurred\b/g, '').trim();
+    video.src = src;
+    video.dataset.url = src;
+    video.dataset.videoPreview = '1';
+    video.dataset.originalSrc = poster.dataset.originalSrc || '';
+    video.dataset.posterSrc = poster.dataset.posterSrc || '';
+    video.muted = true;
+    video.autoplay = true;
+    video.controls = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.disablePictureInPicture = true;
+    video.setAttribute('controls', '');
+    video.setAttribute('loop', '');
+    video.setAttribute('playsinline', '');
+    video.setAttribute('preload', 'metadata');
+    video.setAttribute('disablepictureinpicture', '');
+    video.setAttribute('controlslist', 'nodownload noplaybackrate noremoteplayback');
+    video.draggable = false;
+    if(poster.style?.cssText) video.style.cssText = poster.style.cssText;
+    const resumeTime = Math.max(0, Number(container.dataset.previewTime || 0) || 0);
+    const startPlayback = () => {
+        if(resumeTime > 0){
+            try { video.currentTime = resumeTime; } catch(e) {}
+        }
+        const promise = video.play?.();
+        if(promise?.catch) promise.catch(() => {});
+    };
+    if(video.readyState >= 1) startPlayback();
+    else video.addEventListener('loadedmetadata', startPlayback, {once:true});
+    poster.replaceWith(video);
+}
 function smartRunTaskLabel(run){
     const s = run?.settings || {};
     if(run?.kind === 'video') return s.videoModel || 'Video';
@@ -5593,9 +5669,24 @@ function filePreviewUrl(item){
     if(fileId) return `/api/files/${encodeURIComponent(fileId)}/preview`;
     return String(item?.url || '');
 }
+function fileThumbnailUrl(item, size=320){
+    const fileId = String(item?.file_id || '').trim();
+    if(fileId) return `/api/files/${encodeURIComponent(fileId)}/thumb?size=${Math.max(32, Math.min(1024, Number(size) || 320))}`;
+    return filePreviewUrl(item);
+}
 function proxiedMediaUrl(itemOrUrl, name=''){
     if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
     return filePreviewUrl(itemOrUrl);
+}
+function thumbMediaUrl(itemOrUrl, size=320){
+    if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
+    return fileThumbnailUrl(itemOrUrl, size);
+}
+function videoPosterHtml(item, size=256, extraClass='', style=''){
+    const cls = extraClass ? ` class="${extraClass}"` : '';
+    const styleAttr = style ? ` style="${style}"` : '';
+    const posterUrl = thumbMediaUrl(item, size);
+    return `<img${cls} src="${escapeHtml(posterUrl)}" data-original-src="${escapeAttr(item?.url || '')}" data-poster-src="${escapeAttr(posterUrl)}" data-video-src="${escapeAttr(filePreviewUrl(item) || item?.url || '')}" draggable="false"${styleAttr}>`;
 }
 function displayMediaUrl(itemOrUrl, name=''){
     if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
@@ -6841,6 +6932,15 @@ function bindNodeEvents(){
                 e.dataTransfer.setData('application/x-smart-canvas-image', JSON.stringify(latestPayload));
                 e.dataTransfer.setData('text/plain', latestPayload.url || '');
             });
+            const hasVideoPreview = Boolean(item.querySelector('[data-video-preview-container="1"]'));
+            if(hasVideoPreview){
+                item.addEventListener('mouseenter', () => {
+                    activateCanvasVideoPreview(item);
+                });
+                item.addEventListener('mouseleave', () => {
+                    deactivateCanvasVideoPreview(item);
+                });
+            }
             item.addEventListener('mousedown', e => {
                 if(isCandidatePanelInteractionTarget(e.target)) return;
                 if(e.button !== 0 || e.target.closest('.image-delete')) return;
@@ -9706,11 +9806,11 @@ function renderRhInputThumb(ref, field, index, kind, node, sourceUrl){
     const isVid = kind === 'video' || isVideoMediaItem(ref);
     const title = `${field.label || field.fieldName || rhInputKindLabel(kind)} · ${ref?.name || tr('smart.inputNum').replace('{n}', String(index + 1))}`;
     const inner = isVid
-        ? `<video src="${escapeAttr(ref.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>`
-        : `<img src="${escapeAttr(ref.url)}" draggable="false">`;
+        ? `<div class="input-thumb-video">${videoPosterHtml(ref, 160)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
+        : `<img src="${escapeAttr(thumbMediaUrl(ref, 160))}" draggable="false">`;
     const label = rhInputKindLabel(kind).slice(0, 3);
     const isSelf = node ? isSelfReferenceForNode(node, ref) : false;
-    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(ref.url || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(thumbMediaUrl(ref, 160) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
 }
 function renderRunningHubInputThumbsRow(node){
     const fields = rhActiveFields().filter(field => ['image','video','audio'].includes(rhFieldKind(field)));
@@ -9768,10 +9868,12 @@ function renderInputThumbsRow(node){
         const title = isSelf
             ? tr('smart.inputSelf')
             : (smartImageMode(node) === 'workflow' ? tr('smart.inputUpstreamWorkflow') : tr('smart.inputUpstream'));
-        const inner = isVid ? `<video src="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>` : `<img src="${escapeHtml(img.url)}" draggable="false">`;
+        const inner = isVid
+            ? `<div class="input-thumb-video">${videoPosterHtml(img, 160)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
+            : `<img src="${escapeHtml(thumbMediaUrl(img, 160))}" draggable="false">`;
         const label = `图${i + 1}`;
         const sourceUrl = img.originalLocalUrl || img.url || '';
-        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}" style="--preview-url:url('${escapeHtml(img.url || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}" style="--preview-url:url('${escapeHtml(thumbMediaUrl(img, 160) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
     }).join('');
     inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}${dedup.length > 1 ? `<span class="input-thumb-count">${escapeHtml(tr('smart.inputCount').replace('{n}', String(dedup.length)))}</span>` : ''}</div>`;
     bindInputThumbsDrag(node, dedup);

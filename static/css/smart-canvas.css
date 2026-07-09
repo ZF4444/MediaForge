@@ -290,7 +290,7 @@ body.smart-node-drag .image-wrap:hover .image-resolution-badge { opacity:0 !impo
 video.node-img { object-fit:cover; background:#0f172a; }
 .media-video-card { align-items:stretch; justify-content:stretch; overflow:hidden; border:1px solid rgba(148,163,184,.38); border-radius:12px; background:#0f172a; box-sizing:border-box; }
 .theme-dark .media-video-card { border-color:rgba(148,163,184,.3); }
-.media-video-card video { width:100%; height:100%; object-fit:cover; background:#0f172a; display:block; border-radius:inherit; }
+.media-video-card video, .media-video-card img { width:100%; height:100%; object-fit:cover; background:#0f172a; display:block; border-radius:inherit; }
 .media-audio-card, .media-file-card { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:16px; color:var(--text); text-align:center; min-width:240px; min-height:148px; box-sizing:border-box; overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:0 20px 56px var(--shadow); backdrop-filter:blur(20px); transition:border-color .12s ease, box-shadow .12s ease; }
 .theme-dark .media-audio-card { background:var(--panel); border-color:var(--line); box-shadow:0 20px 56px var(--shadow); }
 .media-card-icon { width:46px; height:46px; border-radius:15px; display:flex; align-items:center; justify-content:center; background:var(--card); border:1px solid var(--line); color:var(--muted); }
@@ -300,8 +300,16 @@ video.node-img { object-fit:cover; background:#0f172a; }
 .media-audio-card audio { width:100%; max-width:100%; min-width:150px; flex:0 0 auto; color-scheme:light; border-radius:999px; background:var(--card); }
 .theme-dark .media-audio-card audio { color-scheme:dark; background:#0f172a; filter:brightness(.9) contrast(1.08); }
 .thumb-item video { width:auto; height:auto; max-width:100%; max-height:100%; object-fit:contain; object-position:center; border-radius:12px; background:#0f172a; display:block; }
-.media-thumb.video-thumb { width:100%; height:100%; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:12px; background:#0f172a; }
-.media-thumb.video-thumb video { width:auto; height:auto; max-width:100%; max-height:100%; object-fit:contain; object-position:center; background:#0f172a; display:block; }
+.media-thumb.video-thumb { position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:12px; background:#0f172a; }
+.media-thumb.video-thumb video, .media-thumb.video-thumb img { width:auto; height:auto; max-width:100%; max-height:100%; object-fit:contain; object-position:center; background:#0f172a; display:block; }
+.video-poster.is-blurred { filter:blur(3px) saturate(.94) brightness(.96); transform:scale(1.02); }
+.media-video-card .video-poster.is-blurred { filter:blur(4px) saturate(.92) brightness(.95); transform:scale(1.03); }
+.smart-video-badge { position:absolute; right:8px; bottom:8px; width:26px; height:26px; border-radius:999px; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,.72); color:#fff; box-shadow:0 8px 20px rgba(0,0,0,.28); pointer-events:none; }
+.smart-video-badge.large { right:12px; bottom:12px; width:34px; height:34px; }
+.smart-video-badge i, .smart-video-badge svg { width:14px; height:14px; }
+.smart-video-badge.large i, .smart-video-badge.large svg { width:18px; height:18px; }
+.input-thumb-video { position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+.input-thumb-video img, .input-thumb-video video { width:100%; height:100%; object-fit:cover; display:block; }
 .media-thumb.audio-thumb { flex-direction:column; gap:4px; }
 .media-thumb.audio-thumb span { max-width:80%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9px; font-weight:800; }
 .media-thumb.file-thumb { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; background:var(--soft); color:var(--muted); text-align:center; padding:5px; }

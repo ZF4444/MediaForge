@@ -23,8 +23,10 @@ from app.services.assets import compact_asset_item_reference, normalize_asset_li
 from app.services.history import compact_history_record, normalize_history_record
 from app.services.storage import (
     build_object_key,
+    ensure_media_derivatives,
     file_preview_url,
     lookup_media_url,
+    object_exists,
     register_media_url,
     save_bytes,
 )
@@ -197,13 +199,19 @@ def iter_local_asset_candidates(
 
 
 def migrate_candidate(candidate: MigrationCandidate, *, dry_run: bool = False) -> Dict[str, Any]:
-    existing = lookup_media_url(candidate.legacy_url)
-    if existing:
+    existing = lookup_media_url(candidate.legacy_url, include_deleted=True)
+    existing_file_id = str((existing or {}).get("file_id") or "").strip()
+    existing_bucket = str((existing or {}).get("bucket") or "").strip()
+    existing_object_key = str((existing or {}).get("object_key") or "").strip()
+    source_exists = os.path.isfile(candidate.local_path)
+    object_ready = bool(existing_bucket and existing_object_key and object_exists(existing_bucket, existing_object_key))
+
+    if existing and dry_run and object_ready:
         return {
             "status": "skipped",
             "reason": "already_registered",
             "legacy_url": candidate.legacy_url,
-            "file_id": existing.get("file_id") or "",
+            "file_id": existing_file_id,
             "user_id": existing.get("user_id") or candidate.user_id,
         }
     if dry_run:
@@ -214,13 +222,37 @@ def migrate_candidate(candidate: MigrationCandidate, *, dry_run: bool = False) -
             "size_bytes": candidate.size_bytes,
             "category": candidate.category,
         }
-    with open(candidate.local_path, "rb") as f:
-        payload = f.read()
+
+    payload = b""
+    if source_exists:
+        with open(candidate.local_path, "rb") as f:
+            payload = f.read()
+    elif not object_ready:
+        return {
+            "status": "error",
+            "reason": "source_missing_and_object_missing",
+            "legacy_url": candidate.legacy_url,
+            "file_id": existing_file_id,
+            "user_id": candidate.user_id,
+        }
+
     token = current_user_var.set(candidate.user_id)
     try:
-        file_id = uuid.uuid4().hex
-        object_key = build_object_key(candidate.category, file_id, os.path.splitext(candidate.stored_name)[1].lower(), user_id=candidate.user_id)
-        stored = save_bytes(payload, object_key, content_type=candidate.content_type)
+        file_id = existing_file_id or uuid.uuid4().hex
+        if object_ready:
+            stored = {
+                "bucket": existing_bucket,
+                "object_key": existing_object_key,
+                "size": int((existing or {}).get("size") or candidate.size_bytes or len(payload)),
+            }
+        else:
+            object_key = build_object_key(
+                candidate.category,
+                file_id,
+                os.path.splitext(candidate.stored_name)[1].lower(),
+                user_id=candidate.user_id,
+            )
+            stored = save_bytes(payload, object_key, content_type=candidate.content_type)
         entry = register_media_url(
             candidate.legacy_url,
             stored["bucket"],
@@ -236,10 +268,22 @@ def migrate_candidate(candidate: MigrationCandidate, *, dry_run: bool = False) -
             source=CATEGORY_SOURCE.get(candidate.category, "upload"),
             is_public=False,
         )
+        ensure_media_derivatives(entry, payload=payload)
     finally:
         current_user_var.reset(token)
+
+    if existing and object_ready:
+        status = "repaired"
+        reason = "metadata_refreshed"
+    elif existing:
+        status = "repaired"
+        reason = "object_restored"
+    else:
+        status = "migrated"
+        reason = ""
     return {
-        "status": "migrated",
+        "status": status,
+        "reason": reason,
         "legacy_url": candidate.legacy_url,
         "file_id": entry.get("file_id") or file_id,
         "preview_url": file_preview_url(file_id),
@@ -333,8 +377,10 @@ def run_local_storage_migration(
     summary = {
         "scanned": len(candidates),
         "migrated": sum(1 for item in results if item.get("status") == "migrated"),
+        "repaired": sum(1 for item in results if item.get("status") == "repaired"),
         "planned": sum(1 for item in results if item.get("status") == "planned"),
         "skipped": sum(1 for item in results if item.get("status") == "skipped"),
+        "errors": sum(1 for item in results if item.get("status") == "error"),
         "results": results,
     }
     if rewrite_metadata:
