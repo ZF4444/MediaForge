@@ -5612,10 +5612,17 @@ function captureVideoPreviewFrame(video){
         return '';
     }
 }
+function isVideoPreviewFullscreen(video){
+    if(!video) return false;
+    const fullscreenEl = document.fullscreenElement || document.webkitFullscreenElement || null;
+    return Boolean(fullscreenEl && (fullscreenEl === video || fullscreenEl.contains?.(video)));
+}
 function deactivateCanvasVideoPreview(itemEl){
     const container = itemEl?.querySelector?.('[data-video-preview-container="1"]');
     const video = container?.querySelector?.('video[data-video-preview="1"]');
     if(!container || !video) return;
+    if(isVideoPreviewFullscreen(video)) return;
+    container.classList.remove('is-playing');
     const posterSrc = video.dataset.posterSrc || '';
     const frameSrc = captureVideoPreviewFrame(video) || posterSrc;
     container.dataset.previewTime = Number.isFinite(video.currentTime) ? String(video.currentTime) : '';
@@ -5658,6 +5665,8 @@ function activateCanvasVideoPreview(itemEl){
     video.setAttribute('controlslist', 'nodownload noplaybackrate noremoteplayback');
     video.draggable = false;
     if(poster.style?.cssText) video.style.cssText = poster.style.cssText;
+    video.style.removeProperty('width');
+    video.style.removeProperty('height');
     const resumeTime = Math.max(0, Number(container.dataset.previewTime || 0) || 0);
     const startPlayback = () => {
         if(resumeTime > 0){
@@ -5668,6 +5677,15 @@ function activateCanvasVideoPreview(itemEl){
     };
     if(video.readyState >= 1) startPlayback();
     else video.addEventListener('loadedmetadata', startPlayback, {once:true});
+    const handleFullscreenExit = () => {
+        if(isVideoPreviewFullscreen(video)) return;
+        document.removeEventListener('fullscreenchange', handleFullscreenExit);
+        document.removeEventListener('webkitfullscreenchange', handleFullscreenExit);
+        if(!itemEl?.matches?.(':hover')) deactivateCanvasVideoPreview(itemEl);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenExit);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenExit);
+    container.classList.add('is-playing');
     poster.replaceWith(video);
 }
 function smartRunTaskLabel(run){
