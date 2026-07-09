@@ -657,27 +657,27 @@
         } catch(e) {}
         document.addEventListener('visibilitychange', () => { if(!document.hidden) scheduleProviderRefresh(); });
 
-        async function uploadReferenceBlob(blob, filename){
-            const form = new FormData();
-            form.append('files', blob, filename);
-            const res = await fetch('/api/ai/upload', { method:'POST', body:form });
-            const data = await window.readResponsePayload(res);
-            if(!res.ok) throw new Error(window.responseErrorMessage('参考图上传失败', '/api/ai/upload', res, data));
-            const ref = data.files?.[0];
-            if(!ref?.url) throw new Error('参考图上传失败：接口未返回文件 URL');
-            return { url:ref.url, name:ref.name || filename, role:'' };
+        function fileToDataUrl(file){
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.onerror = () => reject(reader.error || new Error('读取参考图失败'));
+                reader.readAsDataURL(file);
+            });
         }
-        function uploadReferenceFile(file){
-            return uploadReferenceBlob(file, file.name || 'source.png');
+        async function buildReferenceFromFile(file){
+            const url = await fileToDataUrl(file);
+            if(!url) throw new Error('参考图读取失败：未生成 data URL');
+            return { url, name:file.name || 'source.png', role:'' };
         }
-        async function uploadDataUrlReference(dataUrl, filename){
-            const blob = await fetch(dataUrl).then(r => r.blob());
-            return uploadReferenceBlob(blob, filename);
+        async function buildReferenceFromDataUrl(dataUrl, filename){
+            if(!dataUrl || !String(dataUrl).startsWith('data:image/')) throw new Error('姿势图生成失败：无效的 data URL');
+            return { url:dataUrl, name:filename, role:'' };
         }
         function queueInputReferenceUpload(file){
             const token = ++inputUploadToken;
             inputImageRef = null;
-            inputReferenceUploadPromise = uploadReferenceFile(file).then(ref => {
+            inputReferenceUploadPromise = buildReferenceFromFile(file).then(ref => {
                 if(token === inputUploadToken) inputImageRef = ref;
                 refreshTransferState();
                 return ref;
@@ -691,7 +691,7 @@
         function queuePoseReferenceUpload(dataUrl){
             const token = ++poseUploadToken;
             poseImageRef = null;
-            poseImageRefUploadPromise = uploadDataUrlReference(dataUrl, `pose-${Date.now()}.png`).then(ref => {
+            poseImageRefUploadPromise = buildReferenceFromDataUrl(dataUrl, `pose-${Date.now()}.png`).then(ref => {
                 if(token === poseUploadToken) poseImageRef = ref;
                 refreshTransferState();
                 return ref;
@@ -893,12 +893,12 @@
                 const refs = [];
                 let inputRef = inputImageRef;
                 if(!inputRef && inputReferenceUploadPromise) inputRef = await inputReferenceUploadPromise;
-                if(!inputRef) inputRef = await uploadReferenceFile(uploadedFile);
+                if(!inputRef) inputRef = await buildReferenceFromFile(uploadedFile);
                 inputImageRef = inputRef;
                 refs.push({ ...inputRef, role:'image' });
                 let poseRef = poseImageRef;
                 if(!poseRef && poseImageRefUploadPromise) poseRef = await poseImageRefUploadPromise;
-                if(!poseRef) poseRef = await uploadDataUrlReference(posePreviewImg.src, `pose-${Date.now()}.png`);
+                if(!poseRef) poseRef = await buildReferenceFromDataUrl(posePreviewImg.src, `pose-${Date.now()}.png`);
                 poseImageRef = poseRef;
                 refs.push({ ...poseRef, role:'image' });
 

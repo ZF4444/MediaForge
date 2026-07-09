@@ -2799,7 +2799,7 @@ from app.core.media import (
     normalize_local_image_path,
     import_local_image_file,
 )
-from app.services.storage import resolve_file_reference
+from app.services.storage import get_object_bytes, resolve_file_reference
 
 
 def media_response_item(url: str = "", name: str = "", kind: str = "") -> Dict[str, Any]:
@@ -4597,10 +4597,34 @@ def runninghub_extract_image(raw):
     return extract_image(raw)
 
 async def runninghub_upload_reference(client, provider, ref):
-    path = output_file_from_url(ref.get("url", ""))
+    value = str(ref.get("url", "") or "").strip()
+    if value.startswith("data:image/") and ";base64," in value:
+        header, encoded = value.split(";base64,", 1)
+        mime = header.replace("data:", "", 1) or "image/png"
+        try:
+            content = base64.b64decode(encoded)
+        except Exception:
+            return ""
+        upload_url = runninghub_endpoint_url(provider, "/openapi/v2/media/upload/binary")
+        api_key = os.getenv(provider_key_env(provider["id"]), "")
+        headers = {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
+        ext = (mime.split("/")[-1] or "png").split("+")[0]
+        files = {"file": (f"reference.{ext}", content, mime)}
+        response = await client.post(upload_url, headers=headers, files=files, timeout=120)
+        response.raise_for_status()
+        raw = response.json()
+        data = raw.get("data") if isinstance(raw, dict) else None
+        candidates = [raw, data] if isinstance(data, dict) else [raw]
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            uploaded = item.get("download_url") or item.get("downloadUrl") or item.get("url") or item.get("fileUrl") or item.get("file_url")
+            if uploaded:
+                return str(uploaded)
+        raise HTTPException(status_code=502, detail=f"RunningHub 上传图片未返回 download_url：{raw}")
+    path = output_file_from_url(value)
     if not path:
-        value = ref.get("url", "")
-        return value if str(value).startswith(("http://", "https://")) else ""
+        return value if value.startswith(("http://", "https://")) else ""
     upload_url = runninghub_endpoint_url(provider, "/openapi/v2/media/upload/binary")
     api_key = os.getenv(provider_key_env(provider["id"]), "")
     headers = {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
@@ -5775,8 +5799,18 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     content_type = "application/octet-stream"
     content = b""
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0), follow_redirects=True) as client:
-        path = runninghub_local_asset_path(source_url)
-        if path:
+        entry = resolve_file_reference(url=source_url) if source_url else None
+        path = None if entry else runninghub_local_asset_path(source_url)
+        if entry:
+            filename = (
+                entry.get("original_name")
+                or entry.get("filename")
+                or entry.get("stored_name")
+                or filename
+            )
+            content_type = entry.get("mime_type") or entry.get("content_type") or content_type
+            content = get_object_bytes(str(entry.get("bucket") or ""), str(entry.get("object_key") or ""))
+        elif path:
             filename = os.path.basename(path)
             content_type = content_type_for_path(path)
             with open(path, "rb") as f:
@@ -5792,6 +5826,34 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
             raise HTTPException(status_code=400, detail=f"不支持的素材地址：{source_url}")
         if not content:
             raise HTTPException(status_code=400, detail="素材为空，无法上传到 RunningHub")
+        upload_url = runninghub_endpoint_url(provider, "/task/openapi/upload")
+        files = {"file": (filename, content, content_type)}
+        data = {"apiKey": api_key, "fileType": "input"}
+        try:
+            response = await client.post(upload_url, headers=runninghub_app_headers(False), data=data, files=files)
+            raw = response.json()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"上传素材到 RunningHub 失败：{exc}") from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
+    if isinstance(raw, dict) and raw.get("code") in (0, "0") and isinstance(raw.get("data"), dict) and raw["data"].get("fileName"):
+        return {"success": True, "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type}}
+    raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}")
+
+
+@app.post("/api/runninghub/upload-asset-file")
+async def runninghub_upload_asset_file(file: UploadFile = File(...)):
+    provider = runninghub_provider()
+    api_key = runninghub_api_key(provider)
+    filename = os.path.basename(str(file.filename or "").strip()) or "asset.bin"
+    content_type = str(file.content_type or "").strip() or "application/octet-stream"
+    try:
+        content = await file.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"读取上传素材失败：{exc}") from exc
+    if not content:
+        raise HTTPException(status_code=400, detail="素材为空，无法上传到 RunningHub")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0), follow_redirects=True) as client:
         upload_url = runninghub_endpoint_url(provider, "/task/openapi/upload")
         files = {"file": (filename, content, content_type)}
         data = {"apiKey": api_key, "fileType": "input"}

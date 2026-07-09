@@ -23,6 +23,7 @@
     <script src="/static/js/i18n.js"></script>
     <script src="/static/js/image-preview.js"></script>
     <script src="/static/js/history-bulk-manager.js"></script>
+    <script src="/static/js/runninghub-client.js"></script>
     <style>
         @import url('/static/vendor/css/fonts.css');
 
@@ -262,8 +263,6 @@
         const viewerFrame = document.getElementById('viewerFrame');
 
         let uploadedFile = null;     // 输入源图(File)
-        let uploadedPath = null;     // 源图上传后的本地 url
-        let viewerReady = false;
         let currentResult = null;
         let plyLoaded = false;       // 查看器是否已成功加载生成的 PLY（门控开始修复）
 
@@ -316,7 +315,6 @@
         async function handleFile(file) {
             if (!file || !/^image\//.test(file.type)) return;
             uploadedFile = file;
-            uploadedPath = null;
             refreshLeaveGuard();
 
             const reader = new FileReader();
@@ -338,16 +336,6 @@
             };
             reader.readAsDataURL(file);
 
-            // 上传到本地，便于后续作为 SourceImage 推送到 RunningHub
-            const formData = new FormData();
-            formData.append('files', file);
-            try {
-                const res = await fetch('/api/ai/upload', { method: 'POST', body: formData });
-                const data = await res.json();
-                uploadedPath = data.files[0].url;
-            } catch (err) {
-                console.error('上传失败', err);
-            }
         }
 
         // ===== 3D 高斯生成：输入图 -> 工作流 -> PLY URL -> 自动喂给查看器 =====
@@ -372,50 +360,26 @@
 
             try {
                 updateGenProgress({ status: '上传参考图...', progress: 10 });
-                if (!uploadedPath) {
-                    uploadedPath = await uploadLocal(uploadedFile, uploadedFile.name || 'source.png');
-                }
-                const imageFileName = await uploadToRunningHub(uploadedPath);
+                const imageFileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'source.png');
 
                 updateGenProgress({ status: 'Queueing...', progress: 30 });
-                const submit = await fetch('/api/runninghub/submit', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        webappId: GEN_WEBAPP_ID,
-                        nodeInfoList: [
-                            { nodeId: GEN_NODE_IMAGE, fieldName: 'image', fieldValue: imageFileName, description: 'image' }
-                        ],
-                        instanceType: 'default'
-                    })
-                }).then(async r => {
-                    const j = await r.json();
-                    if (!r.ok || j.success === false) throw new Error(j.detail || '提交失败');
-                    return j.data || j;
+                const taskId = await RunningHubClient.submitTask({
+                    webappId: GEN_WEBAPP_ID,
+                    nodeInfoList: [
+                        { nodeId: GEN_NODE_IMAGE, fieldName: 'image', fieldValue: imageFileName, description: 'image' }
+                    ],
+                    instanceType: 'default'
                 });
-                const taskId = submit.taskId;
-                if (!taskId) throw new Error('未返回 taskId');
 
-                // 轮询 PLY 结果
-                let plyUrl = null;
-                for (let i = 0; i < 720; i++) {
-                    await new Promise(res => setTimeout(res, 2500));
-                    const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
-                        const j = await r.json();
-                        if (!r.ok || j.success === false) throw new Error(j.detail || '查询失败');
-                        return j.data || j;
-                    });
-                    if (data.status === 'QUEUED') updateGenProgress({ status: 'Queueing...', progress: 45 });
-                    else if (data.status === 'RUNNING') updateGenProgress({ status: 'Generating...', progress: 70 });
-                    else if (data.status === 'SUCCESS') {
-                        const urls = data.urls || [];
-                        // 优先取 .ply，否则取第一个
-                        plyUrl = urls.find(u => /\.ply(\?|$)/i.test(u)) || urls[0];
-                        if (!plyUrl) throw new Error('生成输出为空');
-                        break;
+                const data = await RunningHubClient.pollTask(taskId, {
+                    onUpdate(task) {
+                        if (task.status === 'QUEUED') updateGenProgress({ status: 'Queueing...', progress: 45 });
+                        else if (task.status === 'RUNNING') updateGenProgress({ status: 'Generating...', progress: 70 });
                     }
-                    else if (data.status === 'FAILED') throw new Error(data.failReason || '生成任务失败');
-                }
-                if (!plyUrl) throw new Error('生成任务超时');
+                });
+                const urls = data.urls || [];
+                let plyUrl = urls.find(u => /\.ply(\?|$)/i.test(u)) || urls[0];
+                if (!plyUrl) throw new Error('生成输出为空');
 
                 updateGenProgress({ status: '加载到查看器...', progress: 95 });
                 // 把生成的 PLY URL 推送给查看器加载（成功后会回传 PLY_LOADED 解锁修复）
@@ -480,81 +444,38 @@
             return new Blob([arr], { type: mime });
         }
 
-        async function uploadLocal(fileOrBlob, name) {
-            const fd = new FormData();
-            fd.append('files', fileOrBlob, name);
-            const r = await fetch('/api/ai/upload', { method: 'POST', body: fd });
-            const j = await r.json();
-            if (!r.ok || !j.files || !j.files[0]) throw new Error('本地上传失败');
-            return j.files[0].url;
-        }
-
-        async function uploadToRunningHub(localUrl) {
-            const r = await fetch('/api/runninghub/upload-asset', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: localUrl })
-            });
-            const j = await r.json();
-            if (!r.ok || j.success === false) throw new Error(j.detail || 'RunningHub 上传失败');
-            const fileName = (j.data || j).fileName;
-            if (!fileName) throw new Error('RunningHub 上传未返回 fileName');
-            return fileName;
-        }
-
         async function runRepairTask() {
             // 1. 输入源图 -> SourceImage fileName
             updateCloudProgress({ status: '上传参考图...', progress: 10 });
-            if (!uploadedPath) {
-                uploadedPath = await uploadLocal(uploadedFile, uploadedFile.name || 'source.png');
-            }
-            const sourceFileName = await uploadToRunningHub(uploadedPath);
+            const sourceFileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'source.png');
 
             // 2. 查看器渲染图 -> GaussianImage fileName
             updateCloudProgress({ status: '渲染高斯视角...', progress: 25 });
             const renderDataUrl = await requestViewerRender();
-            const gaussianLocalUrl = await uploadLocal(dataUrlToBlob(renderDataUrl), 'gaussian_render.png');
             updateCloudProgress({ status: '上传渲染图...', progress: 40 });
-            const gaussianFileName = await uploadToRunningHub(gaussianLocalUrl);
+            const gaussianFileName = await RunningHubClient.uploadFile(dataUrlToBlob(renderDataUrl), 'gaussian_render.png');
 
             // 3. 提交任务
             updateCloudProgress({ status: 'Queueing...', progress: 55 });
-            const submit = await fetch('/api/runninghub/submit', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    webappId: RH_WEBAPP_ID,
-                    nodeInfoList: [
-                        { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
-                        { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
-                    ],
-                    instanceType: 'default'
-                })
-            }).then(async r => {
-                const j = await r.json();
-                if (!r.ok || j.success === false) throw new Error(j.detail || '提交失败');
-                return j.data || j;
+            const taskId = await RunningHubClient.submitTask({
+                webappId: RH_WEBAPP_ID,
+                nodeInfoList: [
+                    { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
+                    { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
+                ],
+                instanceType: 'default'
             });
-            const taskId = submit.taskId;
-            if (!taskId) throw new Error('未返回 taskId');
 
-            // 4. 轮询
-            for (let i = 0; i < 720; i++) {
-                await new Promise(res => setTimeout(res, 2500));
-                const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
-                    const j = await r.json();
-                    if (!r.ok || j.success === false) throw new Error(j.detail || '查询失败');
-                    return j.data || j;
-                });
-                if (data.status === 'QUEUED') updateCloudProgress({ status: 'Queueing...', progress: 60 });
-                else if (data.status === 'RUNNING') updateCloudProgress({ status: 'Generating...', progress: 80 });
-                else if (data.status === 'SUCCESS') {
-                    const urls = data.urls || [];
-                    if (!urls.length) throw new Error('修复输出为空');
-                    updateCloudProgress({ status: 'Done', progress: 100 });
-                    return { images: urls };
+            const data = await RunningHubClient.pollTask(taskId, {
+                onUpdate(task) {
+                    if (task.status === 'QUEUED') updateCloudProgress({ status: 'Queueing...', progress: 60 });
+                    else if (task.status === 'RUNNING') updateCloudProgress({ status: 'Generating...', progress: 80 });
                 }
-                else if (data.status === 'FAILED') throw new Error(data.failReason || '修复任务失败');
-            }
-            throw new Error('修复任务超时');
+            });
+            const urls = data.urls || [];
+            if (!urls.length) throw new Error('修复输出为空');
+            updateCloudProgress({ status: 'Done', progress: 100 });
+            return { images: urls };
         }
 
         window.handleRepair = async function handleRepair() {
@@ -713,8 +634,7 @@
             }
             // 兜底：宿主直接要求隐藏/重置（force 切换路径）
             if (m.type === 'page-hidden' && m.page === 'gaussian') { resetPage(); return; }
-            if (m.type === 'VIEWER_READY') viewerReady = true;
-            else if (m.type === 'PLY_LOADED') {
+            if (m.type === 'PLY_LOADED') {
                 plyLoaded = true;
                 refreshLeaveGuard();
                 setRepairEnabled(true);
@@ -738,7 +658,6 @@
         function resetPage() {
             // 状态变量
             uploadedFile = null;
-            uploadedPath = null;
             plyLoaded = false;
             currentResult = null;
             setLeaveGuard(false);
@@ -770,7 +689,6 @@
 
             // 03 查看器：重载 iframe 清空已加载的 PLY
             if (viewerFrame) {
-                viewerReady = false;
                 viewerFrame.src = '/static/gaussian-viewer.html?embed=1';
             }
 

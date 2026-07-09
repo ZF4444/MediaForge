@@ -23,6 +23,7 @@
     <script src="/static/js/i18n.js"></script>
     <script src="/static/js/image-preview.js"></script>
     <script src="/static/js/history-bulk-manager.js"></script>
+    <script src="/static/js/runninghub-client.js"></script>
     <script type="importmap">
         {
             "imports": {
@@ -460,21 +461,6 @@
                             </div>
                         </div>
 
-                        <div id="textResult"
-                            class="hidden w-full h-full p-12 flex flex-col items-center justify-center text-center space-y-8">
-                            <i data-lucide="terminal" class="w-12 h-12 text-gray-300 mx-auto"></i>
-                            <div class="space-y-4 max-w-md">
-                                <p class="text-[10px] font-bold uppercase tracking-[0.5em] text-gray-400" data-i18n="studio.generatedCommand">Generated
-                                    Command
-                                </p>
-                                <h2 id="generatedText" class="text-2xl font-bold leading-relaxed text-gray-900"></h2>
-                            </div>
-                            <button onclick="copyText()"
-                                class="px-8 py-3 bg-gray-100 hover:bg-black hover:text-white rounded-full text-[10px] font-bold uppercase tracking-widest transition-all flex items-center gap-2">
-                                <i data-lucide="copy" class="w-3 h-3"></i><span data-i18n="studio.copy">Copy</span>
-                            </button>
-                        </div>
-
                         <img id="outputImg"
                             class="hidden w-full h-full object-contain p-8 cursor-zoom-in transition-all duration-700 hover:scale-[1.02]"
                             onclick="zoomImage()">
@@ -780,7 +766,6 @@
         const CLIENT_ID = localStorage.getItem("client_id") || generateUUID();
         localStorage.setItem("client_id", CLIENT_ID);
 
-        let uploadedPath = "";
         let uploadedFile = null; // Store raw file for cloud upload
         let currentResult = null;
         let allHistory = [];
@@ -850,81 +835,36 @@
             };
             reader.readAsDataURL(file);
 
-            const formData = new FormData();
-            formData.append('files', file);
-            try {
-                const res = await fetch('/api/ai/upload', { method: 'POST', body: formData });
-                const data = await res.json();
-                uploadedPath = data.files[0].url;
-                btn.disabled = false;
-                btnText.innerText = tr('studio.generateAngle');
-            } catch (err) {
-                console.error("Upload error");
-                btnText.innerText = tr('studio.uploadFailed');
-                btn.disabled = false;
-            }
+            btn.disabled = false;
+            btnText.innerText = tr('studio.generateAngle');
         }
 
         async function runRunningHubTask() {
             if (!uploadedFile) throw new Error("Please upload an image first");
 
             updateCloudProgress({ status: "Uploading...", progress: 0, total: 100 });
-
-            // 1. Upload the source image to RunningHub to obtain a fileName
-            const upload = await fetch('/api/runninghub/upload-asset', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: uploadedPath })
-            }).then(async r => {
-                const json = await r.json();
-                if (!r.ok || json.success === false) throw new Error(json.detail || "RunningHub upload failed");
-                return json.data || json;
-            });
-            const fileName = upload.fileName;
-            if (!fileName) throw new Error("RunningHub upload returned no fileName");
-
-            // 2. Submit the AI-app task (nodeId 13 = image, nodeId 68 = <sks> prompt)
+            const fileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'angle-source.png');
             updateCloudProgress({ status: "Queueing...", progress: 0, total: 100 });
-            const submit = await fetch('/api/runninghub/submit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    webappId: RH_WEBAPP_ID,
-                    nodeInfoList: [
-                        { nodeId: "13", fieldName: "image", fieldValue: fileName, description: "image" },
-                        { nodeId: "68", fieldName: "value", fieldValue: promptInput.value, description: "value" }
-                    ],
-                    instanceType: "default"
-                })
-            }).then(async r => {
-                const json = await r.json();
-                if (!r.ok || json.success === false) throw new Error(json.detail || "RunningHub submit failed");
-                return json.data || json;
+            const taskId = await RunningHubClient.submitTask({
+                webappId: RH_WEBAPP_ID,
+                nodeInfoList: [
+                    { nodeId: "13", fieldName: "image", fieldValue: fileName, description: "image" },
+                    { nodeId: "68", fieldName: "value", fieldValue: promptInput.value, description: "value" }
+                ],
+                instanceType: "default"
             });
-            const taskId = submit.taskId;
-            if (!taskId) throw new Error("RunningHub returned no taskId");
-
-            // 3. Poll for outputs
-            for (let i = 0; i < 720; i++) {
-                await new Promise(res => setTimeout(res, 2500));
-                const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
-                    const json = await r.json();
-                    if (!r.ok || json.success === false) throw new Error(json.detail || "RunningHub query failed");
-                    return json.data || json;
-                });
-                if (data.status === 'RUNNING') updateCloudProgress({ status: "Generating...", progress: 60, total: 100 });
-                if (data.status === 'SUCCESS') {
-                    const urls = data.urls || [];
-                    if (!urls.length) throw new Error("RunningHub outputs empty");
-                    return { images: urls };
+            const data = await RunningHubClient.pollTask(taskId, {
+                onUpdate(task) {
+                    if (task.status === 'RUNNING') updateCloudProgress({ status: "Generating...", progress: 60, total: 100 });
                 }
-                if (data.status === 'FAILED') throw new Error(data.failReason || "RunningHub task failed");
-            }
-            throw new Error("RunningHub task timeout");
+            });
+            const urls = data.urls || [];
+            if (!urls.length) throw new Error("RunningHub outputs empty");
+            return { images: urls };
         }
 
         async function handleGenerate() {
-            if (!uploadedFile || !uploadedPath) {
+            if (!uploadedFile) {
                 const dropzone = document.getElementById('dropzone');
                 dropzone.style.transition = "0.2s";
                 dropzone.style.borderColor = "#ef4444";
@@ -956,7 +896,6 @@
 
             document.getElementById('emptyState').classList.add('hidden');
             document.getElementById('outputImg').classList.add('hidden');
-            document.getElementById('textResult').classList.add('hidden'); // Ensure text result is hidden
             document.getElementById('loadingState').classList.remove('hidden');
 
             try {
@@ -1005,19 +944,6 @@
                 }
             }
         }
-
-        window.copyText = () => {
-            const text = document.getElementById('generatedText').innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                const btn = document.querySelector('#textResult button');
-                const originalHTML = btn.innerHTML;
-                btn.innerHTML = `<i data-lucide="check" class="w-3 h-3"></i> Copied`;
-                setTimeout(() => {
-                    btn.innerHTML = originalHTML;
-                    lucide.createIcons();
-                }, 2000);
-            });
-        };
 
         // History Management
         function renderImageCard(data, isNew = false) {

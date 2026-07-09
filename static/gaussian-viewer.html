@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>高斯泼溅查看器 · Gaussian Splat Viewer</title>
+    <script src="/static/js/runninghub-client.js"></script>
     <style>
         * {
             margin: 0;
@@ -1679,30 +1680,6 @@
             });
         }
 
-        // 上传一个 Blob/File 到本地，得到 /assets/input/... 的 url
-        async function uploadLocal(fileOrBlob, name) {
-            const fd = new FormData();
-            fd.append('files', fileOrBlob, name);
-            const r = await fetch('/api/ai/upload', { method: 'POST', body: fd });
-            const j = await r.json();
-            if (!r.ok || !j.files || !j.files[0]) throw new Error('本地上传失败');
-            return j.files[0].url;
-        }
-
-        // 把本地 url 上传到 RunningHub，得到 fileName
-        async function uploadToRunningHub(localUrl) {
-            const r = await fetch('/api/runninghub/upload-asset', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: localUrl })
-            });
-            const j = await r.json();
-            if (!r.ok || j.success === false) throw new Error(j.detail || 'RunningHub 上传失败');
-            const fileName = (j.data || j).fileName;
-            if (!fileName) throw new Error('RunningHub 上传未返回 fileName');
-            return fileName;
-        }
-
         async function startRepair() {
             if (!currentSplat) { setRepairStatus('请先加载 PLY 文件', true); return; }
             if (!sourceImageFile) { setRepairStatus('请先在左栏上传参考图像（SourceImage）', true); return; }
@@ -1718,69 +1695,46 @@
                 setRepairStatus('正在渲染当前视角…');
                 setRepairProgress(10);
                 const gaussianBlob = await renderViewToBlob();
-                const gaussianLocalUrl = await uploadLocal(gaussianBlob, 'gaussian_render.png');
                 setRepairStatus('上传渲染图到 RunningHub…');
                 setRepairProgress(25);
-                const gaussianFileName = await uploadToRunningHub(gaussianLocalUrl);
+                const gaussianFileName = await RunningHubClient.uploadFile(gaussianBlob, 'gaussian_render.png');
 
-                // 2. 上传左栏源图 -> SourceImage 的 RunningHub fileName（复用已上传的本地 url）
+                // 2. 上传左栏源图 -> SourceImage 的 RunningHub fileName
                 setRepairStatus('上传参考图到 RunningHub…');
                 setRepairProgress(40);
-                if (!uploadedSourceUrl) {
-                    uploadedSourceUrl = await uploadLocal(sourceImageFile, sourceImageFile.name || 'source.png');
-                }
-                const sourceFileName = await uploadToRunningHub(uploadedSourceUrl);
+                const sourceFileName = await RunningHubClient.uploadFile(sourceImageFile, sourceImageFile.name || 'source.png');
 
                 // 3. 提交 AI 应用任务
                 setRepairStatus('提交修复任务…');
                 setRepairProgress(55);
-                const submit = await fetch('/api/runninghub/submit', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        webappId: RH_WEBAPP_ID,
-                        nodeInfoList: [
-                            { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
-                            { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
-                        ],
-                        instanceType: 'default'
-                    })
-                }).then(async r => {
-                    const j = await r.json();
-                    if (!r.ok || j.success === false) throw new Error(j.detail || '提交失败');
-                    return j.data || j;
+                const taskId = await RunningHubClient.submitTask({
+                    webappId: RH_WEBAPP_ID,
+                    nodeInfoList: [
+                        { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
+                        { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
+                    ],
+                    instanceType: 'default'
                 });
-                const taskId = submit.taskId;
-                if (!taskId) throw new Error('未返回 taskId');
 
-                // 4. 轮询结果
                 setRepairStatus('修复任务排队/运行中…');
-                for (let i = 0; i < 720; i++) {
-                    await new Promise(res => setTimeout(res, 2500));
-                    const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
-                        const j = await r.json();
-                        if (!r.ok || j.success === false) throw new Error(j.detail || '查询失败');
-                        return j.data || j;
-                    });
-                    if (data.status === 'QUEUED') { setRepairStatus('排队中…'); setRepairProgress(60); }
-                    else if (data.status === 'RUNNING') { setRepairStatus('修复生成中…'); setRepairProgress(80); }
-                    else if (data.status === 'SUCCESS') {
-                        const urls = data.urls || [];
-                        if (!urls.length) throw new Error('修复输出为空');
-                        setRepairProgress(100);
-                        setRepairStatus('修复完成');
-                        const out = urls[0];
-                        repairResultImg.src = out;
-                        repairResultLink.href = out;
-                        repairDownloadBtn.href = out;
-                        repairDownloadBtn.download = `gaussian-repair-${Date.now()}.png`;
-                        repairResultZone.style.display = 'flex';
-                        setTimeout(() => setRepairProgress(null), 1500);
-                        return;
+                const data = await RunningHubClient.pollTask(taskId, {
+                    onUpdate(task) {
+                        if (task.status === 'QUEUED') { setRepairStatus('排队中…'); setRepairProgress(60); }
+                        else if (task.status === 'RUNNING') { setRepairStatus('修复生成中…'); setRepairProgress(80); }
                     }
-                    else if (data.status === 'FAILED') throw new Error(data.failReason || '修复任务失败');
-                }
-                throw new Error('修复任务超时');
+                });
+                const urls = data.urls || [];
+                if (!urls.length) throw new Error('修复输出为空');
+                setRepairProgress(100);
+                setRepairStatus('修复完成');
+                const out = urls[0];
+                repairResultImg.src = out;
+                repairResultLink.href = out;
+                repairDownloadBtn.href = out;
+                repairDownloadBtn.download = `gaussian-repair-${Date.now()}.png`;
+                repairResultZone.style.display = 'flex';
+                setTimeout(() => setRepairProgress(null), 1500);
+                return;
             } catch (err) {
                 console.error('[GaussianRepair] error:', err);
                 setRepairStatus('修复失败: ' + err.message, true);
@@ -1802,7 +1756,6 @@
         let lastPlyBuffer = null;   // 记住已加载的 PLY，便于换图后用新内参重渲染
         let lastPlyName = null;
         let sourceImageFile = null; // 左栏上传的源图(File)，作为 SourceImage
-        let uploadedSourceUrl = null; // 源图上传到本地后的 url（/assets/input/...）
 
         function applyImageIntrinsics(width, height) {
             currentIntrinsics = computeIntrinsicsFromImage(width, height, DEFAULT_FOV_DEG);
@@ -1817,7 +1770,6 @@
         async function handleImageFile(file) {
             if (!file || !/^image\//.test(file.type)) { showError('请选择图像文件'); return; }
             sourceImageFile = file;   // 记住源图，修复时作为 SourceImage 上传
-            uploadedSourceUrl = null; // 换图后清空已上传 url，下次修复重新上传
             const url = URL.createObjectURL(file);
             const img = new Image();
             img.onload = async () => {
