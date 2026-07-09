@@ -1087,7 +1087,7 @@ async function loadConfig(){
         runningHubWorkflowCache = {};
         const rhProvider = apiProviders.find(p => p.id === 'runninghub');
         const rhWorkflowIds = (rhProvider?.rh_workflows || []).map(item => String(item.workflowId || item.id || '').trim()).filter(Boolean);
-        await Promise.all(rhWorkflowIds.map(async workflowId => {
+        Promise.allSettled(rhWorkflowIds.map(async workflowId => {
             try { await ensureRunningHubWorkflow(workflowId); } catch(_) {}
         }));
     } catch(e) {
@@ -1574,6 +1574,13 @@ async function setCanvasTitle(id, title){
 async function openCanvas(id){
     setStatus('Opening...');
     try {
+        const listItem = canvases.find(item => item.id === id);
+        if((listItem?.kind || 'classic') === 'smart'){
+            const touched = await touchCanvasOpened(id).catch(() => null);
+            if(touched?.updated_at && listItem) listItem.updated_at = Number(touched.updated_at);
+            openSmartCanvasPage(id);
+            return;
+        }
         const res = await fetch(`/api/canvases/${id}`);
         if(!res.ok) throw new Error(tr('canvas.openFailed'));
         const data = await res.json();

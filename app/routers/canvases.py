@@ -54,6 +54,27 @@ def compact_canvas(canvas):
     return _map_canvas_value(dict(canvas), compact_media_refs)
 
 
+def read_canvas_json(canvas_id, *, hydrate=False):
+    path = canvas_path(canvas_id)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="画布不存在")
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return hydrate_canvas(data) if hydrate else data
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def read_canvas_file(path, *, hydrate=False):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return hydrate_canvas(data) if hydrate else data
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 def canvas_path(canvas_id):
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", canvas_id or "")
     if not cleaned:
@@ -62,12 +83,19 @@ def canvas_path(canvas_id):
 
 
 def save_canvas(canvas):
-    canvas = hydrate_canvas(canvas)
     canvas["updated_at"] = now_ms()
     persisted = compact_canvas(canvas)
     with CANVAS_LOCK:
         with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
             json.dump(persisted, f, ensure_ascii=False, indent=2)
+
+
+def save_canvas_raw(canvas, *, update_timestamp=True):
+    if update_timestamp:
+        canvas["updated_at"] = now_ms()
+    with CANVAS_LOCK:
+        with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
+            json.dump(canvas, f, ensure_ascii=False, indent=2)
 
 
 def normalize_canvas_kind(kind="classic"):
@@ -96,28 +124,25 @@ def new_canvas(title="未命名画布", icon="layers", kind="classic"):
 
 
 def load_canvas(canvas_id):
-    path = canvas_path(canvas_id)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="画布不存在")
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            canvas = hydrate_canvas(json.load(f))
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    canvas = read_canvas_json(canvas_id, hydrate=True)
     if canvas.get("deleted_at"):
         raise HTTPException(status_code=404, detail="画布已在回收站")
     return canvas
 
 
 def load_canvas_any(canvas_id):
-    path = canvas_path(canvas_id)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="画布不存在")
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return hydrate_canvas(json.load(f))
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return read_canvas_json(canvas_id, hydrate=True)
+
+
+def load_canvas_raw(canvas_id):
+    canvas = read_canvas_json(canvas_id, hydrate=False)
+    if canvas.get("deleted_at"):
+        raise HTTPException(status_code=404, detail="画布已在回收站")
+    return canvas
+
+
+def load_canvas_any_raw(canvas_id):
+    return read_canvas_json(canvas_id, hydrate=False)
 
 
 CANVAS_COLORS = {"", "red", "orange", "amber", "green", "teal", "blue", "violet", "pink", "slate"}
@@ -153,8 +178,7 @@ def cleanup_expired_canvas_trash():
                 continue
             path = os.path.join(cdir, filename)
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = hydrate_canvas(json.load(f))
+                data = read_canvas_file(path, hydrate=False)
                 deleted_at = int(data.get("deleted_at") or 0)
                 if deleted_at and deleted_at < cutoff:
                     os.remove(path)
@@ -170,8 +194,7 @@ def iter_canvas_records(include_deleted=False):
         if not filename.endswith(".json"):
             continue
         try:
-            with open(os.path.join(cdir, filename), 'r', encoding='utf-8') as f:
-                data = hydrate_canvas(json.load(f))
+            data = read_canvas_file(os.path.join(cdir, filename), hydrate=False)
         except Exception:
             continue
         is_deleted = bool(data.get("deleted_at"))
@@ -214,7 +237,7 @@ async def create_canvas(payload: CanvasCreateRequest):
 
 @router.get("/api/canvases/{canvas_id}/meta")
 async def get_canvas_meta(canvas_id: str):
-    canvas = load_canvas(canvas_id)
+    canvas = load_canvas_raw(canvas_id)
     return {
         "id": canvas.get("id"),
         "updated_at": canvas.get("updated_at", 0),
@@ -228,7 +251,7 @@ async def get_canvas_meta(canvas_id: str):
 async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
-    canvas = load_canvas(canvas_id)
+    canvas = load_canvas_raw(canvas_id)
     if payload.title is not None:
         canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
     if payload.icon is not None:
@@ -239,9 +262,7 @@ async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
         canvas["color"] = normalize_canvas_color(payload.color)
     if payload.pinned is not None:
         canvas["pinned"] = bool(payload.pinned)
-    with CANVAS_LOCK:
-        with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
-            json.dump(canvas, f, ensure_ascii=False, indent=2)
+    save_canvas_raw(canvas, update_timestamp=False)
     return {"canvas": canvas_record(canvas)}
 
 
@@ -252,22 +273,23 @@ async def get_canvas(canvas_id: str):
 
 @router.post("/api/canvases/{canvas_id}/touch")
 async def touch_canvas(canvas_id: str):
-    canvas = load_canvas(canvas_id)
-    save_canvas(canvas)
+    canvas = load_canvas_raw(canvas_id)
+    save_canvas_raw(canvas, update_timestamp=True)
     return {"canvas": canvas_record(canvas), "updated_at": canvas.get("updated_at", 0)}
 
 
 @router.put("/api/canvases/{canvas_id}")
 async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
-    canvas = load_canvas(canvas_id)
+    canvas = load_canvas_raw(canvas_id)
     current_updated_at = int(canvas.get("updated_at") or 0)
     last_client_id = str(canvas.get("last_client_id") or "")
     incoming_client_id = str(payload.client_id or "")
     same_client_retry = bool(incoming_client_id and incoming_client_id == last_client_id)
     if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at and not same_client_retry:
+        hydrated = hydrate_canvas(canvas)
         raise HTTPException(status_code=409, detail={
             "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
-            "canvas": canvas,
+            "canvas": hydrated,
             "updated_at": current_updated_at,
         })
     canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
@@ -285,24 +307,24 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
         canvas["last_client_id"] = incoming_client_id
     save_canvas(canvas)
     await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
-    return {"canvas": canvas}
+    return {"canvas": {"id": canvas_id, "updated_at": canvas.get("updated_at", 0)}}
 
 
 @router.delete("/api/canvases/{canvas_id}")
 async def delete_canvas(canvas_id: str):
-    canvas = load_canvas_any(canvas_id)
+    canvas = load_canvas_any_raw(canvas_id)
     if not canvas.get("deleted_at"):
         canvas["deleted_at"] = now_ms()
-        save_canvas(canvas)
+        save_canvas_raw(canvas, update_timestamp=True)
     return {"ok": True}
 
 
 @router.post("/api/canvases/{canvas_id}/restore")
 async def restore_canvas(canvas_id: str):
-    canvas = load_canvas_any(canvas_id)
+    canvas = load_canvas_any_raw(canvas_id)
     if canvas.get("deleted_at"):
         canvas.pop("deleted_at", None)
-        save_canvas(canvas)
+        save_canvas_raw(canvas, update_timestamp=True)
     return {"canvas": canvas}
 
 

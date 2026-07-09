@@ -80,6 +80,16 @@ let panState = null;
 let didPan = false;
 let portDragState = null;
 let saveTimer = null;
+let suppressAutoSave = false;
+let deferredAutoSaveNeeded = false;
+let suppressAutoSaveReleaseTimer = null;
+let viewportInteractionReleaseTimer = null;
+let minimapRenderQueued = false;
+let connectionLayerRefreshQueued = false;
+let viewportInteractionActive = false;
+let pendingMinimapRefreshAfterInteraction = false;
+let lastConnectionLayerRefreshAt = 0;
+const DRAG_CONNECTION_REFRESH_INTERVAL = 66;
 let apiProviders = [];
 let comfyWorkflows = [];
 let comfyInstanceCount = 1;
@@ -1677,7 +1687,7 @@ function applyViewport(){
     shell.style.backgroundPosition = '0 0';
     const active = selectedNode();
     if(active && composer?.classList?.contains('open')) positionComposerForNode(active);
-    renderMinimap();
+    requestRenderMinimap();
 }
 function screenToWorld(event){
     const rect = shell.getBoundingClientRect();
@@ -1724,6 +1734,18 @@ function renderMinimap(){
     minimapContent.innerHTML = `${nodeHtml}<div id="minimapViewport" class="smart-minimap-viewport" style="left:${view.left}px;top:${view.top}px;width:${view.width}px;height:${view.height}px"></div>`;
     minimapViewport = document.getElementById('minimapViewport');
 }
+function requestRenderMinimap(){
+    if(viewportInteractionActive || dragState || panState || smartMinimapDrag){
+        pendingMinimapRefreshAfterInteraction = true;
+        return;
+    }
+    if(minimapRenderQueued) return;
+    minimapRenderQueued = true;
+    requestAnimationFrame(() => {
+        minimapRenderQueued = false;
+        renderMinimap();
+    });
+}
 function minimapEventToWorld(event){
     if(!smartMinimapState) renderMinimap();
     const state = smartMinimapState;
@@ -1741,6 +1763,13 @@ function centerViewportOnWorldPoint(point){
     viewport.y = shell.clientHeight / 2 - point.y * viewport.scale;
     applyViewport();
     scheduleSave();
+}
+function flushDeferredViewportRendering(){
+    viewportInteractionActive = false;
+    if(pendingMinimapRefreshAfterInteraction){
+        pendingMinimapRefreshAfterInteraction = false;
+        renderMinimap();
+    }
 }
 function fitAllNodesViewport(){
     if(!nodes.length){
@@ -3639,12 +3668,14 @@ async function loadConfig(){
         runningHubWorkflowCache = {};
         const rhProvider = apiProviders.find(p => p.id === 'runninghub');
         const rhWorkflowIds = (rhProvider?.rh_workflows || []).map(item => String(item.workflowId || item.id || '').trim()).filter(Boolean);
-        await Promise.all(rhWorkflowIds.map(async workflowId => {
-            try { await ensureRunningHubWorkflow(workflowId); } catch(_) {}
-        }));
         lastConfigRefreshAt = Date.now();
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
+        Promise.allSettled(rhWorkflowIds.map(async workflowId => {
+            try { await ensureRunningHubWorkflow(workflowId); } catch(_) {}
+        })).then(() => {
+            if(selectedNode()?.type === 'smart-prompt') renderDynamicParams();
+        });
     } catch(e) {
         toast(tr('smart.toastApiSettingsFail'));
     }
@@ -4794,6 +4825,9 @@ function canvasImageDragPayload(node, index=0){
 async function loadCanvas(){
     if(!canvasId) return;
     try {
+        clearTimeout(suppressAutoSaveReleaseTimer);
+        suppressAutoSave = true;
+        deferredAutoSaveNeeded = false;
         const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
         if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.toastCanvasFail')));
         const data = await res.json();
@@ -4826,17 +4860,36 @@ async function loadCanvas(){
         resumeSmartPendingTasks();
         resumeJimengPendingNodes();
         startCanvasMetaPoll();
-    } catch(e) { toast(e.message || tr('smart.toastCanvasFail')); }
+        suppressAutoSaveReleaseTimer = setTimeout(() => {
+            suppressAutoSave = false;
+            suppressAutoSaveReleaseTimer = null;
+            if(deferredAutoSaveNeeded){
+                deferredAutoSaveNeeded = false;
+                scheduleSave();
+            }
+        }, 2000);
+    } catch(e) {
+        clearTimeout(suppressAutoSaveReleaseTimer);
+        suppressAutoSaveReleaseTimer = null;
+        suppressAutoSave = false;
+        deferredAutoSaveNeeded = false;
+        toast(e.message || tr('smart.toastCanvasFail'));
+    }
 }
-function scheduleSave(){
+function scheduleSave(delay=450){
     if(!canvasId || !canvas) return;
+    if(suppressAutoSave){
+        deferredAutoSaveNeeded = true;
+        return;
+    }
     canvasSaveDirty = true;
     clearTimeout(saveTimer);
     if(canvasSyncInFlight){
         canvasSaveAgain = true;
         return;
     }
-    saveTimer = setTimeout(saveCanvas, 450);
+    const waitMs = Math.max(0, Number(delay) || 0) || 450;
+    saveTimer = setTimeout(saveCanvas, waitMs);
 }
 async function saveCanvas(){
     if(!canvasId || !canvas) return;
@@ -5131,6 +5184,28 @@ function refreshConnectionLayer(){
     if(nextSvg) oldSvg.replaceWith(nextSvg);
     bindConnectionEvents();
 }
+function requestRefreshConnectionLayer(){
+    const now = performance.now();
+    if(dragState && now - lastConnectionLayerRefreshAt < DRAG_CONNECTION_REFRESH_INTERVAL){
+        if(connectionLayerRefreshQueued) return;
+        connectionLayerRefreshQueued = true;
+        requestAnimationFrame(() => {
+            connectionLayerRefreshQueued = false;
+            if(performance.now() - lastConnectionLayerRefreshAt >= DRAG_CONNECTION_REFRESH_INTERVAL){
+                lastConnectionLayerRefreshAt = performance.now();
+                refreshConnectionLayer();
+            }
+        });
+        return;
+    }
+    if(connectionLayerRefreshQueued) return;
+    connectionLayerRefreshQueued = true;
+    requestAnimationFrame(() => {
+        connectionLayerRefreshQueued = false;
+        lastConnectionLayerRefreshAt = performance.now();
+        refreshConnectionLayer();
+    });
+}
 function moveNodeElementsDuringDrag(){
     if(!dragState) return;
     const groupItems = dragState.group || [{id:dragState.id}];
@@ -5146,8 +5221,8 @@ function moveNodeElementsDuringDrag(){
     if(active && (dragState.group || [{id:dragState.id}]).some(item => item.id === active.id)){
         positionComposerForNode(active);
     }
-    refreshConnectionLayer();
-    renderMinimap();
+    requestRefreshConnectionLayer();
+    requestRenderMinimap();
 }
 function updateNodeElementDuringResize(node){
     if(!node) return;
@@ -6140,7 +6215,7 @@ function render(){
     bindNodeEvents();
     bindConnectionEvents();
     updateComposer();
-    renderMinimap();
+    requestRenderMinimap();
     if(window.lucide) lucide.createIcons();
     measureSmartNodeImages();
     refreshRunTimerPills();
@@ -6202,7 +6277,6 @@ function measureSmartNodeImages(){
             if(candidatePanel) syncCandidateImageDimensions(node, image, w, h);
             applyThumbDisplaySizeToElement(itemEl, image, Math.max(itemEl?.clientWidth || 0, itemEl?.clientHeight || 0));
             render();
-            scheduleSave();
         };
         const isVideo = imgEl.tagName?.toLowerCase() === 'video';
         if(!isVideo && imgEl.complete) apply();
@@ -13623,6 +13697,7 @@ shell.onmousedown = e => {
     if(e.button !== 0 && e.button !== 1) return;
     e.preventDefault();
     didPan = false;
+    viewportInteractionActive = true;
     panState = {button:e.button, startX:e.clientX, startY:e.clientY, ox:viewport.x, oy:viewport.y};
     shell.classList.add('panning');
 };
@@ -13651,6 +13726,7 @@ minimap?.addEventListener('mousedown', e => {
     if(e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    viewportInteractionActive = true;
     smartMinimapDrag = true;
     centerViewportOnWorldPoint(minimapEventToWorld(e));
 });
@@ -13856,11 +13932,13 @@ window.onmouseup = e => {
     if(panState) {
         panState = null;
         shell.classList.remove('panning');
-        scheduleSave();
+        flushDeferredViewportRendering();
+        scheduleSave(900);
         setTimeout(() => { didPan = false; }, 0);
     }
     if(smartMinimapDrag){
         smartMinimapDrag = false;
+        flushDeferredViewportRendering();
     }
     if(dragState){
         const draggedNode = nodes.find(n => n.id === dragState.id);
@@ -13939,19 +14017,21 @@ window.onmouseup = e => {
             stateChanged = true;
         }
         if(dragState.thumbDetached) stateChanged = true;
+        const thumbDetached = Boolean(dragState.thumbDetached);
         if(stateChanged) commitPendingUndo();
         else discardPendingUndo();
-        if(stateChanged || dragState.thumbDetached) suppressNodeClickUntil = Date.now() + 180;
+        if(stateChanged || thumbDetached) suppressNodeClickUntil = Date.now() + 180;
         clearDropHighlight();
         loopInsertPreview = null;
         dragState = null;
-        scheduleSave();
+        if(stateChanged || thumbDetached) scheduleSave();
         refreshConnectionLayer();
     }
 };
 shell.addEventListener('wheel', e => {
     if(e.target.closest('.composer,.smart-back,.image-edit-modal,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal')) return;
     e.preventDefault();
+    viewportInteractionActive = true;
     const rect = shell.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
@@ -13961,7 +14041,12 @@ shell.addEventListener('wheel', e => {
     viewport.x = sx - before.x * viewport.scale;
     viewport.y = sy - before.y * viewport.scale;
     applyViewport();
-    scheduleSave();
+    clearTimeout(viewportInteractionReleaseTimer);
+    viewportInteractionReleaseTimer = setTimeout(() => {
+        viewportInteractionReleaseTimer = null;
+        flushDeferredViewportRendering();
+    }, 140);
+    scheduleSave(1200);
 }, {passive:false});
 shell.ondragover = e => setSmartDropCopyEffect(e, true);
 shell.ondrop = async e => {
@@ -14808,9 +14893,10 @@ window.onload = async () => {
     if(window.StudioI18n) window.StudioI18n.apply();
     if(window.lucide) lucide.createIcons();
     connectAssetLibrarySyncSocket();
-    await loadConfig();
-    await loadAssetLibrary();
     await loadCanvas();
+    const configPromise = loadConfig();
+    const assetLibraryPromise = loadAssetLibrary();
+    await Promise.allSettled([configPromise, assetLibraryPromise]);
     syncApiKindToggleVisibility();
     render();
 };

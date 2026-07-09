@@ -695,6 +695,39 @@ def lookup_media_url(url: str, *, include_deleted: bool = False) -> Optional[Dic
     return _row_to_entry(row) if row else None
 
 
+def lookup_media_urls(urls: List[str], *, include_deleted: bool = False) -> Dict[str, Dict[str, Any]]:
+    canonical_urls = []
+    seen = set()
+    for url in urls or []:
+        canonical = canonicalize_legacy_media_url(url)
+        if canonical and canonical not in seen:
+            canonical_urls.append(canonical)
+            seen.add(canonical)
+    if not canonical_urls:
+        return {}
+    if not metadata_db_enabled():
+        return {url: entry for url in canonical_urls if (entry := _fallback_lookup(url))}
+    _ensure_files_table()
+    deleted_filter = "" if include_deleted else " AND deleted_at IS NULL AND status <> 'deleted'"
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM files
+                WHERE legacy_url = ANY(%s)
+                """ + deleted_filter,
+                (canonical_urls,),
+            )
+            rows = cur.fetchall() or []
+    result: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        entry = _row_to_entry(row)
+        legacy_url = str(entry.get("legacy_url") or "")
+        if legacy_url:
+            result[legacy_url] = entry
+    return result
+
+
 def get_file_by_id(file_id: str) -> Optional[Dict[str, Any]]:
     if not file_id:
         return None
@@ -713,6 +746,33 @@ def get_file_by_id(file_id: str) -> Optional[Dict[str, Any]]:
             )
             row = cur.fetchone()
     return _row_to_entry(row) if row else None
+
+
+def get_files_by_ids(file_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    ids = []
+    seen = set()
+    for file_id in file_ids or []:
+        text = str(file_id or "").strip()
+        if text and text not in seen:
+            ids.append(text)
+            seen.add(text)
+    if not ids:
+        return {}
+    if not metadata_db_enabled():
+        raise RuntimeError("文件元数据数据库未启用，无法通过 file_id 解析媒体；请配置 DATABASE_URL。")
+    _ensure_files_table()
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM files
+                WHERE id = ANY(%s) AND deleted_at IS NULL AND status <> 'deleted'
+                """,
+                (ids,),
+            )
+            rows = cur.fetchall() or []
+    entries = [_row_to_entry(row) for row in rows]
+    return {entry["file_id"]: entry for entry in entries if entry.get("file_id")}
 
 
 def ensure_local_media_registered(url: str) -> Optional[Dict[str, Any]]:
@@ -752,7 +812,7 @@ def ensure_local_media_registered(url: str) -> Optional[Dict[str, Any]]:
     return lookup_media_url(canonical) or entry
 
 
-def resolve_file_reference(url: str = "", file_id: str = "") -> Optional[Dict[str, Any]]:
+def resolve_file_reference(url: str = "", file_id: str = "", *, allow_register: bool = True) -> Optional[Dict[str, Any]]:
     if file_id:
         entry = get_file_by_id(file_id)
         if entry:
@@ -768,7 +828,8 @@ def resolve_file_reference(url: str = "", file_id: str = "") -> Optional[Dict[st
         entry = lookup_media_url(url)
         if entry:
             return entry
-        return ensure_local_media_registered(url)
+        if allow_register:
+            return ensure_local_media_registered(url)
     return None
 
 
@@ -805,13 +866,13 @@ def urls_from_file_refs(refs: List[Dict[str, Any]]) -> List[str]:
     return urls
 
 
-def normalize_media_ref(ref: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_media_ref(ref: Dict[str, Any], *, allow_register: bool = True) -> Dict[str, Any]:
     if not isinstance(ref, dict):
         return ref
     normalized = dict(ref)
     file_id = str(normalized.get("file_id") or "").strip()
     url = str(normalized.get("url") or "").strip()
-    entry = resolve_file_reference(url=url, file_id=file_id)
+    entry = resolve_file_reference(url=url, file_id=file_id, allow_register=allow_register)
     if file_id and not entry:
         raise RuntimeError(f"file_id={file_id} 的媒体元数据不存在或无法解析。")
     if entry:
@@ -825,19 +886,61 @@ def normalize_media_ref(ref: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def normalize_media_refs(refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def normalize_media_refs(refs: List[Dict[str, Any]], *, allow_register: bool = False) -> List[Dict[str, Any]]:
+    normalized_refs = [dict(ref) for ref in (refs or []) if isinstance(ref, dict)]
+    if not normalized_refs:
+        return []
+    file_ids = []
+    urls = []
+    file_api_ids = []
+    for ref in normalized_refs:
+        file_id = str(ref.get("file_id") or "").strip()
+        url = str(ref.get("url") or "").strip()
+        if file_id:
+            file_ids.append(file_id)
+        if url:
+            urls.append(url)
+            parsed = urllib.parse.urlsplit(url)
+            path = parsed.path or url
+            parts = [part for part in path.split("/") if part]
+            if len(parts) >= 3 and parts[0] == "api" and parts[1] == "files":
+                file_api_ids.append(parts[2])
+    entries_by_id = get_files_by_ids(file_ids + file_api_ids) if (file_ids or file_api_ids) else {}
+    entries_by_url = lookup_media_urls(urls) if urls else {}
     items: List[Dict[str, Any]] = []
-    for ref in refs or []:
-        if not isinstance(ref, dict):
-            continue
-        normalized = normalize_media_ref(ref)
+    for ref in normalized_refs:
+        normalized = dict(ref)
+        file_id = str(normalized.get("file_id") or "").strip()
+        url = str(normalized.get("url") or "").strip()
+        canonical_url = canonicalize_legacy_media_url(url) if url else ""
+        entry = entries_by_id.get(file_id) if file_id else None
+        if not entry and url:
+            parsed = urllib.parse.urlsplit(url)
+            path = parsed.path or url
+            parts = [part for part in path.split("/") if part]
+            if len(parts) >= 3 and parts[0] == "api" and parts[1] == "files":
+                entry = entries_by_id.get(parts[2])
+        if not entry and canonical_url:
+            entry = entries_by_url.get(canonical_url)
+        if not entry and allow_register:
+            entry = resolve_file_reference(url=url, file_id=file_id, allow_register=True)
+        if file_id and not entry:
+            raise RuntimeError(f"file_id={file_id} 的媒体元数据不存在或无法解析。")
+        if entry:
+            normalized["file_id"] = entry.get("file_id") or file_id
+            normalized["url"] = file_preview_url(normalized["file_id"])
+            normalized["download_url"] = file_download_url(normalized["file_id"])
+            if not normalized.get("name"):
+                normalized["name"] = entry.get("original_name") or entry.get("filename") or ""
+            if not normalized.get("kind") and entry.get("kind"):
+                normalized["kind"] = entry.get("kind")
         if normalized.get("url") or normalized.get("file_id"):
             items.append(normalized)
     return items
 
 
 def compact_media_ref(ref: Dict[str, Any]) -> Dict[str, Any]:
-    normalized = normalize_media_ref(ref or {})
+    normalized = normalize_media_ref(ref or {}, allow_register=True)
     compact: Dict[str, Any] = {}
     for key in ("file_id", "name", "role", "kind"):
         value = normalized.get(key)
@@ -847,9 +950,14 @@ def compact_media_ref(ref: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def compact_media_refs(refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized_refs = normalize_media_refs(refs, allow_register=True)
     items: List[Dict[str, Any]] = []
-    for ref in refs or []:
-        compact = compact_media_ref(ref)
+    for ref in normalized_refs:
+        compact: Dict[str, Any] = {}
+        for key in ("file_id", "name", "role", "kind"):
+            value = ref.get(key)
+            if value not in (None, ""):
+                compact[key] = value
         if compact:
             items.append(compact)
     return items
