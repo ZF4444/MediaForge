@@ -142,3 +142,29 @@ def test_remove_media_url_deletes_remote_derivatives(monkeypatch, tmp_path):
         ("mediaforge-private", "users/user-1/derived/posters/s320/file-1.jpg"),
     ]
     assert not os.path.exists(cache_file)
+
+
+def test_run_storage_metadata_purge_once_hard_deletes_only_when_objects_are_gone(monkeypatch):
+    deleted_rows = []
+    monkeypatch.setattr(storage, "STORAGE_METADATA_PURGE_ENABLED", True)
+    monkeypatch.setattr(storage, "STORAGE_METADATA_PURGE_RETENTION_DAYS", 30)
+    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
+    monkeypatch.setattr(storage, "_deleted_metadata_candidates", lambda limit, deleted_before_ms: [
+        {
+            **_row("gone-1", category="output", created_at=1),
+            "status": "deleted",
+            "deleted_at": deleted_before_ms - 1,
+        },
+        {
+            **_row("still-there", category="output", created_at=1),
+            "status": "deleted",
+            "deleted_at": deleted_before_ms - 1,
+        },
+    ])
+    monkeypatch.setattr(storage, "media_objects_exist", lambda entry: entry.get("file_id") == "still-there")
+    monkeypatch.setattr(storage, "_hard_delete_file_row", lambda file_id: deleted_rows.append(file_id))
+
+    result = storage.run_storage_metadata_purge_once(limit=10)
+
+    assert result == {"scanned": 2, "purged": 1}
+    assert deleted_rows == ["gone-1"]

@@ -36,6 +36,8 @@ from app.config import (
     STORAGE_CLEANUP_ENABLED,
     STORAGE_CLEANUP_INTERVAL_SECONDS,
     STORAGE_INPUT_RETENTION_DAYS,
+    STORAGE_METADATA_PURGE_ENABLED,
+    STORAGE_METADATA_PURGE_RETENTION_DAYS,
     STORAGE_OBJECT_INDEX_FILE,
     STORAGE_OUTPUT_RETENTION_DAYS,
     STORAGE_QUOTA_ENABLED,
@@ -328,6 +330,34 @@ def _mark_file_deleted(file_id: str, deleted_at_ms: int) -> None:
             )
 
 
+def _deleted_metadata_candidates(limit: int, deleted_before_ms: int) -> List[Dict[str, Any]]:
+    if not metadata_db_enabled():
+        return []
+    _ensure_files_table()
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM files
+                WHERE deleted_at IS NOT NULL
+                  AND deleted_at <= %s
+                ORDER BY deleted_at ASC
+                LIMIT %s
+                """,
+                (deleted_before_ms, max(1, int(limit or STORAGE_CLEANUP_BATCH_SIZE or 500))),
+            )
+            return cur.fetchall() or []
+
+
+def _hard_delete_file_row(file_id: str) -> None:
+    if not file_id or not metadata_db_enabled():
+        return
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM files WHERE id = %s", (file_id,))
+
+
 def run_storage_cleanup_once(limit: int = 0) -> Dict[str, int]:
     if not STORAGE_CLEANUP_ENABLED:
         return {"scanned": 0, "deleted": 0}
@@ -355,10 +385,32 @@ def run_storage_cleanup_once(limit: int = 0) -> Dict[str, int]:
     return {"scanned": len(rows), "deleted": deleted}
 
 
+def run_storage_metadata_purge_once(limit: int = 0) -> Dict[str, int]:
+    if not STORAGE_METADATA_PURGE_ENABLED or not metadata_db_enabled():
+        return {"scanned": 0, "purged": 0}
+    retention_days = int(STORAGE_METADATA_PURGE_RETENTION_DAYS or 0)
+    if retention_days <= 0:
+        return {"scanned": 0, "purged": 0}
+    deleted_before_ms = now_ms() - retention_days * 24 * 60 * 60 * 1000
+    rows = _deleted_metadata_candidates(limit or STORAGE_CLEANUP_BATCH_SIZE, deleted_before_ms)
+    purged = 0
+    for row in rows:
+        entry = _row_to_entry(row)
+        if media_objects_exist(entry):
+            continue
+        _hard_delete_file_row(entry.get("file_id") or "")
+        purged += 1
+    return {"scanned": len(rows), "purged": purged}
+
+
 async def storage_cleanup_loop() -> None:
     while True:
         try:
             await asyncio.to_thread(run_storage_cleanup_once)
+        except Exception:
+            pass
+        try:
+            await asyncio.to_thread(run_storage_metadata_purge_once)
         except Exception:
             pass
         await asyncio.sleep(max(60, int(STORAGE_CLEANUP_INTERVAL_SECONDS or 3600)))
@@ -1163,6 +1215,31 @@ def delete_media_objects(entry: Dict[str, Any]) -> None:
             delete_object(bucket, key)
         except Exception:
             pass
+
+
+def media_objects_exist(entry: Dict[str, Any]) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    bucket = str(entry.get("bucket") or "").strip()
+    object_key = str(entry.get("object_key") or "").strip()
+    if not bucket:
+        return False
+    keys = []
+    if object_key:
+        keys.append(object_key)
+    keys.extend(media_derived_object_keys(entry))
+    seen = set()
+    for key in keys:
+        key = str(key or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        try:
+            if object_exists(bucket, key):
+                return True
+        except Exception:
+            return True
+    return False
 
 
 def _generate_image_thumb_bytes(payload: bytes, size: int = THUMB_SIZE_DEFAULT) -> bytes:
