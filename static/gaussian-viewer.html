@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>高斯泼溅查看器 · Gaussian Splat Viewer</title>
+    <title>高斯泼溅查看器</title>
     <script src="/static/js/runninghub-client.js"></script>
     <style>
         * {
@@ -479,8 +479,8 @@
         <span class="title">高斯泼溅查看器</span>
         <label class="file-btn" for="plyFileInput">打开 PLY 文件</label>
         <input id="plyFileInput" type="file" accept=".ply" style="display:none;">
-        <input id="plyUrlInput" type="text" placeholder="或粘贴 PLY 文件 URL …">
-        <button id="loadUrlBtn" class="secondary" type="button">从 URL 加载</button>
+        <input id="plyUrlInput" type="text" placeholder="或粘贴 PLY 文件链接…">
+        <button id="loadUrlBtn" class="secondary" type="button">从链接加载</button>
         <span id="fileName"></span>
     </div>
 
@@ -506,10 +506,10 @@
             <div id="infoContent"></div>
         </div>
 
-        <div id="ratioPanel" class="ratio-panel" aria-label="Aspect ratio presets">
-            <div class="label">Image Ratio</div>
+        <div id="ratioPanel" class="ratio-panel" aria-label="画幅比例预设">
+            <div class="label">画幅比例</div>
             <select id="ratioSelect" class="ratio-select">
-                <option value="source">Source</option>
+                <option value="source">原图</option>
                 <option value="1:1">1:1</option>
                 <option value="1:2">1:2</option>
                 <option value="4:3">4:3</option>
@@ -539,37 +539,32 @@
         </div>
     </div>
 
-    <div id="controlsBar">
+        <div id="controlsBar">
         <div class="control-group view-group">
-            <span class="group-label">View</span>
-            <button id="resetCamera" title="重置相机视角">Reset View</button>
+            <span class="group-label">视角</span>
+            <button id="resetCamera" title="重置相机视角">重置视角</button>
             <button id="toggleHelp" title="显示键盘快捷键">?</button>
         </div>
 
         <div class="control-group camera-group">
-            <span class="group-label">Camera</span>
+            <span class="group-label">相机</span>
             <div class="scale-control">
-                <span>Focal:</span>
-                <input type="range" id="focalScale" min="0.2" max="3.0" step="0.01" value="1.0" title="焦距缩放">
-                <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.0" title="焦距缩放值">
+                <span>焦距:</span>
+                <input type="range" id="focalScale" min="0.2" max="3.0" step="0.01" value="1.9" title="焦距缩放">
+                <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.9" title="焦距缩放值">
             </div>
-            <button id="setCamera" title="保存当前相机视角（本地存储）">Set Camera</button>
         </div>
 
         <div class="control-group display-group">
-            <span class="group-label">Display</span>
+            <span class="group-label">显示</span>
             <div class="scale-control">
-                <span>Scale:</span>
-                <input type="range" id="gaussianScaleValue" min="1" max="30" step="1" value="11" title="高斯点尺寸倍数">
-                <span id="gaussianScaleDisplay">11</span>
-                <button id="autoScaleBtn" title="恢复自动缩放 (11)">Auto</button>
-                <label style="display: flex; align-items: center; gap: 4px; color: #ccc; font-size: calc(10px * var(--ui-scale)); margin-left: calc(8px * var(--ui-scale)); cursor: pointer;" title="根据相机距离与 FOV 动态调整尺寸">
-                    <input type="checkbox" id="dynamicScaleToggle" style="margin: 0; cursor: pointer;" checked>
-                    Dynamic
-                </label>
+                <span>清晰度:</span>
+                <input type="range" id="gaussianScaleValue" min="1" max="30" step="1" value="8" title="高斯点清晰度">
+                <span id="gaussianScaleDisplay">8</span>
+                <button id="autoScaleBtn" title="恢复默认清晰度 (8)">默认</button>
             </div>
             <div id="overlayControl" class="scale-control">
-                <span>Overlay:</span>
+                <span>叠图:</span>
                 <input type="range" id="overlayAlpha" min="0" max="1" step="0.01" value="0.5" title="叠加图透明度">
                 <input type="number" id="overlayAlphaValue" min="0" max="1" step="0.01" value="0.5" title="叠加图透明度值">
             </div>
@@ -626,19 +621,8 @@
         let lastSceneCenter = null;
         let lastSceneSize = null;
 
-        let baseDistance = null;
-        let isDynamicScaleEnabled = true;
-
-        function updateBaseDistance() {
-            if (!camera || !lastSceneCenter) return;
-            const pos = initialCameraData ? initialCameraData.position : camera.position;
-            const dx = pos.x - lastSceneCenter.x;
-            const dy = pos.y - lastSceneCenter.y;
-            const dz = pos.z - lastSceneCenter.z;
-            baseDistance = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1.0;
-        }
-
         const DEFAULT_FOCAL_LENGTH = 30;
+        const FOCAL_UI_OFFSET = 0.2;
         const SCALE_DENSITY_BOOST = 3.0;
 
         // 独立页默认相机内外参：本地/拖拽/URL 加载时未提供参数则用这组，
@@ -703,32 +687,11 @@
                 resize();
                 scheduleFrameLayoutUpdate();
 
-                let lastIdealScale = -1;
-
                 const frame = () => {
                     controls.update();
                     updateCameraInfoDisplay();
                     renderer.render(scene, camera);
                     animationId = requestAnimationFrame(frame);
-
-                    if (isDynamicScaleEnabled && camera && lastSceneCenter && baseDistance) {
-                        const currentFocal = camera.data.fx || baseFocalLength;
-                        const dx = camera.position.x - lastSceneCenter.x;
-                        const dy = camera.position.y - lastSceneCenter.y;
-                        const dz = camera.position.z - lastSceneCenter.z;
-                        const currentDistance = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1.0;
-                        const distRatio = currentDistance / baseDistance;
-                        const focalRatio = baseFocalLength / currentFocal;
-                        const scaleFactor = Math.pow(distRatio * focalRatio, 0.85);
-                        let idealScale = Math.round(11.0 * scaleFactor);
-                        idealScale = Math.max(1, Math.min(30, idealScale));
-                        if (idealScale !== lastIdealScale) {
-                            lastIdealScale = idealScale;
-                            if (idealScale !== currentScale) {
-                                updateGaussianScale(idealScale);
-                            }
-                        }
-                    }
                 };
                 frame();
 
@@ -793,7 +756,6 @@
         };
 
         const CAMERA_PRESET_STORAGE_KEY = 'geompack_camera_presets_v1';
-        const CAMERA_SAVED_STATE_KEY = 'gaussian_saved_camera_v1';
         let currentMeshKey = null;
         let presetOptionMap = new Map();
 
@@ -927,10 +889,10 @@
                     nativeImageHeight = null;
                     cachedSplatData = null;
                     lastMeshSignature = meshSignature;
-                    currentScale = 11.0;
-                    lastScaleValue = 11.0;
-                    if (scaleInput) scaleInput.value = 11;
-                    if (scaleDisplay) scaleDisplay.textContent = '11';
+                    currentScale = 8.0;
+                    lastScaleValue = 8.0;
+                    if (scaleInput) scaleInput.value = 8;
+                    if (scaleDisplay) scaleDisplay.textContent = '8';
                 }
 
                 const hasIntrinsics = Array.isArray(intrinsics) && intrinsics.length >= 2;
@@ -1026,10 +988,8 @@
                 }
 
                 infoPanel.classList.remove('hidden');
-                infoContent.innerHTML = `<span style="color:#6cc;">Gaussian Splat 已加载</span><br><span style="color:#888;">${filename}</span>`;
+                infoContent.innerHTML = `<span style="color:#6cc;">高斯泼溅已加载</span><br><span style="color:#888;">${filename}</span>`;
                 fileNameEl.textContent = filename;
-
-                updateBaseDistance();
                 loadingEl.classList.add('hidden');
                 try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'PLY_LOADED', filename }, '*'); } catch (e) {}
             } catch (err) {
@@ -1058,10 +1018,9 @@
                     if (controls.resetRoll) { controls.resetRoll(); }
                 }
                 controls.update();
-                focalScaleInput.value = 1.0;
-                focalScaleValue.value = 1.0;
-                applyFocalScale(1.0);
-                if (isDynamicScaleEnabled) { updateBaseDistance(); }
+                focalScaleInput.value = 1.9;
+                focalScaleValue.value = 1.9;
+                applyFocalScale(1.9);
                 scheduleFrameLayoutUpdate();
             }
         }
@@ -1110,7 +1069,9 @@
 
         function parseAspectRatio(value, fallbackWidth, fallbackHeight) {
             if (!value || value === "source") {
-                return fallbackWidth > 0 && fallbackHeight > 0 ? fallbackWidth / fallbackHeight : 1.0;
+                const sourceWidth = nativeImageWidth || (Array.isArray(currentIntrinsics) ? Number(currentIntrinsics[0]?.[2]) * 2 : 0) || fallbackWidth;
+                const sourceHeight = nativeImageHeight || (Array.isArray(currentIntrinsics) ? Number(currentIntrinsics[1]?.[2]) * 2 : 0) || fallbackHeight;
+                return sourceWidth > 0 && sourceHeight > 0 ? sourceWidth / sourceHeight : 1.0;
             }
             if (value.includes(":")) {
                 const parts = value.split(":");
@@ -1133,7 +1094,6 @@
             };
             const aspect = parseAspectRatio(outputSettings.aspectRatio, rect.width, rect.height);
             if (!aspect || rect.width <= 0 || rect.height <= 0) { cropFrame.style.display = 'none'; return; }
-            if (outputSettings.aspectRatio === "source") { cropFrame.style.display = 'none'; return; }
 
             let frameWidth = rect.width;
             let frameHeight = rect.width / aspect;
@@ -1286,7 +1246,7 @@
                 roll: Number.isFinite(controls.currentRoll) ? controls.currentRoll : 0,
                 image_width: nativeImageWidth || canvasRef?.width || null,
                 image_height: nativeImageHeight || canvasRef?.height || null,
-                scale: currentScale || 11.0,
+                scale: currentScale || 8.0,
                 scale_compensation: gaussianScaleCompensation || null
             };
         }
@@ -1301,14 +1261,14 @@
             presetSelectEl.innerHTML = '';
             const empty = document.createElement('option');
             empty.value = '';
-            empty.textContent = '(No Preset)';
+            empty.textContent = '（无预设）';
             presetSelectEl.appendChild(empty);
             let i = 1;
             for (const p of globalPresets) {
                 const value = `g:${i++}`;
                 const opt = document.createElement('option');
                 opt.value = value;
-                opt.textContent = `[Global] ${p.name || 'unnamed'}`;
+                opt.textContent = `[全局] ${p.name || '未命名'}`;
                 presetOptionMap.set(value, { scope: 'global', preset: p });
                 presetSelectEl.appendChild(opt);
             }
@@ -1316,7 +1276,7 @@
                 const value = `m:${i++}`;
                 const opt = document.createElement('option');
                 opt.value = value;
-                opt.textContent = `[Mesh] ${p.name || 'unnamed'}`;
+                opt.textContent = `[模型] ${p.name || '未命名'}`;
                 presetOptionMap.set(value, { scope: 'mesh', preset: p });
                 presetSelectEl.appendChild(opt);
             }
@@ -1382,7 +1342,7 @@
             const selectedKey = presetSelectEl?.value;
             if (!selectedKey || !presetOptionMap.has(selectedKey)) { showPresetStatus('请先选择预设', true); return; }
             const selected = presetOptionMap.get(selectedKey);
-            const presetName = selected?.preset?.name || 'unnamed';
+            const presetName = selected?.preset?.name || '未命名';
             const ok = await requestPresetConfirm({
                 title: '删除预设',
                 message: `确定删除预设 "${presetName}"？此操作不可撤销。`,
@@ -1415,27 +1375,10 @@
             if (position) { camera.position.x = position.x; camera.position.y = position.y; camera.position.z = position.z; }
             if (target && controls.setCameraTarget) { controls.setCameraTarget(target); }
             if (Number.isFinite(roll)) { controls.currentRoll = roll; controls.targetRoll = roll; }
-            if (dynamicScaleToggle && dynamicScaleToggle.checked) { dynamicScaleToggle.checked = false; isDynamicScaleEnabled = false; }
             if (scale) { updateGaussianScale(scale); }
-            if (focalScaleInput) focalScaleInput.value = 1.0;
-            if (focalScaleValue) focalScaleValue.value = 1.0;
+            if (focalScaleInput) focalScaleInput.value = 1.9;
+            if (focalScaleValue) focalScaleValue.value = 1.9;
             controls.update();
-            scheduleFrameLayoutUpdate();
-        }
-
-        // 独立页：Set Camera 保存到 localStorage（替代原 SET_CAMERA_PARAMS postMessage）
-        function setCameraParams() {
-            if (!renderer || !camera || !controls) return;
-            const cameraState = getCurrentCameraStateSnapshot();
-            if (!cameraState) return;
-            try {
-                const all = JSON.parse(localStorage.getItem(CAMERA_SAVED_STATE_KEY) || '{}');
-                all[currentMeshKey || '__default__'] = { camera_state: cameraState, updated_at: Date.now() };
-                localStorage.setItem(CAMERA_SAVED_STATE_KEY, JSON.stringify(all));
-                showPresetStatus('相机已保存');
-            } catch (e) {
-                showPresetStatus('保存失败', true);
-            }
             scheduleFrameLayoutUpdate();
         }
 
@@ -1443,11 +1386,11 @@
         const scaleInput = document.getElementById('gaussianScaleValue');
         const scaleDisplay = document.getElementById('gaussianScaleDisplay');
         const autoScaleBtn = document.getElementById('autoScaleBtn');
-        let currentScale = 11.0;
+        let currentScale = 8.0;
         let lastScaleValue = -1;
 
         function updateGaussianScale(newScale) {
-            newScale = Math.max(1, Math.min(30, Math.round(parseFloat(newScale) || 11)));
+            newScale = Math.max(1, Math.min(30, Math.round(parseFloat(newScale) || 8)));
             if (newScale === lastScaleValue) return;
             currentScale = newScale;
             lastScaleValue = newScale;
@@ -1478,24 +1421,14 @@
             }
         }
 
-        const dynamicScaleToggle = document.getElementById('dynamicScaleToggle');
-        if (dynamicScaleToggle) {
-            dynamicScaleToggle.addEventListener('change', (e) => {
-                isDynamicScaleEnabled = e.target.checked;
-                if (isDynamicScaleEnabled) { updateBaseDistance(); }
-            });
-        }
-
         if (scaleInput) {
             scaleInput.addEventListener('input', (e) => {
-                if (dynamicScaleToggle && dynamicScaleToggle.checked) { dynamicScaleToggle.checked = false; isDynamicScaleEnabled = false; }
                 updateGaussianScale(e.target.value);
             });
         }
 
         const setAutoScale = () => {
-            if (dynamicScaleToggle) { dynamicScaleToggle.checked = true; isDynamicScaleEnabled = true; updateBaseDistance(); }
-            updateGaussianScale(11);
+            updateGaussianScale(8);
         };
         if (autoScaleBtn) autoScaleBtn.addEventListener('click', setAutoScale);
 
@@ -1508,7 +1441,7 @@
             focalScaleValue.value = scale;
             const baseFx = baseFocalLength || camera?.data?.fx || DEFAULT_FOCAL_LENGTH;
             const baseFy = baseFocalY || camera?.data?.fy || DEFAULT_FOCAL_LENGTH;
-            if (camera?.data) { camera.data.fx = baseFx * scale; camera.data.fy = baseFy * scale; }
+            if (camera?.data) { camera.data.fx = baseFx * (scale + FOCAL_UI_OFFSET); camera.data.fy = baseFy * (scale + FOCAL_UI_OFFSET); }
         }
 
         focalScaleInput.addEventListener('input', (e) => applyFocalScale(e.target.value));
@@ -1541,12 +1474,12 @@
                 roll = controls.currentRoll;
             }
             cameraInfoContent.innerHTML = `
-                <div style="color: #6cc; margin-bottom: 2px; font-weight: bold;">Camera State</div>
+                <div style="color: #6cc; margin-bottom: 2px; font-weight: bold;">相机状态</div>
                 <div style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;">
-                    <span style="color: #888;">Pos:</span>
+                    <span style="color: #888;">位置:</span>
                     <span>${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}</span>
-                    <span style="color: #888;">Rot:</span>
-                    <span>P:${toDeg(pitch)}° Y:${toDeg(yaw)}° R:${toDeg(roll)}°</span>
+                    <span style="color: #888;">旋转:</span>
+                    <span>俯:${toDeg(pitch)}° 偏:${toDeg(yaw)}° 滚:${toDeg(roll)}°</span>
                 </div>
             `;
         }
@@ -1565,7 +1498,6 @@
         refreshPresetOptions();
 
         document.getElementById('resetCamera').addEventListener('click', resetCamera);
-        document.getElementById('setCamera').addEventListener('click', setCameraParams);
 
         const helpPanel = document.getElementById('helpPanel');
         const toggleHelpBtn = document.getElementById('toggleHelp');
@@ -1620,7 +1552,7 @@
                 setTimeout(() => { setAutoScale(); }, 500);
             } catch (err) {
                 loadingEl.classList.add('hidden');
-                showError('从 URL 加载失败: ' + err.message);
+                showError('从链接加载失败: ' + err.message);
             }
         }
 
