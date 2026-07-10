@@ -344,10 +344,7 @@ def run_storage_cleanup_once(limit: int = 0) -> Dict[str, int]:
             continue
         deleted_at_ms = now_ms()
         _mark_file_deleted(entry.get("file_id") or "", deleted_at_ms)
-        try:
-            delete_object(entry["bucket"], entry["object_key"])
-        except Exception:
-            pass
+        delete_media_objects(entry)
         cache_path = cached_media_path(entry)
         if cache_path and os.path.isfile(cache_path):
             try:
@@ -1015,10 +1012,7 @@ def remove_media_url(url: str, *, delete_remote: bool = False) -> Optional[Dict[
                     (deleted_at, deleted_at, removed["file_id"]),
                 )
     if delete_remote:
-        try:
-            delete_object(removed["bucket"], removed["object_key"])
-        except Exception:
-            pass
+        delete_media_objects(removed)
     cache_path = cached_media_path(removed)
     if cache_path and os.path.isfile(cache_path):
         try:
@@ -1134,6 +1128,41 @@ def media_poster_object_key(entry_or_file_id: Any, *, user_id: str = "") -> str:
     file_id = entry_or_file_id.get("file_id") if isinstance(entry_or_file_id, dict) else entry_or_file_id
     uid = user_id or (entry_or_file_id.get("user_id") if isinstance(entry_or_file_id, dict) else "")
     return build_derived_object_key(str(file_id or "").strip(), f"posters/s{THUMB_SIZE_DEFAULT}", ".jpg", user_id=uid)
+
+
+def media_derived_object_keys(entry_or_file_id: Any, *, user_id: str = "") -> List[str]:
+    file_id = entry_or_file_id.get("file_id") if isinstance(entry_or_file_id, dict) else entry_or_file_id
+    uid = user_id or (entry_or_file_id.get("user_id") if isinstance(entry_or_file_id, dict) else "")
+    file_id = str(file_id or "").strip()
+    if not file_id:
+        return []
+    return [
+        media_thumb_object_key(file_id, user_id=uid),
+        media_poster_object_key(file_id, user_id=uid),
+    ]
+
+
+def delete_media_objects(entry: Dict[str, Any]) -> None:
+    if not isinstance(entry, dict):
+        return
+    bucket = str(entry.get("bucket") or "").strip()
+    object_key = str(entry.get("object_key") or "").strip()
+    if not bucket:
+        return
+    keys = []
+    if object_key:
+        keys.append(object_key)
+    keys.extend(media_derived_object_keys(entry))
+    seen = set()
+    for key in keys:
+        key = str(key or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        try:
+            delete_object(bucket, key)
+        except Exception:
+            pass
 
 
 def _generate_image_thumb_bytes(payload: bytes, size: int = THUMB_SIZE_DEFAULT) -> bytes:

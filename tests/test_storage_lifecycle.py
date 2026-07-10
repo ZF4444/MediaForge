@@ -94,5 +94,51 @@ def test_run_storage_cleanup_once_marks_deleted_and_removes_cache(monkeypatch, t
 
     assert result == {"scanned": 2, "deleted": 1}
     assert deleted_ids == [("expired-1", now_value)]
-    assert deleted_objects == [("mediaforge-private", "users/user-1/input/expired-1.png")]
+    assert deleted_objects == [
+        ("mediaforge-private", "users/user-1/input/expired-1.png"),
+        ("mediaforge-private", "users/user-1/derived/thumbs/s320/expired-1.webp"),
+        ("mediaforge-private", "users/user-1/derived/posters/s320/expired-1.jpg"),
+    ]
+    assert not os.path.exists(cache_file)
+
+
+def test_remove_media_url_deletes_remote_derivatives(monkeypatch, tmp_path):
+    cache_file = tmp_path / "cached.png"
+    cache_file.write_bytes(b"stale")
+    removed_entry = {
+        "file_id": "file-1",
+        "url": "/api/files/file-1/preview",
+        "bucket": "mediaforge-private",
+        "object_key": "users/user-1/output/file-1.png",
+        "filename": "file-1.png",
+        "category": "output",
+        "original_name": "file-1.png",
+        "content_type": "image/png",
+        "kind": "image",
+        "size": 12,
+        "created_at": 1,
+        "updated_at": 1,
+        "user_id": "user-1",
+        "status": "active",
+        "source": "generated",
+        "ext": ".png",
+        "sha256": "hash",
+        "is_public": False,
+    }
+    deleted_objects = []
+
+    monkeypatch.setattr(storage, "lookup_media_url", lambda url: removed_entry if url == removed_entry["url"] else None)
+    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: False)
+    monkeypatch.setattr(storage, "_fallback_remove", lambda url: None)
+    monkeypatch.setattr(storage, "delete_object", lambda bucket, object_key: deleted_objects.append((bucket, object_key)))
+    monkeypatch.setattr(storage, "cached_media_path", lambda entry: str(cache_file))
+
+    removed = storage.remove_media_url(removed_entry["url"], delete_remote=True)
+
+    assert removed == removed_entry
+    assert deleted_objects == [
+        ("mediaforge-private", "users/user-1/output/file-1.png"),
+        ("mediaforge-private", "users/user-1/derived/thumbs/s320/file-1.webp"),
+        ("mediaforge-private", "users/user-1/derived/posters/s320/file-1.jpg"),
+    ]
     assert not os.path.exists(cache_file)
