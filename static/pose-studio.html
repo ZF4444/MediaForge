@@ -728,9 +728,15 @@
             document.getElementById('modelMeshInfo').textContent = `${data.vertices} verts / ${data.bones} bones`;
             document.getElementById('modelOutputInfo').textContent = loadedMessage || 'FBX Loaded';
             const download = document.getElementById('downloadModelBtn');
-            download.href = data.fbx_url || data.url;
-            download.download = data.filename || `pose-model-${Date.now()}.fbx`;
-            download.classList.remove('hidden');
+            const fbxUrl = data.fbx_url || data.url || '';
+            if(fbxUrl){
+                download.href = fbxUrl;
+                download.download = data.filename || `pose-model-${Date.now()}.fbx`;
+                download.classList.remove('hidden');
+            } else {
+                download.removeAttribute('href');
+                download.classList.add('hidden');
+            }
             document.getElementById('focusEditorBtn').classList.remove('hidden');
             const api = poseFrame.contentWindow?.__VNCCS_STANDALONE__;
             if(api?.loadGeneratedModel && generatedModelId) {

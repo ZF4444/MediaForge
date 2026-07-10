@@ -1588,6 +1588,17 @@ def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_
         kind = "text"
     return _register_output_file(local_path, filename, "output", kind=kind)
 
+
+def fetch_comfy_output_bytes_by_name(comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "") -> bytes:
+    query = urllib.parse.urlencode({
+        "filename": str(comfy_filename or ""),
+        "subfolder": str(subfolder or ""),
+        "type": str(file_type or "output"),
+    })
+    full_url = f"http://{comfy_address}/view?{query}"
+    with urllib.request.urlopen(full_url, timeout=30) as response:
+        return response.read()
+
 def save_comfy_text_output(value, prefix="studio_", name=""):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
     stem = sanitize_export_filename(name or "comfy_text.txt", "comfy_text.txt")
@@ -5452,32 +5463,25 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
         raise HTTPException(status_code=502, detail=f"Sam3D-Body 工作流执行失败：{result.get('error')}")
 
     try:
-        source_fbx_url = download_comfy_output_by_name(
+        fbx_content = fetch_comfy_output_bytes_by_name(
             result["backend"],
             exported_fbx_name,
             file_type="output",
-            prefix=f"{request_payload.type}_{int(time.time())}_",
         )
     except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail=f"Sam3D-Body 工作流未生成指定 FBX 文件：{exported_fbx_name}",
         ) from exc
-
-    fbx_path = output_file_from_url(source_fbx_url)
-    if not fbx_path or not os.path.isfile(fbx_path):
-        raise HTTPException(status_code=502, detail="无法读取 Sam3D-Body 工作流输出的 FBX 文件")
-    if os.path.getsize(fbx_path) <= 0:
+    if not fbx_content:
         raise HTTPException(status_code=502, detail="Sam3D-Body 工作流输出的 FBX 文件为空")
-    with open(fbx_path, "rb") as f:
-        fbx_content = f.read()
     registered = register_uploaded_fbx_model(fbx_content, exported_fbx_name)
     registered["workflow_result"] = {
         "workflow_json": result.get("workflow_json"),
         "prompt_id": result.get("prompt_id"),
         "backend": result.get("backend"),
         "source_fbx_name": exported_fbx_name,
-        "source_fbx_url": source_fbx_url,
+        "source_fbx_url": "",
     }
     return registered
 
@@ -5762,7 +5766,7 @@ def delete_runninghub_workflow(workflow_id: str):
     return {"success": True}
 
 @app.get("/api/runninghub/query")
-async def runninghub_query(taskId: str = ""):
+async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
     task_id = str(taskId or "").strip()
     if not task_id:
         raise HTTPException(status_code=400, detail="taskId 必填")
@@ -5780,6 +5784,9 @@ async def runninghub_query(taskId: str = ""):
         code = raw.get("code") if isinstance(raw, dict) else None
         urls = []
         for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw):
+            if not persistOutputs:
+                urls.append(remote)
+                continue
             try:
                 urls.append(await runninghub_store_remote_output(client, remote))
             except Exception:
@@ -9343,6 +9350,7 @@ from app.routers import access_control as access_control_router
 from app.routers import feedback as feedback_router
 from app.routers import help as help_router
 from app.routers import announcement as announcement_router
+from app.routers import storage_management as storage_management_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -9358,6 +9366,7 @@ app.include_router(access_control_router.router)
 app.include_router(feedback_router.router)
 app.include_router(help_router.router)
 app.include_router(announcement_router.router)
+app.include_router(storage_management_router.router)
 
 
 if __name__ == "__main__":

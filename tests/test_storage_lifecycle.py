@@ -168,3 +168,43 @@ def test_run_storage_metadata_purge_once_hard_deletes_only_when_objects_are_gone
 
     assert result == {"scanned": 2, "purged": 1}
     assert deleted_rows == ["gone-1"]
+
+
+def test_storage_quota_config_can_override_default_and_user_limit(monkeypatch, tmp_path):
+    config_file = tmp_path / "global_config.json"
+    monkeypatch.setattr(storage, "GLOBAL_CONFIG_FILE", str(config_file))
+    monkeypatch.setattr(storage, "_QUOTA_CONFIG_CACHE", None)
+
+    saved = storage.save_storage_quota_config({
+        "enabled": False,
+        "default_quota_bytes": 2048,
+        "users": {"user-1": {"quota_bytes": 1024}},
+    })
+
+    assert saved["enabled"] is False
+    assert saved["default_quota_bytes"] == 2048
+    assert storage.storage_quota_enabled() is False
+    assert storage.storage_quota_limit_bytes_for_user("user-1") == 1024
+    assert storage.storage_quota_limit_bytes_for_user("user-2") == 2048
+
+
+def test_storage_usage_summary_groups_sizes_by_category(monkeypatch):
+    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: False)
+    monkeypatch.setattr(storage, "storage_quota_enabled", lambda: True)
+    monkeypatch.setattr(storage, "storage_quota_limit_bytes_for_user", lambda user_id="": 1000)
+    monkeypatch.setattr(storage, "_fallback_list", lambda prefix="": [
+        {"category": "output", "size": 400},
+        {"category": "output", "size": 100},
+        {"category": "library", "size": 200},
+    ])
+
+    summary = storage.storage_usage_summary_for_user("user-1")
+
+    assert summary["quota_enabled"] is True
+    assert summary["quota_bytes"] == 1000
+    assert summary["used_bytes"] == 700
+    assert summary["remaining_bytes"] == 300
+    assert summary["usage_by_category"] == [
+        {"category": "output", "size_bytes": 500, "file_count": 2},
+        {"category": "library", "size_bytes": 200, "file_count": 1},
+    ]

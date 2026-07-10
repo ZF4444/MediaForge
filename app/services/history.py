@@ -14,7 +14,7 @@ import urllib.request
 
 from app.config import HISTORY_LOCK
 from app.core.auth import history_file
-from app.services.storage import compact_media_refs, file_refs_from_urls, remove_media_url, urls_from_file_refs
+from app.services.storage import compact_media_refs, file_refs_from_urls, normalize_media_refs, remove_media_url, urls_from_file_refs
 
 
 def normalize_history_record(record):
@@ -24,7 +24,18 @@ def normalize_history_record(record):
     file_refs = normalized.get("image_refs")
     if not isinstance(file_refs, list):
         file_refs = file_refs_from_urls(normalized.get("images") or [])
-    normalized["image_refs"] = compact_media_refs(file_refs)
+    try:
+        normalized_refs = normalize_media_refs(file_refs, allow_register=True)
+    except Exception:
+        normalized_refs = []
+        for ref in file_refs:
+            if not isinstance(ref, dict):
+                continue
+            try:
+                normalized_refs.extend(normalize_media_refs([ref], allow_register=True))
+            except Exception:
+                continue
+    normalized["image_refs"] = compact_media_refs(normalized_refs)
     normalized["images"] = urls_from_file_refs(normalized["image_refs"])
     return normalized
 

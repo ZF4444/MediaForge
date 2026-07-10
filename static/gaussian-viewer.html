@@ -559,9 +559,9 @@
             <span class="group-label">显示</span>
             <div class="scale-control">
                 <span>清晰度:</span>
-                <input type="range" id="gaussianScaleValue" min="1" max="30" step="1" value="8" title="高斯点清晰度">
-                <span id="gaussianScaleDisplay">8</span>
-                <button id="autoScaleBtn" title="恢复默认清晰度 (8)">默认</button>
+                <input type="range" id="gaussianScaleValue" min="1" max="30" step="1" value="4" title="高斯点清晰度">
+                <span id="gaussianScaleDisplay">4</span>
+                <button id="autoScaleBtn" title="恢复默认清晰度 (4)">默认</button>
             </div>
             <div id="overlayControl" class="scale-control">
                 <span>叠图:</span>
@@ -1246,7 +1246,7 @@
                 roll: Number.isFinite(controls.currentRoll) ? controls.currentRoll : 0,
                 image_width: nativeImageWidth || canvasRef?.width || null,
                 image_height: nativeImageHeight || canvasRef?.height || null,
-                scale: currentScale || 8.0,
+                scale: currentScale || 4.0,
                 scale_compensation: gaussianScaleCompensation || null
             };
         }
@@ -1386,11 +1386,11 @@
         const scaleInput = document.getElementById('gaussianScaleValue');
         const scaleDisplay = document.getElementById('gaussianScaleDisplay');
         const autoScaleBtn = document.getElementById('autoScaleBtn');
-        let currentScale = 8.0;
+        let currentScale = 4.0;
         let lastScaleValue = -1;
 
         function updateGaussianScale(newScale) {
-            newScale = Math.max(1, Math.min(30, Math.round(parseFloat(newScale) || 8)));
+            newScale = Math.max(1, Math.min(30, Math.round(parseFloat(newScale) || 4)));
             if (newScale === lastScaleValue) return;
             currentScale = newScale;
             lastScaleValue = newScale;
@@ -1428,7 +1428,7 @@
         }
 
         const setAutoScale = () => {
-            updateGaussianScale(8);
+            updateGaussianScale(4);
         };
         if (autoScaleBtn) autoScaleBtn.addEventListener('click', setAutoScale);
 

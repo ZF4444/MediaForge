@@ -21,6 +21,8 @@ from PIL import Image
 from app.config import (
     ASSET_LIBRARY_DIR,
     DATABASE_URL,
+    GLOBAL_CONFIG_FILE,
+    GLOBAL_CONFIG_LOCK,
     LOCAL_UPLOAD_DIR,
     MINIO_ACCESS_KEY,
     MINIO_BUCKET_PRIVATE,
@@ -55,6 +57,7 @@ _BUCKETS_LOCK = Lock()
 _DB_READY = False
 _DB_LOCK = Lock()
 _INDEX_LOCK = Lock()
+_QUOTA_CONFIG_CACHE: Optional[Dict[str, Any]] = None
 THUMB_SIZE_DEFAULT = 320
 
 
@@ -215,6 +218,104 @@ def _quota_applies_to_category(category: str) -> bool:
     return str(category or "").strip() in {"input", "uploads", "output", "library", "temp"}
 
 
+def _sanitize_storage_quota_config(raw: Any) -> Dict[str, Any]:
+    data = raw if isinstance(raw, dict) else {}
+    users_raw = data.get("users") if isinstance(data.get("users"), dict) else {}
+    users: Dict[str, Dict[str, Optional[int]]] = {}
+    for user_id, cfg in users_raw.items():
+        uid = os.path.basename(str(user_id or "").strip())
+        if not uid:
+            continue
+        quota_value = cfg.get("quota_bytes") if isinstance(cfg, dict) else None
+        try:
+            quota_bytes = int(quota_value) if quota_value not in (None, "") else None
+        except (TypeError, ValueError):
+            quota_bytes = None
+        if quota_bytes is not None and quota_bytes < 0:
+            quota_bytes = None
+        users[uid] = {"quota_bytes": quota_bytes}
+    default_value = data.get("default_quota_bytes")
+    try:
+        default_quota_bytes = int(default_value) if default_value not in (None, "") else None
+    except (TypeError, ValueError):
+        default_quota_bytes = None
+    if default_quota_bytes is not None and default_quota_bytes < 0:
+        default_quota_bytes = None
+    return {
+        "enabled": bool(data.get("enabled", STORAGE_QUOTA_ENABLED)),
+        "default_quota_bytes": default_quota_bytes,
+        "users": users,
+    }
+
+
+def load_storage_quota_config() -> Dict[str, Any]:
+    global _QUOTA_CONFIG_CACHE
+    with GLOBAL_CONFIG_LOCK:
+        if _QUOTA_CONFIG_CACHE is not None:
+            return {
+                "enabled": bool(_QUOTA_CONFIG_CACHE.get("enabled", STORAGE_QUOTA_ENABLED)),
+                "default_quota_bytes": _QUOTA_CONFIG_CACHE.get("default_quota_bytes"),
+                "users": dict(_QUOTA_CONFIG_CACHE.get("users") or {}),
+            }
+        data: Dict[str, Any] = {}
+        if os.path.exists(GLOBAL_CONFIG_FILE):
+            try:
+                with open(GLOBAL_CONFIG_FILE, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception:
+                data = {}
+        _QUOTA_CONFIG_CACHE = _sanitize_storage_quota_config((data or {}).get("storage_quota"))
+        return {
+            "enabled": bool(_QUOTA_CONFIG_CACHE.get("enabled", STORAGE_QUOTA_ENABLED)),
+            "default_quota_bytes": _QUOTA_CONFIG_CACHE.get("default_quota_bytes"),
+            "users": dict(_QUOTA_CONFIG_CACHE.get("users") or {}),
+        }
+
+
+def save_storage_quota_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    global _QUOTA_CONFIG_CACHE
+    sanitized = _sanitize_storage_quota_config(config)
+    with GLOBAL_CONFIG_LOCK:
+        payload: Dict[str, Any] = {}
+        if os.path.exists(GLOBAL_CONFIG_FILE):
+            try:
+                with open(GLOBAL_CONFIG_FILE, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    payload = loaded
+            except Exception:
+                payload = {}
+        payload["storage_quota"] = sanitized
+        tmp = GLOBAL_CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, GLOBAL_CONFIG_FILE)
+        _QUOTA_CONFIG_CACHE = sanitized
+    return {
+        "enabled": bool(sanitized.get("enabled", STORAGE_QUOTA_ENABLED)),
+        "default_quota_bytes": sanitized.get("default_quota_bytes"),
+        "users": dict(sanitized.get("users") or {}),
+    }
+
+
+def storage_quota_enabled() -> bool:
+    return bool(load_storage_quota_config().get("enabled", STORAGE_QUOTA_ENABLED))
+
+
+def storage_quota_limit_bytes_for_user(user_id: str = "") -> int:
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
+    config = load_storage_quota_config()
+    user_quota = ((config.get("users") or {}).get(uid) or {}).get("quota_bytes")
+    if user_quota not in (None, ""):
+        return int(user_quota or 0)
+    default_quota = config.get("default_quota_bytes")
+    if default_quota not in (None, ""):
+        return int(default_quota or 0)
+    return int(STORAGE_USER_QUOTA_BYTES or 0)
+
+
 def storage_quota_bytes_for_user(user_id: str = "") -> int:
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     if not metadata_db_enabled():
@@ -236,11 +337,11 @@ def storage_quota_bytes_for_user(user_id: str = "") -> int:
 
 def enforce_storage_quota(incoming_bytes: int, *, category: str = "", user_id: str = "") -> None:
     size = int(incoming_bytes or 0)
-    if size <= 0 or not STORAGE_QUOTA_ENABLED or not metadata_db_enabled():
+    if size <= 0 or not storage_quota_enabled() or not metadata_db_enabled():
         return
     if not _quota_applies_to_category(category):
         return
-    quota_bytes = int(STORAGE_USER_QUOTA_BYTES or 0)
+    quota_bytes = storage_quota_limit_bytes_for_user(user_id)
     if quota_bytes <= 0:
         return
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
@@ -639,6 +740,9 @@ def _row_to_entry(row: Dict[str, Any]) -> Dict[str, Any]:
         "ext": row.get("ext") or "",
         "sha256": row.get("sha256") or "",
         "is_public": bool(row.get("is_public")),
+        "last_accessed_at": int(row.get("last_accessed_at") or 0),
+        "expires_at": int(row.get("expires_at") or 0) if row.get("expires_at") is not None else None,
+        "deleted_at": int(row.get("deleted_at") or 0) if row.get("deleted_at") is not None else None,
     }
 
 
@@ -836,6 +940,42 @@ def get_files_by_ids(file_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     return {entry["file_id"]: entry for entry in entries if entry.get("file_id")}
 
 
+def get_user_files_by_ids(file_ids: List[str], *, user_id: str = "") -> Dict[str, Dict[str, Any]]:
+    ids = []
+    seen = set()
+    for file_id in file_ids or []:
+        text = str(file_id or "").strip()
+        if text and text not in seen:
+            ids.append(text)
+            seen.add(text)
+    if not ids:
+        return {}
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
+    if not metadata_db_enabled():
+        result = {}
+        for item in _fallback_list():
+            file_id = str(item.get("file_id") or "").strip()
+            if file_id and file_id in seen:
+                result[file_id] = item
+        return result
+    _ensure_files_table()
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM files
+                WHERE id = ANY(%s)
+                  AND user_id = %s
+                  AND deleted_at IS NULL
+                  AND status <> 'deleted'
+                """,
+                (ids, uid),
+            )
+            rows = cur.fetchall() or []
+    entries = [_row_to_entry(row) for row in rows]
+    return {entry["file_id"]: entry for entry in entries if entry.get("file_id")}
+
+
 def ensure_local_media_registered(url: str) -> Optional[Dict[str, Any]]:
     canonical, local_path = _legacy_local_path(url)
     if not canonical or not local_path or not os.path.isfile(local_path) or not storage_enabled():
@@ -908,9 +1048,12 @@ def file_refs_from_urls(urls: List[str]) -> List[Dict[str, Any]]:
         if not text:
             continue
         entry = resolve_file_reference(url=text)
-        refs.append({
+        ref = {
             "file_id": entry.get("file_id") if entry else "",
-        })
+        }
+        if not entry:
+            ref["url"] = text
+        refs.append(ref)
     return refs
 
 
@@ -1003,7 +1146,7 @@ def normalize_media_refs(refs: List[Dict[str, Any]], *, allow_register: bool = F
 def compact_media_ref(ref: Dict[str, Any]) -> Dict[str, Any]:
     normalized = normalize_media_ref(ref or {}, allow_register=True)
     compact: Dict[str, Any] = {}
-    for key in ("file_id", "name", "role", "kind"):
+    for key in ("file_id", "url", "name", "role", "kind"):
         value = normalized.get(key)
         if value not in (None, ""):
             compact[key] = value
@@ -1015,7 +1158,7 @@ def compact_media_refs(refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for ref in normalized_refs:
         compact: Dict[str, Any] = {}
-        for key in ("file_id", "name", "role", "kind"):
+        for key in ("file_id", "url", "name", "role", "kind"):
             value = ref.get(key)
             if value not in (None, ""):
                 compact[key] = value
@@ -1024,7 +1167,65 @@ def compact_media_refs(refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return items
 
 
-def list_media_entries(prefix: str = "") -> List[Dict[str, Any]]:
+def storage_usage_summary_for_user(user_id: str = "") -> Dict[str, Any]:
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
+    quota_bytes = storage_quota_limit_bytes_for_user(uid)
+    if not metadata_db_enabled():
+        entries = _fallback_list()
+        total_bytes = sum(int(item.get("size") or 0) for item in entries)
+        by_category: Dict[str, Dict[str, Any]] = {}
+        for item in entries:
+            category = str(item.get("category") or "unknown")
+            bucket = by_category.setdefault(category, {"category": category, "size_bytes": 0, "file_count": 0})
+            bucket["size_bytes"] += int(item.get("size") or 0)
+            bucket["file_count"] += 1
+        categories = sorted(by_category.values(), key=lambda item: item["size_bytes"], reverse=True)
+        return {
+            "user_id": uid,
+            "quota_enabled": storage_quota_enabled(),
+            "quota_bytes": quota_bytes,
+            "used_bytes": total_bytes,
+            "remaining_bytes": max(0, quota_bytes - total_bytes) if quota_bytes > 0 else None,
+            "total_files": len(entries),
+            "usage_by_category": categories,
+        }
+    _ensure_files_table()
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT category, COALESCE(SUM(size_bytes), 0) AS size_bytes, COUNT(*) AS file_count
+                FROM files
+                WHERE user_id = %s AND deleted_at IS NULL AND status <> 'deleted'
+                GROUP BY category
+                ORDER BY size_bytes DESC, category ASC
+                """,
+                (uid,),
+            )
+            rows = cur.fetchall() or []
+    categories = [
+        {
+            "category": str(row.get("category") or "unknown"),
+            "size_bytes": int(row.get("size_bytes") or 0),
+            "file_count": int(row.get("file_count") or 0),
+        }
+        for row in rows
+    ]
+    total_bytes = sum(item["size_bytes"] for item in categories)
+    total_files = sum(item["file_count"] for item in categories)
+    return {
+        "user_id": uid,
+        "quota_enabled": storage_quota_enabled(),
+        "quota_bytes": quota_bytes,
+        "used_bytes": total_bytes,
+        "remaining_bytes": max(0, quota_bytes - total_bytes) if quota_bytes > 0 else None,
+        "total_files": total_files,
+        "usage_by_category": categories,
+    }
+
+
+def list_media_entries(prefix: str = "", *, user_id: str = "") -> List[Dict[str, Any]]:
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     if not metadata_db_enabled():
         return _fallback_list(prefix)
     _ensure_files_table()
@@ -1033,6 +1234,8 @@ def list_media_entries(prefix: str = "") -> List[Dict[str, Any]]:
         SELECT * FROM files
         WHERE deleted_at IS NULL AND status <> 'deleted'
     """
+    sql += " AND user_id = %s"
+    params.append(uid)
     if prefix:
         sql += " AND legacy_url LIKE %s"
         params.append(prefix + "%")
@@ -1044,8 +1247,131 @@ def list_media_entries(prefix: str = "") -> List[Dict[str, Any]]:
     return [_row_to_entry(row) for row in rows]
 
 
+def list_media_entries_for_user(
+    *,
+    user_id: str = "",
+    category: str = "",
+    search: str = "",
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
+    if not metadata_db_enabled():
+        items = _fallback_list()
+        if category:
+            items = [item for item in items if str(item.get("category") or "") == category]
+        if search:
+            q = str(search or "").strip().lower()
+            items = [
+                item for item in items
+                if q in str(item.get("original_name") or item.get("filename") or "").lower()
+                or q in str(item.get("category") or "").lower()
+            ]
+        return items[: max(1, min(int(limit or 200), 1000))]
+    _ensure_files_table()
+    params: List[Any] = [uid]
+    sql = """
+        SELECT *
+        FROM files
+        WHERE user_id = %s
+          AND deleted_at IS NULL
+          AND status <> 'deleted'
+    """
+    if category:
+        sql += " AND category = %s"
+        params.append(str(category).strip())
+    if search:
+        sql += " AND (stored_name ILIKE %s OR original_name ILIKE %s OR category ILIKE %s)"
+        pattern = f"%{str(search).strip()}%"
+        params.extend([pattern, pattern, pattern])
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    params.append(max(1, min(int(limit or 200), 1000)))
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall() or []
+    return [_row_to_entry(row) for row in rows]
+
+
+def list_media_entries_page_for_user(
+    *,
+    user_id: str = "",
+    category: str = "",
+    search: str = "",
+    limit: int = 50,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    safe_limit = max(1, min(int(limit or 50), 200))
+    safe_offset = max(0, int(offset or 0))
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
+    q = str(search or "").strip().lower()
+    if not metadata_db_enabled():
+        items = _fallback_list()
+        if category:
+            items = [item for item in items if str(item.get("category") or "") == category]
+        if q:
+            items = [
+                item for item in items
+                if q in str(item.get("original_name") or item.get("filename") or "").lower()
+                or q in str(item.get("category") or "").lower()
+            ]
+        total = len(items)
+        page = items[safe_offset:safe_offset + safe_limit]
+        next_offset = safe_offset + len(page)
+        return {
+            "entries": page,
+            "offset": safe_offset,
+            "limit": safe_limit,
+            "next_offset": next_offset,
+            "has_more": next_offset < total,
+            "total_matches": total,
+            "category_filter": str(category or ""),
+            "search": str(search or ""),
+        }
+    _ensure_files_table()
+    params: List[Any] = [uid]
+    where = """
+        FROM files
+        WHERE user_id = %s
+          AND deleted_at IS NULL
+          AND status <> 'deleted'
+    """
+    if category:
+        where += " AND category = %s"
+        params.append(str(category).strip())
+    if q:
+        where += " AND (stored_name ILIKE %s OR original_name ILIKE %s OR category ILIKE %s)"
+        pattern = f"%{str(search).strip()}%"
+        params.extend([pattern, pattern, pattern])
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS total " + where, params)
+            total_row = cur.fetchone() or {}
+            total = int(total_row.get("total") or 0)
+            cur.execute(
+                "SELECT * "
+                + where
+                + " ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                [*params, safe_limit, safe_offset],
+            )
+            rows = cur.fetchall() or []
+    entries = [_row_to_entry(row) for row in rows]
+    next_offset = safe_offset + len(entries)
+    return {
+        "entries": entries,
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "next_offset": next_offset,
+        "has_more": next_offset < total,
+        "total_matches": total,
+        "category_filter": str(category or ""),
+        "search": str(search or ""),
+    }
+
+
 def remove_media_url(url: str, *, delete_remote: bool = False) -> Optional[Dict[str, Any]]:
-    removed = lookup_media_url(url)
+    removed = resolve_file_reference(url=str(url or "").strip(), allow_register=False)
+    if not removed:
+        removed = lookup_media_url(url)
     if not removed:
         removed = _fallback_remove(url)
     if not removed:
@@ -1074,7 +1400,8 @@ def remove_media_url(url: str, *, delete_remote: bool = False) -> Optional[Dict[
     return removed
 
 
-def media_entry_by_basename(name: str, categories: Optional[set[str]] = None) -> Optional[Dict[str, Any]]:
+def media_entry_by_basename(name: str, categories: Optional[set[str]] = None, *, user_id: str = "") -> Optional[Dict[str, Any]]:
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     safe_name = os.path.basename(str(name or ""))
     if not safe_name:
         return None
@@ -1089,9 +1416,9 @@ def media_entry_by_basename(name: str, categories: Optional[set[str]] = None) ->
     _ensure_files_table()
     sql = """
         SELECT * FROM files
-        WHERE stored_name = %s AND deleted_at IS NULL AND status <> 'deleted'
+        WHERE stored_name = %s AND deleted_at IS NULL AND status <> 'deleted' AND user_id = %s
     """
-    params: list[Any] = [safe_name]
+    params: list[Any] = [safe_name, uid]
     if categories:
         sql += " AND category = ANY(%s)"
         params.append(list(categories))

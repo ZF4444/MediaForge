@@ -466,3 +466,17 @@ class HelpMarkdownPayload(BaseModel):
 
 class AnnouncementPayload(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
+
+
+class StorageBatchDeletePayload(BaseModel):
+    file_ids: List[str] = Field(default_factory=list, max_length=500)
+
+
+class StorageQuotaUserConfigPayload(BaseModel):
+    quota_bytes: Optional[int] = Field(default=None, ge=0)
+
+
+class StorageQuotaConfigPayload(BaseModel):
+    enabled: bool = True
+    default_quota_bytes: Optional[int] = Field(default=None, ge=0)
+    users: Dict[str, StorageQuotaUserConfigPayload] = Field(default_factory=dict)

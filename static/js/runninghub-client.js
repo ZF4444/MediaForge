@@ -38,8 +38,11 @@ window.RunningHubClient = (function () {
         return taskId;
     }
 
-    async function queryTask(taskId) {
-        const response = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`);
+    async function queryTask(taskId, options) {
+        const { persistOutputs = true } = options || {};
+        const params = new URLSearchParams({ taskId: String(taskId || '') });
+        if (!persistOutputs) params.set('persistOutputs', 'false');
+        const response = await fetch(`/api/runninghub/query?${params.toString()}`);
         const data = await readJson(response);
         if (!response.ok || data.success === false) {
             throw new Error(data.detail || 'RunningHub 查询失败');
@@ -48,10 +51,10 @@ window.RunningHubClient = (function () {
     }
 
     async function pollTask(taskId, options) {
-        const { maxAttempts = 720, intervalMs = 2500, onUpdate = null } = options || {};
+        const { maxAttempts = 720, intervalMs = 2500, onUpdate = null, persistOutputs = true } = options || {};
         for (let i = 0; i < maxAttempts; i++) {
             await new Promise(resolve => setTimeout(resolve, intervalMs));
-            const data = await queryTask(taskId);
+            const data = await queryTask(taskId, { persistOutputs });
             if (typeof onUpdate === 'function') {
                 onUpdate(data, i);
             }

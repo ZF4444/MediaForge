@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>空间配额</title>
+    <script>
+        (function(){
+            try {
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                if(theme === 'dark') {
+                    document.documentElement.classList.add('studio-theme-dark');
+                    document.documentElement.classList.add('theme-dark');
+                }
+            } catch(e) {}
+        })();
+    </script>
+    <script src="/static/vendor/js/tailwindcss-cdn.js"></script>
+    <script src="/static/vendor/js/lucide.js"></script>
+    <script src="/static/js/theme.js"></script>
+    <link rel="stylesheet" href="/static/css/theme.css">
+    <style>
+        body{margin:0;background:#f5f7fb;color:#111827;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+        .wrap{max-width:1360px;margin:0 auto;padding:32px 28px 40px}
+        .page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:24px}
+        .title{font-size:28px;font-weight:800;letter-spacing:-0.03em}
+        .sub{margin-top:6px;color:#6b7280;font-size:14px}
+        .status{font-size:13px;color:#475569}
+        .layout{display:grid;grid-template-columns:320px minmax(0,1fr);gap:18px}
+        .panel{background:#fff;border:1px solid rgba(148,163,184,.2);border-radius:24px;box-shadow:0 10px 30px rgba(15,23,42,.06)}
+        .sidebar{padding:20px}
+        .content{padding:20px}
+        .section-title{font-size:13px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.12em}
+        .card{margin-top:14px;padding:14px;border:1px solid rgba(148,163,184,.18);border-radius:18px;background:linear-gradient(180deg,#fff,#f8fafc)}
+        .toggle-row,.field-row{display:flex;align-items:center;gap:10px}
+        .field-row input{flex:1}
+        input[type="number"],input[type="search"]{width:100%;padding:10px 12px;border:1px solid rgba(148,163,184,.35);border-radius:12px;background:#fff;font-size:14px}
+        .muted{font-size:12px;color:#64748b}
+        .actions{display:flex;gap:10px;flex-wrap:wrap}
+        .btn{display:inline-flex;align-items:center;gap:8px;border:none;border-radius:12px;padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;background:#e2e8f0;color:#0f172a}
+        .btn.primary{background:#0f172a;color:#fff}
+        .summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+        .summary-card{padding:16px;border-radius:18px;background:linear-gradient(135deg,#eff6ff,#f8fafc);border:1px solid rgba(59,130,246,.14)}
+        .summary-label{font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.08em}
+        .summary-value{margin-top:8px;font-size:24px;font-weight:800}
+        .toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+        .toolbar-right{display:flex;align-items:center;gap:10px}
+        .table{display:grid;gap:10px}
+        .row{display:grid;grid-template-columns:minmax(0,1.1fr) 160px 160px 180px 120px;gap:10px;align-items:center;padding:14px;border:1px solid rgba(148,163,184,.16);border-radius:16px;background:#fff}
+        .row.header{background:#f8fafc;color:#475569;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+        .user-name{font-weight:700}
+        .used-bar{height:8px;border-radius:999px;background:rgba(148,163,184,.22);overflow:hidden;margin-top:8px}
+        .used-bar > span{display:block;height:100%;background:linear-gradient(90deg,#2563eb,#34d399)}
+        .quota-input{display:flex;align-items:center;gap:8px}
+        .quota-input input{min-width:0}
+        .quick-actions{display:flex;gap:8px;flex-wrap:wrap}
+        .quick{border:none;border-radius:999px;padding:6px 10px;background:#eef2ff;color:#3730a3;font-size:12px;cursor:pointer}
+        @media (max-width: 1100px){.layout{grid-template-columns:1fr}.summary-grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}.row.header{display:none}}
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <header class="page-head">
+            <div>
+                <div class="title">空间配额</div>
+                <div class="sub">管理员统一管理默认配额、单用户配额和空间使用情况。</div>
+            </div>
+            <div id="status" class="status">准备就绪</div>
+        </header>
+        <div class="layout">
+            <aside class="panel sidebar">
+                <div class="section-title">全局配置</div>
+                <div class="card">
+                    <label class="toggle-row">
+                        <input id="quotaEnabled" type="checkbox">
+                        <span>启用空间配额</span>
+                    </label>
+                    <div class="muted" style="margin-top:8px;">关闭后不做写入配额限制，但统计仍可查看。</div>
+                </div>
+                <div class="card">
+                    <div class="muted">默认配额</div>
+                    <div class="field-row" style="margin-top:8px;">
+                        <input id="defaultQuotaGb" type="number" min="0" step="0.1" placeholder="例如 10">
+                        <span>GB</span>
+                    </div>
+                    <div class="muted" style="margin-top:8px;">用户未单独配置时继承此值。留空表示不覆盖系统默认值。</div>
+                </div>
+                <div class="card">
+                    <div class="section-title" style="margin-bottom:10px;">快捷设置</div>
+                    <div class="quick-actions">
+                        <button class="quick" type="button" data-default-gb="2">2 GB</button>
+                        <button class="quick" type="button" data-default-gb="5">5 GB</button>
+                        <button class="quick" type="button" data-default-gb="10">10 GB</button>
+                        <button class="quick" type="button" data-default-gb="">不限</button>
+                    </div>
+                </div>
+                <div class="actions" style="margin-top:16px;">
+                    <button id="saveBtn" class="btn primary" type="button"><i data-lucide="save" class="w-4 h-4"></i><span>保存配置</span></button>
+                    <button id="refreshBtn" class="btn" type="button"><i data-lucide="refresh-cw" class="w-4 h-4"></i><span>刷新</span></button>
+                </div>
+            </aside>
+            <main class="panel content">
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <div class="summary-label">用户数</div>
+                        <div id="summaryUsers" class="summary-value">0</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-label">总已用空间</div>
+                        <div id="summaryUsed" class="summary-value">0 GB</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-label">默认配额</div>
+                        <div id="summaryDefault" class="summary-value">不限</div>
+                    </div>
+                </div>
+                <div class="toolbar" style="margin-top:20px;">
+                    <div>
+                        <div class="section-title">用户配额</div>
+                        <div class="muted" style="margin-top:6px;">按已用空间排序，可直接编辑单用户配额。</div>
+                    </div>
+                    <div class="toolbar-right">
+                        <input id="searchInput" type="search" placeholder="搜索用户 ID / 用户名">
+                    </div>
+                </div>
+                <div class="table" id="userTable"></div>
+            </main>
+        </div>
+    </div>
+    <script src="/static/js/storage-quota.js"></script>
+</body>
+</html>

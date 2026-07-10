@@ -54,6 +54,14 @@ let selectedLocalUploadIds = new Set();
 let localUploadQuery = '';
 let localUploadManageMode = false;
 let lightboxPanState = null;
+let storageUsage = {usage_by_category:[]};
+let storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matches:0, total_pages:0, current_page:1};
+let storageCategoryFilter = '';
+let storageQuery = '';
+let storageSelectedIds = new Set();
+let storageManageMode = false;
+let meInfo = {is_admin:false, user_id:''};
+let storageSearchTimer = 0;
 
 const LOCAL_MEDIA_EXTS = /\.(png|jpe?g|webp|gif|bmp|avif|svg|mp4|webm|mov|m4v|mp3|wav|flac|ogg|m4a|aac)(\?|#|$)/i;
 
@@ -102,6 +110,56 @@ function formatFileSize(bytes=0){
     const units = ['B','KB','MB','GB','TB'];
     const idx = Math.min(units.length - 1, Math.floor(Math.log(size) / Math.log(1024)));
     return `${(size / Math.pow(1024, idx)).toFixed(idx ? 1 : 0)} ${units[idx]}`;
+}
+function storageUsagePercent(){
+    const quota = Number(storageUsage?.quota_bytes || 0);
+    const used = Number(storageUsage?.used_bytes || 0);
+    if(!quota) return 0;
+    return Math.max(0, Math.min(100, (used / quota) * 100));
+}
+function storageEntries(){
+    return Array.isArray(storageFiles?.entries) ? storageFiles.entries : [];
+}
+function storageCategories(){
+    return Array.isArray(storageUsage?.usage_by_category) ? storageUsage.usage_by_category : [];
+}
+function currentStorageEntries(){
+    return storageEntries();
+}
+function findStorageEntry(fileId=''){
+    return storageEntries().find(item => item.file_id === fileId) || null;
+}
+function selectedStorageEntry(){
+    const ids = [...storageSelectedIds];
+    return findStorageEntry(ids[0] || '') || currentStorageEntries()[0] || null;
+}
+function storagePageInfo(){
+    const totalMatches = Number(storageFiles?.total_matches || 0);
+    const limit = Math.max(1, Number(storageFiles?.limit || 50) || 50);
+    const totalPages = Math.max(1, Math.ceil(totalMatches / limit) || 1);
+    const currentPage = Math.min(totalPages, Math.max(1, Number(storageFiles?.current_page || Math.floor((Number(storageFiles?.offset || 0) || 0) / limit) + 1)));
+    return {totalMatches, limit, totalPages, currentPage};
+}
+function storageThumbUrl(fileId='', size=256){
+    const id = String(fileId || '').trim();
+    if(!id) return '';
+    return `/api/files/${encodeURIComponent(id)}/thumb?size=${Math.max(32, Math.min(1024, Number(size || 256) || 256))}`;
+}
+function storageCardThumb(item){
+    const fileId = String(item?.file_id || '').trim();
+    const kind = String(item?.kind || '').toLowerCase();
+    if(fileId && (kind === 'image' || kind === 'video')){
+        return assetThumb({
+            url: storageThumbUrl(fileId, 256),
+            name: item?.original_name || item?.filename || 'file',
+            kind: item?.kind || 'document',
+        });
+    }
+    return assetThumb({
+        url: item?.url,
+        name: item?.original_name || item?.filename || 'file',
+        kind: item?.kind || 'document',
+    });
 }
 function assetLibraries(){
     return Array.isArray(assetLibrary.libraries) && assetLibrary.libraries.length
@@ -437,16 +495,24 @@ function normalizePromptState(){
 }
 async function loadAll(){
     setStatus('加载中...');
-    const [assetData, promptData, providerData] = await Promise.all([
+    const [assetData, promptData, providerData, _sharedFolders, _localAssets, meData, usageData] = await Promise.all([
         apiJson('/api/asset-library'),
         apiJson('/api/prompt-libraries'),
         apiJson('/api/providers').catch(() => ({providers:[]})),
         loadSharedFolders(),
-        loadLocalAssets()
+        loadLocalAssets(),
+        apiJson('/api/access-control/me').catch(() => ({is_admin:false, user_id:''})),
+        apiJson('/api/storage/usage').catch(() => ({usage_by_category:[]}))
     ]);
     assetLibrary = assetData.library || {libraries:[], categories:[]};
     promptLibrary = promptData.library || {libraries:[]};
     apiProviders = Array.isArray(providerData.providers) ? providerData.providers : [];
+    meInfo = meData || {is_admin:false, user_id:''};
+    storageUsage = usageData || {usage_by_category:[]};
+    storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matches:0, total_pages:0, current_page:1};
+    if(activeTab === 'storage'){
+        await loadStorageFiles({reset:true}).catch(() => null);
+    }
     // 刷新时默认回到「默认资产库」
     const libs = assetLibraries();
     activeAssetLibraryId = (libs.find(lib => lib.id === 'default') || libs[0])?.id || '';
@@ -457,13 +523,208 @@ async function loadAll(){
     render();
     setStatus('准备就绪');
 }
+async function loadStorageUsage(){
+    storageUsage = await apiJson('/api/storage/usage');
+    return storageUsage;
+}
+async function loadStorageFiles({reset=false, page=null}={}){
+    const limit = Number(storageFiles?.limit || 50) || 50;
+    const targetPage = page === null ? (reset ? 1 : Number(storageFiles?.current_page || 1) || 1) : Math.max(1, Number(page || 1) || 1);
+    const offset = Math.max(0, (targetPage - 1) * limit);
+    const params = new URLSearchParams();
+    if(storageCategoryFilter) params.set('category', storageCategoryFilter);
+    if(storageQuery.trim()) params.set('search', storageQuery.trim());
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
+    const data = await apiJson(`/api/storage/files?${params.toString()}`);
+    const incoming = Array.isArray(data?.entries) ? data.entries : [];
+    const totalMatches = Number(data?.total_matches || 0);
+    const totalPages = Math.max(1, Math.ceil(totalMatches / limit) || 1);
+    storageFiles = {
+        entries: incoming,
+        offset: Number(data?.offset || 0),
+        limit: Number(data?.limit || limit),
+        has_more: !!data?.has_more,
+        total_matches: totalMatches,
+        total_pages: totalPages,
+        current_page: Math.min(totalPages, targetPage),
+    };
+    storageSelectedIds = new Set([...storageSelectedIds].filter(id => !!findStorageEntry(id)));
+    return storageFiles;
+}
+async function deleteStorageEntries(fileIds){
+    const ids = [...new Set((fileIds || []).map(id => String(id || '').trim()).filter(Boolean))];
+    if(!ids.length) return;
+    setStatus('正在删除媒体...');
+    const {currentPage, totalPages, totalMatches, limit} = storagePageInfo();
+    const result = await apiJson('/api/storage/delete', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({file_ids:ids})
+    });
+    const removed = Number(result?.removed || 0);
+    const deletedIds = Array.isArray(result?.deleted) ? result.deleted.map(id => String(id || '').trim()).filter(Boolean) : [];
+    const remainingMatches = Math.max(0, totalMatches - removed);
+    const nextTotalPages = Math.max(1, Math.ceil(remainingMatches / Math.max(1, limit)) || 1);
+    const nextPage = Math.min(Math.max(1, currentPage), Math.max(1, Math.min(totalPages, nextTotalPages)));
+    await Promise.all([
+        loadStorageUsage(),
+        loadStorageFiles({reset:true, page: nextPage}),
+    ]);
+    storageSelectedIds = new Set([...storageSelectedIds].filter(id => !deletedIds.includes(id)));
+    render();
+    setStatus(removed > 0 ? `已删除 ${removed} 个文件` : '未删除任何文件');
+}
+async function switchTab(tab='assets'){
+    activeTab = tab || 'assets';
+    selectedAssetIds.clear();
+    selectedPromptIds.clear();
+    selectedLocalIds.clear();
+    selectedLocalUploadIds.clear();
+    if(activeTab === 'storage'){
+        await Promise.all([
+            loadStorageUsage().catch(() => null),
+            loadStorageFiles({reset:true}).catch(() => null),
+        ]);
+    }
+    render();
+}
 function render(){
     document.querySelectorAll('[data-tab]').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === activeTab));
     if(activeTab === 'prompts') renderPromptManager();
     else if(activeTab === 'local') renderLocalManager();
+    else if(activeTab === 'storage') renderStorageManager();
     else if(activeTab === 'canvas-assets') renderCanvasAssetsManager();
     else renderAssetManager();
     refreshIcons();
+}
+function renderStorageManager(){
+    const entries = currentStorageEntries();
+    const detail = selectedStorageEntry();
+    const categories = storageCategories();
+    const percent = storageUsagePercent();
+    const quotaBytes = Number(storageUsage?.quota_bytes || 0);
+    const remainingBytes = storageUsage?.remaining_bytes;
+    const {totalMatches, totalPages, currentPage} = storagePageInfo();
+    const progressTone = percent >= 95 ? 'linear-gradient(90deg,#ef4444,#fb923c)' : percent >= 80 ? 'linear-gradient(90deg,#f59e0b,#fbbf24)' : 'linear-gradient(90deg,#2563eb,#34d399)';
+    root.innerHTML = `
+        <aside class="asset-panel asset-nav">
+            <div class="panel-head">
+                <div class="panel-title"><strong>空间概览</strong><span>${escapeHtml(meInfo?.user_id || 'current')}</span></div>
+            </div>
+            <div class="nav-scroll">
+                <div class="asset-clipboard-bar" style="margin:12px;">
+                    <div class="asset-clipboard-info"><i data-lucide="hard-drive"></i><span>已用 ${escapeHtml(formatFileSize(storageUsage?.used_bytes || 0))}${quotaBytes ? ` / ${escapeHtml(formatFileSize(quotaBytes))}` : ' / 不限额'}</span></div>
+                </div>
+                <div style="padding:0 12px 12px;">
+                    <div style="height:10px;border-radius:999px;background:rgba(148,163,184,.22);overflow:hidden;">
+                        <div style="width:${percent.toFixed(1)}%;height:100%;background:${progressTone};"></div>
+                    </div>
+                    <div style="margin-top:8px;font-size:12px;opacity:.7;">剩余 ${quotaBytes && remainingBytes !== null ? escapeHtml(formatFileSize(remainingBytes)) : '不限'}</div>
+                </div>
+                <div class="nav-tree">
+                    <button class="tree-row tree-parent ${storageCategoryFilter ? '' : 'active'}" type="button" data-storage-category="">
+                        <span class="tree-row-icon"><i data-lucide="folders"></i></span>
+                        <span class="tree-row-name">全部类别</span>
+                        <span class="tree-row-count">${Number(storageUsage?.total_files || 0)}</span>
+                    </button>
+                    ${categories.map(item => `
+                        <button class="tree-row tree-child ${storageCategoryFilter === item.category ? 'active' : ''}" type="button" data-storage-category="${escapeAttr(item.category)}">
+                            <span class="tree-elbow"></span>
+                            <span class="tree-row-icon"><i data-lucide="folder"></i></span>
+                            <span class="tree-row-name">${escapeHtml(item.category || 'unknown')}</span>
+                            <span class="tree-row-count">${item.file_count}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        </aside>
+        <section class="asset-panel asset-content ${storageManageMode ? 'manage-on' : ''}">
+            <div class="content-toolbar">
+                <div class="content-heading">
+                    <strong>空间管理</strong>
+                    <span>${totalMatches} 个文件</span>
+                </div>
+                <div class="asset-tools">
+                    <label class="asset-search-wrap"><i data-lucide="search"></i><input id="storageSearch" class="asset-search" type="search" value="${escapeAttr(storageQuery)}" placeholder="搜索文件名或类别"></label>
+                    <button class="asset-btn" type="button" data-storage-refresh><i data-lucide="refresh-cw"></i><span>刷新</span></button>
+                    <button class="asset-btn ${storageManageMode ? 'primary' : ''}" type="button" data-storage-manage ${entries.length ? '' : 'disabled'}><i data-lucide="list-checks"></i><span>${storageManageMode ? '完成管理' : '批量管理'}</span></button>
+                </div>
+            </div>
+            <div class="manage-tools">
+                <span>已选择 ${storageSelectedIds.size} 个文件。</span>
+                <div class="asset-tools">
+                    <button class="asset-btn" type="button" data-storage-select-all ${entries.length ? '' : 'disabled'}><i data-lucide="check-square"></i><span>全选</span></button>
+                    <button class="asset-btn" type="button" data-storage-clear ${storageSelectedIds.size ? '' : 'disabled'}><i data-lucide="square"></i><span>清空</span></button>
+                    <button class="asset-btn danger" type="button" data-storage-delete-selected ${storageSelectedIds.size ? '' : 'disabled'}><i data-lucide="trash-2"></i><span>删除</span></button>
+                </div>
+            </div>
+            <div class="content-scroll">
+                <div class="asset-grid">
+                    ${entries.map(item => `
+                        <article class="asset-card ${detail?.file_id === item.file_id ? 'active' : ''}" data-storage-card="${escapeAttr(item.file_id)}">
+                            <input class="asset-card-check" type="checkbox" data-storage-check="${escapeAttr(item.file_id)}" ${storageSelectedIds.has(item.file_id) ? 'checked' : ''}>
+                            <div class="asset-thumb">${storageCardThumb(item)}</div>
+                            <div class="asset-card-body">
+                                <div class="asset-card-name" title="${escapeAttr(item.original_name || item.filename || '')}">${escapeHtml(item.original_name || item.filename || 'file')}</div>
+                                <div class="asset-card-meta">${escapeHtml(item.category || 'unknown')} · ${escapeHtml(formatFileSize(item.size))}</div>
+                            </div>
+                        </article>
+                    `).join('') || '<div class="empty-state">当前筛选下没有文件。</div>'}
+                </div>
+                <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:16px 0 4px;">
+                    <span style="font-size:12px;opacity:.72;">第 ${currentPage} / ${totalPages} 页</span>
+                    <button class="asset-btn" type="button" data-storage-page-prev ${currentPage <= 1 ? 'disabled' : ''}><i data-lucide="chevron-left"></i><span>上一页</span></button>
+                    <button class="asset-btn" type="button" data-storage-page-next ${currentPage >= totalPages ? 'disabled' : ''}><i data-lucide="chevron-right"></i><span>下一页</span></button>
+                </div>
+            </div>
+        </section>
+        <aside class="asset-panel asset-detail">
+            ${renderStorageDetail(detail)}
+        </aside>
+    `;
+}
+function renderStorageDetail(item){
+    const categories = storageCategories();
+    const categoryHtml = categories.map(entry => `<div class="detail-meta"><span>${escapeHtml(entry.category || 'unknown')}</span><strong>${escapeHtml(formatFileSize(entry.size_bytes || 0))} / ${entry.file_count}</strong></div>`).join('');
+    if(!item){
+        return `
+            <div class="panel-head"><div class="panel-title"><strong>空间详情</strong><span>选择文件查看详情</span></div></div>
+            <div class="detail-scroll">
+                <div class="detail-body">
+                    <div class="detail-name">按类别占用</div>
+                    <div class="detail-meta-grid">${categoryHtml || '<div class="detail-meta"><span>暂无数据</span><strong>0</strong></div>'}</div>
+                </div>
+            </div>
+        `;
+    }
+    return `
+        <div class="panel-head">
+            <div class="panel-title"><strong>文件详情</strong><span>${escapeHtml(item.category || 'unknown')}</span></div>
+            <div class="panel-actions">
+                <button class="asset-icon-btn" type="button" data-storage-open="${escapeAttr(item.file_id)}" title="新窗口打开"><i data-lucide="external-link"></i></button>
+                <button class="asset-icon-btn" type="button" data-storage-copy="${escapeAttr(item.file_id)}" title="复制链接"><i data-lucide="link"></i></button>
+                <button class="asset-icon-btn danger" type="button" data-storage-delete-one="${escapeAttr(item.file_id)}" title="删除"><i data-lucide="trash-2"></i></button>
+            </div>
+        </div>
+        <div class="detail-scroll">
+            <div class="detail-media"><button class="detail-media-frame detail-media-zoomable" type="button" data-storage-preview="${escapeAttr(item.file_id)}" title="点击放大预览">${assetThumb({url:item.url, name:item.original_name || item.filename, kind:item.kind})}</button></div>
+            <div class="detail-body">
+                <div class="detail-name">${escapeHtml(item.original_name || item.filename || 'file')}</div>
+                <div class="detail-meta-grid">
+                    <div class="detail-meta"><span>类型</span><strong>${escapeHtml(item.kind || 'document')}</strong></div>
+                    <div class="detail-meta"><span>类别</span><strong>${escapeHtml(item.category || 'unknown')}</strong></div>
+                    <div class="detail-meta"><span>大小</span><strong>${escapeHtml(formatFileSize(item.size || 0))}</strong></div>
+                    <div class="detail-meta"><span>创建时间</span><strong>${escapeHtml(formatDate(item.created_at || 0))}</strong></div>
+                </div>
+                <div class="detail-url">${escapeHtml(item.url || '')}</div>
+                <div class="detail-body" style="padding:0;margin-top:12px;">
+                    <div class="detail-name" style="font-size:13px;">按类别占用</div>
+                    <div class="detail-meta-grid">${categoryHtml || '<div class="detail-meta"><span>暂无数据</span><strong>0</strong></div>'}</div>
+                </div>
+            </div>
+        </div>
+    `;
 }
 function renderCanvasAssetsManager(){
     root.innerHTML = `
@@ -1175,7 +1436,10 @@ async function deleteLocalAssets(ids){
 async function handleClick(event){
     const target = event.target;
     const tabBtn = target.closest?.('[data-tab]');
-    if(tabBtn){ activeTab = tabBtn.dataset.tab || 'assets'; selectedAssetIds.clear(); selectedPromptIds.clear(); selectedLocalIds.clear(); selectedLocalUploadIds.clear(); render(); return; }
+    if(tabBtn){
+        await switchTab(tabBtn.dataset.tab || 'assets');
+        return;
+    }
     if(target.closest?.('#refreshBtn')){ await loadAll(); return; }
     const assetPreview = target.closest?.('[data-asset-preview]');
     if(assetPreview){ showDetailPreview('asset', assetPreview.dataset.assetPreview || ''); return; }
@@ -1183,7 +1447,63 @@ async function handleClick(event){
     if(localPreview){ showDetailPreview('local', localPreview.dataset.localPreview || ''); return; }
     const localUpPreview = target.closest?.('[data-localup-preview]');
     if(localUpPreview){ showDetailPreview('localup', localUpPreview.dataset.localupPreview || ''); return; }
+    const storagePreview = target.closest?.('[data-storage-preview]');
+    if(storagePreview){ showDetailPreview('storage', storagePreview.dataset.storagePreview || ''); return; }
     if(target.closest?.('[data-localup-upload]')){ uploadInput?.click(); return; }
+    if(target.closest?.('[data-storage-refresh]')){ await Promise.all([loadStorageUsage(), loadStorageFiles({reset:true, page:1})]); render(); return; }
+    if(target.closest?.('[data-storage-manage]')){
+        storageManageMode = !storageManageMode;
+        if(!storageManageMode) storageSelectedIds.clear();
+        render();
+        return;
+    }
+    if(target.closest?.('[data-storage-select-all]')){ currentStorageEntries().forEach(item => storageSelectedIds.add(item.file_id)); render(); return; }
+    if(target.closest?.('[data-storage-clear]')){ storageSelectedIds.clear(); render(); return; }
+    if(target.closest?.('[data-storage-delete-selected]')){ await deleteStorageEntries([...storageSelectedIds]); return; }
+    const storageDeleteOne = target.closest?.('[data-storage-delete-one]');
+    if(storageDeleteOne){ await deleteStorageEntries([storageDeleteOne.dataset.storageDeleteOne || '']); return; }
+    const storageCheck = target.closest?.('[data-storage-check]');
+    if(storageCheck){
+        const id = storageCheck.dataset.storageCheck || '';
+        if(storageSelectedIds.has(id)) storageSelectedIds.delete(id); else storageSelectedIds.add(id);
+        render();
+        return;
+    }
+    const storageOpen = target.closest?.('[data-storage-open]');
+    if(storageOpen){ const it = findStorageEntry(storageOpen.dataset.storageOpen || ''); if(it?.url) window.open(it.url, '_blank'); return; }
+    const storageCopy = target.closest?.('[data-storage-copy]');
+    if(storageCopy){ const it = findStorageEntry(storageCopy.dataset.storageCopy || ''); const ok = await copyTextToClipboard(it?.url || ''); setStatus(ok ? '已复制链接' : '复制失败'); return; }
+    if(target.closest?.('[data-storage-page-prev]')){
+        const {currentPage} = storagePageInfo();
+        await loadStorageFiles({page: Math.max(1, currentPage - 1)});
+        render();
+        return;
+    }
+    if(target.closest?.('[data-storage-page-next]')){
+        const {currentPage, totalPages} = storagePageInfo();
+        await loadStorageFiles({page: Math.min(totalPages, currentPage + 1)});
+        render();
+        return;
+    }
+    const storageCard = target.closest?.('[data-storage-card]');
+    if(storageCard){
+        const id = storageCard.dataset.storageCard || '';
+        if(storageManageMode){
+            if(storageSelectedIds.has(id)) storageSelectedIds.delete(id); else storageSelectedIds.add(id);
+        } else {
+            storageSelectedIds = new Set(id ? [id] : []);
+        }
+        render();
+        return;
+    }
+    const storageCategory = target.closest?.('[data-storage-category]');
+    if(storageCategory){
+        storageCategoryFilter = storageCategory.dataset.storageCategory || '';
+        storageSelectedIds.clear();
+        await loadStorageFiles({reset:true, page:1});
+        render();
+        return;
+    }
     if(target.closest?.('[data-localup-manage]')){
         localUploadManageMode = !localUploadManageMode;
         if(!localUploadManageMode) selectedLocalUploadIds.clear();
@@ -1397,9 +1717,15 @@ function openAssetItem(id){
     if(item?.url) window.open(item.url, '_blank', 'noopener');
 }
 function showDetailPreview(source, id){
-    const item = source === 'local' ? findLocalItem(id) : source === 'localup' ? findLocalUpload(id) : findAssetItem(id);
+    const item = source === 'local'
+        ? findLocalItem(id)
+        : source === 'localup'
+            ? findLocalUpload(id)
+            : source === 'storage'
+                ? findStorageEntry(id)
+                : findAssetItem(id);
     if(!item) return;
-    const kind = source === 'local' ? (item.kind || localItemKind(item)) : assetKind(item);
+    const kind = source === 'local' ? (item.kind || localItemKind(item)) : source === 'storage' ? String(item.kind || 'document') : assetKind(item);
     if(kind !== 'image'){
         setStatus('仅图片支持放大预览');
         return;
@@ -2167,6 +2493,21 @@ root.addEventListener('input', event => {
             input?.setSelectionRange?.(pos, pos);
         });
     }
+    if(event.target?.id === 'storageSearch'){
+        const pos = event.target.selectionStart || 0;
+        storageQuery = event.target.value || '';
+        if(storageSearchTimer) clearTimeout(storageSearchTimer);
+        storageSearchTimer = window.setTimeout(async () => {
+            await loadStorageFiles({reset:true, page:1}).catch(err => setStatus(err.message || '加载失败'));
+            render();
+        }, 250);
+        render();
+        requestAnimationFrame(() => {
+            const input = document.getElementById('storageSearch');
+            input?.focus();
+            input?.setSelectionRange?.(pos, pos);
+        });
+    }
 });
 root.addEventListener('change', event => {
     const inlineAssetName = event.target.closest?.('[data-asset-inline-name]');
@@ -2239,12 +2580,7 @@ uploadInput?.addEventListener('change', event => {
 });
 document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
-        activeTab = btn.dataset.tab || 'assets';
-        selectedAssetIds.clear();
-        selectedPromptIds.clear();
-        selectedLocalIds.clear();
-        selectedLocalUploadIds.clear();
-        render();
+        switchTab(btn.dataset.tab || 'assets').catch(err => setStatus(err.message || '加载失败'));
     });
 });
 refreshBtn?.addEventListener('click', () => loadAll().catch(err => setStatus(err.message || '加载失败')));

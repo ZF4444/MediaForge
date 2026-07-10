@@ -372,6 +372,7 @@
                 });
 
                 const data = await RunningHubClient.pollTask(taskId, {
+                    persistOutputs: false,
                     onUpdate(task) {
                         if (task.status === 'QUEUED') updateGenProgress({ status: 'Queueing...', progress: 45 });
                         else if (task.status === 'RUNNING') updateGenProgress({ status: 'Generating...', progress: 70 });
@@ -466,12 +467,13 @@
                 instanceType: 'default'
             });
 
-            const data = await RunningHubClient.pollTask(taskId, {
-                onUpdate(task) {
-                    if (task.status === 'QUEUED') updateCloudProgress({ status: 'Queueing...', progress: 60 });
-                    else if (task.status === 'RUNNING') updateCloudProgress({ status: 'Generating...', progress: 80 });
-                }
-            });
+                const data = await RunningHubClient.pollTask(taskId, {
+                    persistOutputs: false,
+                    onUpdate(task) {
+                        if (task.status === 'QUEUED') updateCloudProgress({ status: 'Queueing...', progress: 60 });
+                        else if (task.status === 'RUNNING') updateCloudProgress({ status: 'Generating...', progress: 80 });
+                    }
+                });
             const urls = data.urls || [];
             if (!urls.length) throw new Error('修复输出为空');
             updateCloudProgress({ status: 'Done', progress: 100 });
