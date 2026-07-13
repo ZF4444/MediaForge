@@ -175,8 +175,7 @@ from app.config import (
     LOCAL_IMAGE_IMPORT_EXTS,
     RUNNINGHUB_THUMBNAIL_EXTS,
     STORAGE_CLEANUP_ENABLED,
-    QUEUE,
-    QUEUE_LOCK,
+    TASK_ID_LOCK,
     HISTORY_LOCK,
     GLOBAL_CONFIG_LOCK,
     FEEDBACK_LOCK,
@@ -8291,14 +8290,6 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
 # --- 历史记录 ---
 # GET /api/history、POST /api/history/save、POST /api/history/delete 路由已迁移至 app/routers/history.py。
 
-@app.get("/api/queue_status")
-async def get_queue_status(client_id: str):
-    with QUEUE_LOCK:
-        total = len(QUEUE)
-        positions = [i + 1 for i, t in enumerate(QUEUE) if t["client_id"] == client_id]
-        position = positions[0] if positions else 0
-    return {"total": total, "position": position}
-
 # --- ModelScope 角度控制 ---
 
 @app.post("/api/angle/poll_status")
@@ -8672,13 +8663,10 @@ async def ms_generate(req: MsGenerateRequest):
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
     global NEXT_TASK_ID
-    current_task = None
     target_backend = None
-    with QUEUE_LOCK:
+    with TASK_ID_LOCK:
         task_id = NEXT_TASK_ID
         NEXT_TASK_ID += 1
-        current_task = {"task_id": task_id, "client_id": req.client_id}
-        QUEUE.append(current_task)
 
     try:
         required_images = collect_required_comfy_media(req.params)
@@ -8873,11 +8861,6 @@ def generate(req: GenerateRequest):
             with LOAD_LOCK:
                 if BACKEND_LOCAL_LOAD.get(target_backend, 0) > 0:
                     BACKEND_LOCAL_LOAD[target_backend] -= 1
-        if current_task:
-            with QUEUE_LOCK:
-                if current_task in QUEUE:
-                    QUEUE.remove(current_task)
-
 # --- ComfyUI 工作流管理 ---
 
 # --- ComfyUI 工作流管理数据逻辑 ---

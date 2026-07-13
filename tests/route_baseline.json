@@ -756,13 +756,6 @@
     "APIRoute"
   ],
   [
-    "/api/queue_status",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
     "/api/runninghub/app-info",
     [
       "GET"

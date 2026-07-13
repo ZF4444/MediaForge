@@ -1,9 +1,6 @@
 """历史记录路由（/api/history）。
 
 从 main.py 的「历史记录」区块原样迁移。URL/请求响应模型/状态码完全一致。
-注意：/api/queue_status（生成队列状态）虽与历史路由相邻，但属于生成队列概念，
-仍保留在 main.py。
-
 依赖：
 - app.core.media：output_file_from_url
 - app.services.history：save_to_history

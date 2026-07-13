@@ -34,7 +34,7 @@ def test_root_redirects_to_login_when_anonymous(client):
 
 def test_protected_api_returns_401_when_anonymous(client):
     """未登录访问受保护 API -> 401 JSON。"""
-    r = client.get("/api/queue_status", follow_redirects=False)
+    r = client.get("/api/canvases", follow_redirects=False)
     assert r.status_code == 401
     assert "application/json" in r.headers.get("content-type", "")
     body = r.json()
@@ -48,7 +48,7 @@ def test_protected_providers_api_401_when_anonymous(client):
 
 @pytest.mark.parametrize(
     "path",
-    ["/api/queue_status", "/api/providers", "/api/canvases"],
+    ["/api/providers", "/api/canvases"],
 )
 def test_known_api_paths_registered(app, path):
     """这些业务路径必须存在于路由表中（防止拆分时漏注册 router）。"""

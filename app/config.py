@@ -66,9 +66,8 @@ LLM_MESSAGE_MAX_LENGTH = int(os.getenv("LLM_MESSAGE_MAX_LENGTH", "20000"))
 # 视频任务轮询超时（秒）
 VIDEO_POLL_TIMEOUT = float(os.getenv("VIDEO_POLL_TIMEOUT", "1800"))
 
-# --- 队列与全局锁 ---
-QUEUE = []
-QUEUE_LOCK = Lock()
+# --- 全局锁 ---
+TASK_ID_LOCK = Lock()
 HISTORY_LOCK = Lock()
 GLOBAL_CONFIG_LOCK = Lock()
 FEEDBACK_LOCK = Lock()

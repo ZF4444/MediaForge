@@ -14,7 +14,7 @@ from app.core.logging import get_access_logger, get_logger
 
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{8,128}$")
-_QUIET_PATHS = {"/api/queue_status", "/api/canvases", "/api/canvases/trash"}
+_QUIET_PATHS = {"/api/canvases", "/api/canvases/trash"}
 
 
 def _header_id(value: str, prefix: str) -> str:

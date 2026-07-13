@@ -95,8 +95,8 @@ def test_successful_quiet_poll_is_suppressed_but_error_is_logged():
     test_app = FastAPI()
     test_app.add_middleware(RequestLoggingMiddleware)
 
-    @test_app.get("/api/queue_status")
-    async def queue_status(fail: bool = False):
+    @test_app.get("/api/canvases")
+    async def canvases(fail: bool = False):
         if fail:
             from fastapi import HTTPException
             raise HTTPException(status_code=503)
@@ -104,9 +104,9 @@ def test_successful_quiet_poll_is_suppressed_but_error_is_logged():
 
     try:
         client = TestClient(test_app)
-        assert client.get("/api/queue_status").status_code == 200
+        assert client.get("/api/canvases").status_code == 200
         assert not [record for record in capture.records if record.name == "aistudio.access"]
-        assert client.get("/api/queue_status?fail=true").status_code == 503
+        assert client.get("/api/canvases?fail=true").status_code == 503
     finally:
         root.removeHandler(capture)
 
