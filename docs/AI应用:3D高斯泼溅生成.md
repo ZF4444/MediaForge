@@ -1,10 +1,10 @@
-# 欢迎使用 RunningHub API，轻松调用 RunningHub 云端的 ComfyUI 工作流
+# 欢迎使用 RunningHub API，轻松调用 RunningHub 云端 AI 应用
 
 ## 1. 开始使用
 
 ### 注册用户
 
-注册 RunningHub 账号并充值钱包后，即可开始使用 AI 应用 API 和 ComfyUI 工作流 API。
+注册 RunningHub 账号并充值钱包后，即可开始使用 AI 应用 API。
 请注意：若您使用 消费级-会员 API Key，需拥有 基础版及以上会员 才能调用上述接口。
 使用 企业级-共享 或 企业级-独占 API Key 的用户不受此限制。
 
@@ -196,4 +196,3 @@ curl --location --request POST 'https://www.runninghub.cn/openapi/v2/media/uploa
 ```
 
 **备注:** 上传后获得的链接有效期为 1 天，超期将无法通过 URL 直接访问。
-

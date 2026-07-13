@@ -34,7 +34,6 @@ def main():
         "announcement": data / "announcement.json",
         "api_providers": data / "api_providers.json",
         "shared_folders": data / "shared_folders.json",
-        "runninghub_workflows": data / "runninghub_workflows.json",
         "system_prompt_libraries": data / "prompt_libraries.json",
     }
     for key, path in mappings.items():

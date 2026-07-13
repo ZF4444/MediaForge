@@ -784,55 +784,6 @@
     "APIRoute"
   ],
   [
-    "/api/runninghub/workflow-info",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/runninghub/workflow-submit",
-    [
-      "POST"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/runninghub/workflows",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/runninghub/workflows/fetch",
-    [
-      "POST"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/runninghub/workflows/{workflow_id:path}",
-    [
-      "DELETE"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/runninghub/workflows/{workflow_id:path}",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/runninghub/workflows/{workflow_id:path}",
-    [
-      "PUT"
-    ],
-    "APIRoute"
-  ],
-  [
     "/api/shared-folders",
     [
       "GET"

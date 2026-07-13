@@ -1,7 +1,7 @@
-"""全部 Pydantic 请求/数据模型（53 个）。
+"""全部 Pydantic 请求/数据模型（50 个）。
 
 从 main.py 原样迁移，字段与默认值完全一致，并保持原有定义顺序
-（部分模型相互引用，如 RunningHubWorkflowConfig 依赖 RunningHubWorkflowConfigField）。
+（部分模型相互引用，定义顺序需要保持稳定）。
 
 依赖：pydantic、typing、app.config 中的长度/默认值常量。
 """
@@ -120,12 +120,6 @@ class RunningHubSubmitRequest(BaseModel):
     instanceType: str = ""
 
 
-class RunningHubWorkflowSubmitRequest(BaseModel):
-    workflowId: str = ""
-    nodeInfoList: List[Dict[str, Any]] = []
-    workflow: Any = None
-
-
 class RunningHubUploadAssetRequest(BaseModel):
     url: str = ""
 
@@ -137,36 +131,6 @@ class JimengHelpRequest(BaseModel):
 class JimengQueryMediaRequest(BaseModel):
     submit_id: str = ""
     kind: str = "image"
-
-
-class RunningHubWorkflowConfigField(BaseModel):
-    id: str = ""
-    nodeId: str = ""
-    fieldName: str = ""
-    fieldValue: str = ""
-    fieldType: str = "TEXT"
-    label: str = ""
-    enabled: bool = True
-    sourceFromUpstream: bool = True
-    group: str = ""
-    note: str = ""
-    options: List[str] = Field(default_factory=list)
-    random_enabled: bool = False
-    min: Any = ""
-    max: Any = ""
-    step: Any = ""
-    imageOrder: int = 0
-    required: bool = False
-
-
-class RunningHubWorkflowConfig(BaseModel):
-    workflowId: str = ""
-    title: str = ""
-    description: str = ""
-    fields: List[RunningHubWorkflowConfigField] = Field(default_factory=list)
-    workflowJson: Dict[str, Any] = Field(default_factory=dict)
-    optionalImageMode: str = "prune-workflow"
-    raw: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ApiProviderPayload(BaseModel):
@@ -186,7 +150,6 @@ class ApiProviderPayload(BaseModel):
     ms_loras: List[Dict[str, Any]] = []
     ms_defaults_version: int = 0
     rh_apps: List[Dict[str, Any]] = []
-    rh_workflows: List[Dict[str, Any]] = []
     volcengine_project_name: str = VOLCENGINE_DEFAULT_PROJECT_NAME
     volcengine_region: str = VOLCENGINE_DEFAULT_REGION
     volcengine_access_key_id: Optional[str] = None

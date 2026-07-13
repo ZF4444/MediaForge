@@ -27,9 +27,7 @@ const jimengHelpOutput = document.getElementById('jimengHelpOutput');
 const runninghubConfigBlock = document.getElementById('runninghubConfigBlock');
 const rhPasteInput = document.getElementById('rhPasteInput');
 const rhAppsList = document.getElementById('rhAppsList');
-const rhWorkflowsList = document.getElementById('rhWorkflowsList');
 const rhAppsCount = document.getElementById('rhAppsCount');
-const rhWorkflowsCount = document.getElementById('rhWorkflowsCount');
 const settingsContent = document.getElementById('settingsContent');
 const recommendContent = document.getElementById('recommendContent');
 const recommendPanel = document.getElementById('recommendPanel');
@@ -43,8 +41,6 @@ const rhWorkflowEditNote = document.getElementById('rhWorkflowEditNote');
 const rhWorkflowEditorSummary = document.getElementById('rhWorkflowEditorSummary');
 const rhWorkflowEditorNodeList = document.getElementById('rhWorkflowEditorNodeList');
 const rhWorkflowEditorGraphWrap = document.getElementById('rhWorkflowEditorGraphWrap');
-let rhWorkflowEditorGraphSvg = document.getElementById('rhWorkflowEditorGraphSvg');
-let rhWorkflowEditorZoom = document.getElementById('rhWorkflowEditorZoom');
 const imageModelList = document.getElementById('imageModelList');
 const chatModelList = document.getElementById('chatModelList');
 const videoModelList = document.getElementById('videoModelList');
@@ -96,7 +92,6 @@ const ONBOARDING_GUIDES = {
     }
 };
 let rhWorkflowEditorState = { open:false, index:-1, entry:null, config:null, expanded:{}, activeNodeId:'', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
-let rhEditorMode = 'workflow';
 let recommendInlineOpen = false;
 let providerDragId = '';
 const RECOMMENDED_APIS = [
@@ -250,11 +245,11 @@ function unique(values){
 function normalizeRhEntries(values, kind){
     const seen = new Set();
     return (Array.isArray(values) ? values : []).map(raw => {
-        const parsed = parseRunningHubRunRef(raw?.appId || raw?.workflowId || raw?.id || '');
-        const id = String(parsed?.id || raw?.id || raw?.appId || raw?.workflowId || '').trim();
+        const parsed = parseRunningHubRunRef(raw?.appId || raw?.id || '');
+        const id = String(parsed?.id || raw?.id || raw?.appId || '').trim();
         if(!id || seen.has(id)) return null;
         seen.add(id);
-        const fallback = kind === 'app' ? `AI 应用 ${id.slice(-6)}` : `工作流 ${id.slice(-6)}`;
+        const fallback = `AI 应用 ${id.slice(-6)}`;
         const entry = {
             id,
             title:String(raw?.title || raw?.name || fallback).trim(),
@@ -264,41 +259,20 @@ function normalizeRhEntries(values, kind){
         };
         if(raw?.hidden === true) entry.hidden = true;
         if(Array.isArray(raw?.fields)) entry.fields = raw.fields.map(normalizeRhWorkflowField);
-        if(raw?.workflowJson && typeof raw.workflowJson === 'object') entry.workflowJson = raw.workflowJson;
         if(raw?.raw && typeof raw.raw === 'object') entry.raw = raw.raw;
         const updatedAt = Number(raw?.updatedAt || 0);
         if(updatedAt > 0) entry.updatedAt = updatedAt;
-        if(kind === 'app') entry.appId = id;
-        else {
-            entry.workflowId = id;
-            entry.optionalImageMode = String(raw?.optionalImageMode || 'prune-workflow');
-        }
+        entry.appId = id;
         return entry;
     }).filter(Boolean);
 }
 function parseRunningHubRunRef(value){
     const text = String(value || '').trim();
-    const match = text.match(/\/run\/(ai-app|workflow)\/([0-9A-Za-z_-]+)/i);
-    if(match) return { type:match[1].toLowerCase() === 'ai-app' ? 'app' : 'workflow', id:match[2] };
+    const match = text.match(/\/run\/ai-app\/([0-9A-Za-z_-]+)/i);
+    if(match) return { type:'app', id:match[1] };
     const numeric = text.match(/^[0-9]{8,}$/);
-    if(numeric) return { type:'workflow', id:text };
+    if(numeric) return { type:'app', id:text };
     return null;
-}
-function workflowNodeTitle(node){
-    return (node?._meta?.title || node?.class_type || node?._class || node?.type || 'Node').toString();
-}
-function workflowNodeClass(node){
-    return (node?.class_type || node?._class || node?.type || '').toString();
-}
-function workflowNodeCategory(node){
-    const text = `${workflowNodeTitle(node)} ${workflowNodeClass(node)}`.toLowerCase();
-    if(/text|prompt|clip/.test(text)) return 'prompt';
-    if(/lora/.test(text)) return 'lora';
-    if(/ksampler|k sampler|sampler|scheduler|guid|cfg/.test(text)) return 'sampler';
-    if(/video|movie|mp4|webm|frame/.test(text)) return 'video';
-    if(/audio|sound|voice|music|wav|mp3/.test(text)) return 'audio';
-    if(/image|mask|resize|scale|crop|photo|picture|preview|save/.test(text)) return 'image';
-    return 'misc';
 }
 function rhWorkflowFieldKey(field){
     return `${field?.nodeId || ''}::${field?.fieldName || ''}`;
@@ -567,7 +541,6 @@ function syncEditor(){
     item.image_generation_endpoint = '';
     item.image_edit_endpoint = '';
     item.rh_apps = normalizeRhEntries(item.rh_apps || [], 'app');
-    item.rh_workflows = normalizeRhEntries(item.rh_workflows || [], 'workflow');
     const key = keyInput.value.trim();
     if(key) item.api_key = key;
     if(item.id === 'runninghub'){
@@ -586,7 +559,6 @@ function syncEditor(){
 function ensureRunningHubLists(item){
     if(!item) return;
     item.rh_apps = normalizeRhEntries(item.rh_apps || [], 'app');
-    item.rh_workflows = normalizeRhEntries(item.rh_workflows || [], 'workflow');
 }
 function updateProtocolFromInput(){
     const item = provider();
@@ -613,16 +585,14 @@ function createRhEntryFromPaste(){
     const item = provider();
     if(!item || item.id !== 'runninghub') return;
     const parsed = parseRunningHubRunRef(rhPasteInput?.value || '');
-    if(!parsed){ setStatus('请粘贴 /run/ai-app/... 或 /run/workflow/...'); return; }
+    if(!parsed){ setStatus('请粘贴 /run/ai-app/...'); return; }
     ensureRunningHubLists(item);
-    const listKey = parsed.type === 'app' ? 'rh_apps' : 'rh_workflows';
-    const exists = item[listKey].some(entry => entry.id === parsed.id);
+    const exists = item.rh_apps.some(entry => entry.id === parsed.id);
     if(!exists){
-        item[listKey].unshift({
+        item.rh_apps.unshift({
             id:parsed.id,
-            appId:parsed.type === 'app' ? parsed.id : undefined,
-            workflowId:parsed.type === 'workflow' ? parsed.id : undefined,
-            title:parsed.type === 'app' ? `AI 应用 ${parsed.id.slice(-6)}` : `工作流 ${parsed.id.slice(-6)}`,
+            appId:parsed.id,
+            title:`AI 应用 ${parsed.id.slice(-6)}`,
             note:'',
             thumbnail:'',
             enabled:true
@@ -635,19 +605,17 @@ function createRhEntryFromPaste(){
 function updateRhEntry(kind, index, prop, value){
     const item = provider();
     if(!item || item.id !== 'runninghub') return;
-    const listKey = kind === 'app' ? 'rh_apps' : 'rh_workflows';
     ensureRunningHubLists(item);
-    if(!item[listKey][index]) return;
-    item[listKey][index][prop] = value;
+    if(!item.rh_apps[index]) return;
+    item.rh_apps[index][prop] = value;
     if(prop === 'title') setStatus('名称已修改，点保存生效');
     if(prop === 'note') setStatus('备注已修改，点保存生效');
 }
 function removeRhEntry(kind, index){
     const item = provider();
     if(!item || item.id !== 'runninghub') return;
-    const listKey = kind === 'app' ? 'rh_apps' : 'rh_workflows';
     ensureRunningHubLists(item);
-    item[listKey].splice(index, 1);
+    item.rh_apps.splice(index, 1);
     renderRunningHubCards();
 }
 function readFileAsDataUrl(file){
@@ -704,30 +672,12 @@ function pickRhThumbnail(kind, index){
     };
     input.click();
 }
-async function openRhWorkflowEditor(index){
-    const item = provider();
-    if(!item || item.id !== 'runninghub') return;
-    ensureRunningHubLists(item);
-    const entry = item.rh_workflows[index];
-    if(!entry) return;
-    rhEditorMode = 'workflow';
-    rhWorkflowEditorState = { open:true, index, entry, config:null, expanded:{}, activeNodeId:'', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
-    if(rhWorkflowEditorOverlay) rhWorkflowEditorOverlay.classList.add('open');
-    renderRhWorkflowEditorLoading('正在加载工作流...');
-    refreshIcons();
-    try {
-        await loadRhWorkflowEditorConfig(entry);
-    } catch(e) {
-        renderRhWorkflowEditorLoading(e.message || '工作流加载失败');
-    }
-}
 async function openRhAppEditor(index){
     const item = provider();
     if(!item || item.id !== 'runninghub') return;
     ensureRunningHubLists(item);
     const entry = item.rh_apps[index];
     if(!entry) return;
-    rhEditorMode = 'app';
     rhWorkflowEditorState = { open:true, index, entry, config:null, expanded:{}, activeNodeId:'app', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
     if(rhWorkflowEditorOverlay) rhWorkflowEditorOverlay.classList.add('open');
     renderRhWorkflowEditorLoading('正在加载应用参数...');
@@ -743,55 +693,16 @@ function closeRhWorkflowEditor(){
     rhWorkflowEditorState.open = false;
 }
 function renderRhWorkflowEditorLoading(text){
-    if(rhWorkflowEditorTitle) rhWorkflowEditorTitle.textContent = rhWorkflowEditorState.entry?.title || (rhEditorMode === 'app' ? 'RunningHub AI 应用' : 'RunningHub 工作流');
+    if(rhWorkflowEditorTitle) rhWorkflowEditorTitle.textContent = rhWorkflowEditorState.entry?.title || 'RunningHub AI 应用';
     if(rhWorkflowEditName) rhWorkflowEditName.value = rhWorkflowEditorState.entry?.title || '';
     if(rhWorkflowEditNote) rhWorkflowEditNote.value = rhWorkflowEditorState.entry?.note || '';
-    if(rhWorkflowEditorSub) rhWorkflowEditorSub.textContent = rhEditorMode === 'app'
-        ? `/run/ai-app/${rhWorkflowEditorState.entry?.appId || rhWorkflowEditorState.entry?.id || ''}`
-        : `/run/workflow/${rhWorkflowEditorState.entry?.workflowId || rhWorkflowEditorState.entry?.id || ''}`;
+    if(rhWorkflowEditorSub) rhWorkflowEditorSub.textContent = `/run/ai-app/${rhWorkflowEditorState.entry?.appId || rhWorkflowEditorState.entry?.id || ''}`;
     if(rhWorkflowEditorSummary) rhWorkflowEditorSummary.innerHTML = `<div class="rh-editor-empty">${escapeHtml(text)}</div>`;
     if(rhWorkflowEditorNodeList) rhWorkflowEditorNodeList.innerHTML = '';
-    if(rhEditorMode === 'workflow') {
-        restoreRhGraphWrap();
-        if(rhWorkflowEditorGraphSvg) rhWorkflowEditorGraphSvg.innerHTML = '';
-    } else if(rhWorkflowEditorGraphWrap) {
+    if(rhWorkflowEditorGraphWrap) {
         rhWorkflowEditorGraphWrap.classList.add('rh-app-field-wrap');
         rhWorkflowEditorGraphWrap.innerHTML = `<div class="rh-editor-empty">${escapeHtml(text)}</div>`;
     }
-}
-async function loadRhWorkflowEditorConfig(entry){
-    let config = null;
-    const workflowId = String(entry.workflowId || entry.id || '').trim();
-    if(!workflowId) throw new Error('workflowId 为空');
-    const existing = await fetch(`/api/runninghub/workflows/${encodeURIComponent(workflowId)}`).then(async r => {
-        if(r.status === 404) return null;
-        const data = await r.json();
-        if(!r.ok) throw new Error(data.detail || '读取工作流配置失败');
-        return data.workflow || null;
-    });
-    if(existing) {
-        config = existing;
-    } else {
-        config = await fetchRhWorkflowEditor(false);
-        return config;
-    }
-    rhWorkflowEditorState.config = normalizeRhWorkflowConfig(config, entry);
-    renderRhWorkflowEditor();
-    setTimeout(() => rhEditorGraphFit(), 50);
-    return rhWorkflowEditorState.config;
-}
-function normalizeRhWorkflowConfig(config, entry){
-    const workflowId = String(config?.workflowId || entry?.workflowId || entry?.id || '').trim();
-    const normalized = {
-        workflowId,
-        title:String(config?.title || entry?.title || workflowId),
-        description:String(config?.description || entry?.note || ''),
-        fields:(Array.isArray(config?.fields) ? config.fields : []).map(normalizeRhWorkflowField),
-        workflowJson:config?.workflowJson || {},
-        optionalImageMode:String(config?.optionalImageMode || entry?.optionalImageMode || 'prune-workflow'),
-        raw:config?.raw || {}
-    };
-    return applyRhImageSlotDefaults(normalized);
 }
 function normalizeRhAppConfig(entry){
     const appId = String(entry?.appId || entry?.id || '').trim();
@@ -802,22 +713,6 @@ function normalizeRhAppConfig(entry){
         fields:(Array.isArray(entry?.fields) ? entry.fields : []).map(normalizeRhWorkflowField),
         raw:entry?.raw || {}
     };
-}
-function applyRhImageSlotDefaults(config){
-    const imageFields = (config.fields || []).filter(field => rhWorkflowFieldKind(field) === 'IMAGE');
-    imageFields.forEach((field, index) => {
-        if(!Number(field.imageOrder)) field.imageOrder = index + 1;
-        if(field.required !== true && field.required !== false) field.required = index === 0;
-        if(index === 0 && field.required !== false) field.required = true;
-    });
-    config.optionalImageMode = config.optionalImageMode || 'prune-workflow';
-    return config;
-}
-function setRhWorkflowOptionalImageMode(value){
-    const config = rhWorkflowEditorState.config;
-    if(!config || rhEditorMode !== 'workflow') return;
-    config.optionalImageMode = value || 'prune-workflow';
-    withRhEditorScrollPreserved(() => renderRhMappedPreview());
 }
 function rhAppFieldSourceList(raw){
     const data = raw?.data && typeof raw.data === 'object' ? raw.data : raw;
@@ -888,7 +783,6 @@ async function loadRhAppEditorConfig(entry){
     if(!config.fields.length) await fetchRhAppEditor(false);
     else {
         renderRhWorkflowEditor();
-        setTimeout(() => rhEditorGraphFit(), 50);
     }
     return rhWorkflowEditorState.config;
 }
@@ -911,40 +805,6 @@ async function fetchRhAppEditor(force=false){
     };
     state.graph = { k:1, x:0, y:0, w:0, h:0 };
     renderRhWorkflowEditor();
-    setTimeout(() => rhEditorGraphFit(), 50);
-    return state.config;
-}
-async function fetchRhWorkflowEditor(force=false){
-    const state = rhWorkflowEditorState;
-    const entry = state.entry;
-    if(rhEditorMode === 'app') return fetchRhAppEditor(force);
-    if(!entry) return null;
-    const workflowId = String(entry.workflowId || entry.id || '').trim();
-    if(!workflowId) throw new Error('workflowId 为空');
-    if(force) renderRhWorkflowEditorLoading('正在重新拉取...');
-    const res = await fetch('/api/runninghub/workflows/fetch', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-            workflowId,
-            title:rhWorkflowEditName?.value.trim() || entry.title || workflowId,
-            description:rhWorkflowEditNote?.value.trim() || entry.note || ''
-        })
-    });
-    const data = await res.json();
-    if(!res.ok || data.success === false) throw new Error(data.detail || '拉取工作流失败');
-    state.config = normalizeRhWorkflowConfig({
-        workflowId:data.data.workflowId,
-        title:data.data.title,
-        description:data.data.description,
-        fields:(data.data.fields || []).map(normalizeFetchedRhWorkflowField),
-        workflowJson:data.data.workflowJson || {},
-        optionalImageMode:entry.optionalImageMode || 'prune-workflow',
-        raw:data.data.raw || {}
-    }, entry);
-    state.graph = { k:1, x:0, y:0, w:0, h:0 };
-    renderRhWorkflowEditor();
-    setTimeout(() => rhEditorGraphFit(), 50);
     return state.config;
 }
 function updateRhWorkflowEditorMeta(prop, value){
@@ -954,67 +814,8 @@ function updateRhWorkflowEditorMeta(prop, value){
     if(prop === 'description') config.description = value;
     withRhEditorScrollPreserved(() => renderRhMappedPreview());
 }
-function toggleRhWorkflowEditorGroup(groupId){
-    const expanded = rhWorkflowEditorState.expanded;
-    expanded[groupId] = expanded[groupId] === false;
-    withRhEditorScrollPreserved(() => renderRhWorkflowEditor());
-}
-function focusRhWorkflowEditorNode(nodeId){
-    const state = rhWorkflowEditorState;
-    const config = state.config;
-    if(!config) return;
-    state.activeNodeId = String(nodeId || '');
-    (config.fields || []).forEach(field => {
-        if(String(field.nodeId) === state.activeNodeId){
-            const groupId = rhWorkflowGroupKey(field).replace(/[^a-zA-Z0-9_-]/g, '_');
-            state.expanded[groupId] = true;
-        }
-    });
-    withRhEditorScrollPreserved(() => renderRhWorkflowEditor());
-}
-function openRhWorkflowNodePopover(nodeId, anchorEl){
-    const state = rhWorkflowEditorState;
-    state.activeNodeId = String(nodeId || '');
-    renderRhWorkflowEditorGraph();
-    const freshAnchor = Array.from(document.querySelectorAll('.rh-editor-gnode')).find(el => el.dataset.nodeId === state.activeNodeId) || anchorEl;
-    renderRhNodePopover(state.activeNodeId, freshAnchor);
-}
 function closeRhNodePopover(){
     document.getElementById('rhNodePopover')?.remove();
-}
-function renderRhNodePopover(nodeId, anchorEl){
-    closeRhNodePopover();
-    const config = rhWorkflowEditorState.config;
-    if(!config) return;
-    const fields = (config.fields || []).filter(field => String(field.nodeId) === String(nodeId));
-    if(!fields.length) return;
-    const pop = document.createElement('div');
-    pop.id = 'rhNodePopover';
-    pop.className = 'rh-node-popover';
-    pop.dataset.nodeId = String(nodeId || '');
-    const workflowNode = config.workflowJson?.[nodeId] || {};
-    const title = (workflowNode?._meta?.title || workflowNode?.class_type || fields[0]?.group || `Node #${nodeId}`).toString();
-    pop.innerHTML = `
-        <div class="rh-popover-head">
-            <div>
-                <strong>${escapeHtml(title)}</strong>
-                <span>#${escapeHtml(nodeId)} · ${fields.length}</span>
-            </div>
-            <button type="button" onclick="closeRhNodePopover()"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
-        </div>
-        <div class="rh-popover-body">${fields.map(field => renderRhWorkflowEditorField(field)).join('')}</div>
-    `;
-    document.body.appendChild(pop);
-    const rect = anchorEl?.getBoundingClientRect?.();
-    const modalRect = rhWorkflowEditorOverlay?.getBoundingClientRect?.() || {left:0, top:0, right:window.innerWidth, bottom:window.innerHeight};
-    let left = rect ? rect.right + 12 : window.innerWidth / 2 - 190;
-    let top = rect ? rect.top : window.innerHeight / 2 - 180;
-    const width = 390;
-    if(left + width > modalRect.right - 16) left = Math.max(modalRect.left + 16, (rect?.left || left) - width - 12);
-    top = Math.max(modalRect.top + 74, Math.min(top, modalRect.bottom - 420));
-    pop.style.left = `${left}px`;
-    pop.style.top = `${top}px`;
-    refreshIcons();
 }
 function toggleRhWorkflowEditorField(key){
     const config = rhWorkflowEditorState.config;
@@ -1025,13 +826,8 @@ function toggleRhWorkflowEditorField(key){
             return {...field, enabled: field.enabled !== true};
         });
         renderRhWorkflowEditor();
-        if(rhEditorMode === 'workflow' && rhWorkflowEditorState.activeNodeId) {
-            const active = document.querySelector(`.rh-editor-gnode[data-node-id="${rhWorkflowEditorState.activeNodeId}"]`);
-            if(active) renderRhNodePopover(rhWorkflowEditorState.activeNodeId, active);
-        } else if(rhEditorMode === 'app') {
-            const active = findRhAppFieldCard(key);
-            if(active) openRhAppFieldPopover(key, active);
-        }
+        const active = findRhAppFieldCard(key);
+        if(active) openRhAppFieldPopover(key, active);
     });
 }
 function updateRhWorkflowEditorField(key, prop, value){
@@ -1045,13 +841,8 @@ function updateRhWorkflowEditorField(key, prop, value){
     if(prop === 'random_enabled' || prop === 'fieldType' || prop === 'required' || prop === 'sourceFromUpstream'){
         withRhEditorScrollPreserved(() => {
             renderRhWorkflowEditor();
-            if(rhEditorMode === 'workflow' && rhWorkflowEditorState.activeNodeId) {
-                const active = document.querySelector(`.rh-editor-gnode[data-node-id="${rhWorkflowEditorState.activeNodeId}"]`);
-                if(active) renderRhNodePopover(rhWorkflowEditorState.activeNodeId, active);
-            } else if(rhEditorMode === 'app') {
-                const active = findRhAppFieldCard(key);
-                if(active) openRhAppFieldPopover(key, active);
-            }
+            const active = findRhAppFieldCard(key);
+            if(active) openRhAppFieldPopover(key, active);
         });
     }
 }
@@ -1068,62 +859,25 @@ function setRhWorkflowSaveButtonState(state, text){
 async function saveRhWorkflowEditor(){
     const state = rhWorkflowEditorState;
     const config = state.config;
-    if(!config){ alert(rhEditorMode === 'app' ? '请先加载应用参数' : '请先加载工作流'); return; }
+    if(!config){ alert('请先加载应用参数'); return; }
     setRhWorkflowSaveButtonState('saving', '保存中...');
-    config.title = rhWorkflowEditName?.value.trim() || config.title || config.workflowId;
+    config.title = rhWorkflowEditName?.value.trim() || config.title || config.appId;
     config.description = rhWorkflowEditNote?.value.trim() || config.description || '';
     try {
-        if(rhEditorMode === 'app'){
-            const item = provider();
-            if(item?.id === 'runninghub' && item.rh_apps?.[state.index]){
-                const entry = item.rh_apps[state.index];
-                entry.title = config.title || entry.title;
-                entry.note = config.description || '';
-                entry.fields = (config.fields || []).map(normalizeRhWorkflowField);
-                entry.raw = config.raw || {};
-                renderRunningHubCards();
-                await saveProviders();
-            }
-            setStatus('应用参数配置已保存');
-            setRhWorkflowSaveButtonState('saved', '已保存');
-            setTimeout(() => setRhWorkflowSaveButtonState('idle', '保存'), 1600);
-            broadcastStudioApiChange('providers-changed');
-            renderRhWorkflowEditor();
-            return;
-        }
-        const res = await fetch(`/api/runninghub/workflows/${encodeURIComponent(config.workflowId)}`, {
-            method:'PUT',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                workflowId:config.workflowId,
-                title:config.title,
-                description:config.description,
-                fields:(config.fields || []).map(normalizeRhWorkflowField),
-                workflowJson:config.workflowJson || {},
-                optionalImageMode:config.optionalImageMode || 'prune-workflow',
-                raw:config.raw || {}
-            })
-        });
-        const data = await res.json();
-        if(!res.ok || data.success === false) throw new Error(data.detail || '保存失败');
-        state.config = normalizeRhWorkflowConfig(data.workflow || config, state.entry);
         const item = provider();
-        if(item?.id === 'runninghub' && item.rh_workflows?.[state.index]){
-            const entry = item.rh_workflows[state.index];
-            entry.title = state.config.title;
-            entry.note = state.config.description;
-            entry.fields = (state.config.fields || []).map(normalizeRhWorkflowField);
-            entry.workflowJson = state.config.workflowJson || {};
-            entry.optionalImageMode = state.config.optionalImageMode || 'prune-workflow';
-            entry.raw = state.config.raw || {};
-            entry.updatedAt = Number(data.workflow?.updatedAt || Date.now());
+        if(item?.id === 'runninghub' && item.rh_apps?.[state.index]){
+            const entry = item.rh_apps[state.index];
+            entry.title = config.title || entry.title;
+            entry.note = config.description || '';
+            entry.fields = (config.fields || []).map(normalizeRhWorkflowField);
+            entry.raw = config.raw || {};
             renderRunningHubCards();
             await saveProviders();
         }
-        setStatus('工作流配置已保存');
+        setStatus('应用参数配置已保存');
         setRhWorkflowSaveButtonState('saved', '已保存');
         setTimeout(() => setRhWorkflowSaveButtonState('idle', '保存'), 1600);
-        broadcastStudioApiChange('workflows-changed');
+        broadcastStudioApiChange('providers-changed');
         renderRhWorkflowEditor();
     } catch(err) {
         setRhWorkflowSaveButtonState('idle', '保存');
@@ -1132,12 +886,11 @@ async function saveRhWorkflowEditor(){
 }
 function renderRhWorkflowEditor(){
     const config = rhWorkflowEditorState.config;
-    if(!config){ renderRhWorkflowEditorLoading(rhEditorMode === 'app' ? '应用参数未加载' : '工作流未加载'); return; }
-    if(rhWorkflowEditorTitle) rhWorkflowEditorTitle.textContent = config.title || (rhEditorMode === 'app' ? 'RunningHub AI 应用' : 'RunningHub 工作流');
-    if(rhWorkflowEditorSub) rhWorkflowEditorSub.textContent = rhEditorMode === 'app' ? `/run/ai-app/${config.appId}` : `/run/workflow/${config.workflowId}`;
+    if(!config){ renderRhWorkflowEditorLoading('应用参数未加载'); return; }
+    if(rhWorkflowEditorTitle) rhWorkflowEditorTitle.textContent = config.title || 'RunningHub AI 应用';
+    if(rhWorkflowEditorSub) rhWorkflowEditorSub.textContent = `/run/ai-app/${config.appId}`;
     if(rhWorkflowEditName) rhWorkflowEditName.value = config.title || '';
     if(rhWorkflowEditNote) rhWorkflowEditNote.value = config.description || '';
-    applyRhImageSlotDefaults(config);
     renderRhMappedPreview();
     renderRhEditorSourcePane();
     refreshIcons();
@@ -1151,7 +904,7 @@ function renderRhMappedPreview(){
 }
 function renderRhMappedPreviewHtml(config){
     const enabledFields = rhEditorSortedFields((config.fields || []).filter(field => field.enabled === true));
-    const title = config.title || (rhEditorMode === 'app' ? 'RunningHub AI 应用' : 'RunningHub 工作流');
+    const title = config.title || 'RunningHub AI 应用';
     const mediaCounts = enabledFields.reduce((acc, field) => {
         const kind = rhWorkflowFieldKind(field);
         if(kind === 'IMAGE') acc.image += 1;
@@ -1169,25 +922,13 @@ function renderRhMappedPreviewHtml(config){
     const outputsHtml = (rhWorkflowEditorState.previewOutputs || []).length
         ? `<div class="rh-preview-output-list">${rhWorkflowEditorState.previewOutputs.map(url => renderRhPreviewOutput(url)).join('')}</div>`
         : '';
-    const workflowOptionsHtml = rhEditorMode === 'workflow' ? `
-        <div class="rh-workflow-run-mode">
-            <label>
-                <span>空可选图</span>
-                <select onchange="setRhWorkflowOptionalImageMode(this.value)">
-                    <option value="prune-workflow" ${String(config.optionalImageMode || 'prune-workflow') === 'prune-workflow' ? 'selected' : ''}>裁剪 workflow JSON</option>
-                    <option value="skip" ${String(config.optionalImageMode || '') === 'skip' ? 'selected' : ''}>不提交字段</option>
-                </select>
-            </label>
-            <small>仅工作流生效。可选图片为空时，裁剪模式会移除该图片输入及相关连接。</small>
-        </div>
-    ` : '';
     return `
         <div class="rh-mapped-card">
             <div class="rh-mapped-head">
-                <div class="rh-mapped-icon"><i data-lucide="${rhEditorMode === 'app' ? 'sparkles' : 'workflow'}" class="w-4 h-4"></i></div>
+                <div class="rh-mapped-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
                 <div>
                     <div class="rh-mapped-title">${escapeHtml(title)}</div>
-                    <div class="rh-mapped-sub">${rhEditorMode === 'app' ? `/run/ai-app/${escapeHtml(config.appId || '')}` : `/run/workflow/${escapeHtml(config.workflowId || '')}`}</div>
+                    <div class="rh-mapped-sub">/run/ai-app/${escapeHtml(config.appId || '')}</div>
                 </div>
             </div>
             <div class="rh-mapped-stats">
@@ -1197,7 +938,6 @@ function renderRhMappedPreviewHtml(config){
                 <span>参数 ${mediaCounts.setting}</span>
             </div>
             <div class="rh-preview-fields">${fieldsHtml}</div>
-            ${workflowOptionsHtml}
             <button class="rh-preview-run ${rhWorkflowEditorState.previewRunning ? 'running' : ''}" type="button" onclick="testRhMappedPreview()" ${rhWorkflowEditorState.previewRunning ? 'disabled' : ''}><i data-lucide="${rhWorkflowEditorState.previewRunning ? 'loader-2' : 'play'}" class="w-3.5 h-3.5 ${rhWorkflowEditorState.previewRunning ? 'spin-icon' : ''}"></i><span>${rhWorkflowEditorState.previewRunning ? '测试中...' : '测试'}</span></button>
             ${statusHtml}
             ${outputsHtml}
@@ -1216,20 +956,17 @@ function renderRhPreviewControl(field){
     const kind = rhWorkflowFieldKind(field);
     const previewState = rhWorkflowEditorState.previewParams[key] || {};
     if(field.sourceFromUpstream === false && !['IMAGE','VIDEO','AUDIO'].includes(kind)){
-        return `<div class="rh-preview-field keep-original"><div class="rh-preview-label">${label}</div><div class="rh-preview-keep"><i data-lucide="lock" class="w-3.5 h-3.5"></i><span>保留工作流原设置</span></div></div>`;
+        return `<div class="rh-preview-field keep-original"><div class="rh-preview-label">${label}</div><div class="rh-preview-keep"><i data-lucide="lock" class="w-3.5 h-3.5"></i><span>保留应用原设置</span></div></div>`;
     }
     const randomActive = field.random_enabled === true && previewState.randomActive !== false;
     const value = previewState.value ?? field.fieldValue ?? '';
     const options = Array.isArray(field.options) ? field.options : [];
     if(['IMAGE','VIDEO','AUDIO'].includes(kind)){
-        const slot = rhEditorMode === 'workflow' && kind === 'IMAGE'
-            ? `<span class="rh-preview-slot">图 ${Number(field.imageOrder) || 1} · ${field.required === true ? '必选' : '可选'}</span>`
-            : '';
         const icon = kind === 'VIDEO' ? 'file-video' : kind === 'AUDIO' ? 'file-audio' : 'image';
         const media = previewState.url
             ? renderRhPreviewMedia(previewState.url, kind, previewState.name || value)
             : `<i data-lucide="${icon}" class="w-5 h-5"></i><span>点击上传</span>`;
-        return `<div class="rh-preview-field"><div class="rh-preview-label">${label}${slot}</div><button class="rh-preview-media ${previewState.url ? 'has-media' : ''}" type="button" onclick="pickRhPreviewMedia('${escapeAttr(key)}','${kind}')">${media}</button></div>`;
+        return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><button class="rh-preview-media ${previewState.url ? 'has-media' : ''}" type="button" onclick="pickRhPreviewMedia('${escapeAttr(key)}','${kind}')">${media}</button></div>`;
     }
     if(kind === 'BOOLEAN'){
         const on = String(value).toLowerCase() === 'true';
@@ -1350,8 +1087,6 @@ async function buildRhPreviewNodeInfoList(){
         const preview = rhWorkflowEditorState.previewParams[key] || {};
         let value = preview.value ?? field.fieldValue ?? '';
         if(['IMAGE','VIDEO','AUDIO'].includes(kind)){
-            if(rhEditorMode === 'workflow' && kind === 'IMAGE' && field.required !== true && !preview.url) continue;
-            if(rhEditorMode === 'workflow' && kind === 'IMAGE' && field.required === true && !preview.url && !value) throw new Error(`缺少必选图片：${field.label || field.fieldName}`);
             value = await rhPreviewUploadValueIfNeeded(preview.url || value);
         } else if(kind === 'NUMBER' && field.random_enabled === true && preview.randomActive !== false) {
             value = rhPreviewRandomValue(field);
@@ -1363,27 +1098,6 @@ async function buildRhPreviewNodeInfoList(){
     }
     return result;
 }
-function rhPreviewPruneWorkflow(nodeInfoList){
-    const config = rhWorkflowEditorState.config;
-    if(rhEditorMode !== 'workflow' || (config?.optionalImageMode || 'prune-workflow') !== 'prune-workflow') return null;
-    const submitted = new Set((nodeInfoList || []).map(item => rhWorkflowFieldKey(item)));
-    const missing = rhEditorSortedFields(config.fields || []).filter(field => field.enabled === true && rhWorkflowFieldKind(field) === 'IMAGE' && field.required !== true && !submitted.has(rhWorkflowFieldKey(field)));
-    if(!missing.length || !config.workflowJson) return null;
-    const workflow = JSON.parse(JSON.stringify(config.workflowJson));
-    const removeIds = new Set();
-    missing.forEach(field => {
-        const node = workflow[String(field.nodeId)];
-        if(node?.inputs && Object.prototype.hasOwnProperty.call(node.inputs, field.fieldName)) delete node.inputs[field.fieldName];
-        if(node?.inputs && !Object.keys(node.inputs).length) removeIds.add(String(field.nodeId));
-    });
-    removeIds.forEach(id => delete workflow[id]);
-    Object.values(workflow).forEach(node => {
-        Object.entries(node?.inputs || {}).forEach(([name, value]) => {
-            if(Array.isArray(value) && removeIds.has(String(value[0]))) delete node.inputs[name];
-        });
-    });
-    return workflow;
-}
 async function testRhMappedPreview(){
     const config = rhWorkflowEditorState.config;
     if(!config || rhWorkflowEditorState.previewRunning) return;
@@ -1393,14 +1107,9 @@ async function testRhMappedPreview(){
     renderRhMappedPreview();
     try {
         const nodeInfoList = await buildRhPreviewNodeInfoList();
-        const endpoint = rhEditorMode === 'workflow' ? '/api/runninghub/workflow-submit' : '/api/runninghub/submit';
-        const workflow = rhPreviewPruneWorkflow(nodeInfoList);
-        const body = rhEditorMode === 'workflow'
-            ? {workflowId:String(config.workflowId || '').trim(), nodeInfoList, ...(workflow ? {workflow} : {})}
-            : {webappId:String(config.appId || '').trim(), nodeInfoList};
-        if(rhEditorMode === 'workflow' && !body.workflowId) throw new Error('workflowId 为空');
-        if(rhEditorMode === 'app' && !body.webappId) throw new Error('webappId 为空');
-        const submit = await fetch(endpoint, {
+        const body = {webappId:String(config.appId || '').trim(), nodeInfoList};
+        if(!body.webappId) throw new Error('webappId 为空');
+        const submit = await fetch('/api/runninghub/submit', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(body)
@@ -1445,55 +1154,17 @@ async function testRhMappedPreview(){
     }
 }
 function renderRhEditorSourcePane(){
-    if(rhEditorMode === 'app') renderRhAppFieldCards();
-    else renderRhWorkflowEditorGraph();
+    renderRhAppFieldCards();
 }
 function renderRhWorkflowEditorSummary(){
     const config = rhWorkflowEditorState.config;
     if(!config || !rhWorkflowEditorSummary) return;
     const fields = config.fields || [];
     const enabled = fields.filter(field => field.enabled === true).length;
-    const nodes = rhEditorMode === 'app' ? 1 : Object.keys(config.workflowJson || {}).length;
-    const imageFields = fields.filter(field => field.enabled === true && rhWorkflowFieldKind(field) === 'IMAGE');
-    const optionalImages = imageFields.filter(field => field.required !== true).length;
     rhWorkflowEditorSummary.innerHTML = `
-        <div><span>${rhEditorMode === 'app' ? '应用' : '节点'}</span><strong>${nodes}</strong></div>
+        <div><span>应用</span><strong>1</strong></div>
         <div><span>字段</span><strong>${enabled} / ${fields.length}</strong></div>
-        ${rhEditorMode === 'workflow' ? `<div><span>可选图</span><strong>${optionalImages} / ${imageFields.length}</strong></div>` : ''}
     `;
-}
-function renderRhWorkflowEditorNodeList(){
-    const config = rhWorkflowEditorState.config;
-    if(!config || !rhWorkflowEditorNodeList) return;
-    const groups = {};
-    (config.fields || []).forEach(field => {
-        const key = rhWorkflowGroupKey(field);
-        (groups[key] = groups[key] || { field, items:[] }).items.push(field);
-    });
-    const values = Object.entries(groups);
-    if(!values.length){
-        rhWorkflowEditorNodeList.innerHTML = `<div class="rh-editor-empty">没有可配置字段</div>`;
-        return;
-    }
-    rhWorkflowEditorNodeList.innerHTML = values.map(([groupKey, group]) => {
-        const safeGroup = groupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const expanded = rhWorkflowEditorState.expanded[safeGroup] !== false;
-        const enabledCount = group.items.filter(field => field.enabled === true).length;
-        return `
-            <div class="rh-editor-node ${expanded ? 'expanded' : ''} ${String(group.field.nodeId) === rhWorkflowEditorState.activeNodeId ? 'is-focused' : ''}" data-node-id="${escapeAttr(group.field.nodeId)}">
-                <button class="rh-editor-node-head" type="button" onclick="toggleRhWorkflowEditorGroup('${escapeAttr(safeGroup)}')">
-                    <span>
-                        <strong>${escapeHtml(group.field.group || `Node #${group.field.nodeId}`)}</strong>
-                        <small>#${escapeHtml(group.field.nodeId)} · ${enabledCount}/${group.items.length}</small>
-                    </span>
-                    <i data-lucide="chevron-down" class="w-4 h-4"></i>
-                </button>
-                <div class="rh-editor-node-body">
-                    ${group.items.map(field => renderRhWorkflowEditorField(field)).join('')}
-                </div>
-            </div>
-        `;
-    }).join('');
 }
 function renderRhWorkflowEditorField(field){
     const key = rhWorkflowFieldKey(field);
@@ -1502,14 +1173,6 @@ function renderRhWorkflowEditorField(field){
     const optionsText = Array.isArray(field.options) ? field.options.join('\n') : '';
     const randomOn = field.random_enabled === true;
     const keepOriginal = field.sourceFromUpstream === false;
-    const imageSlotControls = rhEditorMode === 'workflow' && type === 'IMAGE' ? `
-        <div class="rh-image-slot-row">
-            <label><span>排序</span><input type="number" min="1" step="1" value="${escapeAttr(field.imageOrder || '')}" oninput="updateRhWorkflowEditorField('${escapeAttr(key)}','imageOrder',this.value)"></label>
-            <button class="rh-editor-required ${field.required === true ? 'active' : ''}" type="button" onclick="updateRhWorkflowEditorField('${escapeAttr(key)}','required',${field.required === true ? 'false' : 'true'})">
-                <span class="check-dot"></span>${field.required === true ? '必选' : '可选'}
-            </button>
-        </div>
-    ` : '';
     return `
         <div class="rh-editor-field-row ${checked ? 'active' : ''}">
             <button class="rh-editor-check ${checked ? 'checked' : ''}" type="button" onclick="toggleRhWorkflowEditorField('${escapeAttr(key)}')">${checked ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}</button>
@@ -1517,7 +1180,7 @@ function renderRhWorkflowEditorField(field){
                 <div class="rh-editor-field-name">${escapeHtml(field.label || field.fieldName)}</div>
                 <div class="rh-editor-field-meta">${escapeHtml(field.fieldName)} · ${escapeHtml(type)}</div>
                 <button class="rh-editor-keep ${keepOriginal ? 'active' : ''}" type="button" onclick="updateRhWorkflowEditorField('${escapeAttr(key)}','sourceFromUpstream',${keepOriginal ? 'true' : 'false'})">
-                    <span class="check-dot"></span>${keepOriginal ? '保留工作流原设置' : '暴露并覆盖参数'}
+                    <span class="check-dot"></span>${keepOriginal ? '保留应用原设置' : '暴露并覆盖参数'}
                 </button>
                 <div class="rh-editor-field-controls">
                     <input type="text" value="${escapeAttr(field.label || '')}" placeholder="显示名称" oninput="updateRhWorkflowEditorField('${escapeAttr(key)}','label',this.value)">
@@ -1525,7 +1188,6 @@ function renderRhWorkflowEditorField(field){
                         ${['TEXT','NUMBER','SLIDER','BOOLEAN','SELECT','IMAGE','VIDEO','AUDIO'].map(option => `<option value="${option}" ${String(field.fieldType || type).toUpperCase() === option ? 'selected' : ''}>${rhWorkflowFieldTypeLabel(option)}</option>`).join('')}
                     </select>
                 </div>
-                ${imageSlotControls}
                 <div class="rh-editor-field-controls rh-editor-wide-controls">
                     <textarea placeholder="下拉选项：每行一个，例如 1024x1024" oninput="updateRhWorkflowEditorField('${escapeAttr(key)}','options',this.value)">${escapeHtml(optionsText)}</textarea>
                 </div>
@@ -1552,21 +1214,6 @@ function renderRhAppFieldCards(){
         </div>
     `;
     refreshIcons();
-}
-function restoreRhGraphWrap(){
-    if(!rhWorkflowEditorGraphWrap || rhWorkflowEditorGraphSvg?.parentElement === rhWorkflowEditorGraphWrap) return;
-    rhWorkflowEditorGraphWrap.classList.remove('rh-app-field-wrap');
-    rhWorkflowEditorGraphWrap.innerHTML = `
-        <svg id="rhWorkflowEditorGraphSvg" class="rh-editor-graph-svg"></svg>
-        <div class="rh-editor-graph-controls">
-            <button type="button" onclick="rhEditorGraphZoom(-1)" title="缩小"><i data-lucide="zoom-out" class="w-4 h-4"></i></button>
-            <span id="rhWorkflowEditorZoom">100%</span>
-            <button type="button" onclick="rhEditorGraphZoom(1)" title="放大"><i data-lucide="zoom-in" class="w-4 h-4"></i></button>
-            <button type="button" onclick="rhEditorGraphFit()" title="适应窗口"><i data-lucide="maximize" class="w-4 h-4"></i></button>
-        </div>
-    `;
-    rhWorkflowEditorGraphSvg = document.getElementById('rhWorkflowEditorGraphSvg');
-    rhWorkflowEditorZoom = document.getElementById('rhWorkflowEditorZoom');
 }
 function renderRhAppFieldCard(field){
     const key = rhWorkflowFieldKey(field);
@@ -1613,189 +1260,23 @@ function openRhAppFieldPopover(key, anchorEl){
     pop.style.top = `${top}px`;
     refreshIcons();
 }
-function computeRhWorkflowEditorLayers(workflow){
-    const ids = Object.keys(workflow || {});
-    const incoming = {}, outgoing = {};
-    ids.forEach(id => { incoming[id] = new Set(); outgoing[id] = new Set(); });
-    ids.forEach(id => {
-        Object.values(workflow[id]?.inputs || {}).forEach(value => {
-            if(Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && workflow[value[0]]){
-                incoming[id].add(value[0]);
-                outgoing[value[0]].add(id);
-            }
-        });
-    });
-    const layer = {};
-    const visiting = new Set();
-    function dfs(id, lv){
-        if(visiting.has(id)) return;
-        layer[id] = Math.max(layer[id] || 0, lv);
-        visiting.add(id);
-        outgoing[id].forEach(child => dfs(child, lv + 1));
-        visiting.delete(id);
-    }
-    ids.forEach(id => { if(incoming[id].size === 0) dfs(id, 0); });
-    ids.forEach(id => { if(!(id in layer)) layer[id] = 0; });
-    const buckets = {};
-    ids.forEach(id => { (buckets[layer[id]] = buckets[layer[id]] || []).push(id); });
-    return { buckets };
-}
-function renderRhWorkflowEditorGraph(){
-    const config = rhWorkflowEditorState.config;
-    restoreRhGraphWrap();
-    closeRhNodePopover();
-    const workflow = config?.workflowJson || {};
-    const svg = rhWorkflowEditorGraphSvg;
-    const wrap = rhWorkflowEditorGraphWrap;
-    if(!svg || !wrap) return;
-    if(!workflow || !Object.keys(workflow).length){
-        svg.innerHTML = `<text x="24" y="42" fill="currentColor">暂无工作流预览</text>`;
-        return;
-    }
-    const { buckets } = computeRhWorkflowEditorLayers(workflow);
-    const NODE_W = 136, NODE_H = 52, X_GAP = 42, Y_GAP = 16;
-    const positions = {};
-    const levels = Object.keys(buckets).map(Number).sort((a,b)=>a-b);
-    let maxRows = 0;
-    levels.forEach(lv => {
-        const ids = buckets[lv].sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        ids.forEach((id, idx) => positions[id] = { x:lv * (NODE_W + X_GAP) + 18, y:idx * (NODE_H + Y_GAP) + 18 });
-        maxRows = Math.max(maxRows, ids.length);
-    });
-    const edges = [];
-    Object.keys(workflow).forEach(toId => {
-        const seen = new Set();
-        Object.values(workflow[toId]?.inputs || {}).forEach(value => {
-            if(Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && positions[value[0]] && positions[toId]){
-                if(seen.has(value[0])) return;
-                seen.add(value[0]);
-                const from = positions[value[0]], to = positions[toId];
-                const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
-                const x2 = to.x, y2 = to.y + NODE_H / 2;
-                const cx = (x1 + x2) / 2;
-                edges.push(`<path class="rh-editor-edge" d="M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}"></path>`);
-            }
-        });
-    });
-    const activeNodes = new Set((config.fields || []).filter(field => field.enabled === true).map(field => String(field.nodeId)));
-    const nodes = Object.entries(workflow).map(([id, node]) => {
-        const pos = positions[id];
-        const title = workflowNodeTitle(node);
-        const klass = workflowNodeClass(node);
-        const cat = workflowNodeCategory(node);
-        const count = (config.fields || []).filter(field => field.enabled === true && String(field.nodeId) === String(id)).length;
-        return `
-            <g class="rh-editor-gnode cat-${cat} ${activeNodes.has(String(id)) ? 'has-exposed' : ''} ${String(id) === rhWorkflowEditorState.activeNodeId ? 'is-active' : ''}" data-node-id="${escapeAttr(id)}" transform="translate(${pos.x},${pos.y})" onclick="openRhWorkflowNodePopover('${escapeAttr(id)}', this)">
-                <rect width="${NODE_W}" height="${NODE_H}" rx="8"></rect>
-                <text class="rh-editor-gtitle" x="10" y="20">${escapeHtml(title.length > 15 ? title.slice(0, 15) + '...' : title)}</text>
-                <text class="rh-editor-gsub" x="10" y="36">${escapeHtml(klass.length > 18 ? klass.slice(0, 18) + '...' : klass)}</text>
-                <text class="rh-editor-gsub" x="${NODE_W - 8}" y="20" text-anchor="end">#${escapeHtml(id)}</text>
-                ${count ? `<text class="rh-editor-gbadge" x="${NODE_W - 8}" y="43" text-anchor="end">${count}</text>` : ''}
-            </g>
-        `;
-    }).join('');
-    rhWorkflowEditorState.graph.w = levels.length * (NODE_W + X_GAP) + 18;
-    rhWorkflowEditorState.graph.h = maxRows * (NODE_H + Y_GAP) + 18;
-    svg.setAttribute('viewBox', `0 0 ${wrap.clientWidth || 800} ${wrap.clientHeight || 520}`);
-    svg.innerHTML = `<g id="rhWorkflowEditorViewport" transform="translate(${rhWorkflowEditorState.graph.x},${rhWorkflowEditorState.graph.y}) scale(${rhWorkflowEditorState.graph.k})">${edges.join('')}${nodes}</g>`;
-    bindRhWorkflowEditorPanZoom();
-    updateRhEditorZoom();
-}
-function updateRhEditorZoom(){
-    if(rhWorkflowEditorZoom) rhWorkflowEditorZoom.textContent = Math.round((rhWorkflowEditorState.graph.k || 1) * 100) + '%';
-}
-function applyRhEditorGraphTransform(){
-    const vp = document.getElementById('rhWorkflowEditorViewport');
-    const g = rhWorkflowEditorState.graph;
-    if(vp) vp.setAttribute('transform', `translate(${g.x},${g.y}) scale(${g.k})`);
-    updateRhEditorZoom();
-}
-function rhEditorGraphZoom(dir){
-    const wrap = rhWorkflowEditorGraphWrap;
-    if(!wrap) return;
-    const g = rhWorkflowEditorState.graph;
-    const factor = dir > 0 ? 1.2 : 1 / 1.2;
-    const newK = Math.max(0.2, Math.min(3, g.k * factor));
-    const cx = wrap.clientWidth / 2;
-    const cy = wrap.clientHeight / 2;
-    g.x = cx - (cx - g.x) * (newK / g.k);
-    g.y = cy - (cy - g.y) * (newK / g.k);
-    g.k = newK;
-    applyRhEditorGraphTransform();
-}
-function rhEditorGraphFit(){
-    const wrap = rhWorkflowEditorGraphWrap;
-    const g = rhWorkflowEditorState.graph;
-    if(!wrap || !g.w || !g.h) return;
-    const pad = 24;
-    const k = Math.max(0.2, Math.min(2, Math.min((wrap.clientWidth - pad * 2) / g.w, (wrap.clientHeight - pad * 2) / g.h)));
-    g.k = k;
-    g.x = (wrap.clientWidth - g.w * k) / 2;
-    g.y = (wrap.clientHeight - g.h * k) / 2;
-    applyRhEditorGraphTransform();
-}
-function bindRhWorkflowEditorPanZoom(){
-    const svg = rhWorkflowEditorGraphSvg;
-    const wrap = rhWorkflowEditorGraphWrap;
-    if(!svg || !wrap || svg.dataset.editorPanZoomBound) return;
-    svg.dataset.editorPanZoomBound = '1';
-    rhWorkflowEditorState.bound = true;
-    wrap.addEventListener('wheel', event => {
-        if(!rhWorkflowEditorState.open) return;
-        event.preventDefault();
-        const g = rhWorkflowEditorState.graph;
-        const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
-        const newK = Math.max(0.2, Math.min(3, g.k * factor));
-        const rect = wrap.getBoundingClientRect();
-        const mx = event.clientX - rect.left;
-        const my = event.clientY - rect.top;
-        g.x = mx - (mx - g.x) * (newK / g.k);
-        g.y = my - (my - g.y) * (newK / g.k);
-        g.k = newK;
-        applyRhEditorGraphTransform();
-    }, { passive:false });
-    svg.addEventListener('mousedown', event => {
-        if(!rhWorkflowEditorState.open) return;
-        event.preventDefault();
-        rhWorkflowEditorState.pan = { sx:event.clientX, sy:event.clientY, ox:rhWorkflowEditorState.graph.x, oy:rhWorkflowEditorState.graph.y };
-        wrap.classList.add('is-panning');
-    });
-    window.addEventListener('mousemove', event => {
-        const pan = rhWorkflowEditorState.pan;
-        if(!pan) return;
-        rhWorkflowEditorState.graph.x = pan.ox + event.clientX - pan.sx;
-        rhWorkflowEditorState.graph.y = pan.oy + event.clientY - pan.sy;
-        applyRhEditorGraphTransform();
-    });
-    window.addEventListener('mouseup', () => {
-        if(rhWorkflowEditorState.pan){
-            rhWorkflowEditorState.pan = null;
-            wrap.classList.remove('is-panning');
-        }
-    });
-}
 function renderRunningHubCards(){
     const item = provider();
     if(!item || item.id !== 'runninghub'){
         if(rhAppsList) rhAppsList.innerHTML = '';
-        if(rhWorkflowsList) rhWorkflowsList.innerHTML = '';
         return;
     }
     ensureRunningHubLists(item);
     const apps = item.rh_apps.map((entry, index) => ({...entry, _rhIndex:index})).filter(entry => entry?.hidden !== true);
-    const workflows = item.rh_workflows.map((entry, index) => ({...entry, _rhIndex:index})).filter(entry => entry?.hidden !== true);
     if(rhAppsCount) rhAppsCount.textContent = apps.length;
-    if(rhWorkflowsCount) rhWorkflowsCount.textContent = workflows.length;
     renderRhEntryList(rhAppsList, apps, 'app');
-    renderRhEntryList(rhWorkflowsList, workflows, 'workflow');
     refreshIcons();
 }
 function rhEntryThumbnailCandidates(kind, entry){
-    const id = String((kind === 'workflow' ? (entry?.workflowId || entry?.id) : (entry?.appId || entry?.id)) || '').trim().replace(/[^0-9A-Za-z_-]/g, '');
+    const id = String(entry?.appId || entry?.id || '').trim().replace(/[^0-9A-Za-z_-]/g, '');
     if(!id) return [];
-    const prefix = kind === 'workflow' ? 'workflow' : 'app';
     const exts = ['jpg'];
-    const names = [`${prefix}-${id}`, id];
+    const names = [`app-${id}`, id];
     const roots = ['/static/runninghub/thumbnails', '/static/runninghub'];
     const urls = [];
     names.forEach(name => {
@@ -1806,7 +1287,7 @@ function rhEntryThumbnailCandidates(kind, entry){
     return urls;
 }
 function renderRhEntryThumbnail(kind, entry){
-    const icon = kind === 'app' ? 'sparkles' : 'workflow';
+    const icon = 'sparkles';
     const candidates = rhEntryThumbnailCandidates(kind, entry);
     const thumbnail = String(entry?.thumbnail || '').trim();
     const src = thumbnail || candidates[0] || '';
@@ -1824,14 +1305,14 @@ function fallbackRhEntryThumbnail(img, icon){
     }
     const parent = img?.parentElement;
     if(parent){
-        parent.innerHTML = `<i data-lucide="${icon === 'sparkles' ? 'sparkles' : 'workflow'}" class="w-5 h-5"></i>`;
+        parent.innerHTML = `<i data-lucide="sparkles" class="w-5 h-5"></i>`;
         refreshIcons();
     }
 }
 function renderRhEntryList(target, list, kind){
     if(!target) return;
     if(!list.length){
-        target.innerHTML = `<div class="rh-empty">${kind === 'app' ? '粘贴 /run/ai-app/... 后点击创建 AI 应用卡片' : '粘贴 /run/workflow/... 后点击创建工作流卡片'}</div>`;
+        target.innerHTML = `<div class="rh-empty">粘贴 /run/ai-app/... 后点击创建 AI 应用卡片</div>`;
         return;
     }
     target.innerHTML = list.map((entry, index) => `
@@ -1842,15 +1323,13 @@ function renderRhEntryList(target, list, kind){
             <div class="rh-card-main">
                 <label class="rh-card-title-field">
                     <span>名称</span>
-                    <input type="text" value="${escapeAttr(entry.title || '')}" oninput="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'title', this.value)" placeholder="${kind === 'app' ? 'AI 应用名称' : '工作流名称'}">
+                    <input type="text" value="${escapeAttr(entry.title || '')}" oninput="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'title', this.value)" placeholder="AI 应用名称">
                 </label>
-                <div class="rh-id-line"><i data-lucide="hash" class="w-3 h-3"></i><span>${escapeHtml(kind === 'app' ? `/run/ai-app/${entry.id}` : `/run/workflow/${entry.id}`)}</span></div>
+                <div class="rh-id-line"><i data-lucide="hash" class="w-3 h-3"></i><span>/run/ai-app/${escapeHtml(entry.id)}</span></div>
                 <textarea oninput="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'note', this.value)" placeholder="备注、用途、参数说明">${escapeHtml(entry.note || '')}</textarea>
             </div>
             <div class="rh-card-actions">
-                ${kind === 'workflow'
-                    ? `<button class="rh-card-action" type="button" onclick="openRhWorkflowEditor(${entry._rhIndex ?? index})" title="编辑工作流"><i data-lucide="settings-2" class="w-3.5 h-3.5"></i></button>`
-                    : `<button class="rh-card-action" type="button" onclick="openRhAppEditor(${entry._rhIndex ?? index})" title="编辑应用参数"><i data-lucide="settings-2" class="w-3.5 h-3.5"></i></button>`}
+                <button class="rh-card-action" type="button" onclick="openRhAppEditor(${entry._rhIndex ?? index})" title="编辑应用参数"><i data-lucide="settings-2" class="w-3.5 h-3.5"></i></button>
                 <button class="rh-card-action danger" type="button" onclick="removeRhEntry('${kind}', ${entry._rhIndex ?? index})" title="删除"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
             </div>
         </div>
@@ -2177,9 +1656,7 @@ function renderEditor(){
     if(!isRunningHub){
         if(rhPasteInput) rhPasteInput.value = '';
         if(rhAppsList) rhAppsList.innerHTML = '';
-        if(rhWorkflowsList) rhWorkflowsList.innerHTML = '';
         if(rhAppsCount) rhAppsCount.textContent = '0';
-        if(rhWorkflowsCount) rhWorkflowsCount.textContent = '0';
     }
     if(msLoraBlock) msLoraBlock.style.display = isModelScope ? 'flex' : 'none';
     if(jimengCliPanel){
@@ -2976,7 +2453,6 @@ async function saveProviders(){
         item.chat_models = unique(item.chat_models || []);
         item.video_models = unique(item.video_models || []);
         item.rh_apps = normalizeRhEntries(item.rh_apps || [], 'app');
-        item.rh_workflows = normalizeRhEntries(item.rh_workflows || [], 'workflow');
         item.ms_loras = (Array.isArray(item.ms_loras) ? item.ms_loras : []).map(lora => ({
             id:String(lora.id || '').trim(),
             name:String(lora.name || lora.id || '').trim(),
@@ -3012,7 +2488,6 @@ async function saveProviders(){
                 ms_loras:item.id === 'modelscope' ? (item.ms_loras || []) : [],
                 ms_defaults_version:item.id === 'modelscope' ? (item.ms_defaults_version || 1) : 0,
                 rh_apps:item.id === 'runninghub' ? (item.rh_apps || []) : [],
-                rh_workflows:item.id === 'runninghub' ? (item.rh_workflows || []) : [],
                 volcengine_project_name:item.id === 'volcengine' ? (item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME) : '',
                 volcengine_region:item.id === 'volcengine' ? (item.volcengine_region || VOLCENGINE_DEFAULT_REGION) : '',
                 volcengine_access_key_id:item.volcengine_access_key_id || undefined,
@@ -3068,7 +2543,7 @@ document.addEventListener('mousedown', event => {
     const pop = document.getElementById('rhNodePopover');
     if(!pop) return;
     if(pop.contains(event.target)) return;
-    if(event.target.closest('.rh-editor-gnode,.rh-app-field-card')) return;
+    if(event.target.closest('.rh-app-field-card')) return;
     closeRhNodePopover();
 });
 recommendApiOverlay?.addEventListener('mousedown', event => {

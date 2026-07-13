@@ -182,7 +182,6 @@ let apiProviders = [];
 let comfyBackendCount = 1;
 let comfyWorkflows = [];
 let comfyWorkflowCache = {};
-let runningHubWorkflowCache = {};
 let managedProviderId = 'comfly';
 let localImageModels = [];
 let localChatModels = [];
@@ -417,7 +416,7 @@ function isRunningHubProvider(provider){
     return id === 'runninghub' || protocol === 'runninghub' || name === 'runninghub' || id === 'rh';
 }
 // RunningHub 标准模型 API：目前只把 GPT-Image2（rhart-image-g-2-official）暴露给通用「AI 生成」模型下拉，
-// 不影响 rh_apps / rh_workflows 专属的应用/工作流引擎逻辑。
+// 不影响 rh_apps 专属的 AI 应用引擎逻辑。
 const RUNNINGHUB_STANDARD_IMAGE_MODELS = ['rhart-image-g-2-official'];
 function runningHubStandardImageModels(provider){
     const models = Array.isArray(provider?.image_models) ? provider.image_models : [];
@@ -1083,12 +1082,6 @@ async function loadConfig(){
         } catch(_) {
             comfyWorkflows = [];
         }
-        runningHubWorkflowCache = {};
-        const rhProvider = apiProviders.find(p => p.id === 'runninghub');
-        const rhWorkflowIds = (rhProvider?.rh_workflows || []).map(item => String(item.workflowId || item.id || '').trim()).filter(Boolean);
-        Promise.allSettled(rhWorkflowIds.map(async workflowId => {
-            try { await ensureRunningHubWorkflow(workflowId); } catch(_) {}
-        }));
     } catch(e) {
         apiProviders = defaultApiProviders();
     }
@@ -2145,10 +2138,8 @@ function addRhNode(point){
         rhMode:'app',
         rhPayment:'free',
         webappId:'',
-        workflowId:'',
         instanceType:'',
         rhAppInfo:null,
-        rhWorkflowInfo:null,
         rhParams:{},
         inputs:[],
         running:false
@@ -8104,26 +8095,6 @@ async function ensureComfyWorkflow(name){
     comfyWorkflowCache[name] = data;
     return data;
 }
-function validRunningHubWorkflowId(workflowId){
-    return String(workflowId || '').trim();
-}
-function currentRunningHubWorkflow(node){
-    const workflowId = validRunningHubWorkflowId(node.workflowId || '');
-    return runningHubWorkflowCache[workflowId] || null;
-}
-async function ensureRunningHubWorkflow(workflowId){
-    workflowId = validRunningHubWorkflowId(workflowId);
-    if(!workflowId) return null;
-    if(runningHubWorkflowCache[workflowId]) return runningHubWorkflowCache[workflowId];
-    const res = await fetch(`/api/runninghub/workflows/${encodeURIComponent(workflowId)}`);
-    if(!res.ok){
-        delete runningHubWorkflowCache[workflowId];
-        return null;
-    }
-    const data = await res.json();
-    runningHubWorkflowCache[workflowId] = data.workflow || null;
-    return runningHubWorkflowCache[workflowId];
-}
 function comfyFieldKind(f){
     if(['image','video','audio'].includes(f?.type)) return f.type;
     const key = `${f.input || ''} ${f.name || ''}`.toLowerCase();
@@ -8352,82 +8323,38 @@ function toggleRhRandom(nodeId, key){
     refreshNodes([node.id]);
     scheduleSave();
 }
-function rhWorkflowNodeInfoList(data){
-    const list = [];
-    if(!data || typeof data !== 'object' || Array.isArray(data)) return list;
-    Object.entries(data).forEach(([nodeId, nodeContent]) => {
-        const inputs = nodeContent?.inputs || {};
-        if(!inputs || typeof inputs !== 'object') return;
-        Object.entries(inputs).forEach(([fieldName, rawValue]) => {
-            if(rhIsWorkflowLinkValue(rawValue)) return;
-            let fieldValue = rawValue;
-            if(fieldValue !== null && typeof fieldValue === 'object') fieldValue = JSON.stringify(fieldValue);
-            else if(fieldValue === undefined || fieldValue === null) fieldValue = '';
-            else fieldValue = String(fieldValue);
-            list.push({
-                nodeId:String(nodeId),
-                fieldName:String(fieldName),
-                fieldValue,
-                fieldType:rhInferWorkflowFieldType(fieldName, fieldValue),
-                source:'workflow'
-            });
-        });
-    });
-    return list;
-}
-function rhInferWorkflowFieldType(fieldName, fieldValue){
-    const key = `${fieldName || ''} ${fieldValue || ''}`.toLowerCase();
-    if(/\b(image|img|mask|photo|picture)\b/.test(key) || /\.(png|jpe?g|webp|gif|bmp)(\?|$)/i.test(key)) return 'IMAGE';
-    if(/\b(video|movie|mp4)\b/.test(key) || /\.(mp4|webm|mov|m4v|mkv)(\?|$)/i.test(key)) return 'VIDEO';
-    if(/\b(audio|sound|music|voice)\b/.test(key) || /\.(mp3|wav|ogg|m4a|flac|aac)(\?|$)/i.test(key)) return 'AUDIO';
-    if(/^(true|false)$/i.test(String(fieldValue || ''))) return 'BOOLEAN';
-    if(String(fieldValue || '').trim() !== '' && !Number.isNaN(Number(fieldValue))) return 'NUMBER';
-    return 'TEXT';
-}
-function rhIsWorkflowLinkValue(value){
-    return Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && Number.isInteger(value[1]);
-}
 function runningHubProvider(){
     const provider = (apiProviders || []).find(p => p.id === 'runninghub');
     return provider || null;
 }
 function runningHubEntries(kind){
     const provider = runningHubProvider();
-    const key = kind === 'workflow' ? 'rh_workflows' : 'rh_apps';
-    return Array.isArray(provider?.[key]) ? provider[key].filter(item => item?.enabled !== false && item?.hidden !== true) : [];
+    return Array.isArray(provider?.rh_apps) ? provider.rh_apps.filter(item => item?.enabled !== false && item?.hidden !== true) : [];
 }
 function runningHubEntryId(entry, kind){
-    return String(kind === 'workflow' ? (entry?.workflowId || entry?.id || '') : (entry?.appId || entry?.id || '')).trim();
+    return String(entry?.appId || entry?.id || '').trim();
 }
 function runningHubEntryLabel(entry, kind){
     const id = runningHubEntryId(entry, kind);
-    return entry?.title || entry?.name || (kind === 'workflow' ? `工作流 ${id.slice(-6)}` : `AI 应用 ${id.slice(-6)}`);
+    return entry?.title || entry?.name || `AI 应用 ${id.slice(-6)}`;
 }
 function runningHubEntryKey(kind, id){
     return `${kind}:${String(id || '').trim()}`;
 }
 function parseRunningHubEntryKey(value){
     const text = String(value || '').trim();
-    const match = text.match(/^(app|workflow):(.+)$/);
-    if(match) return {kind:match[1], id:match[2]};
+    const match = text.match(/^app:(.+)$/);
+    if(match) return {kind:'app', id:match[1]};
     return null;
 }
 function runningHubAllEntries(){
-    return [
-        ...runningHubEntries('app').map(entry => ({kind:'app', id:runningHubEntryId(entry, 'app'), entry})),
-        ...runningHubEntries('workflow').map(entry => ({kind:'workflow', id:runningHubEntryId(entry, 'workflow'), entry}))
-    ].filter(item => item.id);
+    return runningHubEntries('app').map(entry => ({kind:'app', id:runningHubEntryId(entry, 'app'), entry})).filter(item => item.id);
 }
 function rhSelectedEntryRef(node){
     const parsed = parseRunningHubEntryKey(node?.rhConfigKey || '');
     const all = runningHubAllEntries();
     if(parsed){
         const hit = all.find(item => item.kind === parsed.kind && item.id === parsed.id);
-        if(hit) return hit;
-    }
-    const workflowId = validRunningHubWorkflowId(node?.workflowId || '');
-    if(workflowId){
-        const hit = all.find(item => item.kind === 'workflow' && item.id === workflowId);
         if(hit) return hit;
     }
     const webappId = String(node?.webappId || '').trim();
@@ -8440,34 +8367,19 @@ function rhSelectedEntryRef(node){
 function applyRhEntrySelection(node, ref){
     if(!node || !ref) return;
     node.rhConfigKey = runningHubEntryKey(ref.kind, ref.id);
-    node.rhMode = ref.kind;
-    if(ref.kind === 'workflow') node.workflowId = ref.id;
-    else node.webappId = ref.id;
+    node.rhMode = 'app';
+    node.webappId = ref.id;
 }
 function currentRunningHubAppConfig(node){
     const webappId = String(node?.webappId || '').trim();
     if(!webappId) return null;
     return runningHubEntries('app').find(app => runningHubEntryId(app, 'app') === webappId) || null;
 }
-function currentRunningHubWorkflowEntry(node){
-    const workflowId = validRunningHubWorkflowId(node?.workflowId || '');
-    if(!workflowId) return null;
-    return runningHubEntries('workflow').find(workflow => runningHubEntryId(workflow, 'workflow') === workflowId) || null;
-}
 function rhEntryFields(entry){
     return Array.isArray(entry?.fields) ? entry.fields : [];
 }
-function rhWorkflowJsonFromSources(...sources){
-    for(const source of sources){
-        if(source && typeof source === 'object' && Object.keys(source).length) return source;
-    }
-    return {};
-}
 function rhCurrentEntry(node){
     return rhSelectedEntryRef(node)?.entry || null;
-}
-function rhCurrentKind(node){
-    return rhSelectedEntryRef(node)?.kind || (node?.rhMode === 'workflow' ? 'workflow' : 'app');
 }
 function ensureRhNodeSelection(node){
     if(!node || node.type !== 'rh') return null;
@@ -8483,8 +8395,7 @@ function ensureRhNodeSelection(node){
 }
 function rhEntryOptions(selected){
     const apps = runningHubEntries('app');
-    const workflows = runningHubEntries('workflow');
-    if(!apps.length && !workflows.length) return `<option value="">请先在 API 设置里添加 RunningHub 配置</option>`;
+    if(!apps.length) return `<option value="">请先在 API 设置里添加 RunningHub 配置</option>`;
     const group = (kind, entries, label) => entries.length ? `
         <optgroup label="${label}">
             ${entries.map(entry => {
@@ -8494,7 +8405,7 @@ function rhEntryOptions(selected){
             }).join('')}
         </optgroup>
     ` : '';
-    return `${group('app', apps, 'AI 应用')}${group('workflow', workflows, '工作流')}`;
+    return group('app', apps, 'AI 应用');
 }
 function rhPaymentOptions(node){
     const provider = runningHubProvider();
@@ -8519,44 +8430,9 @@ function rhActiveFields(node){
         if(ak !== 'image' && bk === 'image') return 1;
         return String(a.nodeId || '').localeCompare(String(b.nodeId || ''), undefined, {numeric:true}) || String(a.fieldName || '').localeCompare(String(b.fieldName || ''));
     });
-    if(rhCurrentKind(node) === 'workflow') {
-        const workflowId = validRunningHubWorkflowId(node.workflowId || '');
-        const savedEntry = currentRunningHubWorkflowEntry(node);
-        if(Array.isArray(savedEntry?.fields) && savedEntry.fields.length) return sortFields(savedEntry.fields.filter(f => f.enabled === true));
-        const saved = workflowId ? runningHubWorkflowCache[workflowId] : null;
-        if(Array.isArray(saved?.fields)) return sortFields(saved.fields.filter(f => f.enabled === true));
-        return sortFields(node.rhWorkflowInfo?.nodeInfoList || []);
-    }
     const savedApp = currentRunningHubAppConfig(node);
     if(Array.isArray(savedApp?.fields) && savedApp.fields.length) return sortFields(savedApp.fields.filter(f => f.enabled === true));
     return sortFields(node.rhAppInfo?.nodeInfoList || []);
-}
-function currentRunningHubWorkflowConfig(node){
-    if(rhCurrentKind(node) !== 'workflow') return null;
-    const workflowId = validRunningHubWorkflowId(node.workflowId || '');
-    const entry = currentRunningHubWorkflowEntry(node);
-    if(entry){
-        const cached = workflowId ? runningHubWorkflowCache[workflowId] : null;
-        return {
-            ...entry,
-            ...(cached || {}),
-            workflowId:runningHubEntryId(entry, 'workflow') || workflowId,
-            title:entry.title || cached?.title || workflowId,
-            fields:rhEntryFields(entry).length ? rhEntryFields(entry) : (cached?.fields || []),
-            optionalImageMode:entry.optionalImageMode || cached?.optionalImageMode || 'prune-workflow',
-            workflowJson:rhWorkflowJsonFromSources(cached?.workflowJson, entry.workflowJson, entry.raw?.workflowJson, entry.raw?.prompt)
-        };
-    }
-    return workflowId ? runningHubWorkflowCache[workflowId] : null;
-}
-async function ensureRunningHubWorkflowConfigForNode(node){
-    if(rhCurrentKind(node) !== 'workflow') return null;
-    const workflowId = validRunningHubWorkflowId(node.workflowId || '');
-    if(!workflowId) return null;
-    if(!runningHubWorkflowCache[workflowId]){
-        try { await ensureRunningHubWorkflow(workflowId); } catch(_) {}
-    }
-    return currentRunningHubWorkflowConfig(node);
 }
 function rhMediaSources(node){
     const sources = orderedSources(node, generatorSources(node));
@@ -8596,7 +8472,6 @@ function rhFieldValue(node, field, media=null){
     if(['image','video','audio'].includes(kind)){
         const idx = rhFieldIndexes(rhActiveFields(node))[key] || 0;
         const up = (media || rhMediaSources(node))[kind]?.[idx]?.url || '';
-        if(rhCurrentKind(node) === 'workflow' && kind === 'image' && field.required !== true && !up && param?.sourceFromUpstream !== false) return '';
         if(param?.sourceFromUpstream === false) return param.value ?? rhDefaultValue(field);
         return up || param?.value || rhDefaultValue(field);
     }
@@ -8620,58 +8495,6 @@ function rhFieldValue(node, field, media=null){
     }
     return param?.value ?? rhDefaultValue(field);
 }
-function rhRequiredLabel(field){
-    return field?.label || field?.fieldName || `#${field?.nodeId || ''}`;
-}
-function rhPruneWorkflowForMissingFields(workflowJson, missingFields){
-    if(!workflowJson || typeof workflowJson !== 'object' || !missingFields?.length) return null;
-    const workflow = JSON.parse(JSON.stringify(workflowJson));
-    const removeIds = new Set();
-    missingFields.forEach(field => {
-        const node = workflow[String(field.nodeId)];
-        if(node?.inputs && Object.prototype.hasOwnProperty.call(node.inputs, field.fieldName)){
-            delete node.inputs[field.fieldName];
-        }
-        if(node && rhWorkflowNodeInfoList({[field.nodeId]: node}).length <= 0){
-            removeIds.add(String(field.nodeId));
-        }
-    });
-    removeIds.forEach(id => delete workflow[id]);
-    Object.values(workflow).forEach(node => {
-        if(!node?.inputs || typeof node.inputs !== 'object') return;
-        Object.entries(node.inputs).forEach(([name, value]) => {
-            if(rhIsWorkflowLinkValue(value) && removeIds.has(String(value[0]))) delete node.inputs[name];
-        });
-    });
-    return workflow;
-}
-async function rhBuildWorkflowRequestExtras(node, media, nodeInfoList){
-    const config = await ensureRunningHubWorkflowConfigForNode(node);
-    if(!config || (config.optionalImageMode || 'prune-workflow') !== 'prune-workflow') return {};
-    const fields = rhActiveFields(node);
-    const indexes = rhFieldIndexes(fields);
-    const missingOptional = [];
-    for(const field of fields){
-        if(rhFieldKind(field) !== 'image') continue;
-        const key = rhParamKey(field.nodeId, field.fieldName);
-        const idx = indexes[key] || 0;
-        const hasInput = Boolean(media.image?.[idx]?.url);
-        if(field.required === true && !hasInput){
-            throw new Error(`RunningHub 工作流缺少必选图片：${rhRequiredLabel(field)}`);
-        }
-        if(field.required !== true && !hasInput){
-            missingOptional.push(field);
-        }
-    }
-    if(!missingOptional.length) return {};
-    missingOptional.forEach(field => {
-        const key = rhParamKey(field.nodeId, field.fieldName);
-        const idx = nodeInfoList.findIndex(item => rhParamKey(item.nodeId, item.fieldName) === key);
-        if(idx >= 0) nodeInfoList.splice(idx, 1);
-    });
-    const workflow = rhPruneWorkflowForMissingFields(config.workflowJson || {}, missingOptional);
-    return workflow ? {workflow} : {};
-}
 function rhMediaPreviewHtml(ref, kind){
     const safe = escapeAttr(ref?.url || '');
     if(kind === 'video') return `<video src="${safe}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>`;
@@ -8686,8 +8509,6 @@ function renderRhBody(node){
     const selectedRef = rhSelectedEntryRef(node);
     const media = rhMediaSources(node);
     const fields = rhActiveFields(node);
-    const mode = selectedRef?.kind || rhCurrentKind(node);
-    const selectedId = selectedRef?.id || (mode === 'workflow' ? (node.workflowId || '') : (node.webappId || ''));
     const selectedKey = selectedRef ? runningHubEntryKey(selectedRef.kind, selectedRef.id) : '';
     const entryNote = entry?.note || entry?.description || '';
     wrap.innerHTML = `
@@ -8714,7 +8535,7 @@ function renderRhBody(node){
             <div class="input-list rh-input-list"></div>
         </div>
         <div class="rh-param-head">
-            <span>${mode === 'workflow' ? tr('canvas.rhWorkflowParams') : tr('canvas.rhParams')}</span>
+            <span>${tr('canvas.rhParams')}</span>
             <span>${fields.length}</span>
         </div>
         <div class="rh-param-list"></div>
@@ -8951,70 +8772,6 @@ async function rhFetchAppInfo(nodeId, showAlert=true){
         refreshNodes([node.id]);
     }
 }
-async function rhFetchWorkflowInfo(nodeId, showAlert=true){
-    const node = nodes.find(n => n.id === nodeId);
-    if(!node) return false;
-    if(!String(node.workflowId || '').trim()){
-        if(showAlert) alert(tr('canvas.rhNeedWorkflowId'));
-        return false;
-    }
-    node.rhFetching = true;
-    refreshNodes([node.id]);
-    try {
-        const saved = await ensureRunningHubWorkflow(node.workflowId.trim());
-        const res = await fetch(`/api/runninghub/workflow-info?workflowId=${encodeURIComponent(node.workflowId.trim())}`);
-        const data = await res.json();
-        if(!res.ok || data.success === false) throw new Error(data.detail || data.error || tr('canvas.rhFailed'));
-        const info = data.data || {};
-        const savedFields = Array.isArray(saved?.fields) ? saved.fields : [];
-        const mergedFields = savedFields.length
-            ? savedFields
-            : Array.isArray(info.nodeInfoList) ? info.nodeInfoList : [];
-        node.rhWorkflowInfo = {
-            workflowId:node.workflowId.trim(),
-            nodeInfoList:mergedFields,
-            raw:info.raw || null
-        };
-        node.rhParams = node.rhParams || {};
-        (node.rhWorkflowInfo.nodeInfoList || []).forEach(field => {
-            const key = rhParamKey(field.nodeId, field.fieldName);
-            if(!node.rhParams[key]) node.rhParams[key] = {value:rhDefaultValue(field)};
-        });
-        node.runStatus = '';
-        node.runError = '';
-        scheduleSave();
-        return true;
-    } catch(err) {
-        if(showAlert) alert(err.message || tr('canvas.rhFailed'));
-        return false;
-    } finally {
-        node.rhFetching = false;
-        refreshNodes([node.id]);
-    }
-}
-async function rhImportWorkflowJson(nodeId, file){
-    const node = nodes.find(n => n.id === nodeId);
-    if(!node || !file) return;
-    try {
-        const text = await file.text();
-        const json = JSON.parse(text);
-        const nodeInfoList = rhWorkflowNodeInfoList(json);
-        if(!nodeInfoList.length) throw new Error(tr('canvas.rhWorkflowJsonInvalid'));
-        node.rhMode = 'workflow';
-        node.rhWorkflowInfo = {fileName:file.name || 'api.json', nodeInfoList};
-        node.rhParams = node.rhParams || {};
-        nodeInfoList.forEach(field => {
-            const key = rhParamKey(field.nodeId, field.fieldName);
-            if(!node.rhParams[key]) node.rhParams[key] = {value:rhDefaultValue(field)};
-        });
-        node.runStatus = '';
-        node.runError = '';
-        render();
-        scheduleSave();
-    } catch(err) {
-        alert(err.message || tr('canvas.rhWorkflowJsonInvalid'));
-    }
-}
 async function rhUploadValueIfNeeded(value, node=null){
     const text = String(value || '').trim();
     if(!text) return '';
@@ -9031,16 +8788,8 @@ async function rhUploadValueIfNeeded(value, node=null){
 async function rhBuildNodeInfoList(node, media){
     const fields = rhActiveFields(node);
     const result = [];
-    const indexes = rhFieldIndexes(fields);
     for(const field of fields){
         const kind = rhFieldKind(field);
-        const key = rhParamKey(field.nodeId, field.fieldName);
-        if(rhCurrentKind(node) === 'workflow' && field.sourceFromUpstream === false && !['image','video','audio'].includes(kind)) continue;
-        if(rhCurrentKind(node) === 'workflow' && kind === 'image'){
-            const idx = indexes[key] || 0;
-            const hasInput = Boolean(media.image?.[idx]?.url);
-            if(field.required !== true && !hasInput) continue;
-        }
         let value = rhFieldValue(node, field, media);
         if(['image','video','audio'].includes(kind)) value = await rhUploadValueIfNeeded(value, node);
         if(['number','slider'].includes(kind) && String(value ?? '').trim() !== '' && !Number.isNaN(Number(value))) value = Number(value);
@@ -9054,18 +8803,15 @@ async function runRhNode(nodeId, opts={}){
     if(!node || (node.running && !opts.cascade)) return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     ensureRhNodeSelection(node);
-    const mode = rhCurrentKind(node);
     node.rhRandomValues = {};
-    if(mode === 'workflow' && !String(node.workflowId || '').trim()){ alert(tr('canvas.rhNeedWorkflowId')); return; }
-    if(mode === 'app' && !String(node.webappId || '').trim()){ alert(tr('canvas.rhNeedWebappId')); return; }
+    if(!String(node.webappId || '').trim()){ alert(tr('canvas.rhNeedWebappId')); return; }
     const selectedEntry = rhCurrentEntry(node);
     if(!selectedEntry){
-        alert(mode === 'workflow' ? '请先在 API 设置里添加 RunningHub 工作流' : '请先在 API 设置里添加 RunningHub 应用');
+        alert('请先在 API 设置里添加 RunningHub 应用');
         return;
     }
-    if(mode === 'workflow') await ensureRunningHubWorkflowConfigForNode(node);
     if(!rhActiveFields(node).length){
-        alert(mode === 'workflow' ? '请先在 API 设置里编辑并保存这个 RunningHub 工作流参数' : '请先在 API 设置里编辑并保存这个 RunningHub 应用参数');
+        alert('请先在 API 设置里编辑并保存这个 RunningHub 应用参数');
         return;
     }
     const media = rhMediaSources(node);
@@ -9078,12 +8824,8 @@ async function runRhNode(nodeId, opts={}){
     refreshRunNodes(node, out);
     try {
         const nodeInfoList = await rhBuildNodeInfoList(node, media);
-        const workflowExtras = mode === 'workflow' ? await rhBuildWorkflowRequestExtras(node, media, nodeInfoList) : {};
-        const endpoint = mode === 'workflow' ? '/api/runninghub/workflow-submit' : '/api/runninghub/submit';
-        const body = mode === 'workflow'
-            ? {workflowId:node.workflowId.trim(), nodeInfoList, useWallet:rhUseWallet(node), ...workflowExtras}
-            : {webappId:node.webappId.trim(), nodeInfoList, instanceType:node.instanceType || '', useWallet:rhUseWallet(node)};
-        const submit = await cascadeFetch(endpoint, {
+        const body = {webappId:node.webappId.trim(), nodeInfoList, instanceType:node.instanceType || '', useWallet:rhUseWallet(node)};
+        const submit = await cascadeFetch('/api/runninghub/submit', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(body)
@@ -9094,7 +8836,7 @@ async function runRhNode(nodeId, opts={}){
         });
         const taskId = submit.taskId;
         if(!taskId) throw new Error(tr('canvas.rhNoTaskId'));
-        run.request = {task_id:taskId, webappId:node.webappId, workflowId:node.workflowId, backend:'runninghub', mode};
+        run.request = {task_id:taskId, webappId:node.webappId, backend:'runninghub', mode:'app'};
         let result = null;
         for(let i = 0; i < 720; i++){
             if(cascadeTargetId) ensureCascadeActive(cascadeTargetId);

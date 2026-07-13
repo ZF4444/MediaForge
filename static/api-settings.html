@@ -217,12 +217,12 @@
                     <section id="runninghubConfigBlock" class="block runninghub-config-block" hidden>
                         <div class="block-head">
                             <div>
-                                <div class="block-title">应用与工作流</div>
+                                <div class="block-title">AI 应用</div>
                                 <div class="block-desc">粘贴运行路径后，点击右侧创建卡片。</div>
                             </div>
                         </div>
                         <div class="rh-paste-row">
-                            <input id="rhPasteInput" class="rh-paste-input" type="text" placeholder="/run/ai-app/... 或 /run/workflow/...">
+                            <input id="rhPasteInput" class="rh-paste-input" type="text" placeholder="/run/ai-app/...">
                             <button class="action-btn" type="button" onclick="createRhEntryFromPaste()"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>创建</span></button>
                         </div>
                         <div class="rh-card-columns">
@@ -232,13 +232,6 @@
                                     <div id="rhAppsCount" class="rh-group-count">0</div>
                                 </div>
                                 <div id="rhAppsList" class="rh-card-list"></div>
-                            </div>
-                            <div class="rh-card-group">
-                                <div class="rh-group-head">
-                                    <div class="rh-group-title">工作流</div>
-                                    <div id="rhWorkflowsCount" class="rh-group-count">0</div>
-                                </div>
-                                <div id="rhWorkflowsList" class="rh-card-list"></div>
                             </div>
                         </div>
                     </section>
@@ -407,11 +400,11 @@
         <div class="rh-workflow-editor-modal">
             <div class="rh-workflow-editor-head">
                 <div class="rh-workflow-editor-title-wrap">
-                    <div id="rhWorkflowEditorTitle" class="rh-workflow-editor-title">RunningHub 工作流</div>
+                    <div id="rhWorkflowEditorTitle" class="rh-workflow-editor-title">RunningHub AI 应用</div>
                     <div id="rhWorkflowEditorSub" class="rh-workflow-editor-sub">选择要暴露到画布的输入参数</div>
                 </div>
                 <div class="rh-workflow-editor-actions">
-                    <button class="action-btn" type="button" onclick="fetchRhWorkflowEditor(true)"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>重新拉取</span></button>
+                    <button class="action-btn" type="button" onclick="fetchRhAppEditor(true)"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>重新拉取</span></button>
                     <button id="rhWorkflowSaveBtn" class="action-btn save-btn" type="button" onclick="saveRhWorkflowEditor()"><i data-lucide="save" class="w-3.5 h-3.5"></i><span>保存</span></button>
                     <button class="rh-workflow-editor-close" type="button" onclick="closeRhWorkflowEditor()"><i data-lucide="x" class="w-4 h-4"></i></button>
                 </div>
@@ -430,15 +423,7 @@
                     <div id="rhWorkflowEditorNodeList" class="rh-editor-node-list"></div>
                 </aside>
                 <section class="rh-workflow-editor-canvas">
-                    <div id="rhWorkflowEditorGraphWrap" class="rh-editor-graph-wrap">
-                        <svg id="rhWorkflowEditorGraphSvg" class="rh-editor-graph-svg"></svg>
-                        <div class="rh-editor-graph-controls">
-                            <button type="button" onclick="rhEditorGraphZoom(-1)" title="缩小"><i data-lucide="zoom-out" class="w-4 h-4"></i></button>
-                            <span id="rhWorkflowEditorZoom">100%</span>
-                            <button type="button" onclick="rhEditorGraphZoom(1)" title="放大"><i data-lucide="zoom-in" class="w-4 h-4"></i></button>
-                            <button type="button" onclick="rhEditorGraphFit()" title="适应窗口"><i data-lucide="maximize" class="w-4 h-4"></i></button>
-                        </div>
-                    </div>
+                    <div id="rhWorkflowEditorGraphWrap" class="rh-editor-graph-wrap rh-app-field-wrap"></div>
                 </section>
             </div>
         </div>

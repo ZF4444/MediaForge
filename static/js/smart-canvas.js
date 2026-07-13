@@ -253,7 +253,6 @@ const UNDO_LIMIT = 40;
 const undoStack = [];
 let undoSuppressed = false;
 let pendingUndoSnapshot = null;
-let runningHubWorkflowCache = {};
 function activeSmartCascadeCount(){ return smartCascadeRuns.size; }
 function smartCascadeRunForLoop(loopId){ return loopId ? smartCascadeRuns.get(loopId) || null : null; }
 function smartCascadeIsLoopRunning(loopId){ return Boolean(smartCascadeRunForLoop(loopId)); }
@@ -1964,7 +1963,7 @@ function syncEngineOptionsVisibility(){
     }
 }
 // RunningHub 标准模型 API：目前只把 GPT-Image2（rhart-image-g-2-official）暴露给通用「AI 生成」模型下拉，
-// 不影响 rh_apps / rh_workflows 专属的应用/工作流引擎逻辑。
+// 不影响 rh_apps 专属的 AI 应用引擎逻辑。
 const RUNNINGHUB_STANDARD_IMAGE_MODELS = ['rhart-image-g-2-official'];
 function runningHubStandardImageModels(provider){
     const models = Array.isArray(provider?.image_models) ? provider.image_models : [];
@@ -2016,29 +2015,25 @@ function runningHubProvider(){
 }
 function runningHubEntries(kind){
     const provider = runningHubProvider();
-    const key = kind === 'workflow' ? 'rh_workflows' : 'rh_apps';
-    return Array.isArray(provider?.[key]) ? provider[key].filter(item => item?.enabled !== false && item?.hidden !== true) : [];
+    return Array.isArray(provider?.rh_apps) ? provider.rh_apps.filter(item => item?.enabled !== false && item?.hidden !== true) : [];
 }
 function runningHubEntryId(entry, kind){
-    return String(kind === 'workflow' ? (entry?.workflowId || entry?.id || '') : (entry?.appId || entry?.webappId || entry?.id || '')).trim();
+    return String(entry?.appId || entry?.webappId || entry?.id || '').trim();
 }
 function runningHubEntryLabel(entry, kind){
     const id = runningHubEntryId(entry, kind);
-    return entry?.title || entry?.name || (kind === 'workflow' ? `Workflow ${id}` : `AI App ${id}`);
+    return entry?.title || entry?.name || `AI App ${id}`;
 }
 function runningHubEntryKey(kind, id){
     return `${kind}:${String(id || '').trim()}`;
 }
 function parseRunningHubEntryKey(value){
     const text = String(value || '').trim();
-    const match = text.match(/^(app|workflow):(.+)$/);
-    return match ? {kind:match[1], id:match[2].trim()} : null;
+    const match = text.match(/^app:(.+)$/);
+    return match ? {kind:'app', id:match[1].trim()} : null;
 }
 function runningHubAllEntries(){
-    return [
-        ...runningHubEntries('app').map(entry => ({kind:'app', id:runningHubEntryId(entry, 'app'), entry})).filter(x => x.id),
-        ...runningHubEntries('workflow').map(entry => ({kind:'workflow', id:runningHubEntryId(entry, 'workflow'), entry})).filter(x => x.id)
-    ];
+    return runningHubEntries('app').map(entry => ({kind:'app', id:runningHubEntryId(entry, 'app'), entry})).filter(x => x.id);
 }
 function selectedRunningHubRef(sourceSettings=settings){
     const all = runningHubAllEntries();
@@ -2052,23 +2047,9 @@ function selectedRunningHubRef(sourceSettings=settings){
 function rhEntryFields(entry){
     return Array.isArray(entry?.fields) ? entry.fields : [];
 }
-function rhWorkflowJsonFromSources(...sources){
-    for(const source of sources){
-        if(source && typeof source === 'object' && Object.keys(source).length) return source;
-    }
-    return {};
-}
-function rhCurrentKind(sourceSettings=settings){
-    return selectedRunningHubRef(sourceSettings)?.kind || 'app';
-}
 function rhActiveFields(sourceSettings=settings){
     const ref = selectedRunningHubRef(sourceSettings);
     let fields = rhEntryFields(ref?.entry);
-    if(ref?.kind === 'workflow'){
-        const cached = runningHubWorkflowCache[ref.id];
-        if(fields.length) return sortRunningHubFields(fields.filter(f => f.enabled === true));
-        if(Array.isArray(cached?.fields)) fields = cached.fields;
-    }
     fields = fields.filter(f => f.enabled === true);
     return sortRunningHubFields(fields);
 }
@@ -2199,7 +2180,7 @@ function syncJimengVideoModelPillForRefs(){
     try { renderDynamicParams(); } finally { _jimengModelRefreshing = false; }
 }
 let _rhLastAttachedKindsKey = null;
-// 接入素材的类型（图片/视频/音频）变化时，重新渲染 RunningHub 应用/工作流选择列表，
+// 接入素材的类型（图片/视频/音频）变化时，重新渲染 RunningHub AI 应用选择列表，
 // 以便按新的素材类型过滤掉不支持的条目。
 function syncRhConfigForRefs(){
     if(settings.engine !== 'runninghub') { _rhLastAttachedKindsKey = null; return; }
@@ -2554,22 +2535,16 @@ function renderRunningHubParams(){
     `;
 }
 function rhEntryMediaFields(entry, kind){
-    let fields = rhEntryFields(entry);
-    if(kind === 'workflow' && !fields.length){
-        const id = runningHubEntryId(entry, 'workflow');
-        const cached = runningHubWorkflowCache[id];
-        if(Array.isArray(cached?.fields)) fields = cached.fields;
-    }
-    return fields.filter(f => f.enabled === true);
+    return rhEntryFields(entry).filter(f => f.enabled === true);
 }
-// 根据当前生成节点已接入的素材类型（图片/视频），过滤掉不支持该素材类型输入的 AI 应用/工作流。
+// 根据当前生成节点已接入的素材类型（图片/视频），过滤掉不支持该素材类型输入的 AI 应用。
 // 若素材类型信息不足（字段未加载）则不过滤，避免误隐藏。
 function rhEntrySupportsAttachedRefs(entry, kind, attachedKinds){
     if(!attachedKinds.size) return true;
     const fields = rhEntryMediaFields(entry, kind);
     if(!fields.length) return true; // 字段未知（可能未加载），不做过滤
     const supported = new Set(fields.map(f => rhFieldRole(f)).filter(role => ['image', 'video', 'audio'].includes(role)));
-    if(!supported.size) return true; // 该应用/工作流不接受任何媒体输入字段，保留（比如纯文本参数）
+    if(!supported.size) return true; // 该应用不接受任何媒体输入字段，保留（比如纯文本参数）
     for(const kindNeeded of attachedKinds){
         if(supported.has(kindNeeded)) return true;
     }
@@ -2587,14 +2562,13 @@ function rhAttachedRefKinds(){
 function renderRhConfigControl(ref){
     const attachedKinds = rhAttachedRefKinds();
     const apps = runningHubEntries('app').filter(entry => rhEntrySupportsAttachedRefs(entry, 'app', attachedKinds));
-    const workflows = runningHubEntries('workflow').filter(entry => rhEntrySupportsAttachedRefs(entry, 'workflow', attachedKinds));
     const selected = ref ? runningHubEntryKey(ref.kind, ref.id) : '';
     const groupHtml = (kind, entries, label) => entries.length ? `
         <div class="model-list-label rh-list-label">${escapeHtml(label)}<span class="count">${entries.length}</span></div>
         ${entries.map(entry => {
             const id = runningHubEntryId(entry, kind);
             const key = runningHubEntryKey(kind, id);
-            return `<button type="button" class="direct-option rh-entry-option ${key === selected ? 'active' : ''}" data-smart-param="rhConfigKey" data-smart-value="${escapeHtml(key)}"><i data-lucide="${kind === 'workflow' ? 'workflow' : 'sparkles'}"></i><span>${escapeHtml(runningHubEntryLabel(entry, kind))}</span></button>`;
+            return `<button type="button" class="direct-option rh-entry-option ${key === selected ? 'active' : ''}" data-smart-param="rhConfigKey" data-smart-value="${escapeHtml(key)}"><i data-lucide="sparkles"></i><span>${escapeHtml(runningHubEntryLabel(entry, kind))}</span></button>`;
         }).join('')}
     ` : '';
     return `<div class="smart-control rh-config-control">
@@ -2602,7 +2576,7 @@ function renderRhConfigControl(ref){
         <div class="smart-popover compact-popover rh-picker-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.rhConfig'))}</div>
             <div class="model-list rh-config-list">
-                ${groupHtml('app', apps, 'AI 应用')}${groupHtml('workflow', workflows, '工作流') || ''}
+                ${groupHtml('app', apps, 'AI 应用')}
             </div>
         </div>
     </div>`;
@@ -3082,9 +3056,6 @@ function rhDefaultValue(field){
     if(value === undefined || value === null || typeof value === 'object') return '';
     return String(value);
 }
-function rhIsWorkflowLinkValue(value){
-    return Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && Number.isInteger(value[1]);
-}
 function rhRandomEnabled(field){
     return rhFieldKind(field) === 'number' && field?.random_enabled === true;
 }
@@ -3124,7 +3095,6 @@ function rhParamValue(field, media=null, sourceSettings=settings, fields=null, r
     if(['image','video','audio'].includes(kind)){
         const idx = rhFieldIndexes(fields || rhActiveFields(sourceSettings))[key] || 0;
         const up = media?.[kind]?.[idx]?.url || '';
-        if(rhCurrentKind(sourceSettings) === 'workflow' && kind === 'image' && field.required !== true && !up) return '';
         return up || param?.value || rhDefaultValue(field);
     }
     if(rhRandomEnabled(field) && smartRhRandomActiveFor(sourceSettings, key)){
@@ -3183,32 +3153,6 @@ function rhFieldIndexes(fields){
         }
     });
     return map;
-}
-async function ensureRunningHubWorkflow(workflowId){
-    workflowId = String(workflowId || '').trim();
-    if(!workflowId) return null;
-    if(runningHubWorkflowCache[workflowId]) return runningHubWorkflowCache[workflowId];
-    const res = await fetch(`/api/runninghub/workflows/${encodeURIComponent(workflowId)}`);
-    if(!res.ok){
-        delete runningHubWorkflowCache[workflowId];
-        return null;
-    }
-    const data = await res.json();
-    runningHubWorkflowCache[workflowId] = data.workflow || null;
-    return runningHubWorkflowCache[workflowId];
-}
-async function currentRunningHubWorkflowConfig(sourceSettings=settings){
-    const ref = selectedRunningHubRef(sourceSettings);
-    if(ref?.kind !== 'workflow') return null;
-    const cached = await ensureRunningHubWorkflow(ref.id).catch(() => null);
-    return {
-        ...(ref.entry || {}),
-        ...(cached || {}),
-        workflowId:ref.id,
-        fields:Array.isArray(cached?.fields) && cached.fields.length ? cached.fields : rhEntryFields(ref.entry),
-        optionalImageMode:ref.entry?.optionalImageMode || cached?.optionalImageMode || 'prune-workflow',
-        workflowJson:rhWorkflowJsonFromSources(cached?.workflowJson, ref.entry?.workflowJson, ref.entry?.raw?.workflowJson, ref.entry?.raw?.prompt)
-    };
 }
 function rhMediaForRun(prompt, refs){
     const cleanRefs = (refs || []).filter(ref => ref?.url);
@@ -3386,54 +3330,6 @@ async function uploadCurrentSmartVideosToCloud(){
         if(btn) btn.disabled = false;
     }
 }
-function rhRequiredLabel(field){
-    return field?.label || field?.fieldName || `#${field?.nodeId || ''}`;
-}
-function rhPruneWorkflowForMissingFields(workflowJson, missingFields){
-    if(!workflowJson || typeof workflowJson !== 'object' || !missingFields?.length) return null;
-    const workflow = JSON.parse(JSON.stringify(workflowJson));
-    const removeIds = new Set();
-    missingFields.forEach(field => {
-        const node = workflow[String(field.nodeId)];
-        if(node?.inputs && Object.prototype.hasOwnProperty.call(node.inputs, field.fieldName)){
-            delete node.inputs[field.fieldName];
-        }
-        if(node && (!node.inputs || !Object.keys(node.inputs).length)){
-            removeIds.add(String(field.nodeId));
-        }
-    });
-    removeIds.forEach(id => delete workflow[id]);
-    Object.values(workflow).forEach(node => {
-        if(!node?.inputs || typeof node.inputs !== 'object') return;
-        Object.entries(node.inputs).forEach(([name, value]) => {
-            if(rhIsWorkflowLinkValue(value) && removeIds.has(String(value[0]))) delete node.inputs[name];
-        });
-    });
-    return workflow;
-}
-async function rhBuildWorkflowRequestExtras(media, nodeInfoList, sourceSettings=settings){
-    const config = await currentRunningHubWorkflowConfig(sourceSettings);
-    if(!config || (config.optionalImageMode || 'prune-workflow') !== 'prune-workflow') return {};
-    const fields = rhActiveFields(sourceSettings);
-    const indexes = rhFieldIndexes(fields);
-    const missingOptional = [];
-    for(const field of fields){
-        if(rhFieldKind(field) !== 'image') continue;
-        const key = rhParamKey(field.nodeId, field.fieldName);
-        const idx = indexes[key] || 0;
-        const hasInput = Boolean(media.image?.[idx]?.url);
-        if(field.required === true && !hasInput) throw new Error(`工作流缺少必选图片：${rhRequiredLabel(field)}`);
-        if(field.required !== true && !hasInput) missingOptional.push(field);
-    }
-    if(!missingOptional.length) return {};
-    missingOptional.forEach(field => {
-        const key = rhParamKey(field.nodeId, field.fieldName);
-        const idx = nodeInfoList.findIndex(item => rhParamKey(item.nodeId, item.fieldName) === key);
-        if(idx >= 0) nodeInfoList.splice(idx, 1);
-    });
-    const workflow = rhPruneWorkflowForMissingFields(config.workflowJson || {}, missingOptional);
-    return workflow ? {workflow} : {};
-}
 async function rhUploadValueIfNeeded(value, sourceSettings=settings){
     const text = String(value || '').trim();
     if(!text) return '';
@@ -3453,16 +3349,8 @@ async function rhUploadValueIfNeeded(value, sourceSettings=settings){
 async function rhBuildNodeInfoList(media, sourceSettings=settings, randomValues=smartRhRandomValues){
     const fields = rhActiveFields(sourceSettings);
     const result = [];
-    const indexes = rhFieldIndexes(fields);
-    const mode = rhCurrentKind(sourceSettings);
     for(const field of fields){
         const kind = rhFieldKind(field);
-        const key = rhParamKey(field.nodeId, field.fieldName);
-        if(mode === 'workflow' && field.sourceFromUpstream === false && !['image','video','audio'].includes(kind)) continue;
-        if(mode === 'workflow' && kind === 'image'){
-            const idx = indexes[key] || 0;
-            if(field.required !== true && !media.image?.[idx]?.url) continue;
-        }
         let value = rhParamValue(field, media, sourceSettings, fields, randomValues);
         if(rhFieldRole(field) === 'prompt' && !String(value || '').trim()) value = rhDefaultValue(field);
         if(['image','video','audio'].includes(kind)) value = await rhUploadValueIfNeeded(value, sourceSettings);
@@ -3787,22 +3675,14 @@ async function loadConfig(){
         comfyInstanceCount = Math.max(1, (Array.isArray(cfg.comfy_instances) ? cfg.comfy_instances : []).filter(Boolean).length || 1);
         // 根据 provider 启用状态隐藏引擎选项
         syncEngineOptionsVisibility();
-        // 提供商配置已就绪即先渲染参数面板，避免等工作流预取完成后参数才「突然刷新出来」。
+        // 提供商配置就绪后立即刷新参数面板。
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
         const wf = await fetch('/api/workflows').then(r => r.json()).catch(() => ({workflows:[]}));
         comfyWorkflows = Array.isArray(wf.workflows) ? wf.workflows : [];
-        runningHubWorkflowCache = {};
-        const rhProvider = apiProviders.find(p => p.id === 'runninghub');
-        const rhWorkflowIds = (rhProvider?.rh_workflows || []).map(item => String(item.workflowId || item.id || '').trim()).filter(Boolean);
         lastConfigRefreshAt = Date.now();
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
-        Promise.allSettled(rhWorkflowIds.map(async workflowId => {
-            try { await ensureRunningHubWorkflow(workflowId); } catch(_) {}
-        })).then(() => {
-            if(selectedNode()?.type === 'smart-prompt') renderDynamicParams();
-        });
     } catch(e) {
         toast(tr('smart.toastApiSettingsFail'));
     }
@@ -13255,15 +13135,10 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const fields = rhActiveFields(runSettings);
     if(!fields.length) throw new Error(tr('smart.rhNeedFields'));
     const randomValues = {};
-    const mode = ref.kind;
     const media = rhMediaForRun(prompt, refs);
     const nodeInfoList = await rhBuildNodeInfoList(media, runSettings, randomValues);
-    const workflowExtras = mode === 'workflow' ? await rhBuildWorkflowRequestExtras(media, nodeInfoList, runSettings) : {};
-    const endpoint = mode === 'workflow' ? '/api/runninghub/workflow-submit' : '/api/runninghub/submit';
-    const body = mode === 'workflow'
-        ? {workflowId:ref.id, nodeInfoList, ...workflowExtras}
-        : {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || ''};
-    const submit = await fetch(endpoint, {
+    const body = {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || ''};
+    const submit = await fetch('/api/runninghub/submit', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(body)
@@ -13279,7 +13154,7 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
         taskId,
         providerId:'runninghub',
         model:ref.id,
-        mode
+        mode:'app'
     };
 }
 async function pollRunningHubTask(taskId){
