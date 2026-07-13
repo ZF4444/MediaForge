@@ -4,13 +4,11 @@ import zlib
 
 from app.core.media import output_file_from_url
 from app.services.pose_studio import (
-    GENERATED_MODEL_DIR,
     FBX_BINARY_HEADER,
     VNCCS_GAME_ENGINE_BONE_NAMES,
     SAM3D_VISIBLE_MARKER_JOINTS,
     VNCCS_TARGET_MODEL_HEIGHT,
     _annotate_sam3d_bone_semantics,
-    generated_model_preview,
     register_uploaded_fbx_model,
 )
 
@@ -183,7 +181,6 @@ def test_pose_studio_upload_binary_fbx_registers_model():
     try:
         uploaded = register_uploaded_fbx_model(_binary_fbx_fixture(), "binary.fbx")
         paths.append(output_file_from_url(uploaded["fbx_url"]))
-        paths.append(os.path.join(GENERATED_MODEL_DIR, f"{uploaded['model_id']}.json"))
 
         assert uploaded["success"] is True
         assert uploaded["filename"].endswith(".fbx")
@@ -191,7 +188,7 @@ def test_pose_studio_upload_binary_fbx_registers_model():
         assert uploaded["triangles"] == 1
         assert uploaded["bones"] == 2
 
-        model = generated_model_preview(uploaded["model_id"])
+        model = uploaded["model_data"]
         assert model["source"] == "pose-studio-uploaded-fbx"
         assert model["import_transform"]["normalized"] is True
         assert round(model["import_transform"]["normalized_bounds"]["size"][1], 2) == round(VNCCS_TARGET_MODEL_HEIGHT, 2)
@@ -214,8 +211,7 @@ def test_pose_studio_upload_binary_fbx_applies_shared_parent_transform_before_no
             "offset.fbx",
         )
         paths.append(output_file_from_url(uploaded["fbx_url"]))
-        paths.append(os.path.join(GENERATED_MODEL_DIR, f"{uploaded['model_id']}.json"))
-        model = generated_model_preview(uploaded["model_id"])
+        model = uploaded["model_data"]
 
         ys = model["vertices"][1::3]
         root = next(b for b in model["bones"] if b["name"] == "Root")["headPos"]
@@ -235,8 +231,7 @@ def test_pose_studio_upload_binary_fbx_prefers_bind_pose_matrices_for_joints():
     try:
         uploaded = register_uploaded_fbx_model(_binary_fbx_fixture(bind_pose_child_y=4.0), "bindpose.fbx")
         paths.append(output_file_from_url(uploaded["fbx_url"]))
-        paths.append(os.path.join(GENERATED_MODEL_DIR, f"{uploaded['model_id']}.json"))
-        model = generated_model_preview(uploaded["model_id"])
+        model = uploaded["model_data"]
 
         assert model["rig_source"] == "bind_pose"
         root = next(b for b in model["bones"] if b["name"] == "Root")
@@ -257,9 +252,8 @@ def test_pose_studio_upload_binary_fbx_adds_sam3d_semantic_names():
             "sam3d.fbx",
         )
         paths.append(output_file_from_url(uploaded["fbx_url"]))
-        paths.append(os.path.join(GENERATED_MODEL_DIR, f"{uploaded['model_id']}.json"))
 
-        model = generated_model_preview(uploaded["model_id"])
+        model = uploaded["model_data"]
         by_name = {bone["name"]: bone for bone in model["bones"]}
         assert by_name["Joint_001"]["semanticName"] == "Root"
         assert by_name["Joint_113"]["semanticName"] == "head"

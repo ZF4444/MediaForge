@@ -483,8 +483,7 @@
         const outputPreviewImg = document.getElementById('outputPreviewImg');
         const outputPreviewEmpty = document.getElementById('outputPreviewEmpty');
         let uploadedFile = null;
-        let modelUrl = '';
-        let generatedModelId = '';
+        let hasClientModel = false;
         let inputMode = 'image';
         let currentPoseBlobUrls = [];
         let inputImageRef = null;
@@ -562,7 +561,7 @@
         function setLeaveGuard(active){
             try { window.parent.postMessage({ type:'page-guard', page:'pose-studio', active:!!active }, '*'); } catch(e) {}
         }
-        function refreshLeaveGuard(){ setLeaveGuard(!!(uploadedFile || modelUrl)); }
+        function refreshLeaveGuard(){ setLeaveGuard(!!(uploadedFile || hasClientModel)); }
 
         function uniqueModels(list){
             const seen = new Set();
@@ -722,8 +721,7 @@
         }
 
         async function applyRigResult(data, loadedMessage){
-            modelUrl = data.model_url || '';
-            generatedModelId = data.model_id || '';
+            hasClientModel = !!data.model_data;
             refreshLeaveGuard();
             document.getElementById('modelMeshInfo').textContent = `${data.vertices} verts / ${data.bones} bones`;
             document.getElementById('modelOutputInfo').textContent = loadedMessage || 'FBX Loaded';
@@ -739,8 +737,8 @@
             }
             document.getElementById('focusEditorBtn').classList.remove('hidden');
             const api = poseFrame.contentWindow?.__VNCCS_STANDALONE__;
-            if(api?.loadGeneratedModel && generatedModelId) {
-                await api.loadGeneratedModel(generatedModelId);
+            if(api?.loadGeneratedModelData && data.model_data) {
+                await api.loadGeneratedModelData(data.model_data);
             }
         }
 
@@ -750,8 +748,7 @@
             if(!fbx && !/^image\//.test(file.type)) return;
             uploadedFile = file;
             inputMode = fbx ? 'fbx' : 'image';
-            modelUrl = '';
-            generatedModelId = '';
+            hasClientModel = false;
             inputImageRef = null;
             inputReferenceUploadPromise = null;
             inputUploadToken++;
@@ -949,7 +946,7 @@
         window.addEventListener('message', event => {
             const m = event.data || {};
             if(m.type === 'page-leave-check' && m.from === 'pose-studio') {
-                const hadContent = !!(uploadedFile || modelUrl);
+                const hadContent = !!(uploadedFile || hasClientModel);
                 if(hadContent && !confirm('确定离开「姿势编辑」页面吗？\n当前上传图与 FBX 结果将被清空。')) return;
                 resetPage();
                 window.parent.postMessage({ type:'page-leave-allow', from:'pose-studio', target:m.target }, '*');
@@ -960,8 +957,7 @@
 
         function resetPage(){
             uploadedFile = null;
-            modelUrl = '';
-            generatedModelId = '';
+            hasClientModel = false;
             inputMode = 'image';
             inputImageRef = null;
             inputReferenceUploadPromise = null;

@@ -73,10 +73,10 @@
             widget.syncToNode(fullCapture);
             return this.getPoseData();
         },
-        loadGeneratedModel(modelId){
+        loadGeneratedModelData(modelData){
             const widget = window.__VNCCS_STANDALONE_NODE__?.studioWidget;
-            if(!widget?.loadGeneratedModel) return Promise.reject(new Error('姿势编辑器尚未加载完成'));
-            return Promise.resolve(widget.loadGeneratedModel(modelId));
+            if(!widget?.loadGeneratedModelData) return Promise.reject(new Error('姿势编辑器尚未加载完成'));
+            return Promise.resolve(widget.loadGeneratedModelData(modelData));
         },
         capture(){
             const widget = window.__VNCCS_STANDALONE_NODE__?.studioWidget;

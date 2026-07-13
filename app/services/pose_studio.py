@@ -1,5 +1,4 @@
 import hashlib
-import json
 import os
 import re
 import struct
@@ -9,12 +8,9 @@ from typing import Any, Dict, List, Tuple
 
 from fastapi import HTTPException
 
-from app.config import DATA_DIR
 from app.core.media import sanitize_export_filename
 
 
-POSE_STUDIO_DIR = os.path.join(DATA_DIR, "pose_studio")
-GENERATED_MODEL_DIR = os.path.join(POSE_STUDIO_DIR, "GeneratedModels")
 FBX_BINARY_HEADER = b"Kaydara FBX Binary  \x00\x1a\x00"
 VNCCS_TARGET_MODEL_HEIGHT = 17.35
 SAM3D_CANONICAL_JOINT_NAMES = {
@@ -111,16 +107,6 @@ VNCCS_GAME_ENGINE_BONE_NAMES = {
     "thumb_03_l", "thumb_03_r",
     "upperarm_l", "upperarm_r",
 }
-
-
-def _ensure_generated_model_dir() -> str:
-    os.makedirs(GENERATED_MODEL_DIR, exist_ok=True)
-    return GENERATED_MODEL_DIR
-
-
-def _safe_model_id(value: Any) -> str:
-    text = str(value or "").strip()
-    return text if len(text) <= 80 and all(c.isalnum() or c in "-_" for c in text) else ""
 
 
 def _fbx_name(value: str) -> str:
@@ -573,25 +559,6 @@ def _parse_binary_fbx_model(content: bytes) -> Dict[str, Any]:
     }
 
 
-def _generated_model_path(model_id: str) -> str:
-    safe_id = _safe_model_id(model_id)
-    if not safe_id:
-        raise HTTPException(status_code=400, detail="无效模型 ID")
-    root = os.path.abspath(_ensure_generated_model_dir())
-    path = os.path.abspath(os.path.join(root, f"{safe_id}.json"))
-    if os.path.commonpath([root, path]) != root:
-        raise HTTPException(status_code=400, detail="无效模型 ID")
-    return path
-
-
-def generated_model_preview(model_id: str) -> Dict[str, Any]:
-    path = _generated_model_path(model_id)
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="模型不存在")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def _weights_from_nearest_bone(vertices: List[float], bones: List[Dict[str, Any]]) -> Dict[str, Dict[str, List[float]]]:
     weights = {bone["name"]: {"indices": [], "weights": []} for bone in bones if bone.get("name")}
     if not vertices or not bones:
@@ -915,24 +882,19 @@ def register_uploaded_fbx_model(content: bytes, filename_hint: str = "uploaded-m
         raise HTTPException(status_code=400, detail="FBX 文件为空")
     model = _normalize_uploaded_model(_parse_ascii_fbx_model(content))
     model_id = hashlib.sha1(content + uuid.uuid4().bytes).hexdigest()[:16]
-    generated_dir = _ensure_generated_model_dir()
-
     model_data = {
         "status": "success",
         "source": "pose-studio-uploaded-fbx",
         "model_id": model_id,
         **model,
     }
-    with open(os.path.join(generated_dir, f"{model_id}.json"), "w", encoding="utf-8") as f:
-        json.dump(model_data, f, ensure_ascii=False)
-
     stem = sanitize_export_filename(os.path.splitext(filename_hint or "uploaded-model")[0], "uploaded-model")
     fbx_name = f"{stem}_{model_id}.fbx"
 
     return {
         "success": True,
         "model_id": model_id,
-        "model_url": f"/vnccs/character_studio/generated_model/{model_id}",
+        "model_data": model_data,
         "fbx_url": "",
         "url": "",
         "file_id": "",

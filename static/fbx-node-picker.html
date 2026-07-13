@@ -324,9 +324,8 @@
             let data;
             try { data = JSON.parse(text); } catch { data = null; }
             if (!response.ok) throw new Error(data?.detail || text || `HTTP ${response.status}`);
-            const modelResponse = await fetch(data.model_url, { cache:'no-store' });
-            if (!modelResponse.ok) throw new Error(`模型 JSON 读取失败：${modelResponse.status}`);
-            const model = await modelResponse.json();
+            const model = data.model_data;
+            if (!model || typeof model !== 'object') throw new Error('模型数据加载失败');
             model.filename = data.filename;
             loadModel(model);
             toast('FBX 已加载');

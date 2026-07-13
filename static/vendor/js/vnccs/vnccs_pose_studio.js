@@ -3980,31 +3980,11 @@ class PoseStudioWidget {
     loadModel(showOverlay = true) {
         if (showOverlay && this.loadingOverlay) this.loadingOverlay.style.display = "flex";
 
-        const modelId = String(this.exportParams.model_id || "").trim();
-        if (!modelId) {
+        if (!this.clientModelData) {
             if (this.loadingOverlay) this.loadingOverlay.style.display = "none";
             return Promise.resolve(null);
         }
-
-        return api.fetchApi("/vnccs/character_studio/update_preview", {
-            method: "POST",
-            body: JSON.stringify({ model_id: modelId })
-        }).then(async r => {
-            const text = await r.text();
-            let data = {};
-            if (text) {
-                try {
-                    data = JSON.parse(text);
-                } catch (e) {
-                    data = { detail: text };
-                }
-            }
-            if (!r.ok) {
-                const detail = data?.detail || data?.message || r.statusText || "请求失败";
-                throw new Error(`VNCCS 模型加载失败 (${r.status}): ${detail}`);
-            }
-            return data;
-        }).then(d => {
+        return Promise.resolve(this.clientModelData).then(d => {
             if (this.viewer) {
                 // Keep camera during updates
                 this.viewer.loadData(d, true);
@@ -4477,14 +4457,35 @@ class PoseStudioWidget {
         return null;
     }
 
-    loadGeneratedModel(modelId) {
-        const cleanId = String(modelId || "").trim();
-        if (!cleanId) return Promise.resolve(null);
-        this.exportParams.model_id = cleanId;
+    loadGeneratedModelData(modelData) {
+        if (!modelData || typeof modelData !== 'object') return Promise.reject(new Error('模型数据无效'));
+        this.exportParams.model_id = String(modelData.model_id || `client-${Date.now()}`);
+        this.clientModelData = modelData;
         this.poses = [{}];
         this.activeTab = 0;
         this.poseCaptures = [];
-        return this.loadModel(true);
+        if (this.loadingOverlay) this.loadingOverlay.style.display = "flex";
+        try {
+            if (this.viewer) {
+                this.viewer.loadData(modelData, true);
+                this.viewer.updateLights(this.lightParams);
+                this.viewer.snapToCaptureCamera(
+                    this.exportParams.view_width,
+                    this.exportParams.view_height,
+                    this.exportParams.cam_zoom || DEFAULT_CAMERA_ZOOM,
+                    this.exportParams.cam_offset_x || 0,
+                    this.exportParams.cam_offset_y || 0
+                );
+                if (this.viewer.initialized) {
+                    this.viewer.setPose(this.poses[this.activeTab] || {}, true);
+                    this.updateRotationSliders();
+                    this.syncToNode(true);
+                }
+            }
+            return Promise.resolve(modelData);
+        } finally {
+            if (this.loadingOverlay) this.loadingOverlay.style.display = "none";
+        }
     }
 
 

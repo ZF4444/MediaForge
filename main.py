@@ -1692,7 +1692,6 @@ from app.routers.conversations import (
 # helpers 与路由已迁移至 app/routers/canvases.py（原样迁移）。
 # 此处导入以保持原模块级名称可用（如有 main 内残留引用）。
 from app.routers.canvases import (
-    canvas_path,
     save_canvas,
     normalize_canvas_kind,
     new_canvas,
@@ -5372,7 +5371,6 @@ async def upload_image(files: List[UploadFile] = File(...)):
 # 已迁移至 app/routers/local_assets.py。
 
 from app.services.pose_studio import (
-    generated_model_preview,
     register_uploaded_fbx_model,
 )
 
@@ -5494,31 +5492,6 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
 async def pose_studio_upload_fbx(file: UploadFile = File(...)):
     content = await file.read()
     return register_uploaded_fbx_model(content, file.filename or "uploaded-model")
-
-async def _pose_studio_vnccs_route(path: str, request: Request):
-    if path.startswith("/vnccs/character_studio/generated_model/") and request.method == "GET":
-        return generated_model_preview(path.rsplit("/", 1)[-1])
-
-    if path == "/vnccs/character_studio/update_preview" and request.method == "POST":
-        payload = await request.json()
-        model_id = str(payload.get("model_id") or "").strip() if isinstance(payload, dict) else ""
-        if model_id:
-            return generated_model_preview(model_id)
-        raise HTTPException(status_code=400, detail="Pose Studio 仅支持导入 FBX 模型")
-
-    raise HTTPException(status_code=404, detail="VNCCS route not found")
-
-@app.get("/vnccs/{vnccs_path:path}")
-async def vnccs_local_get(vnccs_path: str, request: Request):
-    return await _pose_studio_vnccs_route(f"/vnccs/{vnccs_path}", request)
-
-@app.post("/vnccs/{vnccs_path:path}")
-async def vnccs_local_post(vnccs_path: str, request: Request):
-    return await _pose_studio_vnccs_route(f"/vnccs/{vnccs_path}", request)
-
-@app.delete("/vnccs/{vnccs_path:path}")
-async def vnccs_local_delete(vnccs_path: str, request: Request):
-    return await _pose_studio_vnccs_route(f"/vnccs/{vnccs_path}", request)
 
 @app.post("/api/temp-sh/upload")
 async def temp_sh_upload(payload: TempShUploadRequest, request: Request):
