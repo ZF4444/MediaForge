@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from app.config import BASE_DIR
 from app.services.business_metadata import get_app_setting, set_app_setting
 from app.core.media import content_type_for_path
+from app.core.logging import audit_event
 from app.core.shared import sanitize_asset_name
 from app.core.utils import now_ms
 from app.models import SharedFolderImport, SharedFolderRegister
@@ -183,6 +184,7 @@ async def register_shared_folder(payload: SharedFolderRegister):
             if os.path.normpath(shared_folder_abs(entry)) == os.path.normpath(abs_path):
                 entry["name"] = name
                 shared_folders_save(data)
+                audit_event("shared_folder_updated", action="update", resource_type="shared_folder", resource_id=entry.get("id"), after={"name": name, "rel": rel})
                 return {"folder": {**entry, "path": abs_path, "exists": True}}
         entry = {
             "id": f"shared_{uuid.uuid4().hex[:12]}",
@@ -192,6 +194,7 @@ async def register_shared_folder(payload: SharedFolderRegister):
         }
         data.setdefault("folders", []).append(entry)
         shared_folders_save(data)
+    audit_event("shared_folder_registered", action="register", resource_type="shared_folder", resource_id=entry["id"], after={"name": name, "rel": rel})
     return {"folder": {**entry, "path": abs_path, "exists": True}}
 
 
@@ -204,6 +207,7 @@ async def unregister_shared_folder(folder_id: str):
         if len(data["folders"]) == before:
             raise HTTPException(status_code=404, detail="共享文件夹不存在")
         shared_folders_save(data)
+    audit_event("shared_folder_unregistered", action="delete", resource_type="shared_folder", resource_id=folder_id)
     return {"ok": True}
 
 
@@ -258,4 +262,13 @@ async def import_shared_folder_files(payload: SharedFolderImport):
         cat.setdefault("items", []).append(item)
         added.append(item)
     save_asset_library(lib)
+    audit_event(
+        "shared_files_imported",
+        action="import",
+        resource_type="shared_folder",
+        resource_id=payload.folder_id,
+        imported_count=len(added),
+        target_library_id=payload.library_id,
+        target_category_id=payload.category_id,
+    )
     return {"library": lib, "items": added}

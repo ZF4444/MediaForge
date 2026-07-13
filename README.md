@@ -1,6 +1,22 @@
 # Infinite-Canvas
 Supports comfyui/API calls/modelscope calls
 
+## 日志
+
+服务默认在项目根目录的 `logs/` 写入 JSON 行日志：`app.log`、`access.log`、
+`audit.log`、`task.log` 和 `error.log`。日志按天轮转并压缩；默认分别保留
+15、15、180、30 和 30 天。HTTP 响应包含 `X-Request-ID`，可用它关联访问、
+应用、审计和任务日志。
+
+可通过环境变量调整：
+
+- `LOG_DIR`：日志目录，默认 `./logs`
+- `LOG_LEVEL`：应用日志级别，默认 `INFO`
+- `LOG_STDOUT`：是否同时向标准输出写应用日志，默认 `true`
+- `LOG_TRUST_PROXY_HEADERS`：是否信任 `X-Forwarded-For`，默认 `false`
+- `LOG_APP_RETENTION_DAYS` / `LOG_ACCESS_RETENTION_DAYS`
+- `LOG_AUDIT_RETENTION_DAYS` / `LOG_TASK_RETENTION_DAYS` / `LOG_ERROR_RETENTION_DAYS`
+
 详细教程：[https://youtu.be/1y9ShTvgC_w](https://youtu.be/r_y_9ALr7fg)
 
 由于最近很多API网址关停，我找到一个稳定的网址：

@@ -15,6 +15,10 @@ from app.config import (
     OUTPUT_INPUT_DIR,
     OUTPUT_OUTPUT_DIR,
 )
+from app.core.logging import get_logger
+
+
+logger = get_logger("media")
 
 
 def output_storage(category="output"):
@@ -377,8 +381,11 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
             with open(path, "wb") as f:
                 f.write(response.content)
             return _register_output_file(path, filename, category, kind="image")
-    except Exception as e:
-        print(f"保存上游图片失败: {e}")
+    except Exception:
+        logger.exception(
+            "failed to persist remote image",
+            extra={"event": "remote_image_save_failed", "provider": "remote", "operation": "download"},
+        )
         return value
 
 
@@ -418,6 +425,9 @@ async def save_remote_video_to_output(url, prefix="video_", category="output"):
             with open(path, "wb") as f:
                 f.write(response.content)
             return _register_output_file(path, filename, category, kind="video")
-    except Exception as e:
-        print(f"保存上游视频失败: {e}")
+    except Exception:
+        logger.exception(
+            "failed to persist remote video",
+            extra={"event": "remote_video_save_failed", "provider": "remote", "operation": "download"},
+        )
         return url

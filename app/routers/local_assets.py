@@ -35,6 +35,7 @@ from app.core.media import (
     output_file_from_url,
     sanitize_export_filename,
 )
+from app.core.logging import audit_event
 from app.models import LocalImageImportRequest
 from app.services.storage import (
     list_media_entries,
@@ -291,6 +292,14 @@ async def delete_local_assets(payload: dict, request: Request):
                 continue
         if removed:
             deleted.append(name)
+    audit_event(
+        "local_assets_deleted",
+        action="delete",
+        resource_type="local_asset",
+        requested_count=len(names),
+        removed_count=len(deleted),
+        resource_ids=deleted,
+    )
     return {"deleted": deleted}
 
 

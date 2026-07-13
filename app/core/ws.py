@@ -9,6 +9,10 @@ from typing import Dict, List
 from fastapi import WebSocket
 
 from app.core.utils import now_ms
+from app.core.logging import get_logger
+
+
+logger = get_logger("websocket")
 
 
 class ConnectionManager:
@@ -23,7 +27,10 @@ class ConnectionManager:
         self.connection_clients[websocket] = client_id or f"anon-{id(websocket)}"
         if client_id:
             self.user_connections[client_id] = websocket
-        print(f"WS Connected. Total: {len(self.active_connections)}, Online: {self.online_count()}")
+        logger.info(
+            "websocket connected",
+            extra={"event": "websocket_connected", "connection_count": len(self.active_connections), "online_count": self.online_count()},
+        )
         await self.broadcast_count()
 
     async def disconnect(self, websocket: WebSocket, client_id: str = None):
@@ -32,7 +39,10 @@ class ConnectionManager:
         self.connection_clients.pop(websocket, None)
         if client_id and self.user_connections.get(client_id) is websocket:
             del self.user_connections[client_id]
-        print(f"WS Disconnected. Total: {len(self.active_connections)}, Online: {self.online_count()}")
+        logger.info(
+            "websocket disconnected",
+            extra={"event": "websocket_disconnected", "connection_count": len(self.active_connections), "online_count": self.online_count()},
+        )
         await self.broadcast_count()
 
     def online_count(self):
@@ -48,8 +58,8 @@ class ConnectionManager:
         for connection in self.active_connections[:]:
             try:
                 await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast error: {e}")
+            except Exception:
+                logger.exception("websocket count broadcast failed", extra={"event": "websocket_broadcast_failed", "broadcast_type": "stats"})
                 try:
                     self.active_connections.remove(connection)
                 except ValueError:
@@ -60,8 +70,8 @@ class ConnectionManager:
         for connection in self.active_connections[:]:
             try:
                 await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast image error: {e}")
+            except Exception:
+                logger.exception("websocket image broadcast failed", extra={"event": "websocket_broadcast_failed", "broadcast_type": "new_image"})
                 try:
                     self.active_connections.remove(connection)
                 except ValueError:
@@ -77,8 +87,8 @@ class ConnectionManager:
         for connection in self.active_connections[:]:
             try:
                 await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast canvas error: {e}")
+            except Exception:
+                logger.exception("websocket canvas broadcast failed", extra={"event": "websocket_broadcast_failed", "broadcast_type": "canvas_updated"})
                 try:
                     self.active_connections.remove(connection)
                 except ValueError:
@@ -92,8 +102,8 @@ class ConnectionManager:
         for connection in self.active_connections[:]:
             try:
                 await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast asset library error: {e}")
+            except Exception:
+                logger.exception("websocket asset broadcast failed", extra={"event": "websocket_broadcast_failed", "broadcast_type": "asset_library_updated"})
                 try:
                     self.active_connections.remove(connection)
                 except ValueError:
@@ -104,8 +114,8 @@ class ConnectionManager:
         for connection in self.active_connections[:]:
             try:
                 await connection.send_text(data)
-            except Exception as e:
-                print(f"Broadcast announcement error: {e}")
+            except Exception:
+                logger.exception("websocket announcement broadcast failed", extra={"event": "websocket_broadcast_failed", "broadcast_type": "announcement"})
                 try:
                     self.active_connections.remove(connection)
                 except ValueError:
@@ -116,8 +126,8 @@ class ConnectionManager:
         if ws:
             try:
                 await ws.send_text(json.dumps(message))
-            except Exception as e:
-                print(f"Personal message error for {client_id}: {e}")
+            except Exception:
+                logger.exception("websocket personal message failed", extra={"event": "websocket_personal_message_failed", "client_id": client_id})
 
 
 manager = ConnectionManager()
