@@ -4774,7 +4774,7 @@ async def generate_runninghub_app_image(prompt, reference_images, provider, entr
         deadline = time.monotonic() + 1800
         last_payload = None
         while time.monotonic() < deadline:
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(5)
             query_response = await client.post(query_url, headers=runninghub_app_headers(True), json={"apiKey": api_key, "taskId": task_id})
             query_raw = query_response.json()
             last_payload = query_raw

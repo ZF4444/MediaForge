@@ -13162,8 +13162,8 @@ async function pollRunningHubTask(taskId){
     if(activeRunningHubTaskPolls.has(taskId)) return activeRunningHubTaskPolls.get(taskId);
     const promise = (async () => {
         let sawSuccessWithoutOutputs = false;
-        for(let i = 0; i < 720; i++){
-            await sleep(2500);
+        for(let i = 0; i < 360; i++){
+            await sleep(5000);
             const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
                 const json = await r.json();
                 if(!r.ok || json.success === false) throw new Error(json.detail || json.error || tr('smart.rhFailed'));
@@ -13418,8 +13418,8 @@ function isRunningHubPendingTask(task){
     const provider = String(task?.providerId || task?.provider || task?.engine || '').toLowerCase();
     if(provider !== 'runninghub') return false;
     // RunningHub 标准模型 API（如 GPT-Image2）走通用 /api/canvas-image-tasks 流程，
-    // 只有 App/工作流引擎提交的任务才带 mode 标记，需要走 /api/runninghub/query 轮询。
-    return task?.mode === 'app' || task?.mode === 'workflow';
+    // 只有 AI 应用引擎提交的任务才带 mode 标记，需要走 /api/runninghub/query 轮询。
+    return task?.mode === 'app';
 }
 class JimengPendingSignal extends Error {
     constructor(info){

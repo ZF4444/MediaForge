@@ -8838,9 +8838,9 @@ async function runRhNode(nodeId, opts={}){
         if(!taskId) throw new Error(tr('canvas.rhNoTaskId'));
         run.request = {task_id:taskId, webappId:node.webappId, backend:'runninghub', mode:'app'};
         let result = null;
-        for(let i = 0; i < 720; i++){
+        for(let i = 0; i < 360; i++){
             if(cascadeTargetId) ensureCascadeActive(cascadeTargetId);
-            await sleep(2500);
+            await sleep(5000);
             const data = await cascadeFetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`, {}, {cascadeTargetId}).then(async r => {
                 const json = await r.json();
                 if(!r.ok || json.success === false) throw new Error(json.detail || json.error || tr('canvas.rhFailed'));
