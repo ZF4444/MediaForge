@@ -16,7 +16,6 @@ import time
 import traceback
 import shutil
 import asyncio
-import logging
 import requests
 import zipfile
 import mimetypes
@@ -35,33 +34,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+from app.core.log_context import bind_log_context
+from app.core.logging import audit_event, configure_logging, get_logger, get_task_logger
+from app.middleware.request_logging import RequestLoggingMiddleware
 
-QUIET_ACCESS_PATHS = {
-    "/api/queue_status",
-    "/api/canvases",
-    "/api/canvases/trash",
-}
-QUIET_ACCESS_PREFIXES = (
-    "/api/canvases/",
-)
-
-class QuietAccessLogFilter(logging.Filter):
-    def filter(self, record):
-        args = record.args if isinstance(record.args, tuple) else ()
-        if len(args) >= 3:
-            path = str(args[2]).split("?", 1)[0]
-            status = int(args[4]) if len(args) >= 5 and str(args[4]).isdigit() else 0
-            quiet_dynamic = any(path.startswith(prefix) and path.endswith("/meta") for prefix in QUIET_ACCESS_PREFIXES)
-            if (path in QUIET_ACCESS_PATHS or quiet_dynamic) and status < 400:
-                return False
-        message = record.getMessage()
-        if any(f'"GET {path}' in message and '" 200' in message for path in QUIET_ACCESS_PATHS):
-            return False
-        if 'GET /api/canvases/' in message and '/meta' in message and '" 200' in message:
-            return False
-        return True
-
-logging.getLogger("uvicorn.access").addFilter(QuietAccessLogFilter())
+configure_logging()
+logger = get_logger("main")
+task_logger = get_task_logger("generation")
 
 app = FastAPI()
 
@@ -97,6 +76,12 @@ async def auth_middleware(request: Request, call_next):
     if sess:
         # 已登录：注入当前用户到 ContextVar，供数据路径解析器使用。
         ctx_token = current_user_var.set(sess.get("user_id") or "anonymous")
+        request.state.user_id = sess.get("user_id") or "anonymous"
+        request.state.username = sess.get("username") or sess.get("user_id") or "anonymous"
+        bind_log_context(
+            user_id=request.state.user_id,
+            username=request.state.username,
+        )
         try:
             return await call_next(request)
         finally:
@@ -110,8 +95,17 @@ async def auth_middleware(request: Request, call_next):
     # - 页面请求 302 重定向到登录页
     accept = request.headers.get("accept", "")
     if path.startswith("/api/") or "application/json" in accept:
+        logger.warning(
+            "unauthenticated request rejected",
+            extra={"event": "authentication_required", "method": request.method, "path": path},
+        )
         return JSONResponse({"detail": "未登录", "login_required": True}, status_code=401)
     return RedirectResponse(url="/login", status_code=302)
+
+
+# Registered after auth_middleware so it is the outer middleware and establishes
+# request context before authentication and route handling run.
+app.add_middleware(RequestLoggingMiddleware)
 
 
 # --- WebSocket 状态管理器 ---
@@ -141,6 +135,7 @@ async def startup_event():
     shared_state.set_global_loop(GLOBAL_LOOP)
     if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
         STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
+    logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
@@ -152,8 +147,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
                 await websocket.send_text(json.dumps({"type": "pong"}))
     except WebSocketDisconnect:
         await manager.disconnect(websocket, client_id)
-    except Exception as e:
-        print(f"WS Error: {e}")
+    except Exception:
+        logger.exception("websocket handler failed", extra={"event": "websocket_handler_failed"})
         await manager.disconnect(websocket, client_id)
 
 # --- 配置区域 ---
@@ -379,8 +374,8 @@ def ensure_runtime_config_files():
         if not os.path.exists(API_ENV_FILE):
             with open(API_ENV_FILE, "a", encoding="utf-8"):
                 pass
-    except Exception as e:
-        print(f"初始化 API 配置目录失败: {e}")
+    except Exception:
+        logger.exception("failed to initialize API config directory", extra={"event": "api_config_directory_init_failed"})
 
 def load_env_file():
     if not os.path.exists(API_ENV_FILE):
@@ -395,8 +390,8 @@ def load_env_file():
                 key = key.strip()
                 value = value.strip().strip('"').strip("'")
                 os.environ.setdefault(key, value)
-    except Exception as e:
-        print(f"加载 API/.env 失败: {e}")
+    except Exception:
+        logger.exception("failed to load API environment file", extra={"event": "api_env_load_failed"})
 ensure_runtime_config_files()
 load_env_file()
 
@@ -982,8 +977,8 @@ def load_static_runninghub_provider():
                 provider["rh_apps"] = apply_runninghub_system_thumbnails(provider.get("rh_apps") or [], "app")
                 provider["rh_workflows"] = apply_runninghub_system_thumbnails(provider.get("rh_workflows") or [], "workflow")
                 return provider
-    except Exception as e:
-        print(f"加载 static RunningHub 配置失败: {e}")
+    except Exception:
+        logger.exception("failed to load static RunningHub config", extra={"event": "runninghub_static_config_load_failed", "provider": "runninghub"})
     return None
 
 def merge_runninghub_provider_with_static(provider):
@@ -1101,8 +1096,8 @@ def load_api_providers():
         raw = get_app_setting("api_providers", [])
         providers = [normalize_provider(item) for item in raw if isinstance(item, dict)]
         return merge_default_api_providers(providers or defaults)
-    except Exception as e:
-        print(f"加载 API 平台配置失败: {e}")
+    except Exception:
+        logger.exception("failed to load API provider config", extra={"event": "api_provider_config_load_failed"})
         return defaults
 
 def save_api_providers(providers):
@@ -1419,8 +1414,8 @@ def get_best_backend(required_images: List[str] = None):
                 effective_load = max(remote_load, local_load)
                 has_images = check_images_exist(addr, required_images)
                 backend_stats[addr] = {"load": effective_load, "has_images": has_images}
-        except Exception as e:
-            print(f"Backend {addr} unreachable: {e}")
+        except Exception:
+            logger.warning("ComfyUI backend unreachable", exc_info=True, extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr})
             continue
 
     if not backend_stats:
@@ -1443,8 +1438,8 @@ def reserve_best_backend(required_images: List[str] = None):
                 remote_load = len(data.get('queue_running', [])) + len(data.get('queue_pending', []))
                 has_images = check_images_exist(addr, required_images)
                 backend_stats[addr] = {"remote_load": remote_load, "has_images": has_images}
-        except Exception as e:
-            print(f"Backend {addr} unreachable: {e}")
+        except Exception:
+            logger.warning("ComfyUI backend unreachable", exc_info=True, extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr})
             continue
     with LOAD_LOCK:
         best_backend = COMFYUI_INSTANCES[0]
@@ -1468,8 +1463,8 @@ def download_image(comfy_address, comfy_url_path, prefix="studio_"):
         with urllib.request.urlopen(full_url) as response, open(local_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
         return _register_output_file(local_path, filename, "output", kind="image")
-    except Exception as e:
-        print(f"下载图片失败: {e}")
+    except Exception:
+        logger.exception("failed to download image", extra={"event": "image_download_failed", "provider": "comfyui", "operation": "download"})
         if comfy_url_path.startswith("/view"):
             return comfy_url_path.replace("/view", "/api/view", 1)
         return full_url
@@ -1538,8 +1533,8 @@ def download_comfy_output(comfy_address, item, prefix="studio_"):
         with urllib.request.urlopen(full_url) as response, open(local_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
         return _register_output_file(local_path, filename, "output", kind=comfy_output_kind(item))
-    except Exception as e:
-        print(f"下载 ComfyUI 输出失败: {e}")
+    except Exception:
+        logger.exception("failed to download ComfyUI output", extra={"event": "comfyui_output_download_failed", "provider": "comfyui", "operation": "download"})
         if comfy_url_path.startswith("/view"):
             return comfy_url_path.replace("/view", "/api/view", 1)
         return full_url
@@ -2001,7 +1996,7 @@ def jimeng_wsl_base_args(exe="wsl.exe"):
     if configured and (not names or configured in names):
         return ["-d", configured]
     if configured and names:
-        print(f"JIMENG_WSL_DISTRO={configured} 不存在，已回退自动选择。可用发行版：{names}")
+        logger.warning("configured Jimeng WSL distribution unavailable; using fallback", extra={"event": "jimeng_wsl_distro_fallback", "configured_distro": configured, "available_distros": names})
     try:
         ubuntu = next((name for name in names if re.match(r"^Ubuntu($|-)", name)), "")
         if ubuntu:
@@ -2903,8 +2898,8 @@ def convert_output_to_jpg(url, quality=88):
         rel = os.path.relpath(jpg_path, root).replace("\\", "/")
         prefix = "/assets" if root == ASSETS_DIR else "/output"
         return f"{prefix}/{rel}"
-    except Exception as e:
-        print(f"转换 JPG 失败: {e}")
+    except Exception:
+        logger.exception("failed to convert image to JPEG", extra={"event": "image_jpeg_conversion_failed"})
         return url
 
 def reference_to_data_url(ref, max_size=None):
@@ -2927,8 +2922,8 @@ def reference_to_data_url(ref, max_size=None):
                 encoded = base64.b64encode(buf.getvalue()).decode("ascii")
                 mime = "image/png" if fmt == "PNG" else "image/jpeg"
                 return f"data:{mime};base64,{encoded}"
-        except Exception as e:
-            print(f"reference resize failed, fallback to raw: {e}")
+        except Exception:
+            logger.warning("reference resize failed; using original", exc_info=True, extra={"event": "reference_resize_failed"})
     with open(path, "rb") as f:
         encoded = base64.b64encode(f.read()).decode("ascii")
     return f"data:{content_type_for_path(path)};base64,{encoded}"
@@ -3038,8 +3033,8 @@ async def video_reference_to_frame_data_urls(value, max_frames=6, max_size=768):
                 with open(cleanup_path, "wb") as f:
                     f.write(response.content)
             path = cleanup_path
-        except Exception as e:
-            print(f"[canvas-llm] video download failed: {e}")
+        except Exception:
+            logger.exception("canvas LLM video download failed", extra={"event": "canvas_llm_video_download_failed", "operation": "download"})
             if cleanup_path and os.path.exists(cleanup_path):
                 try: os.remove(cleanup_path)
                 except OSError: pass
@@ -3061,7 +3056,7 @@ async def video_reference_to_frame_data_urls(value, max_frames=6, max_size=768):
         ]
         proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=90)
         if proc.returncode != 0:
-            print(f"[canvas-llm] ffmpeg frame extract failed: {proc.stderr[:300]}")
+            logger.error("canvas LLM frame extraction failed", extra={"event": "canvas_llm_frame_extract_failed", "operation": "frame_extract", "error_excerpt": proc.stderr[:300]})
             return []
         frames = []
         for name in sorted(os.listdir(frame_dir)):
@@ -3102,8 +3097,8 @@ def compress_data_url_image(value, max_size=1536, jpeg_quality=88):
             else:
                 img.save(buf, format=fmt, optimize=True)
             return f"data:{mime};base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
-    except Exception as e:
-        print(f"data url image compress failed, fallback to raw: {e}")
+    except Exception:
+        logger.warning("data URL compression failed; using original", exc_info=True, extra={"event": "data_url_compression_failed"})
         return value
 
 def modelscope_image_url(value, max_size=1536):
@@ -3350,7 +3345,7 @@ async def apimart_upload_post(client, upload_url, headers, file_tuple, timeout=6
             if not is_transient_tls_error(e) or attempt == APIMART_UPLOAD_RETRY_ATTEMPTS - 1:
                 raise
             last_exc = e
-            print(f"APIMart 上传遇到瞬时 TLS 错误，换新连接重试（第 {attempt + 1} 次）：{e}")
+            logger.warning("APIMart upload TLS error; retrying", extra={"event": "external_call_retry", "provider": "apimart", "operation": "upload", "retry_count": attempt + 1, "error_type": type(e).__name__})
             await asyncio.sleep(0.6 * (attempt + 1))
     if last_exc:
         raise last_exc
@@ -3383,20 +3378,20 @@ async def upload_image_for_apimart(client, provider, ref_url: str) -> str:
                 url = extract_apimart_asset_url(rj)
                 if valid_apimart_video_image_input(url):
                     return url
-                print(f"APIMart 上传 data URL 返回中未找到可用 asset/url: {str(rj)[:300]}")
+                logger.warning("APIMart data URL upload response contained no asset URL", extra={"event": "upload_response_invalid", "provider": "apimart", "operation": "upload", "response_excerpt": str(rj)[:300]})
                 return "ERR:APIMart 上传响应未包含可用 URL"
-            print(f"APIMart 上传 data URL 失败 ({resp.status_code}): {resp.text[:300]}")
+            logger.error("APIMart data URL upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload", "status_code": resp.status_code, "response_excerpt": resp.text[:300]})
             return f"ERR:APIMart 上传失败({resp.status_code})"
         except ValueError as e:
             return f"ERR:{e}"
         except Exception as e:
-            print(f"APIMart 上传 data URL 异常: {e}")
+            logger.exception("APIMart data URL upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload"})
             return f"ERR:上传异常 {e}"
     # 本地 /output/ 或 /assets/ 路径：先确认文件存在再上传
     if ref_url.startswith("/output/") or ref_url.startswith("/assets/"):
         path = output_file_from_url(ref_url)
         if not path:
-            print(f"APIMart 上传跳过：本地文件不存在 {ref_url}")
+            logger.warning("APIMart upload skipped because local file is missing", extra={"event": "upload_source_missing", "provider": "apimart", "operation": "upload", "media_url": ref_url})
             return "ERR:本地文件不存在或已被删除"
         try:
             filename, content, ct = apimart_upload_file_payload(path)
@@ -3406,14 +3401,14 @@ async def upload_image_for_apimart(client, provider, ref_url: str) -> str:
                 url = extract_apimart_asset_url(rj)
                 if valid_apimart_video_image_input(url):
                     return url
-                print(f"APIMart 文件上传返回中未找到可用 asset/url: {str(rj)[:300]}")
+                logger.warning("APIMart file upload response contained no asset URL", extra={"event": "upload_response_invalid", "provider": "apimart", "operation": "upload", "response_excerpt": str(rj)[:300]})
                 return "ERR:APIMart 上传响应未包含可用 URL"
-            print(f"APIMart 文件上传失败 ({resp.status_code}): {resp.text[:300]}")
+            logger.error("APIMart file upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload", "status_code": resp.status_code, "response_excerpt": resp.text[:300]})
             return f"ERR:APIMart 上传失败({resp.status_code})"
         except ValueError as e:
             return f"ERR:{e}"
         except Exception as e:
-            print(f"APIMart 文件上传异常: {e}")
+            logger.exception("APIMart file upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload"})
             return f"ERR:上传异常 {e}"
     return "ERR:不支持的图片来源（仅支持 http/https/asset/data 或本地 /output/ /assets/ 路径）"
 
@@ -3453,13 +3448,13 @@ async def upload_video_for_apimart(client, provider, ref_url: str) -> str:
                 if valid_apimart_video_image_input(url):
                     return url
                 last_error = "上传响应未包含可用 URL"
-                print(f"APIMart 视频上传返回中未找到可用 asset/url ({upload_path}): {str(rj)[:300]}")
+                logger.warning("APIMart video upload response contained no asset URL", extra={"event": "upload_response_invalid", "provider": "apimart", "operation": "video_upload", "endpoint": upload_path, "response_excerpt": str(rj)[:300]})
                 continue
             last_error = f"{upload_path} 返回 {resp.status_code}: {resp.text[:200]}"
-            print(f"APIMart 视频上传失败 {last_error}")
+            logger.error("APIMart video upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "video_upload", "endpoint": upload_path, "error_summary": last_error})
         except Exception as e:
             last_error = f"{upload_path} 异常：{e}"
-            print(f"APIMart 视频上传异常: {last_error}")
+            logger.exception("APIMart video upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "video_upload", "endpoint": upload_path})
     return f"ERR:APIMart 未提供可用的视频文件上传入口（{last_error}）。请配置 PUBLIC_BASE_URL，或使用公网 http/https / asset:// 视频地址。"
 
 async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
@@ -5231,7 +5226,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                         status_code=502,
                         detail=f"GPT-Image-2 编辑接口 /images/edits 调用失败：{edit_failed_text[:300] or edit_failed_status}。已停止自动重试，避免上游可能已扣费后再次请求。"
                     )
-                print(f"/images/edits failed ({edit_failed_status}): {edit_failed_text[:200]} → 回退到 /images/generations + image:[] JSON")
+                logger.warning("image edit endpoint failed; using generation fallback", extra={"event": "image_edit_fallback", "provider": provider.get("id"), "operation": "image_edit", "status_code": edit_failed_status, "response_excerpt": edit_failed_text[:200]})
                 image_payload = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:4]]
                 body = {
                     "model": model, "prompt": prompt, "size": size,
@@ -5331,8 +5326,8 @@ async def upload_image(files: List[UploadFile] = File(...)):
                 if response.status_code == 200:
                     last_result = response.json()
                     success_count += 1
-            except Exception as e:
-                print(f"Upload error for {addr}: {e}")
+            except Exception:
+                logger.exception("ComfyUI upload failed", extra={"event": "upload_failed", "provider": "comfyui", "operation": "upload", "endpoint": addr})
 
         if success_count > 0 and last_result:
             uploaded_files.append({"comfy_name": last_result.get("name", file.filename)})
@@ -5369,8 +5364,8 @@ def _sam3d_workflow_info() -> Tuple[Optional[str], Optional[str], Optional[str]]
             if class_type == "SAM3DBodyExportFBX" and export_node_id is None:
                 export_node_id = str(node_id)
         return SAM3D_WORKFLOW_JSON, image_node_id, export_node_id
-    except Exception as exc:
-        print(f"Pose Studio Sam3D workflow node lookup failed: {exc}")
+    except Exception:
+        logger.exception("Pose Studio Sam3D workflow node lookup failed", extra={"event": "sam3d_workflow_node_lookup_failed", "provider": "comfyui"})
     return SAM3D_WORKFLOW_JSON, None, None
 
 @app.post("/api/pose-studio/generate-fbx")
@@ -5413,7 +5408,7 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
                 last_error = response.text[:300]
         except Exception as exc:
             last_error = str(exc)
-            print(f"Pose Studio Sam3D input upload error for {addr}: {exc}")
+            logger.exception("Pose Studio Sam3D input upload failed", extra={"event": "sam3d_input_upload_failed", "provider": "comfyui", "operation": "upload", "endpoint": addr})
     if success_count <= 0:
         raise HTTPException(status_code=502, detail=f"上传图片到 ComfyUI 失败：{last_error or 'no available backend'}")
 
@@ -6054,6 +6049,13 @@ async def save_providers(payload: List[ApiProviderPayload]):
     if env_updates:
         update_env_values(env_updates)
         reload_env_globals()   # 立即将最新 env 值同步回模块全局变量，无需重启
+    audit_event(
+        "api_providers_updated",
+        action="update",
+        resource_type="api_provider_config",
+        resource_id="global",
+        after={"provider_ids": [provider["id"] for provider in providers], "key_fields_changed": len(env_updates)},
+    )
     return {"providers": [public_provider(p) for p in providers]}
 
 # --- ModelScope Token (从 env 读取，不再支持通过 UI 修改) ---
@@ -6681,6 +6683,12 @@ async def query_image_task(payload: ImageTaskQueryRequest):
     }
 
 async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
+    bind_log_context(task_id=task_id)
+    started = time.perf_counter()
+    task_logger.info(
+        "canvas image task started",
+        extra={"event": "task_started", "provider": payload.provider_id, "operation": "image_generation", "status": "running"},
+    )
     with CANVAS_TASK_LOCK:
         if task_id in CANVAS_TASKS:
             CANVAS_TASKS[task_id]["status"] = "running"
@@ -6694,6 +6702,10 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
                 "error": "",
                 "updated_at": time.time(),
             })
+        task_logger.info(
+            "canvas image task completed",
+            extra={"event": "task_completed", "provider": payload.provider_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
     except JimengPendingError as exc:
         # 即梦云端还在排队：标记为 jimeng_pending，前端据 submit_id 持久续查（任务未丢失）
         info = jimeng_pending_payload(exc)
@@ -6708,6 +6720,10 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
                 "error": "",
                 "updated_at": time.time(),
             })
+        task_logger.warning(
+            "canvas image task remains queued upstream",
+            extra={"event": "task_poll_pending", "provider": "jimeng", "operation": "image_generation", "status": "pending", "upstream_task_id": exc.submit_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
@@ -6720,6 +6736,10 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
                 "upstream_task_id": upstream_task_id,
                 "updated_at": time.time(),
             })
+        task_logger.exception(
+            "canvas image task failed",
+            extra={"event": "task_failed", "provider": payload.provider_id, "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
@@ -6739,6 +6759,10 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             "provider_id": payload.provider_id,
             "model": payload.model,
         }
+    task_logger.info(
+        "canvas image task submitted",
+        extra={"event": "task_submitted", "task_id": task_id, "provider": payload.provider_id, "operation": "image_generation", "status": "queued"},
+    )
     asyncio.create_task(run_canvas_image_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
 
@@ -6751,6 +6775,9 @@ async def get_canvas_image_task(task_id: str):
     return task
 
 async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
+    bind_log_context(task_id=task_id)
+    started = time.perf_counter()
+    task_logger.info("canvas ComfyUI task started", extra={"event": "task_started", "provider": "comfyui", "operation": "image_generation", "status": "running"})
     with CANVAS_TASK_LOCK:
         if task_id in CANVAS_TASKS:
             CANVAS_TASKS[task_id]["status"] = "running"
@@ -6766,6 +6793,10 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
                 "error": "",
                 "updated_at": time.time(),
             })
+        task_logger.info(
+            "canvas ComfyUI task completed",
+            extra={"event": "task_completed", "provider": "comfyui", "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
@@ -6776,6 +6807,10 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
                 "status_code": status_code,
                 "updated_at": time.time(),
             })
+        task_logger.exception(
+            "canvas ComfyUI task failed",
+            extra={"event": "task_failed", "provider": "comfyui", "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
 
 @app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(payload: GenerateRequest):
@@ -6791,6 +6826,10 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
             "error": "",
             "workflow_json": payload.workflow_json,
         }
+    task_logger.info(
+        "canvas ComfyUI task submitted",
+        extra={"event": "task_submitted", "task_id": task_id, "provider": "comfyui", "operation": "image_generation", "status": "queued"},
+    )
     asyncio.create_task(run_canvas_comfy_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
 
@@ -7596,7 +7635,7 @@ async def canvas_llm(payload: CanvasLLMRequest):
                     continue
                 content_parts.append({"type": "video_url", "video_url": {"url": ref_url}})
                 ok_videos += 1
-        print(f"[canvas-llm] model={model} provider={payload.provider} text_len={len(payload.message)} images={ok_imgs}/{len(payload.images)} videos={ok_videos}/{len(payload.videos)}")
+        logger.info("canvas LLM request prepared", extra={"event": "canvas_llm_request_prepared", "provider": payload.provider, "model": model, "text_length": len(payload.message), "image_count": ok_imgs, "image_requested_count": len(payload.images), "video_count": ok_videos, "video_requested_count": len(payload.videos)})
         upstream_messages.append({"role": "user", "content": content_parts})
     else:
         upstream_messages.append({"role": "user", "content": payload.message})
@@ -7656,8 +7695,8 @@ async def smart_canvas_prompt_templates():
         template_path = prompt_template_markdown_path()
         source = os.path.relpath(template_path, BASE_DIR).replace("\\", "/") if template_path else ""
         return {"templates": builtin_prompt_templates(), "source": source}
-    except Exception as e:
-        print(f"读取提示词模板失败: {e}")
+    except Exception:
+        logger.exception("failed to read prompt templates", extra={"event": "prompt_templates_load_failed"})
         return {"templates": []}
 
 @app.post("/api/canvas-assets/check")
@@ -8275,7 +8314,8 @@ async def poll_angle_cloud(req: CloudPollRequest):
         "X-ModelScope-Async-Mode": "true"
     }
     task_id = req.task_id
-    print(f"Resuming polling for Angle Task: {task_id}")
+    bind_log_context(task_id=task_id)
+    task_logger.info("angle task polling resumed", extra={"event": "task_poll_started", "provider": "modelscope", "operation": "angle_generation", "status": "running"})
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -8330,7 +8370,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Angle polling error: {e}")
+        task_logger.exception("angle task polling failed", extra={"event": "task_failed", "provider": "modelscope", "operation": "angle_generation", "status": "failed", "error_type": type(e).__name__})
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/angle/generate")
@@ -8367,7 +8407,8 @@ async def generate_angle_cloud(req: CloudGenRequest):
                 raise HTTPException(status_code=submit_res.status_code, detail=detail)
 
             task_id = submit_res.json().get("task_id")
-            print(f"Angle Task submitted, ID: {task_id}")
+            bind_log_context(task_id=task_id)
+            task_logger.info("angle task submitted", extra={"event": "task_submitted", "provider": "modelscope", "operation": "angle_generation", "status": "queued"})
 
             for i in range(300):
                 await asyncio.sleep(2)
@@ -8424,7 +8465,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Angle generation error: {e}")
+        task_logger.exception("angle generation failed", extra={"event": "task_failed", "provider": "modelscope", "operation": "angle_generation", "status": "failed", "error_type": type(e).__name__})
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- ModelScope Z-Image 云端生图 ---
@@ -8464,7 +8505,8 @@ async def generate_cloud(req: CloudGenRequest):
                 raise HTTPException(status_code=submit_res.status_code, detail=detail)
 
             task_id = submit_res.json().get("task_id")
-            print(f"Z-Image Task submitted, ID: {task_id}")
+            bind_log_context(task_id=task_id)
+            task_logger.info("Z-Image task submitted", extra={"event": "task_submitted", "provider": "modelscope", "operation": "image_generation", "status": "queued"})
 
             for i in range(200):
                 await asyncio.sleep(3)
@@ -8477,7 +8519,7 @@ async def generate_cloud(req: CloudGenRequest):
                 status = str(data.get("task_status") or "").upper()
 
                 if i % 5 == 0:
-                    print(f"Task {task_id} status check {i}: {status}")
+                    task_logger.debug("Z-Image task polled", extra={"event": "task_poll", "provider": "modelscope", "operation": "image_generation", "status": status, "retry_count": i})
 
                 if status == "SUCCEED":
                     img_url = data["output_images"][0]
@@ -8493,8 +8535,8 @@ async def generate_cloud(req: CloudGenRequest):
                                 local_path = _register_output_file(file_path, filename, "output", kind="image")
                             else:
                                 local_path = img_url
-                    except Exception as dl_e:
-                        print(f"Download error: {dl_e}")
+                    except Exception:
+                        logger.exception("ModelScope output download failed", extra={"event": "image_download_failed", "provider": "modelscope", "operation": "download"})
                         local_path = img_url
 
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "cloud"}
@@ -8513,7 +8555,7 @@ async def generate_cloud(req: CloudGenRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Cloud generation error: {e}")
+        task_logger.exception("cloud generation failed", extra={"event": "task_failed", "provider": "modelscope", "operation": "image_generation", "status": "failed", "error_type": type(e).__name__})
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- ModelScope 通用图片生成（支持图生图） ---
@@ -8560,7 +8602,8 @@ async def ms_generate(req: MsGenerateRequest):
                 raise HTTPException(status_code=submit_res.status_code, detail=detail)
 
             task_id = submit_res.json().get("task_id")
-            print(f"MS Generate Task submitted ({req.model}), ID: {task_id}")
+            bind_log_context(task_id=task_id)
+            task_logger.info("ModelScope generation task submitted", extra={"event": "task_submitted", "provider": "modelscope", "operation": "image_generation", "status": "queued", "model": req.model})
 
             TERMINAL_FAILED_STATUSES = {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}
 
@@ -8573,7 +8616,7 @@ async def ms_generate(req: MsGenerateRequest):
                     )
                     data = result.json()
                     status = data.get("task_status")
-                    print(f"MS Task {task_id} poll {i}: status={status}")
+                    task_logger.debug("ModelScope task polled", extra={"event": "task_poll", "provider": "modelscope", "operation": "image_generation", "status": status, "retry_count": i})
 
                     if status == "SUCCEED":
                         img_url = data["output_images"][0]
@@ -8613,7 +8656,7 @@ async def ms_generate(req: MsGenerateRequest):
                 except HTTPException:
                     raise
                 except Exception as loop_e:
-                    print(f"MS polling error: {loop_e}")
+                    task_logger.warning("ModelScope polling attempt failed", exc_info=True, extra={"event": "task_poll_retry", "provider": "modelscope", "operation": "image_generation", "status": "retrying", "retry_count": i, "error_type": type(loop_e).__name__})
                     continue
 
             raise HTTPException(status_code=504, detail="MS 生图超时")
@@ -8621,7 +8664,7 @@ async def ms_generate(req: MsGenerateRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"MS generate error: {e}")
+        task_logger.exception("ModelScope generation failed", extra={"event": "task_failed", "provider": "modelscope", "operation": "image_generation", "status": "failed", "error_type": type(e).__name__})
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- 本地 ComfyUI 生图 ---
@@ -8671,8 +8714,8 @@ def generate(req: GenerateRequest):
                     try:
                         files = {'image': (image_name, image_content, image_type)}
                         requests.post(f"http://{target_backend}/upload/image", files=files, timeout=10)
-                    except Exception as e:
-                        print(f"Sync upload failed: {e}")
+                    except Exception:
+                        logger.exception("ComfyUI sync upload failed", extra={"event": "upload_failed", "provider": "comfyui", "operation": "sync_upload", "endpoint": target_backend})
 
         workflow_path = os.path.join(WORKFLOW_DIR, req.workflow_json)
         if not os.path.exists(workflow_path) and req.workflow_json == "Z-Image.json":

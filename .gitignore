@@ -4,8 +4,10 @@ __pycache__/
 **/.env
 assets/
 data/
-docs/
+docs/*
+!docs/日志系统说明.md
 backups/
+logs/
 workflows/
 history.json
 scripts/sync_to_remote.sh

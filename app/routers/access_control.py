@@ -26,6 +26,7 @@ from app.core.access_control import (
     save_config,
 )
 from app.core.auth import USERS, USERS_LOCK, current_user_id
+from app.core.logging import audit_event
 from app.models import AccessControlConfigPayload
 
 router = APIRouter()
@@ -94,6 +95,13 @@ async def access_control_put_config(payload: AccessControlConfigPayload):
             if payload.default is not None else None
         )
     saved = save_config(data)
+    audit_event(
+        "access_control_updated",
+        action="update",
+        resource_type="access_control_config",
+        resource_id="global",
+        after={"configured_user_count": len(saved.get("users", {})), "has_default": saved.get("default") is not None},
+    )
     return {"ok": True, "config": saved.get("users", {}), "default": saved.get("default")}
 
 

@@ -24,6 +24,10 @@ from threading import Lock
 from typing import Any, Dict, List
 
 from app.config import STATIC_DIR
+from app.core.logging import get_logger
+
+
+logger = get_logger("access_control")
 from app.services.business_metadata import get_app_setting, set_app_setting
 
 # 管理员用户 id（用户名经 clean_user_id 清洗后的值）。
@@ -94,8 +98,8 @@ def _load_all_pages() -> List[Dict[str, str]]:
         items = _extract_nav_items(html)
         if items:
             return items
-    except Exception as e:
-        print(f"[access_control] 解析 index.html 导航页面清单失败，使用兜底清单：{e}")
+    except Exception:
+        logger.exception("failed to parse navigation pages; using fallback", extra={"event": "navigation_pages_parse_failed"})
     return list(_FALLBACK_ALL_PAGES)
 
 
@@ -136,8 +140,8 @@ def all_nodes() -> List[Dict[str, str]]:
         return []
     try:
         providers = _image_models_provider() or []
-    except Exception as e:
-        print(f"[access_control] 获取 provider 模型清单失败：{e}")
+    except Exception:
+        logger.exception("failed to load provider models", extra={"event": "provider_models_load_failed"})
         return []
     items: List[Dict[str, str]] = []
     seen = set()

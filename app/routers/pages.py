@@ -30,6 +30,7 @@ from app.core.auth import (
     register_user,
     user_exists,
 )
+from app.core.logging import audit_event
 from app.models import LoginRequest
 
 router = APIRouter()
@@ -107,12 +108,16 @@ async def login_page(request: Request):
 async def auth_register(payload: LoginRequest):
     user_id = clean_user_id(payload.username)
     if not user_id:
+        audit_event("registration_failed", action="register", resource_type="user", result="failure", reason="invalid_username")
         raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
     if len(user_id) < 5:
+        audit_event("registration_failed", action="register", resource_type="user", resource_id=user_id, result="failure", reason="username_too_short")
         raise HTTPException(status_code=400, detail="用户名至少需要 5 位。")
     username = payload.username.strip()[:60]
     if not register_user(user_id, username):
+        audit_event("registration_failed", action="register", resource_type="user", resource_id=user_id, result="failure", reason="username_taken")
         raise HTTPException(status_code=409, detail="该用户名已被占用，请换一个或直接登录。")
+    audit_event("user_registered", action="register", resource_type="user", resource_id=user_id)
     return _issue_session_response(user_id, username)
 
 
@@ -120,17 +125,25 @@ async def auth_register(payload: LoginRequest):
 async def auth_login(payload: LoginRequest):
     user_id = clean_user_id(payload.username)
     if not user_id:
+        audit_event("login_failed", action="login", resource_type="session", result="failure", reason="invalid_username")
         raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
     if not user_exists(user_id):
+        audit_event("login_failed", action="login", resource_type="session", resource_id=user_id, result="failure", reason="user_not_found")
         raise HTTPException(status_code=404, detail="该用户名尚未注册，请先注册。")
     username = payload.username.strip()[:60]
-    return _issue_session_response(user_id, username)
+    response = _issue_session_response(user_id, username)
+    audit_event("login_succeeded", action="login", resource_type="session", resource_id=user_id, user_id=user_id, username=username)
+    return response
 
 
 @router.post("/auth/logout")
 async def auth_logout(request: Request):
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
     destroy_session(token)
+    user_id = getattr(request.state, "user_id", None)
+    username = getattr(request.state, "username", None)
+    if user_id:
+        audit_event("logout_succeeded", action="logout", resource_type="session", resource_id=user_id, user_id=user_id, username=username)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
     return resp
@@ -165,6 +178,7 @@ async def auth_sso(request: Request):
 
     # 创建 session 并设置 cookie，重定向到首页
     token = create_session(user_id, username)
+    audit_event("sso_login_succeeded", action="login", resource_type="session", resource_id=user_id, user_id=user_id, username=username)
     resp = RedirectResponse(url="/", status_code=302)
     resp.set_cookie(
         key=SESSION_COOKIE_NAME,

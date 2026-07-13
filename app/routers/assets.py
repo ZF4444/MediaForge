@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from PIL import Image
 
 from app.core.media import output_file_from_url
+from app.core.logging import audit_event
 from app.core.shared import sanitize_asset_name
 from app.models import (
     AssetLibraryAddRequest,
@@ -92,6 +93,7 @@ async def delete_asset_library(library_id: str):
     if lib.get("active_library_id") == library_id:
         lib["active_library_id"] = lib["libraries"][0].get("id")
     save_asset_library(lib)
+    audit_event("asset_library_deleted", action="delete", resource_type="asset_library", resource_id=library_id)
     return {"library": lib, "removed": 1, "physical_files_deleted": 0}
 
 
@@ -130,6 +132,13 @@ async def delete_asset_library_category(category_id: str):
         raise HTTPException(status_code=400, detail="默认工作流分类不能删除")
     library["categories"] = [c for c in library.get("categories", []) if c.get("id") != category_id]
     save_asset_library(lib)
+    audit_event(
+        "asset_category_deleted",
+        action="delete",
+        resource_type="asset_category",
+        resource_id=category_id,
+        before={"name": cat.get("name"), "item_count": len(cat.get("items") or [])},
+    )
     return {"library": lib}
 
 
@@ -199,6 +208,13 @@ async def delete_asset_library_item(item_id: str):
     if not removed:
         raise HTTPException(status_code=404, detail="资产不存在")
     save_asset_library(lib)
+    audit_event(
+        "asset_deleted",
+        action="delete",
+        resource_type="asset_item",
+        resource_id=item_id,
+        before={"name": removed.get("name"), "kind": removed.get("kind") or removed.get("type")},
+    )
     return {"library": lib}
 
 
@@ -221,6 +237,14 @@ async def batch_delete_asset_library_items(payload: AssetLibraryBatchDeleteReque
                     keep.append(item)
             cat["items"] = keep
     save_asset_library(lib)
+    audit_event(
+        "assets_batch_deleted",
+        action="delete",
+        resource_type="asset_item",
+        requested_count=len(ids),
+        removed_count=removed,
+        resource_ids=sorted(ids),
+    )
     return {"library": lib, "removed": removed, "physical_files_deleted": 0}
 
 
@@ -253,6 +277,16 @@ async def batch_move_asset_library_items(payload: AssetLibraryBatchMoveRequest):
             target_cat.setdefault("items", []).append(item)
             existing_ids.add(item.get("id"))
     save_asset_library(lib)
+    audit_event(
+        "assets_batch_moved",
+        action="move",
+        resource_type="asset_item",
+        requested_count=len(ids),
+        moved_count=len(moved),
+        resource_ids=sorted(ids),
+        target_library_id=payload.target_library_id,
+        target_category_id=payload.target_category_id,
+    )
     return {"library": lib, "moved": len(moved)}
 
 

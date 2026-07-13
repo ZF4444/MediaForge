@@ -12,6 +12,7 @@ from app.core.auth import (
     USERS_LOCK,
     current_user_id,
 )
+from app.core.logging import audit_event
 from app.models import StorageBatchDeletePayload, StorageQuotaConfigPayload
 from app.services.storage import (
     get_user_files_by_ids,
@@ -136,6 +137,15 @@ async def batch_delete_storage_entries(payload: StorageBatchDeletePayload):
         removed = remove_media_url(entry.get("url") or "", delete_remote=True)
         if removed:
             removed_ids.append(str(removed.get("file_id") or ""))
+    audit_event(
+        "storage_files_deleted",
+        action="delete",
+        resource_type="stored_file",
+        resource_id=None,
+        requested_count=len(file_ids),
+        removed_count=len(removed_ids),
+        resource_ids=removed_ids,
+    )
     return {"deleted": removed_ids, "removed": len(removed_ids)}
 
 
@@ -165,4 +175,12 @@ async def put_storage_quota_config(payload: StorageQuotaConfigPayload):
             for user_id, entry in (payload.users or {}).items()
         },
     }
-    return {"config": save_storage_quota_config(data), "users": _registered_users()}
+    saved = save_storage_quota_config(data)
+    audit_event(
+        "storage_quota_config_updated",
+        action="update",
+        resource_type="storage_quota_config",
+        resource_id="global",
+        after={"enabled": bool(saved.get("enabled")), "configured_user_count": len(saved.get("users") or {})},
+    )
+    return {"config": saved, "users": _registered_users()}

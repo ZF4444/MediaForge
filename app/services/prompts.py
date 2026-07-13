@@ -18,6 +18,10 @@ from app.config import STATIC_DIR
 from app.core.auth import current_user_id
 from app.services.business_metadata import get_user_setting, set_user_setting
 from app.core.shared import sanitize_asset_name
+from app.core.logging import get_logger
+
+
+logger = get_logger("prompts")
 from app.core.utils import now_ms
 
 STATIC_PROMPT_TEMPLATE_MD = os.path.join(STATIC_DIR, "system-prompts", "infinite-canvas-prompt-templates.md")
@@ -139,8 +143,8 @@ def builtin_prompt_templates():
             return []
         with open(template_path, "r", encoding="utf-8") as f:
             return parse_prompt_template_markdown(f.read())
-    except Exception as e:
-        print(f"读取提示词模板失败: {e}")
+    except Exception:
+        logger.exception("failed to load prompt templates", extra={"event": "prompt_templates_load_failed"})
         return []
 
 

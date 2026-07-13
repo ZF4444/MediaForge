@@ -9,15 +9,18 @@
 - app.services.history：save_to_history
 - app.models：SaveHistoryRequest / DeleteHistoryRequest
 """
+import os
 import time
 
 from fastapi import APIRouter
 
 from app.core.media import output_file_from_url
+from app.core.logging import audit_event, get_logger
 from app.models import DeleteHistoryRequest, SaveHistoryRequest
 from app.services.history import delete_history_files, load_history_records, normalize_history_record, save_to_history
 
 router = APIRouter()
+logger = get_logger("history")
 
 
 @router.get("/api/history")
@@ -36,8 +39,8 @@ async def get_history_api(type: str = None):
 
         data.sort(key=sort_key, reverse=True)
         return data
-    except Exception as e:
-        print(f"读取历史文件失败: {e}")
+    except Exception:
+        logger.exception("failed to load history", extra={"event": "history_load_failed"})
         return []
 
 
@@ -78,11 +81,19 @@ async def delete_history(req: DeleteHistoryRequest):
                 if file_path and os.path.exists(file_path):
                     try:
                         os.remove(file_path)
-                    except Exception as e:
-                        print(f"Failed to delete file {file_path}: {e}")
+                    except Exception:
+                        logger.exception("failed to delete history file", extra={"event": "history_file_delete_failed", "file_path": file_path})
+            audit_event(
+                "history_deleted",
+                action="delete",
+                resource_type="history_record",
+                resource_id=target_record.get("id") or req.timestamp,
+                before={"type": target_record.get("type"), "image_count": len(target_record.get("images") or [])},
+            )
             return {"success": True}
         else:
             return {"success": False, "message": "Record not found"}
     except Exception as e:
-        print(f"Delete history error: {e}")
+        logger.exception("failed to delete history", extra={"event": "history_delete_failed"})
+        audit_event("history_delete_failed", action="delete", resource_type="history_record", resource_id=req.timestamp, result="failure", error_type=type(e).__name__)
         return {"success": False, "message": str(e)}
