@@ -4224,7 +4224,7 @@ def runninghub_api_key(provider=None):
     return api_key
 
 def runninghub_app_headers(json_body=True):
-    headers = {"Host": "www.runninghub.cn"}
+    headers = {}
     provider = runninghub_provider()
     if provider:
         api_key = os.getenv(provider_key_env(provider["id"]), "")
