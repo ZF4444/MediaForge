@@ -3437,7 +3437,10 @@ async function rhBuildWorkflowRequestExtras(media, nodeInfoList, sourceSettings=
 async function rhUploadValueIfNeeded(value, sourceSettings=settings){
     const text = String(value || '').trim();
     if(!text) return '';
-    if(!/^https?:\/\//i.test(text) && !text.startsWith('/output/') && !text.startsWith('/assets/')) return text;
+    if(!/^https?:\/\//i.test(text)
+        && !text.startsWith('/output/')
+        && !text.startsWith('/assets/')
+        && !text.startsWith('/api/files/')) return text;
     const res = await fetch('/api/runninghub/upload-asset', {
         method:'POST',
         headers:{'Content-Type':'application/json'},

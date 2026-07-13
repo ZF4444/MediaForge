@@ -1,6 +1,17 @@
 import main
 
 
+def test_runninghub_app_headers_do_not_override_request_host(monkeypatch):
+    monkeypatch.setattr(main, "runninghub_provider", lambda: {"id": "runninghub"})
+    monkeypatch.setenv("RUNNINGHUB_API_KEY", "test-key")
+
+    headers = main.runninghub_app_headers(True)
+
+    assert "Host" not in headers
+    assert headers["Authorization"] == "Bearer test-key"
+    assert headers["Content-Type"] == "application/json"
+
+
 def test_runninghub_extract_outputs_nested_urls():
     payload = {
         "outputs": [
