@@ -4,23 +4,20 @@
 与原 main.py 完全一致（纯结构重构，行为零变更）。
 
 依赖：
-- app.core.auth：safe_user_id / user_dir / current_user 隔离
+- app.core.auth：safe_user_id / current_user 隔离
 - app.core.utils：now_ms
 - app.config：CONVERSATION_LOCK
 - app.models：ConversationCreateRequest
 """
-import json
-import os
-import re
 import uuid
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from app.config import CONVERSATION_LOCK
-from app.core.auth import safe_user_id, user_dir
+from app.core.auth import safe_user_id
 from app.core.utils import now_ms
 from app.models import ConversationCreateRequest
 from app.services.storage import compact_media_refs, normalize_media_refs
+from app.services.business_metadata import metadata_connection, new_id, json_value
 
 router = APIRouter()
 
@@ -60,19 +57,25 @@ def compact_conversation(conversation):
 
 
 def conversation_path(user_id, conversation_id):
-    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", conversation_id or "")
-    if not cleaned:
+    if not str(conversation_id or "").strip():
         raise HTTPException(status_code=400, detail="无效的对话 ID")
-    return os.path.join(user_dir(user_id), f"{cleaned}.json")
+    return str(conversation_id)
 
 
 def save_conversation(user_id, conversation):
     conversation = hydrate_conversation(conversation)
     persisted = compact_conversation(conversation)
-    with CONVERSATION_LOCK:
-        path = conversation_path(user_id, conversation["id"])
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(persisted, f, ensure_ascii=False, indent=2)
+    with metadata_connection() as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO conversations(id,user_id,title,created_at,updated_at,extra_json) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,updated_at=EXCLUDED.updated_at,extra_json=EXCLUDED.extra_json", (conversation["id"], user_id, persisted.get("title", ""), persisted.get("created_at", now_ms()), persisted.get("updated_at", now_ms()), json_value({k:v for k,v in persisted.items() if k not in {"id","title","created_at","updated_at","messages"}})))
+                cur.execute("DELETE FROM conversation_messages WHERE conversation_id=%s", (conversation["id"],))
+                for order, msg in enumerate(persisted.get("messages", [])):
+                    mid = msg.get("id") or new_id()
+                    cur.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,sort_order,created_at,updated_at,extra_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)", (mid, conversation["id"], msg.get("role", "user"), msg.get("content", ""), order, msg.get("created_at", now_ms()), msg.get("updated_at", now_ms()), json_value({k:v for k,v in msg.items() if k not in {"id","role","content","created_at","updated_at","attachments"}})))
+                    for aorder, attachment in enumerate(msg.get("attachments") or []):
+                        if isinstance(attachment, dict) and attachment.get("file_id"):
+                            cur.execute("INSERT INTO conversation_message_files(id,message_id,file_id,sort_order,kind,role) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (new_id(), mid, attachment["file_id"], aorder, attachment.get("kind", ""), attachment.get("role", "")))
 
 
 def new_conversation(user_id, title="新对话"):
@@ -89,34 +92,41 @@ def new_conversation(user_id, title="新对话"):
 
 
 def load_conversation(user_id, conversation_id):
-    path = conversation_path(user_id, conversation_id)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="对话不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        return hydrate_conversation(json.load(f))
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM conversations WHERE id=%s AND user_id=%s", (conversation_id, user_id)); row = cur.fetchone()
+        if not row: raise HTTPException(status_code=404, detail="对话不存在")
+        cur.execute("SELECT * FROM conversation_messages WHERE conversation_id=%s ORDER BY sort_order", (conversation_id,)); messages = cur.fetchall()
+        mids = [m["id"] for m in messages]
+        attachments = {}
+        if mids:
+            cur.execute("SELECT message_id,file_id,sort_order,kind,role FROM conversation_message_files WHERE message_id = ANY(%s) ORDER BY sort_order", (mids,))
+            for a in cur.fetchall(): attachments.setdefault(a["message_id"], []).append({"file_id": a["file_id"], "kind": a["kind"], "role": a["role"]})
+    conversation = dict(row.get("extra_json") or {})
+    hydrated_messages = []
+    for message in messages:
+        item = dict(message.get("extra_json") or {})
+        item.update({"id": message["id"], "role": message["role"], "content": message["content"], "created_at": message["created_at"], "updated_at": message["updated_at"], "attachments": attachments.get(message["id"], [])})
+        hydrated_messages.append(item)
+    conversation.update({"id": row["id"], "title": row["title"], "created_at": row["created_at"], "updated_at": row["updated_at"], "messages": hydrated_messages})
+    return hydrate_conversation(conversation)
 
 
 def list_conversations(user_id):
     records = []
-    for filename in os.listdir(user_dir(user_id)):
-        if not filename.endswith(".json"):
-            continue
-        path = os.path.join(user_dir(user_id), filename)
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = hydrate_conversation(json.load(f))
-        except Exception:
-            continue
-        messages = data.get("messages", [])
-        last_message = next((m for m in reversed(messages) if m.get("role") != "system"), None)
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT c.id, c.title, c.created_at, c.updated_at,
+                   COALESCE((SELECT m.content FROM conversation_messages m
+                             WHERE m.conversation_id=c.id AND m.role <> 'system'
+                             ORDER BY m.sort_order DESC LIMIT 1), '') AS last_message
+            FROM conversations c WHERE c.user_id=%s ORDER BY c.updated_at DESC
+        """, (user_id,))
+        rows = cur.fetchall()
+    for data in rows:
         records.append({
-            "id": data.get("id"),
-            "title": data.get("title", "新对话"),
-            "created_at": data.get("created_at", 0),
-            "updated_at": data.get("updated_at", 0),
-            "last_message": (last_message or {}).get("content", ""),
+            "id": data["id"], "title": data["title"], "created_at": data["created_at"], "updated_at": data["updated_at"], "last_message": data["last_message"],
         })
-    return sorted(records, key=lambda item: item["updated_at"], reverse=True)
+    return records
 
 
 @router.get("/api/conversations")
@@ -140,7 +150,6 @@ async def get_conversation(conversation_id: str, request: Request, x_user_id: st
 @router.delete("/api/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
-    path = conversation_path(user_id, conversation_id)
-    if os.path.exists(path):
-        os.remove(path)
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM conversations WHERE id=%s AND user_id=%s", (conversation_id, user_id))
     return {"ok": True}

@@ -6,7 +6,7 @@
 
 依赖：
 - app.config：ASSET_LIBRARY_DIR
-- app.core.auth：asset_library_path / user_data_dir（按用户隔离）
+- app.core.auth：current_user_id（按用户隔离）
 - app.core.utils：now_ms
 - app.core.shared：sanitize_asset_name
 - app.core.ws：manager（广播素材库更新）
@@ -20,7 +20,6 @@ import uuid
 from typing import Any, Dict, Tuple
 
 from app.config import ASSET_LIBRARY_DIR
-from app.core.auth import asset_library_path, user_data_dir
 from app.core.shared import sanitize_asset_name
 from app.core.shared_state import get_global_loop
 from app.core.utils import now_ms
@@ -139,17 +138,14 @@ def compact_asset_item_reference(item):
 
 
 def load_asset_library():
-    lib_path = asset_library_path()
-    if not os.path.exists(lib_path):
-        lib = default_asset_library()
-        save_asset_library(lib)
-        return lib
-    try:
-        with open(lib_path, "r", encoding="utf-8") as f:
-            lib = json.load(f)
-    except Exception:
-        lib = default_asset_library()
-    return normalize_asset_library(lib)
+    from app.services.business_metadata import metadata_connection
+    from app.core.auth import current_user_id
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT payload_json FROM asset_libraries WHERE user_id=%s ORDER BY is_default DESC, created_at LIMIT 1", (current_user_id(),))
+        row = cur.fetchone()
+    if row and row.get("payload_json"):
+        return normalize_asset_library(row["payload_json"])
+    return default_asset_library()
 
 
 def sort_asset_library_items(lib):
@@ -244,12 +240,32 @@ def save_asset_library(lib):
         for cat in library.get("categories", []) if isinstance(library.get("categories"), list) else []:
             for index, item in enumerate(cat.get("items", []) if isinstance(cat.get("items"), list) else []):
                 cat["items"][index] = compact_asset_item_reference(item)
-    os.makedirs(user_data_dir(), exist_ok=True)
-    with open(asset_library_path(), "w", encoding="utf-8") as f:
-        json.dump(persisted, f, ensure_ascii=False, indent=2)
+    from app.services.business_metadata import metadata_connection
+    from app.core.auth import current_user_id
+    uid = current_user_id()
+    envelope_id = "default_" + uid
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("INSERT INTO asset_libraries(id,user_id,name,type,is_default,created_at,updated_at,payload_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET updated_at=EXCLUDED.updated_at,payload_json=EXCLUDED.payload_json", (envelope_id, uid, "默认资产库", "asset", True, lib.get("updated_at", now_ms()), lib.get("updated_at", now_ms()), json.dumps(persisted, ensure_ascii=False)))
+        sync_asset_library_rows(cur, envelope_id, persisted, int(lib["updated_at"]))
     loop = get_global_loop()
     if loop:
         asyncio.run_coroutine_threadsafe(manager.broadcast_asset_library_updated(int(lib["updated_at"])), loop)
+
+
+def sync_asset_library_rows(cur, envelope_id: str, lib: Dict[str, Any], timestamp: int) -> None:
+    """Mirror the compatibility payload into queryable category/item rows."""
+    cur.execute("DELETE FROM asset_categories WHERE library_id=%s", (envelope_id,))
+    for library_order, library in enumerate(lib.get("libraries") or []):
+        for category_order, category in enumerate(library.get("categories") or []):
+            category_id = f"{envelope_id}:{library.get('id', library_order)}:{category.get('id', category_order)}"
+            cur.execute("INSERT INTO asset_categories(id,library_id,name,type,sort_order,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s)", (category_id, envelope_id, category.get("name", ""), category.get("type", "image"), category_order, timestamp, timestamp))
+            for item_order, item in enumerate(category.get("items") or []):
+                file_id = str(item.get("file_id") or "").strip()
+                if not file_id:
+                    continue
+                item_id = f"{category_id}:{item.get('id', item_order)}"
+                extra = {k: v for k, v in item.items() if k not in {"file_id", "name", "kind", "created_at"}}
+                cur.execute("INSERT INTO asset_items(id,category_id,file_id,name,kind,created_at,updated_at,extra_json) SELECT %s,%s,%s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted')", (item_id, category_id, file_id, item.get("name", ""), item.get("kind", "file"), int(item.get("created_at") or timestamp), timestamp, json.dumps(extra, ensure_ascii=False), file_id))
 
 
 def find_asset_category(lib, category_id):

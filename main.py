@@ -125,11 +125,16 @@ APP_VERSION = "2026.05.19"
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
 from app.services.storage import StorageQuotaExceeded, storage_cleanup_loop, verify_storage_startup
+from app.services.business_metadata import initialize_business_metadata
 
 @app.on_event("startup")
 async def startup_event():
     global GLOBAL_LOOP, STORAGE_CLEANUP_TASK
     await asyncio.to_thread(verify_storage_startup)
+    # Business metadata is a separate schema layer above ``files``.  Keep
+    # initialization in startup so new deployments and existing databases are
+    # upgraded automatically before serving requests.
+    await asyncio.to_thread(initialize_business_metadata)
     GLOBAL_LOOP = asyncio.get_running_loop()
     shared_state.set_global_loop(GLOBAL_LOOP)
     if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:

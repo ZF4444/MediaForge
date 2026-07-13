@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import json
-import os
 from typing import Any, Dict, List, Set
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.config import CANVAS_LOCK, CONVERSATION_LOCK, HISTORY_LOCK
 from app.core.access_control import is_admin
 from app.core.auth import (
     USERS,
     USERS_LOCK,
-    asset_library_path,
-    canvas_dir,
-    conversation_base_dir,
     current_user_id,
-    history_file,
 )
 from app.models import StorageBatchDeletePayload, StorageQuotaConfigPayload
-from app.services import assets, history
 from app.services.storage import (
     get_user_files_by_ids,
     list_media_entries_page_for_user,
@@ -73,87 +65,35 @@ def _prune_media_refs_value(value: Any, deleted_ids: Set[str], deleted_urls: Set
     return value
 
 
-def _prune_user_history_refs(deleted_ids: Set[str], deleted_urls: Set[str]) -> None:
-    hist_path = history_file()
-    if not os.path.exists(hist_path):
-        return
-    with HISTORY_LOCK:
-        records = history.load_history_records()
-        next_records = []
-        for record in records:
-            refs = []
-            for ref in record.get("image_refs", []) if isinstance(record.get("image_refs"), list) else []:
-                if _is_media_ref(ref, deleted_ids, deleted_urls):
-                    continue
-                refs.append(ref)
-            if not refs:
-                continue
-            updated = dict(record)
-            updated["image_refs"] = refs
-            next_records.append(history.compact_history_record(updated))
-        with open(hist_path, "w", encoding="utf-8") as f:
-            json.dump(next_records, f, ensure_ascii=False, indent=4)
-
-
-def _prune_user_asset_library_refs(deleted_ids: Set[str], deleted_urls: Set[str]) -> None:
-    lib = assets.load_asset_library()
-    changed = False
-    for library in lib.get("libraries", []) if isinstance(lib.get("libraries"), list) else []:
-        for category in library.get("categories", []) if isinstance(library.get("categories"), list) else []:
-            items = category.get("items") if isinstance(category.get("items"), list) else []
-            kept = []
-            for item in items:
-                if _is_media_ref(item, deleted_ids, deleted_urls):
-                    changed = True
-                    continue
-                kept.append(item)
-            category["items"] = kept
-    if changed:
-        assets.save_asset_library(lib)
-
-
-def _rewrite_json_file(path: str, deleted_ids: Set[str], deleted_urls: Set[str], *, lock=None) -> None:
-    if not os.path.exists(path):
-        return
-    if lock is None:
-        _rewrite_json_file_unlocked(path, deleted_ids, deleted_urls)
-        return
-    with lock:
-        _rewrite_json_file_unlocked(path, deleted_ids, deleted_urls)
-
-
-def _rewrite_json_file_unlocked(path: str, deleted_ids: Set[str], deleted_urls: Set[str]) -> None:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return
-    pruned = _prune_media_refs_value(data, deleted_ids, deleted_urls)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(pruned, f, ensure_ascii=False, indent=2)
-
-
-def _prune_user_canvas_and_conversation_refs(deleted_ids: Set[str], deleted_urls: Set[str]) -> None:
-    canvas_root = canvas_dir()
-    if os.path.isdir(canvas_root):
-        for name in os.listdir(canvas_root):
-            if name.endswith(".json"):
-                _rewrite_json_file(os.path.join(canvas_root, name), deleted_ids, deleted_urls, lock=CANVAS_LOCK)
-    convo_root = conversation_base_dir()
-    if os.path.isdir(convo_root):
-        for name in os.listdir(convo_root):
-            if name.endswith(".json"):
-                _rewrite_json_file(os.path.join(convo_root, name), deleted_ids, deleted_urls, lock=CONVERSATION_LOCK)
-
-
 def _prune_user_media_references(entries: List[Dict[str, Any]]) -> None:
     deleted_ids = {str(entry.get("file_id") or "").strip() for entry in entries if str(entry.get("file_id") or "").strip()}
     deleted_urls = {str(entry.get("url") or "").strip() for entry in entries if str(entry.get("url") or "").strip()}
     if not deleted_ids and not deleted_urls:
         return
-    _prune_user_history_refs(deleted_ids, deleted_urls)
-    _prune_user_asset_library_refs(deleted_ids, deleted_urls)
-    _prune_user_canvas_and_conversation_refs(deleted_ids, deleted_urls)
+    from app.services.assets import sync_asset_library_rows
+    from app.services.business_metadata import json_value, metadata_connection
+    uid = current_user_id()
+    ids = list(deleted_ids)
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("DELETE FROM history_record_files rf USING history_records r WHERE rf.history_record_id=r.id AND r.user_id=%s AND rf.file_id = ANY(%s)", (uid, ids))
+        cur.execute("DELETE FROM history_records r WHERE r.user_id=%s AND NOT EXISTS (SELECT 1 FROM history_record_files rf WHERE rf.history_record_id=r.id)", (uid,))
+        cur.execute("DELETE FROM conversation_message_files mf USING conversation_messages m, conversations c WHERE mf.message_id=m.id AND m.conversation_id=c.id AND c.user_id=%s AND mf.file_id = ANY(%s)", (uid, ids))
+        cur.execute("DELETE FROM smart_canvas_node_files nf USING smart_canvas_nodes n, smart_canvases c WHERE nf.node_id=n.id AND n.canvas_id=c.id AND c.user_id=%s AND nf.file_id = ANY(%s)", (uid, ids))
+        cur.execute("SELECT id,viewport_json FROM smart_canvases WHERE user_id=%s", (uid,))
+        for canvas in cur.fetchall():
+            pruned = _prune_media_refs_value(canvas["viewport_json"], deleted_ids, deleted_urls)
+            if pruned != canvas["viewport_json"]:
+                cur.execute("UPDATE smart_canvases SET viewport_json=%s WHERE id=%s", (json_value(pruned), canvas["id"]))
+        cur.execute("SELECT n.id,n.data_json FROM smart_canvas_nodes n JOIN smart_canvases c ON c.id=n.canvas_id WHERE c.user_id=%s", (uid,))
+        for node in cur.fetchall():
+            pruned = _prune_media_refs_value(node["data_json"], deleted_ids, deleted_urls)
+            if pruned != node["data_json"]:
+                cur.execute("UPDATE smart_canvas_nodes SET data_json=%s WHERE id=%s", (json_value(pruned), node["id"]))
+        cur.execute("SELECT id,payload_json,updated_at FROM asset_libraries WHERE user_id=%s FOR UPDATE", (uid,))
+        for row in cur.fetchall():
+            payload = _prune_media_refs_value(row["payload_json"] or {}, deleted_ids, deleted_urls)
+            cur.execute("UPDATE asset_libraries SET payload_json=%s WHERE id=%s", (json_value(payload), row["id"]))
+            sync_asset_library_rows(cur, row["id"], payload, int(row["updated_at"] or 0))
 
 
 @router.get("/api/storage/usage")
@@ -190,15 +130,12 @@ async def batch_delete_storage_entries(payload: StorageBatchDeletePayload):
     entries = [entries_by_id[file_id] for file_id in file_ids if file_id in entries_by_id]
     if not entries:
         return {"deleted": [], "removed": 0}
+    _prune_user_media_references(entries)
     removed_ids: List[str] = []
-    removed_entries: List[Dict[str, Any]] = []
     for entry in entries:
         removed = remove_media_url(entry.get("url") or "", delete_remote=True)
         if removed:
             removed_ids.append(str(removed.get("file_id") or ""))
-            removed_entries.append(removed)
-    if removed_entries:
-        _prune_user_media_references(removed_entries)
     return {"deleted": removed_ids, "removed": len(removed_ids)}
 
 

@@ -2110,7 +2110,7 @@ async function deleteAssetItem(id){
     if(selectedAssetId === id) selectedAssetId = '';
     pendingDeleteAssetId = '';
     render();
-    setStatus('素材已删除');
+    setStatus('已移出素材库，源文件仍保留');
 }
 async function deleteSelectedAssets(){
     if(!selectedAssetIds.size) return;
@@ -2121,7 +2121,7 @@ async function deleteSelectedAssets(){
     selectedAssetIds.clear();
     pendingBatchDelete = '';
     render();
-    setStatus(`已删除 ${data.removed || ids.length} 个素材`);
+    setStatus(`已移出素材库 ${data.removed || ids.length} 个，源文件仍保留`);
 }
 function setAssetClipboard(mode){
     if(!selectedAssetIds.size) return;

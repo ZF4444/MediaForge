@@ -3,25 +3,23 @@
 从 main.py 的「画布管理」区块原样迁移。URL/请求响应模型/状态码完全一致。
 
 依赖：
-- app.config：CANVAS_LOCK / CANVAS_TRASH_RETENTION_MS
-- app.core.auth：canvas_dir（按用户隔离）
+- app.config：CANVAS_TRASH_RETENTION_MS
+- app.core.auth：current_user_id（按用户隔离）
 - app.core.utils：now_ms
 - app.core.ws：manager（广播画布更新）
 - app.models：CanvasCreateRequest / CanvasMetaUpdate / CanvasSaveRequest
 """
-import json
-import os
-import re
 import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from app.config import CANVAS_LOCK, CANVAS_TRASH_RETENTION_MS
-from app.core.auth import canvas_dir
+from app.config import CANVAS_TRASH_RETENTION_MS
+from app.core.auth import current_user_id
 from app.core.utils import now_ms
 from app.core.ws import manager
 from app.models import CanvasCreateRequest, CanvasMetaUpdate, CanvasSaveRequest
 from app.services.storage import compact_media_refs, normalize_media_refs
+from app.services.business_metadata import save_canvas_payload, load_canvas_payload, delete_canvas_payload
 
 router = APIRouter()
 
@@ -55,47 +53,22 @@ def compact_canvas(canvas):
 
 
 def read_canvas_json(canvas_id, *, hydrate=False):
-    path = canvas_path(canvas_id)
-    if not os.path.exists(path):
+    data = load_canvas_payload(current_user_id(), canvas_id)
+    if data is None:
         raise HTTPException(status_code=404, detail="画布不存在")
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return hydrate_canvas(data) if hydrate else data
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-def read_canvas_file(path, *, hydrate=False):
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return hydrate_canvas(data) if hydrate else data
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-def canvas_path(canvas_id):
-    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", canvas_id or "")
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="无效的画布 ID")
-    return os.path.join(canvas_dir(), f"{cleaned}.json")
+    return hydrate_canvas(data) if hydrate else data
 
 
 def save_canvas(canvas):
     canvas["updated_at"] = now_ms()
     persisted = compact_canvas(canvas)
-    with CANVAS_LOCK:
-        with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
-            json.dump(persisted, f, ensure_ascii=False, indent=2)
+    save_canvas_payload(current_user_id(), persisted)
 
 
 def save_canvas_raw(canvas, *, update_timestamp=True):
     if update_timestamp:
         canvas["updated_at"] = now_ms()
-    with CANVAS_LOCK:
-        with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
-            json.dump(canvas, f, ensure_ascii=False, indent=2)
+    save_canvas_payload(current_user_id(), canvas)
 
 
 def normalize_canvas_kind(kind="classic"):
@@ -170,32 +143,22 @@ def canvas_record(data):
 
 
 def cleanup_expired_canvas_trash():
+    from app.services.business_metadata import metadata_connection
     cutoff = now_ms() - CANVAS_TRASH_RETENTION_MS
-    cdir = canvas_dir()
-    with CANVAS_LOCK:
-        for filename in os.listdir(cdir):
-            if not filename.endswith(".json"):
-                continue
-            path = os.path.join(cdir, filename)
-            try:
-                data = read_canvas_file(path, hydrate=False)
-                deleted_at = int(data.get("deleted_at") or 0)
-                if deleted_at and deleted_at < cutoff:
-                    os.remove(path)
-            except Exception:
-                continue
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM smart_canvases WHERE user_id=%s AND deleted_at IS NOT NULL AND deleted_at < %s", (current_user_id(), cutoff))
 
 
 def iter_canvas_records(include_deleted=False):
     cleanup_expired_canvas_trash()
-    cdir = canvas_dir()
+    from app.services.business_metadata import metadata_connection
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM smart_canvases WHERE user_id=%s", (current_user_id(),))
+        ids = [r["id"] for r in cur.fetchall()]
     records = []
-    for filename in os.listdir(cdir):
-        if not filename.endswith(".json"):
-            continue
-        try:
-            data = read_canvas_file(os.path.join(cdir, filename), hydrate=False)
-        except Exception:
+    for cid in ids:
+        data = load_canvas_payload(current_user_id(), cid)
+        if not data:
             continue
         is_deleted = bool(data.get("deleted_at"))
         if include_deleted != is_deleted:
@@ -330,7 +293,5 @@ async def restore_canvas(canvas_id: str):
 
 @router.delete("/api/canvases/{canvas_id}/purge")
 async def purge_canvas(canvas_id: str):
-    path = canvas_path(canvas_id)
-    if os.path.exists(path):
-        os.remove(path)
+    delete_canvas_payload(current_user_id(), canvas_id)
     return {"ok": True}

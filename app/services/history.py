@@ -3,17 +3,13 @@
 从 main.py 原样迁移。save_to_history 被生成域多处复用，
 get_comfy_history 被本地 ComfyUI 生图复用，故置于 service 层供多域 import。
 
-依赖：
-- app.config：HISTORY_LOCK
-- app.core.auth：history_file（按用户隔离）
+依赖：PostgreSQL 业务元数据表与统一文件引用服务。
 """
 import json
-import os
-import time
 import urllib.request
 
-from app.config import HISTORY_LOCK
-from app.core.auth import history_file
+from app.core.auth import current_user_id
+from app.services.business_metadata import metadata_connection, insert_history_record
 from app.services.storage import compact_media_refs, file_refs_from_urls, normalize_media_refs, remove_media_url, urls_from_file_refs
 
 
@@ -48,30 +44,24 @@ def compact_history_record(record):
 
 
 def load_history_records():
-    hist_path = history_file()
-    if not os.path.exists(hist_path):
-        return []
-    try:
-        with open(hist_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return []
-    if not isinstance(data, list):
-        return []
-    return [normalize_history_record(item) for item in data if isinstance(item, dict)]
+    uid = current_user_id()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM history_records WHERE user_id=%s ORDER BY created_at DESC", (uid,)); rows = cur.fetchall()
+        result = []
+        for row in rows:
+            cur.execute("SELECT file_id,role FROM history_record_files WHERE history_record_id=%s ORDER BY sort_order", (row["id"],))
+            refs = [{"file_id": r["file_id"], "role": r["role"]} for r in cur.fetchall()]
+            record = dict(row.get("extra_json") or {})
+            record.update({"id": row["id"], "timestamp": row["created_at"] / 1000, "prompt": row["prompt"], "type": row["type"], "is_cloud": row["is_cloud"], "image_refs": refs})
+            result.append(normalize_history_record(record))
+    return result
 
 
 def save_to_history(record):
-    with HISTORY_LOCK:
-        hist_path = history_file()
-        history = load_history_records()
-        next_record = normalize_history_record(record)
-        if "timestamp" not in next_record:
-            next_record["timestamp"] = time.time()
-        history.insert(0, next_record)
-        persisted = [compact_history_record(item) for item in history[:5000]]
-        with open(hist_path, 'w', encoding='utf-8') as f:
-            json.dump(persisted, f, ensure_ascii=False, indent=4)
+    next_record = normalize_history_record(record)
+    refs = next_record.get("image_refs") or []
+    uid = current_user_id()
+    insert_history_record(uid, next_record, refs)
 
 
 def delete_history_files(record):

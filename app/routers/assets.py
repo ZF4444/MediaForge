@@ -92,7 +92,7 @@ async def delete_asset_library(library_id: str):
     if lib.get("active_library_id") == library_id:
         lib["active_library_id"] = lib["libraries"][0].get("id")
     save_asset_library(lib)
-    return {"library": lib}
+    return {"library": lib, "removed": 1, "physical_files_deleted": 0}
 
 
 @router.post("/api/asset-library/categories")
@@ -221,7 +221,7 @@ async def batch_delete_asset_library_items(payload: AssetLibraryBatchDeleteReque
                     keep.append(item)
             cat["items"] = keep
     save_asset_library(lib)
-    return {"library": lib, "removed": removed}
+    return {"library": lib, "removed": removed, "physical_files_deleted": 0}
 
 
 @router.post("/api/asset-library/items/move")

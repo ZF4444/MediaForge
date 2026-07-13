@@ -5,20 +5,14 @@
 仍保留在 main.py。
 
 依赖：
-- app.config：HISTORY_LOCK
-- app.core.auth：history_file
 - app.core.media：output_file_from_url
 - app.services.history：save_to_history
 - app.models：SaveHistoryRequest / DeleteHistoryRequest
 """
-import json
-import os
 import time
 
 from fastapi import APIRouter
 
-from app.config import HISTORY_LOCK
-from app.core.auth import history_file
 from app.core.media import output_file_from_url
 from app.models import DeleteHistoryRequest, SaveHistoryRequest
 from app.services.history import delete_history_files, load_history_records, normalize_history_record, save_to_history
@@ -65,31 +59,17 @@ async def save_history_api(req: SaveHistoryRequest):
 
 @router.post("/api/history/delete")
 async def delete_history(req: DeleteHistoryRequest):
-    hist_path = history_file()
-    if not os.path.exists(hist_path):
-        return {"success": False, "message": "History file not found"}
     try:
-        with HISTORY_LOCK:
-            with open(hist_path, 'r', encoding='utf-8') as f:
-                raw_history = json.load(f)
-            history = [normalize_history_record(item) for item in raw_history if isinstance(item, dict)]
-            target_record = None
-            new_history = []
-            for item in history:
-                is_match = False
-                item_ts = item.get("timestamp", 0)
-                if isinstance(req.timestamp, (int, float)) and isinstance(item_ts, (int, float)):
-                    if abs(float(item_ts) - float(req.timestamp)) < 0.001:
-                        is_match = True
-                elif str(item_ts) == str(req.timestamp):
-                    is_match = True
-                if is_match:
-                    target_record = item
-                else:
-                    new_history.append(item)
-            if target_record:
-                with open(hist_path, 'w', encoding='utf-8') as f:
-                    json.dump(new_history, f, ensure_ascii=False, indent=4)
+        from app.services.business_metadata import metadata_connection
+        from app.core.auth import current_user_id
+        uid = current_user_id()
+        target_record = None
+        with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+            cur.execute("SELECT id FROM history_records WHERE user_id=%s AND ABS(created_at - %s) < 2 LIMIT 1", (uid, int(float(req.timestamp) * 1000)))
+            row = cur.fetchone()
+            if row:
+                target_record = next((item for item in load_history_records() if item.get("id") == row["id"]), None)
+                cur.execute("DELETE FROM history_records WHERE id=%s", (row["id"],))
 
         if target_record:
             delete_history_files(target_record)
