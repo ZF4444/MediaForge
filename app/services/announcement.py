@@ -1,6 +1,6 @@
 """全局广播公告的持久化。
 
-管理员发送的公告仅保留「最新一条」，持久化到 data/announcement.json，
+管理员发送的公告仅保留「最新一条」，持久化到 PostgreSQL，
 用于用户刷新页面/重新连接 WebSocket 后仍能看到尚未手动关闭的公告。
 
 存储结构：
@@ -12,32 +12,21 @@
     }
 清空公告时文件内容为 {}。
 """
-import json
-import os
 import uuid
 from typing import Any, Dict, Optional
 
-from app.config import ANNOUNCEMENT_FILE, ANNOUNCEMENT_LOCK, DATA_DIR
+from app.config import ANNOUNCEMENT_LOCK
 from app.core.utils import now_ms
+from app.services.business_metadata import get_app_setting, set_app_setting
 
 
 def _read_unlocked() -> Dict[str, Any]:
-    if not os.path.exists(ANNOUNCEMENT_FILE):
-        return {}
-    try:
-        with open(ANNOUNCEMENT_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    data = get_app_setting("announcement", {})
+    return data if isinstance(data, dict) else {}
 
 
 def _write_unlocked(data: Dict[str, Any]) -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    tmp = ANNOUNCEMENT_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, ANNOUNCEMENT_FILE)
+    set_app_setting("announcement", data)
 
 
 def get_latest_announcement() -> Optional[Dict[str, Any]]:

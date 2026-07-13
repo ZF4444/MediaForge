@@ -1,13 +1,11 @@
-import os
 import re
 
 from app.config import (
-    DATA_DIR,
     HELP_DEFAULT_PAGE,
     HELP_LOCK,
-    HELP_MARKDOWN_DIR,
-    HELP_MARKDOWN_FILE,
 )
+from app.core.utils import now_ms
+from app.services.business_metadata import metadata_connection
 
 
 DEFAULT_HELP_MARKDOWN = """# 使用帮助
@@ -35,47 +33,26 @@ def _normalize_page(page: str | None) -> str:
     return page
 
 
-def _page_file(page: str) -> str:
-    return os.path.join(HELP_MARKDOWN_DIR, f"{page}.md")
-
-
 def read_help_markdown(page: str | None = None) -> str:
     page = _normalize_page(page)
     with HELP_LOCK:
-        path = _page_file(page)
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception:
-                return DEFAULT_HELP_MARKDOWN
-        # 兼容旧版本：默认页优先回退读取旧的单文件 help.md
-        if page == HELP_DEFAULT_PAGE and os.path.exists(HELP_MARKDOWN_FILE):
-            try:
-                with open(HELP_MARKDOWN_FILE, "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception:
-                return DEFAULT_HELP_MARKDOWN
-        return DEFAULT_HELP_MARKDOWN
+        with metadata_connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT content FROM help_pages WHERE slug=%s", (page,))
+            row = cur.fetchone()
+    return row["content"] if row else DEFAULT_HELP_MARKDOWN
 
 
 def write_help_markdown(content: str, page: str | None = None) -> str:
     page = _normalize_page(page)
     text = str(content or "")
     with HELP_LOCK:
-        os.makedirs(HELP_MARKDOWN_DIR, exist_ok=True)
-        path = _page_file(page)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(text)
-        os.replace(tmp, path)
+        with metadata_connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO help_pages(slug,content,updated_at) VALUES(%s,%s,%s) ON CONFLICT(slug) DO UPDATE SET content=EXCLUDED.content,updated_at=EXCLUDED.updated_at", (page, text, now_ms()))
     return text
 
 
 def list_help_pages() -> list[str]:
     with HELP_LOCK:
-        if not os.path.isdir(HELP_MARKDOWN_DIR):
-            return []
-        return sorted(
-            name[:-3] for name in os.listdir(HELP_MARKDOWN_DIR) if name.endswith(".md")
-        )
+        with metadata_connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT slug FROM help_pages ORDER BY slug")
+            return [row["slug"] for row in cur.fetchall()]

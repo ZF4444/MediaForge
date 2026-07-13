@@ -1,7 +1,7 @@
 """按用户区分的访问控制（侧边栏页面 + 无限画布节点）。
 
 - 管理员：用户名（清洗后的 user_id）等于 ADMIN_USER_ID（默认 "admin"）。
-- 配置文件：data/access_control.json，结构：
+- PostgreSQL `app_settings.access_control`，结构：
     {
       "users": {
         "<user_id>": {"pages": ["canvas", ...], "nodes": ["comfly::gpt-image-1", ...]}
@@ -15,21 +15,20 @@
     * "节点"（nodes）特指智能画布「AI生成」引擎（engine=api）下可选的具体模型，
       id 格式为 "<provider_id>::<model>"，随 API 设置里的 provider/模型配置动态变化。
 
-依赖：app.config（DATA_DIR），app.core.auth（current_user_id, USERS 注册表）。
+依赖：PostgreSQL app_settings 与用户注册表。
 本模块不引用 FastAPI app 对象，避免循环导入。
 """
-import json
 import os
 import re
 from threading import Lock
 from typing import Any, Dict, List
 
-from app.config import DATA_DIR, STATIC_DIR
+from app.config import STATIC_DIR
+from app.services.business_metadata import get_app_setting, set_app_setting
 
 # 管理员用户 id（用户名经 clean_user_id 清洗后的值）。
 ADMIN_USER_ID = "admin"
 
-ACCESS_CONTROL_FILE = os.path.join(DATA_DIR, "access_control.json")
 ACCESS_CONTROL_LOCK = Lock()
 
 # 侧边栏首页文件（唯一真实来源）：页面清单从这里动态解析，避免与本文件的硬编码列表脱节。
@@ -190,16 +189,11 @@ def is_admin(user_id: str) -> bool:
 
 
 def _load_config_unlocked() -> Dict[str, Any]:
-    if os.path.exists(ACCESS_CONTROL_FILE):
-        try:
-            with open(ACCESS_CONTROL_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("users"), dict):
-                if "default" not in data or not isinstance(data.get("default"), dict):
-                    data["default"] = None
-                return data
-        except Exception:
-            pass
+    data = get_app_setting("access_control", {})
+    if isinstance(data, dict) and isinstance(data.get("users"), dict):
+        if "default" not in data or not isinstance(data.get("default"), dict):
+            data["default"] = None
+        return data
     return {"default": None, "users": {}}
 
 
@@ -248,14 +242,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
             continue
         sanitized["users"][uid] = _sanitize_user_entry(entry)
     with ACCESS_CONTROL_LOCK:
-        try:
-            os.makedirs(DATA_DIR, exist_ok=True)
-            tmp = ACCESS_CONTROL_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(sanitized, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, ACCESS_CONTROL_FILE)
-        except Exception as e:
-            print(f"[access_control] persist failed: {e}")
+        set_app_setting("access_control", sanitized)
     return sanitized
 
 

@@ -1,4 +1,3 @@
-import json
 import os
 import asyncio
 
@@ -7,10 +6,7 @@ from app.routers import assets as asset_router
 from app.models import AssetLibraryAddRequest
 
 
-def test_save_to_history_persists_image_refs_and_loads_urls(monkeypatch, tmp_path):
-    hist_path = tmp_path / "history.json"
-
-    monkeypatch.setattr(history, "history_file", lambda: str(hist_path))
+def test_history_normalizes_image_refs_and_loads_urls(monkeypatch):
     monkeypatch.setattr(
         history,
         "file_refs_from_urls",
@@ -22,16 +18,9 @@ def test_save_to_history_persists_image_refs_and_loads_urls(monkeypatch, tmp_pat
         lambda refs: ["/assets/input/restored.png"] if refs and refs[0].get("file_id") == "file-1" else [],
     )
 
-    history.save_to_history({"images": ["/assets/input/original.png"], "prompt": "demo"})
-    records = history.load_history_records()
-
-    assert records[0]["image_refs"] == [{"file_id": "file-1"}]
-    assert records[0]["images"] == ["/assets/input/restored.png"]
-
-    with open(hist_path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-    assert raw[0]["image_refs"][0]["file_id"] == "file-1"
-    assert "images" not in raw[0]
+    record = history.normalize_history_record({"images": ["/assets/input/original.png"], "prompt": "demo"})
+    assert record["image_refs"] == [{"file_id": "file-1"}]
+    assert record["images"] == ["/assets/input/restored.png"]
 
 
 def test_make_asset_library_item_stores_file_id_when_storage_enabled(monkeypatch, tmp_path):

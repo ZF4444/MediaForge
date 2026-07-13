@@ -6,7 +6,7 @@
 依赖：
 - app.config：STATIC_DIR
 - app.core.utils：now_ms
-- app.core.auth：prompt_library_path / user_data_dir（按用户隔离）
+- app.core.auth：current_user_id（按用户隔离）
 - app.core.shared：sanitize_asset_name
 """
 import json
@@ -15,7 +15,8 @@ import re
 import uuid
 
 from app.config import STATIC_DIR
-from app.core.auth import prompt_library_path, user_data_dir
+from app.core.auth import current_user_id
+from app.services.business_metadata import get_user_setting, set_user_setting
 from app.core.shared import sanitize_asset_name
 from app.core.utils import now_ms
 
@@ -270,15 +271,7 @@ def normalize_prompt_libraries(data):
 
 
 def load_prompt_libraries():
-    lib_path = prompt_library_path()
-    if not os.path.exists(lib_path):
-        data = default_prompt_libraries()
-        return save_prompt_libraries(data)
-    try:
-        with open(lib_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        data = default_prompt_libraries()
+    data = get_user_setting(current_user_id(), "prompt_libraries", default_prompt_libraries())
     if not isinstance(data, dict):
         data = default_prompt_libraries()
     normalized = normalize_prompt_libraries(data)
@@ -290,9 +283,7 @@ def load_prompt_libraries():
 def save_prompt_libraries(data):
     data = normalize_prompt_libraries(data)
     data["updated_at"] = now_ms()
-    os.makedirs(user_data_dir(), exist_ok=True)
-    with open(prompt_library_path(), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    set_user_setting(current_user_id(), "prompt_libraries", data)
     return data
 
 

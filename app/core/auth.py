@@ -8,24 +8,19 @@
 本模块不引用 FastAPI app 对象，避免循环导入（中间件仍注册在 main.py）。
 """
 import contextvars
-import json
-import os
+import hashlib
 import re
 import secrets as _secrets
 from threading import Lock
 from typing import Any, Dict
 
-from app.config import DATA_DIR, SESSIONS_FILE, USERS_DIR, USERS_REGISTRY_FILE
 from app.core.utils import now_ms
+from app.services.business_metadata import metadata_connection
 
-SESSION_LOCK = Lock()
 SESSION_COOKIE_NAME = "sid"
 SESSION_MAX_AGE = 365 * 24 * 60 * 60  # 1 年：同一台电脑不用反复登录
 # 当前请求的登录用户（由认证中间件设置），数据路径解析器据此隔离。
 current_user_var: "contextvars.ContextVar[str]" = contextvars.ContextVar("current_user", default="")
-# token -> {user_id, username, created_at, last_seen}
-SESSIONS: Dict[str, Dict[str, Any]] = {}
-
 # 用户注册表（无密码，仅记录已注册的用户名）。user_id -> {username, created_at}
 USERS_LOCK = Lock()
 USERS: Dict[str, Dict[str, Any]] = {}
@@ -39,29 +34,19 @@ def clean_user_id(raw: str) -> str:
 
 
 def load_users_registry():
-    global USERS
     with USERS_LOCK:
-        if os.path.exists(USERS_REGISTRY_FILE):
-            try:
-                with open(USERS_REGISTRY_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    USERS = data
-            except Exception:
-                USERS = {}
-        else:
-            USERS = {}
+        with metadata_connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT id,username,created_at FROM users")
+            loaded = {row["id"]: {"username": row["username"], "created_at": row["created_at"]} for row in cur.fetchall()}
+        # Several routers import USERS directly, so preserve the shared object.
+        USERS.clear()
+        USERS.update(loaded)
 
 
 def _persist_users_unlocked():
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = USERS_REGISTRY_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(USERS, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, USERS_REGISTRY_FILE)
-    except Exception as e:
-        print(f"[auth] persist users failed: {e}")
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        for uid, info in USERS.items():
+            cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO UPDATE SET username=EXCLUDED.username", (uid, info.get("username") or uid, int(info.get("created_at") or now_ms())))
 
 
 def user_exists(user_id: str) -> bool:
@@ -74,104 +59,51 @@ def register_user(user_id: str, username: str) -> bool:
     with USERS_LOCK:
         if user_id in USERS:
             return False
-        USERS[user_id] = {"username": username, "created_at": now_ms()}
-        _persist_users_unlocked()
+        created_at = now_ms()
+        with metadata_connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING id", (user_id, username, created_at))
+            if not cur.fetchone():
+                return False
+        USERS[user_id] = {"username": username, "created_at": created_at}
     return True
 
 
 def load_sessions():
-    global SESSIONS
-    with SESSION_LOCK:
-        if os.path.exists(SESSIONS_FILE):
-            try:
-                with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    SESSIONS = data
-            except Exception:
-                SESSIONS = {}
-        else:
-            SESSIONS = {}
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM user_sessions WHERE expires_at < %s", (now_ms(),))
 
 
-def _persist_sessions_unlocked():
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = SESSIONS_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(SESSIONS, f, ensure_ascii=False)
-        os.replace(tmp, SESSIONS_FILE)
-    except Exception as e:
-        print(f"[auth] persist sessions failed: {e}")
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
 
 
 def create_session(user_id: str, username: str) -> str:
     token = _secrets.token_urlsafe(32)
     now = now_ms()
-    with SESSION_LOCK:
-        SESSIONS[token] = {
-            "user_id": user_id,
-            "username": username,
-            "created_at": now,
-            "last_seen": now,
-        }
-        _persist_sessions_unlocked()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO user_sessions(token_hash,user_id,username,created_at,last_seen,expires_at) VALUES(%s,%s,%s,%s,%s,%s)", (_token_hash(token), user_id, username, now, now, now + SESSION_MAX_AGE * 1000))
     return token
 
 
 def get_session(token: str):
     if not token:
         return None
-    with SESSION_LOCK:
-        sess = SESSIONS.get(token)
-        if sess:
-            sess["last_seen"] = now_ms()
-        return dict(sess) if sess else None
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE user_sessions SET last_seen=%s WHERE token_hash=%s AND expires_at>%s RETURNING user_id,username,created_at,last_seen", (now, _token_hash(token), now))
+        return cur.fetchone()
 
 
 def destroy_session(token: str):
     if not token:
         return
-    with SESSION_LOCK:
-        if token in SESSIONS:
-            del SESSIONS[token]
-            _persist_sessions_unlocked()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM user_sessions WHERE token_hash=%s", (_token_hash(token),))
 
 
 def current_user_id() -> str:
     """返回当前请求的用户 id；未登录上下文回退到 'anonymous'（仅防御性兜底）。"""
     return current_user_var.get() or "anonymous"
-
-
-def user_data_dir() -> str:
-    path = os.path.join(USERS_DIR, current_user_id())
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-# 以下解析器替代原来的全局路径常量，实现按用户隔离（方案 A）。
-def canvas_dir() -> str:
-    path = os.path.join(user_data_dir(), "canvases")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def conversation_base_dir() -> str:
-    path = os.path.join(user_data_dir(), "conversations")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def history_file() -> str:
-    return os.path.join(user_data_dir(), "history.json")
-
-
-def asset_library_path() -> str:
-    return os.path.join(user_data_dir(), "asset_library.json")
-
-
-def prompt_library_path() -> str:
-    return os.path.join(user_data_dir(), "prompt_libraries.json")
 
 
 def safe_user_id(user_id, request) -> str:
@@ -189,10 +121,3 @@ def safe_user_id(user_id, request) -> str:
         candidate = f"ip-{request.client.host}"
     candidate = re.sub(r"[^a-zA-Z0-9_.-]", "-", candidate)[:80].strip(".-")
     return candidate or "anonymous"
-
-
-def user_dir(user_id) -> str:
-    """对话目录：data/users/<user_id>/conversations（从 main.py 原样迁移）。"""
-    path = os.path.join(USERS_DIR, user_id, "conversations")
-    os.makedirs(path, exist_ok=True)
-    return path

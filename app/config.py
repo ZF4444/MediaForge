@@ -26,25 +26,9 @@ OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
 OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
 ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
 LOCAL_UPLOAD_DIR = os.path.join(ASSETS_DIR, "uploads")
-HISTORY_FILE = os.path.join(BASE_DIR, "history.json")  # 旧的全局历史文件（仅遗留，已改为每用户 history_file()）
 API_ENV_FILE = os.path.join(BASE_DIR, "API", ".env")
 DATA_DIR = os.path.join(BASE_DIR, "data")
-# 每个登录用户的私有数据根目录：data/users/<user_id>/
-USERS_DIR = os.path.join(DATA_DIR, "users")
-SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
-USERS_REGISTRY_FILE = os.path.join(DATA_DIR, "users_registry.json")
-# 兼容旧的全局路径（仅用于历史遗留/默认回退，不再直接读写用户数据）。
-LEGACY_CONVERSATION_DIR = os.path.join(DATA_DIR, "conversations")
-LEGACY_CANVAS_DIR = os.path.join(DATA_DIR, "canvases")
-API_PROVIDERS_FILE = os.path.join(DATA_DIR, "api_providers.json")
-RUNNINGHUB_WORKFLOW_STORE_FILE = os.path.join(DATA_DIR, "runninghub_workflows.json")
-SHARED_FOLDERS_FILE = os.path.join(DATA_DIR, "shared_folders.json")
-GLOBAL_CONFIG_FILE = os.path.join(BASE_DIR, "global_config.json")
-FEEDBACK_FILE = os.path.join(DATA_DIR, "feedback.json")
-HELP_MARKDOWN_FILE = os.path.join(DATA_DIR, "help.md")
-HELP_MARKDOWN_DIR = os.path.join(DATA_DIR, "help_pages")
 HELP_DEFAULT_PAGE = "index"
-ANNOUNCEMENT_FILE = os.path.join(DATA_DIR, "announcement.json")
 CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 LOCAL_IMAGE_IMPORT_MAX_BYTES = int(os.getenv("LOCAL_IMAGE_IMPORT_MAX_BYTES", str(50 * 1024 * 1024)))
 LOCAL_IMAGE_IMPORT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}

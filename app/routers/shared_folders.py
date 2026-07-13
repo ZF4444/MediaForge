@@ -3,7 +3,7 @@
 从 main.py 的「共享文件夹」区块原样迁移。URL/请求响应模型/状态码完全一致。
 
 依赖：
-- app.config：BASE_DIR / DATA_DIR / SHARED_FOLDERS_FILE
+- app.config：BASE_DIR
 - app.core.utils：now_ms
 - app.core.shared：sanitize_asset_name
 - app.core.media：content_type_for_path
@@ -11,7 +11,6 @@
   find_asset_category_in_library / make_asset_library_item / save_asset_library
 - app.models：SharedFolderRegister / SharedFolderImport
 """
-import json
 import os
 import urllib.parse
 import uuid
@@ -20,7 +19,8 @@ from threading import Lock
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from app.config import BASE_DIR, DATA_DIR, SHARED_FOLDERS_FILE
+from app.config import BASE_DIR
+from app.services.business_metadata import get_app_setting, set_app_setting
 from app.core.media import content_type_for_path
 from app.core.shared import sanitize_asset_name
 from app.core.utils import now_ms
@@ -45,11 +45,7 @@ SHARED_FOLDERS_LOCK = Lock()
 
 
 def shared_folders_load():
-    try:
-        with open(SHARED_FOLDERS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        data = {}
+    data = get_app_setting("shared_folders", {})
     if not isinstance(data, dict):
         data = {}
     folders = data.get("folders")
@@ -59,9 +55,7 @@ def shared_folders_load():
 
 
 def shared_folders_save(data):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(SHARED_FOLDERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    set_app_setting("shared_folders", data)
 
 
 def shared_folder_by_id(folder_id):

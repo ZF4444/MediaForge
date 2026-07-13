@@ -170,9 +170,10 @@ def test_run_storage_metadata_purge_once_hard_deletes_only_when_objects_are_gone
     assert deleted_rows == ["gone-1"]
 
 
-def test_storage_quota_config_can_override_default_and_user_limit(monkeypatch, tmp_path):
-    config_file = tmp_path / "global_config.json"
-    monkeypatch.setattr(storage, "GLOBAL_CONFIG_FILE", str(config_file))
+def test_storage_quota_config_can_override_default_and_user_limit(monkeypatch):
+    settings = {}
+    monkeypatch.setattr("app.services.business_metadata.get_app_setting", lambda key, default=None: settings.get(key, default))
+    monkeypatch.setattr("app.services.business_metadata.set_app_setting", lambda key, value: settings.__setitem__(key, value) or value)
     monkeypatch.setattr(storage, "_QUOTA_CONFIG_CACHE", None)
 
     saved = storage.save_storage_quota_config({

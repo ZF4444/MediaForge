@@ -74,6 +74,32 @@ CREATE TABLE IF NOT EXISTS smart_canvas_node_files (
     file_id TEXT NOT NULL REFERENCES files(id) ON DELETE RESTRICT, field_name TEXT NOT NULL DEFAULT '',
     sort_order INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id TEXT NOT NULL, key TEXT NOT NULL, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id, key)
+);
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY, username TEXT NOT NULL, created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_sessions (
+    token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username TEXT NOT NULL, created_at BIGINT NOT NULL, last_seen BIGINT NOT NULL, expires_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS feedback_entries (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, username TEXT NOT NULL, type TEXT NOT NULL,
+    content TEXT NOT NULL, page TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open', admin_note TEXT NOT NULL DEFAULT '',
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status_created ON feedback_entries(status, created_at DESC);
+CREATE TABLE IF NOT EXISTS help_pages (
+    slug TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '', updated_at BIGINT NOT NULL
+);
 """
 
 
@@ -144,6 +170,36 @@ def metadata_connection():
     if not DATABASE_URL:
         raise RuntimeError("业务元数据系统必须配置 DATABASE_URL")
     return _connect()
+
+
+def get_app_setting(key: str, default: Any = None) -> Any:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT value_json FROM app_settings WHERE key=%s", (key,))
+        row = cur.fetchone()
+    return row["value_json"] if row else default
+
+
+def set_app_setting(key: str, value: Any) -> Any:
+    from app.core.utils import now_ms
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO app_settings(key,value_json,created_at,updated_at) VALUES(%s,%s,%s,%s) ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=EXCLUDED.updated_at", (key, json_value(value), now, now))
+    return value
+
+
+def get_user_setting(user_id: str, key: str, default: Any = None) -> Any:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT value_json FROM user_settings WHERE user_id=%s AND key=%s", (user_id, key))
+        row = cur.fetchone()
+    return row["value_json"] if row else default
+
+
+def set_user_setting(user_id: str, key: str, value: Any) -> Any:
+    from app.core.utils import now_ms
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO user_settings(user_id,key,value_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s) ON CONFLICT(user_id,key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=EXCLUDED.updated_at", (user_id, key, json_value(value), now, now))
+    return value
 
 
 def save_canvas_payload(user_id: str, canvas: Dict[str, Any]) -> None:

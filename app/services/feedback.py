@@ -1,35 +1,12 @@
-import json
-import os
 import uuid
 from typing import Any, Dict, List, Optional
 
-from app.config import DATA_DIR, FEEDBACK_FILE, FEEDBACK_LOCK
 from app.core.utils import now_ms
+from app.services.business_metadata import metadata_connection
 
 
 VALID_FEEDBACK_STATUSES = {"open", "reviewing", "resolved", "ignored"}
 VALID_FEEDBACK_TYPES = {"issue", "idea", "question", "other"}
-
-
-def _read_items_unlocked() -> List[Dict[str, Any]]:
-    if not os.path.exists(FEEDBACK_FILE):
-        return []
-    try:
-        with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)]
-    except Exception:
-        return []
-    return []
-
-
-def _write_items_unlocked(items: List[Dict[str, Any]]) -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    tmp = FEEDBACK_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(items, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, FEEDBACK_FILE)
 
 
 def normalize_feedback_type(raw: str) -> str:
@@ -59,10 +36,8 @@ def create_feedback(payload: Dict[str, Any], user_id: str, username: str) -> Dic
         "created_at": now,
         "updated_at": now,
     }
-    with FEEDBACK_LOCK:
-        items = _read_items_unlocked()
-        items.insert(0, item)
-        _write_items_unlocked(items)
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO feedback_entries(id,user_id,username,type,content,page,user_agent,status,admin_note,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", tuple(item[key] for key in ("id","user_id","username","type","content","page","user_agent","status","admin_note","created_at","updated_at")))
     return item
 
 
@@ -82,52 +57,32 @@ def list_feedback(
     user_filter = (user_id or "").strip()
     query = (q or "").strip().lower()
 
-    with FEEDBACK_LOCK:
-        items = _read_items_unlocked()
-
-    def match(item: Dict[str, Any]) -> bool:
-        if status_filter and item.get("status") != status_filter:
-            return False
-        if type_filter and item.get("type") != type_filter:
-            return False
-        if user_filter and item.get("user_id") != user_filter:
-            return False
-        if query:
-            haystack = " ".join(
-                str(item.get(k) or "")
-                for k in ("content", "username", "user_id", "page", "admin_note")
-            ).lower()
-            if query not in haystack:
-                return False
-        return True
-
-    filtered = [item for item in items if match(item)]
-    return {"items": filtered[offset : offset + limit], "total": len(filtered)}
+    clauses, params = [], []
+    for column, value in (("status", status_filter), ("type", type_filter), ("user_id", user_filter)):
+        if value:
+            clauses.append(f"{column}=%s"); params.append(value)
+    if query:
+        clauses.append("LOWER(content || ' ' || username || ' ' || user_id || ' ' || page || ' ' || admin_note) LIKE %s"); params.append(f"%{query}%")
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) AS count FROM feedback_entries{where}", tuple(params)); total = int(cur.fetchone()["count"])
+        cur.execute(f"SELECT * FROM feedback_entries{where} ORDER BY created_at DESC LIMIT %s OFFSET %s", tuple(params + [limit, offset])); items = cur.fetchall()
+    return {"items": items, "total": total}
 
 
 def update_feedback(feedback_id: str, *, status: Optional[str], admin_note: Optional[str]) -> Optional[Dict[str, Any]]:
-    with FEEDBACK_LOCK:
-        items = _read_items_unlocked()
-        for item in items:
-            if item.get("id") != feedback_id:
-                continue
-            if status is not None:
-                normalized = normalize_feedback_status(status)
-                if normalized:
-                    item["status"] = normalized
-            if admin_note is not None:
-                item["admin_note"] = str(admin_note or "").strip()[:1000]
-            item["updated_at"] = now_ms()
-            _write_items_unlocked(items)
-            return item
-    return None
+    updates, params = [], []
+    if status is not None and (normalized := normalize_feedback_status(status)):
+        updates.append("status=%s"); params.append(normalized)
+    if admin_note is not None:
+        updates.append("admin_note=%s"); params.append(str(admin_note or "").strip()[:1000])
+    updates.append("updated_at=%s"); params.append(now_ms()); params.append(feedback_id)
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(f"UPDATE feedback_entries SET {','.join(updates)} WHERE id=%s RETURNING *", tuple(params))
+        return cur.fetchone()
 
 
 def delete_feedback(feedback_id: str) -> bool:
-    with FEEDBACK_LOCK:
-        items = _read_items_unlocked()
-        next_items = [item for item in items if item.get("id") != feedback_id]
-        if len(next_items) == len(items):
-            return False
-        _write_items_unlocked(next_items)
-    return True
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM feedback_entries WHERE id=%s RETURNING id", (feedback_id,))
+        return bool(cur.fetchone())

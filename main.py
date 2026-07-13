@@ -135,6 +135,8 @@ async def startup_event():
     # initialization in startup so new deployments and existing databases are
     # upgraded automatically before serving requests.
     await asyncio.to_thread(initialize_business_metadata)
+    await asyncio.to_thread(load_users_registry)
+    await asyncio.to_thread(load_sessions)
     GLOBAL_LOOP = asyncio.get_running_loop()
     shared_state.set_global_loop(GLOBAL_LOOP)
     if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
@@ -171,20 +173,8 @@ from app.config import (
     OUTPUT_OUTPUT_DIR,
     ASSET_LIBRARY_DIR,
     LOCAL_UPLOAD_DIR,
-    HISTORY_FILE,
     API_ENV_FILE,
     DATA_DIR,
-    USERS_DIR,
-    SESSIONS_FILE,
-    USERS_REGISTRY_FILE,
-    LEGACY_CONVERSATION_DIR,
-    LEGACY_CANVAS_DIR,
-    API_PROVIDERS_FILE,
-    RUNNINGHUB_WORKFLOW_STORE_FILE,
-    SHARED_FOLDERS_FILE,
-    GLOBAL_CONFIG_FILE,
-    FEEDBACK_FILE,
-    HELP_MARKDOWN_FILE,
     CANVAS_TRASH_RETENTION_MS,
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
@@ -206,11 +196,9 @@ from app.config import (
 # 已迁移至 app/core/auth.py，此处导入以保持原模块级名称可用。
 from app.core.utils import now_ms
 from app.core.auth import (
-    SESSION_LOCK,
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE,
     current_user_var,
-    SESSIONS,
     USERS_LOCK,
     USERS,
     clean_user_id,
@@ -219,17 +207,10 @@ from app.core.auth import (
     user_exists,
     register_user,
     load_sessions,
-    _persist_sessions_unlocked,
     create_session,
     get_session,
     destroy_session,
     current_user_id,
-    user_data_dir,
-    canvas_dir,
-    conversation_base_dir,
-    history_file,
-    asset_library_path,
-    prompt_library_path,
 )
 
 NEXT_TASK_ID = 1
@@ -1115,11 +1096,9 @@ def normalize_provider(item):
 
 def load_api_providers():
     defaults = default_api_providers()
-    if not os.path.exists(API_PROVIDERS_FILE):
-        return merge_default_api_providers(defaults)
     try:
-        with open(API_PROVIDERS_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        from app.services.business_metadata import get_app_setting
+        raw = get_app_setting("api_providers", [])
         providers = [normalize_provider(item) for item in raw if isinstance(item, dict)]
         return merge_default_api_providers(providers or defaults)
     except Exception as e:
@@ -1127,10 +1106,8 @@ def load_api_providers():
         return defaults
 
 def save_api_providers(providers):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with GLOBAL_CONFIG_LOCK:
-        with open(API_PROVIDERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(providers, f, ensure_ascii=False, indent=2)
+    from app.services.business_metadata import set_app_setting
+    set_app_setting("api_providers", providers)
 
 # 依赖注入：把 load_api_providers 交给 access_control 模块，用于动态枚举
 # 智能画布「AI生成」引擎下的可选模型清单（画布节点访问控制）。避免 access_control
@@ -1261,9 +1238,6 @@ BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(WORKFLOW_DIR, exist_ok=True)
-os.makedirs(USERS_DIR, exist_ok=True)
-load_sessions()
-load_users_registry()
 
 # 注意：此路由必须在 app.mount("/static", ...) 之前注册，
 # 否则 StaticFiles 挂载会先匹配 /static/*.html，导致无法动态注入版本号。
@@ -1676,10 +1650,10 @@ def collect_comfy_file_items(node_output):
 from app.services.history import save_to_history, get_comfy_history
 
 # --- 用户身份解析 / 对话管理 ---
-# safe_user_id / user_dir 已迁移至 app/core/auth.py；
+# safe_user_id 已迁移至 app/core/auth.py；
 # 对话管理 helpers 与路由已迁移至 app/routers/conversations.py。
 # 此处导入以保持原模块级名称可用（chat / chat_stream 仍在 main.py 使用它们）。
-from app.core.auth import safe_user_id, user_dir
+from app.core.auth import safe_user_id
 from app.routers.conversations import (
     conversation_path,
     save_conversation,
@@ -6086,18 +6060,7 @@ async def save_providers(payload: List[ApiProviderPayload]):
 
 @app.get("/api/config/token")
 async def get_global_token():
-    # 优先读 env，回退到 global_config.json（兼容旧数据）
-    saved_token = modelscope_api_key()
-    if saved_token:
-        return {"token": saved_token}
-    if os.path.exists(GLOBAL_CONFIG_FILE):
-        try:
-            with open(GLOBAL_CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                return {"token": config.get("modelscope_token", "")}
-        except:
-            pass
-    return {"token": ""}
+    return {"token": modelscope_api_key() or ""}
 
 # --- 在线生图 (COMFLY) ---
 
@@ -7564,45 +7527,29 @@ def _load_builtin_expand_rules():
 
 @app.get("/api/caption-rules")
 async def get_caption_rules():
-    rules_file = os.path.join(user_data_dir(), "caption_rules.json")
-    user_rules = []
-    if os.path.isfile(rules_file):
-        try:
-            with open(rules_file, "r", encoding="utf-8") as f:
-                user_rules = json.load(f)
-        except Exception:
-            user_rules = []
+    from app.services.business_metadata import get_user_setting
+    user_rules = get_user_setting(current_user_id(), "caption_rules", [])
     return {"builtin_rules": _load_builtin_caption_rules(), "user_rules": user_rules}
 
 
 @app.post("/api/caption-rules")
 async def save_caption_rules(payload: dict):
-    rules_file = os.path.join(user_data_dir(), "caption_rules.json")
-    user_rules = payload.get("user_rules", [])
-    with open(rules_file, "w", encoding="utf-8") as f:
-        json.dump(user_rules, f, ensure_ascii=False, indent=2)
+    from app.services.business_metadata import set_user_setting
+    set_user_setting(current_user_id(), "caption_rules", payload.get("user_rules", []))
     return {"ok": True}
 
 
 @app.get("/api/expand-rules")
 async def get_expand_rules():
-    rules_file = os.path.join(user_data_dir(), "expand_rules.json")
-    user_rules = []
-    if os.path.isfile(rules_file):
-        try:
-            with open(rules_file, "r", encoding="utf-8") as f:
-                user_rules = json.load(f)
-        except Exception:
-            user_rules = []
+    from app.services.business_metadata import get_user_setting
+    user_rules = get_user_setting(current_user_id(), "expand_rules", [])
     return {"builtin_rules": _load_builtin_expand_rules(), "user_rules": user_rules}
 
 
 @app.post("/api/expand-rules")
 async def save_expand_rules(payload: dict):
-    rules_file = os.path.join(user_data_dir(), "expand_rules.json")
-    user_rules = payload.get("user_rules", [])
-    with open(rules_file, "w", encoding="utf-8") as f:
-        json.dump(user_rules, f, ensure_ascii=False, indent=2)
+    from app.services.business_metadata import set_user_setting
+    set_user_setting(current_user_id(), "expand_rules", payload.get("user_rules", []))
     return {"ok": True}
 
 
@@ -8904,22 +8851,16 @@ from app.routers.workflows import (
 )
 
 def runninghub_workflow_store_path() -> str:
-    return RUNNINGHUB_WORKFLOW_STORE_FILE
+    return "postgresql:runninghub_workflows"
 
 def load_runninghub_workflow_store():
-    if not os.path.exists(RUNNINGHUB_WORKFLOW_STORE_FILE):
-        return {}
-    try:
-        with open(RUNNINGHUB_WORKFLOW_STORE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    from app.services.business_metadata import get_app_setting
+    data = get_app_setting("runninghub_workflows", {})
+    return data if isinstance(data, dict) else {}
 
 def save_runninghub_workflow_store(store):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(RUNNINGHUB_WORKFLOW_STORE_FILE, "w", encoding="utf-8") as f:
-        json.dump(store, f, ensure_ascii=False, indent=2)
+    from app.services.business_metadata import set_app_setting
+    set_app_setting("runninghub_workflows", store)
 
 def runninghub_workflow_config_has_payload(cfg):
     if not isinstance(cfg, dict):

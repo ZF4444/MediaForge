@@ -21,7 +21,6 @@ from PIL import Image
 from app.config import (
     ASSET_LIBRARY_DIR,
     DATABASE_URL,
-    GLOBAL_CONFIG_FILE,
     GLOBAL_CONFIG_LOCK,
     LOCAL_UPLOAD_DIR,
     MINIO_ACCESS_KEY,
@@ -40,14 +39,13 @@ from app.config import (
     STORAGE_INPUT_RETENTION_DAYS,
     STORAGE_METADATA_PURGE_ENABLED,
     STORAGE_METADATA_PURGE_RETENTION_DAYS,
-    STORAGE_OBJECT_INDEX_FILE,
     STORAGE_OUTPUT_RETENTION_DAYS,
     STORAGE_QUOTA_ENABLED,
     STORAGE_TEMP_RETENTION_DAYS,
     STORAGE_UPLOAD_RETENTION_DAYS,
     STORAGE_USER_QUOTA_BYTES,
 )
-from app.core.auth import current_user_id, user_data_dir
+from app.core.auth import current_user_id
 from app.core.utils import now_ms
 
 _CLIENT = None
@@ -257,16 +255,8 @@ def load_storage_quota_config() -> Dict[str, Any]:
                 "default_quota_bytes": _QUOTA_CONFIG_CACHE.get("default_quota_bytes"),
                 "users": dict(_QUOTA_CONFIG_CACHE.get("users") or {}),
             }
-        data: Dict[str, Any] = {}
-        if os.path.exists(GLOBAL_CONFIG_FILE):
-            try:
-                with open(GLOBAL_CONFIG_FILE, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    data = loaded
-            except Exception:
-                data = {}
-        _QUOTA_CONFIG_CACHE = _sanitize_storage_quota_config((data or {}).get("storage_quota"))
+        from app.services.business_metadata import get_app_setting
+        _QUOTA_CONFIG_CACHE = _sanitize_storage_quota_config(get_app_setting("storage_quota", {}))
         return {
             "enabled": bool(_QUOTA_CONFIG_CACHE.get("enabled", STORAGE_QUOTA_ENABLED)),
             "default_quota_bytes": _QUOTA_CONFIG_CACHE.get("default_quota_bytes"),
@@ -278,20 +268,8 @@ def save_storage_quota_config(config: Dict[str, Any]) -> Dict[str, Any]:
     global _QUOTA_CONFIG_CACHE
     sanitized = _sanitize_storage_quota_config(config)
     with GLOBAL_CONFIG_LOCK:
-        payload: Dict[str, Any] = {}
-        if os.path.exists(GLOBAL_CONFIG_FILE):
-            try:
-                with open(GLOBAL_CONFIG_FILE, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    payload = loaded
-            except Exception:
-                payload = {}
-        payload["storage_quota"] = sanitized
-        tmp = GLOBAL_CONFIG_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, GLOBAL_CONFIG_FILE)
+        from app.services.business_metadata import set_app_setting
+        set_app_setting("storage_quota", sanitized)
         _QUOTA_CONFIG_CACHE = sanitized
     return {
         "enabled": bool(sanitized.get("enabled", STORAGE_QUOTA_ENABLED)),
@@ -653,35 +631,15 @@ def object_exists(bucket: str, object_key: str) -> bool:
 
 
 def _index_path() -> str:
-    return os.path.join(user_data_dir(), STORAGE_OBJECT_INDEX_FILE)
+    raise RuntimeError("本地 JSON 文件索引已停用；必须使用 PostgreSQL")
 
 
 def _load_index() -> Dict[str, Dict[str, Any]]:
-    path = _index_path()
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
+    raise RuntimeError("本地 JSON 文件索引已停用；必须使用 PostgreSQL")
 
 
 def _save_index(index: Dict[str, Dict[str, Any]]) -> None:
-    path = _index_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=os.path.dirname(path), delete=False)
-    try:
-        with tmp:
-            json.dump(index, tmp, ensure_ascii=False, indent=2)
-        os.replace(tmp.name, path)
-    finally:
-        if os.path.exists(tmp.name):
-            try:
-                os.remove(tmp.name)
-            except OSError:
-                pass
+    raise RuntimeError("本地 JSON 文件索引已停用；必须使用 PostgreSQL")
 
 
 def _fallback_upsert(entry: Dict[str, Any]) -> Dict[str, Any]:
