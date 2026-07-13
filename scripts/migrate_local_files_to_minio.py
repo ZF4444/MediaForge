@@ -14,28 +14,17 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from app.services.storage import metadata_db_enabled, storage_enabled
-from app.services.storage_migration import LOCAL_CATEGORY_ROOTS, run_local_storage_migration
+from app.services.storage_migration import run_local_storage_migration
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Migrate local assets/* files into MinIO and rewrite file_id metadata refs.")
-    parser.add_argument("--dry-run", action="store_true", help="Only scan and plan migration without writing MinIO/DB/JSON.")
-    parser.add_argument(
-        "--category",
-        action="append",
-        choices=sorted(LOCAL_CATEGORY_ROOTS.keys()),
-        help="Limit migration to one or more categories.",
+    parser = argparse.ArgumentParser(
+        description="Migrate all legacy assets/* files to MinIO and rewrite local metadata to file_id references."
     )
-    parser.add_argument("--limit", type=int, default=0, help="Only process the first N files after scan ordering.")
     parser.add_argument(
-        "--skip-metadata-rewrite",
+        "--dry-run",
         action="store_true",
-        help="Only migrate binary files, do not rewrite history/assets/canvas/conversation JSON refs.",
-    )
-    parser.add_argument(
-        "--report",
-        default="",
-        help="Optional path to save full JSON report. Default: scripts/reports/storage-migration-<timestamp>.json",
+        help="Scan all files and metadata without writing MinIO, PostgreSQL, or JSON files.",
     )
     return parser.parse_args()
 
@@ -81,13 +70,10 @@ def main() -> int:
     print("Scanning local media and calculating migration total...", file=sys.stderr)
     summary = run_local_storage_migration(
         dry_run=bool(args.dry_run),
-        categories=set(args.category or []),
-        limit=max(0, int(args.limit or 0)),
-        rewrite_metadata=not args.skip_metadata_rewrite,
         progress_callback=render_progress,
         total_callback=report_total,
     )
-    report_path = args.report or default_report_path()
+    report_path = default_report_path()
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
     print(json.dumps({
