@@ -54,14 +54,38 @@ def default_report_path() -> str:
     return os.path.join(folder, f"storage-migration-{stamp}.json")
 
 
+def render_progress(current: int, total: int, result: dict) -> None:
+    width = 30
+    ratio = current / total if total else 1.0
+    filled = min(width, int(width * ratio))
+    bar = "#" * filled + "-" * (width - filled)
+    status = str(result.get("status") or "unknown")
+    path = str(result.get("local_path") or result.get("legacy_url") or "")
+    if len(path) > 48:
+        path = "..." + path[-45:]
+    sys.stderr.write(f"\r[{bar}] {current}/{total} {ratio * 100:6.2f}% {status:8} {path:<48}")
+    if current >= total:
+        sys.stderr.write("\n")
+    sys.stderr.flush()
+
+
+def report_total(total: int) -> None:
+    print(f"Found {total} file(s) to process.", file=sys.stderr)
+    if total == 0:
+        print("No local media files require processing.", file=sys.stderr)
+
+
 def main() -> int:
     args = parse_args()
     ensure_environment()
+    print("Scanning local media and calculating migration total...", file=sys.stderr)
     summary = run_local_storage_migration(
         dry_run=bool(args.dry_run),
         categories=set(args.category or []),
         limit=max(0, int(args.limit or 0)),
         rewrite_metadata=not args.skip_metadata_rewrite,
+        progress_callback=render_progress,
+        total_callback=report_total,
     )
     report_path = args.report or default_report_path()
     with open(report_path, "w", encoding="utf-8") as f:
@@ -74,10 +98,11 @@ def main() -> int:
         "planned": summary.get("planned", 0),
         "skipped": summary.get("skipped", 0),
         "errors": summary.get("errors", 0),
+        "warnings": summary.get("warnings", 0),
         "metadata": summary.get("metadata", {}),
         "report": report_path,
     }, ensure_ascii=False, indent=2))
-    return 0
+    return 1 if int(summary.get("errors") or 0) > 0 else 0
 
 
 if __name__ == "__main__":

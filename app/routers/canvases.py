@@ -137,7 +137,7 @@ def canvas_record(data):
         "pinned": bool(data.get("pinned") or False),
         "created_at": data.get("created_at", 0),
         "updated_at": data.get("updated_at", 0),
-        "deleted_at": data.get("deleted_at", 0),
+        "deleted_at": data.get("deleted_at") or 0,
         "node_count": len(data.get("nodes", [])),
     }
 
@@ -146,7 +146,7 @@ def cleanup_expired_canvas_trash():
     from app.services.business_metadata import metadata_connection
     cutoff = now_ms() - CANVAS_TRASH_RETENTION_MS
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM smart_canvases WHERE user_id=%s AND deleted_at IS NOT NULL AND deleted_at < %s", (current_user_id(), cutoff))
+        cur.execute("DELETE FROM smart_canvases WHERE user_id=%s AND deleted_at > 0 AND deleted_at < %s", (current_user_id(), cutoff))
 
 
 def iter_canvas_records(include_deleted=False):

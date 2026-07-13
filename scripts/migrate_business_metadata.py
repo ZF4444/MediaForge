@@ -1,9 +1,9 @@
 """One-time migration of legacy user JSON into PostgreSQL business metadata."""
-import json, os, sys
+import json, sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 from app.services.business_metadata import initialize_business_metadata, metadata_connection, save_canvas_payload
-from app.config import USERS_DIR
 from app.services.storage import resolve_file_reference
 
 def main():
@@ -13,7 +13,9 @@ def main():
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT id FROM files WHERE status <> 'deleted' AND deleted_at IS NULL")
         valid_file_ids = {str(row["id"]) for row in cur.fetchall()}
-    root = Path(USERS_DIR)
+    root = PROJECT_ROOT / "data" / "users"
+    if not root.exists():
+        print(f"legacy business metadata source does not exist: {root}")
     for user_dir in root.iterdir() if root.exists() else []:
         if not user_dir.is_dir(): continue
         uid = user_dir.name

@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS smart_canvases (
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, deleted_at BIGINT, viewport_json JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS idx_smart_canvases_user_updated ON smart_canvases(user_id, updated_at DESC);
+UPDATE smart_canvases SET deleted_at = NULL WHERE deleted_at = 0;
 CREATE TABLE IF NOT EXISTS smart_canvas_nodes (
     id TEXT PRIMARY KEY, canvas_id TEXT NOT NULL REFERENCES smart_canvases(id) ON DELETE CASCADE,
     node_type TEXT NOT NULL DEFAULT '', position_x DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -206,8 +207,12 @@ def save_canvas_payload(user_id: str, canvas: Dict[str, Any]) -> None:
     now = int(canvas.get("updated_at") or 0)
     payload = dict(canvas)
     nodes = payload.pop("nodes", [])
+    try:
+        deleted_at = int(payload.get("deleted_at") or 0) or None
+    except (TypeError, ValueError):
+        deleted_at = None
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("INSERT INTO smart_canvases(id,user_id,title,icon,owner,color,pinned,created_at,updated_at,deleted_at,viewport_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,icon=EXCLUDED.icon,owner=EXCLUDED.owner,color=EXCLUDED.color,pinned=EXCLUDED.pinned,updated_at=EXCLUDED.updated_at,deleted_at=EXCLUDED.deleted_at,viewport_json=EXCLUDED.viewport_json", (payload["id"], user_id, payload.get("title", ""), payload.get("icon", ""), payload.get("owner", ""), payload.get("color", ""), bool(payload.get("pinned")), payload.get("created_at", now), now, payload.get("deleted_at"), json_value({"viewport": payload.get("viewport", {}), "payload": {k:v for k,v in payload.items() if k not in {"id","title","icon","owner","color","pinned","created_at","updated_at","deleted_at","viewport"}}})))
+        cur.execute("INSERT INTO smart_canvases(id,user_id,title,icon,owner,color,pinned,created_at,updated_at,deleted_at,viewport_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,icon=EXCLUDED.icon,owner=EXCLUDED.owner,color=EXCLUDED.color,pinned=EXCLUDED.pinned,updated_at=EXCLUDED.updated_at,deleted_at=EXCLUDED.deleted_at,viewport_json=EXCLUDED.viewport_json", (payload["id"], user_id, payload.get("title", ""), payload.get("icon", ""), payload.get("owner", ""), payload.get("color", ""), bool(payload.get("pinned")), payload.get("created_at", now), now, deleted_at, json_value({"viewport": payload.get("viewport", {}), "payload": {k:v for k,v in payload.items() if k not in {"id","title","icon","owner","color","pinned","created_at","updated_at","deleted_at","viewport"}}})))
         cur.execute("DELETE FROM smart_canvas_node_files WHERE node_id IN (SELECT id FROM smart_canvas_nodes WHERE canvas_id=%s)", (payload["id"],))
         cur.execute("DELETE FROM smart_canvas_nodes WHERE canvas_id=%s", (payload["id"],))
         for order, node in enumerate(nodes):
@@ -223,7 +228,7 @@ def load_canvas_payload(user_id: str, canvas_id: str) -> Optional[Dict[str, Any]
         if not row: return None
         cur.execute("SELECT data_json FROM smart_canvas_nodes WHERE canvas_id=%s ORDER BY sort_order", (canvas_id,)); nodes = [r["data_json"] for r in cur.fetchall()]
     meta = row.get("viewport_json") or {}; payload = dict(meta.get("payload") or {})
-    payload.update({"id": row["id"], "title": row["title"], "icon": row["icon"], "owner": row["owner"], "color": row["color"], "pinned": row["pinned"], "created_at": row["created_at"], "updated_at": row["updated_at"], "deleted_at": row["deleted_at"] or 0, "viewport": meta.get("viewport") or {}, "nodes": nodes})
+    payload.update({"id": row["id"], "title": row["title"], "icon": row["icon"], "owner": row["owner"], "color": row["color"], "pinned": row["pinned"], "created_at": row["created_at"], "updated_at": row["updated_at"], "deleted_at": row["deleted_at"], "viewport": meta.get("viewport") or {}, "nodes": nodes})
     return payload
 
 

@@ -7,7 +7,7 @@ import os
 import urllib.parse
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from app.config import (
     ASSETS_DIR,
@@ -268,7 +268,13 @@ def migrate_candidate(candidate: MigrationCandidate, *, dry_run: bool = False) -
             source=CATEGORY_SOURCE.get(candidate.category, "upload"),
             is_public=False,
         )
-        ensure_media_derivatives(entry, payload=payload)
+        derivative_warning = ""
+        try:
+            ensure_media_derivatives(entry, payload=payload)
+        except Exception as exc:
+            # The original object and files row are the migration source of truth.
+            # A malformed previewable file must not abort the remaining batch.
+            derivative_warning = f"{type(exc).__name__}: {exc}"
     finally:
         current_user_var.reset(token)
 
@@ -281,7 +287,7 @@ def migrate_candidate(candidate: MigrationCandidate, *, dry_run: bool = False) -
     else:
         status = "migrated"
         reason = ""
-    return {
+    result = {
         "status": status,
         "reason": reason,
         "legacy_url": candidate.legacy_url,
@@ -290,7 +296,12 @@ def migrate_candidate(candidate: MigrationCandidate, *, dry_run: bool = False) -
         "user_id": candidate.user_id,
         "size_bytes": candidate.size_bytes,
         "category": candidate.category,
+        "local_path": candidate.local_path,
     }
+    if derivative_warning:
+        result["warning"] = "derivative_generation_failed"
+        result["warning_detail"] = derivative_warning
+    return result
 
 
 def rewrite_all_metadata(*, dry_run: bool = False, data_dir: str = DATA_DIR) -> Dict[str, int]:
@@ -366,14 +377,33 @@ def run_local_storage_migration(
     categories: Optional[Set[str]] = None,
     limit: int = 0,
     rewrite_metadata: bool = True,
+    progress_callback: Optional[Callable[[int, int, Dict[str, Any]], None]] = None,
+    total_callback: Optional[Callable[[int], None]] = None,
 ) -> Dict[str, Any]:
     reference_index = build_reference_index()
     candidates = iter_local_asset_candidates(categories=categories, reference_index=reference_index)
     if limit > 0:
         candidates = candidates[:limit]
+    if total_callback:
+        total_callback(len(candidates))
     results: List[Dict[str, Any]] = []
-    for candidate in candidates:
-        results.append(migrate_candidate(candidate, dry_run=dry_run))
+    total = len(candidates)
+    for position, candidate in enumerate(candidates, start=1):
+        try:
+            result = migrate_candidate(candidate, dry_run=dry_run)
+        except Exception as exc:
+            result = {
+                "status": "error",
+                "reason": "migration_exception",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "local_path": candidate.local_path,
+                "legacy_url": candidate.legacy_url,
+                "user_id": candidate.user_id,
+                "category": candidate.category,
+            }
+        results.append(result)
+        if progress_callback:
+            progress_callback(position, total, result)
     summary = {
         "scanned": len(candidates),
         "migrated": sum(1 for item in results if item.get("status") == "migrated"),
@@ -381,6 +411,7 @@ def run_local_storage_migration(
         "planned": sum(1 for item in results if item.get("status") == "planned"),
         "skipped": sum(1 for item in results if item.get("status") == "skipped"),
         "errors": sum(1 for item in results if item.get("status") == "error"),
+        "warnings": sum(1 for item in results if item.get("warning")),
         "results": results,
     }
     if rewrite_metadata:
