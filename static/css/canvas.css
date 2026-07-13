@@ -1058,7 +1058,6 @@ body.studio-theme-dark .comfy-random-btn.active,
 .smart-create-btn:disabled { opacity:.65; cursor:wait; transform:none; }
 .secondary-btn { height:38px; padding:0 13px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; gap:8px; background:#fff; color:#475569; border:1px solid #e8edf3; font-size:12px; font-weight:800; }
 .secondary-btn.active { background:#111827; color:#fff; border-color:#111827; }
-.canvas-gate.trash-mode #gateCreateBtn,
 .canvas-gate.trash-mode #gateCreateSmartBtn { display:none; }
 .trash-note { display:none; margin-top:14px; padding:10px 12px; border-radius:12px; background:#fff8e6; color:#92400e; font-size:11px; line-height:1.35; font-weight:700; border:1px solid #fde68a; }
 .canvas-gate.trash-mode .trash-note { display:block; }
