@@ -1178,21 +1178,14 @@
                     </svg>
                     <span class="side-pill-text" data-i18n="common.comfyuiSettings">工作流设置</span>
                 </button>
-                <button class="side-pill" id="nav-storage-quota" onclick="switchUI(this, 'storage-quota')" type="button" title="空间配额" style="display:none">
+                <button class="side-pill" id="nav-user-management" onclick="switchUI(this, 'user-management')" type="button" title="用户管理" style="display:none">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M4 6c0-1.1 3.6-2 8-2s8 .9 8 2-3.6 2-8 2-8-.9-8-2z"></path>
-                        <path d="M4 6v12c0 1.1 3.6 2 8 2s8-.9 8-2V6"></path>
-                        <path d="M4 12c0 1.1 3.6 2 8 2s8-.9 8-2"></path>
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                     </svg>
-                    <span class="side-pill-text">空间配额</span>
-                </button>
-                <button class="side-pill" id="nav-access-control" onclick="switchUI(this, 'access-control')" type="button" title="访问控制" style="display:none">
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="11" width="18" height="11" rx="2"></rect>
-                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                        <circle cx="12" cy="16" r="1"></circle>
-                    </svg>
-                    <span class="side-pill-text">访问控制</span>
+                    <span class="side-pill-text">用户管理</span>
                 </button>
                 <button class="side-pill" id="nav-feedback-admin" onclick="switchUI(this, 'feedback-admin')" type="button" title="反馈管理" style="display:none">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1239,8 +1232,7 @@
             <iframe id="frame-asset-manager" data-src="/static/asset-manager.html" scrolling="yes"></iframe>
             <iframe id="frame-api-settings" data-src="/static/api-settings.html" scrolling="yes"></iframe>
             <iframe id="frame-comfyui-settings" data-src="/static/comfyui-settings.html" scrolling="yes"></iframe>
-            <iframe id="frame-storage-quota" data-src="/static/storage-quota.html" scrolling="yes"></iframe>
-            <iframe id="frame-access-control" data-src="/static/access-control.html" scrolling="yes"></iframe>
+            <iframe id="frame-user-management" data-src="/static/user-management.html" scrolling="yes"></iframe>
             <iframe id="frame-feedback-admin" data-src="/static/feedback-admin.html" scrolling="yes"></iframe>
             <iframe id="frame-broadcast-admin" data-src="/static/broadcast-admin.html" scrolling="yes"></iframe>
 
@@ -1321,7 +1313,8 @@
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_PINNED_KEY = 'studio_sidebar_pinned';
         const DEFAULT_PAGE_ID = 'canvas';
-        const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings','storage-quota','access-control','feedback-admin','broadcast-admin'];
+        const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings','user-management','feedback-admin','broadcast-admin'];
+        const LEGACY_USER_MANAGEMENT_TABS = {'access-control':'access','storage-quota':'quota'};
         const LOCAL_PAGE_IDS = ['angle','gaussian','pose-studio'];
 
         function setSidebarPinned(pinned, options = {}) {
@@ -1387,6 +1380,8 @@
 
         function switchUI(el, id, options = {}) {
             resetStudioRootScroll();
+            const legacyUserTab = LEGACY_USER_MANAGEMENT_TABS[id] || '';
+            if(legacyUserTab) id = 'user-management';
             if(!PAGE_IDS.includes(id)) id = DEFAULT_PAGE_ID;
 
             // 离开前确认：若当前激活页声明了守卫且非强制切换，则先询问该页能否离开
@@ -1414,6 +1409,7 @@
             if(el) el.classList.add('active');
             document.querySelectorAll('iframe').forEach(f => f.classList.remove('active'));
             const target = document.getElementById('frame-' + id);
+            if(id === 'user-management' && legacyUserTab && !target.src) target.dataset.src = `/static/user-management.html#${legacyUserTab}`;
             target.classList.add('active');
             // 切换功能页面时自动收起帮助面板：不同页面的帮助内容互相独立，
             // 避免面板停留在旧页面的内容上造成误解。
@@ -1469,9 +1465,11 @@
 
         function restoreActivePage() {
             restoreSidebarPinned();
-            const id = PAGE_IDS.includes(localStorage.getItem(ACTIVE_PAGE_KEY)) ? localStorage.getItem(ACTIVE_PAGE_KEY) : DEFAULT_PAGE_ID;
+            const savedId = localStorage.getItem(ACTIVE_PAGE_KEY);
+            const id = PAGE_IDS.includes(savedId) || LEGACY_USER_MANAGEMENT_TABS[savedId] ? savedId : DEFAULT_PAGE_ID;
+            if(LEGACY_USER_MANAGEMENT_TABS[id]) localStorage.setItem(ACTIVE_PAGE_KEY, 'user-management');
             restoreLocalNav(id);
-            const trigger = document.querySelector(`[onclick*="'${id}'"],[onclick*='"${id}"']`);
+            const trigger = LEGACY_USER_MANAGEMENT_TABS[id] ? document.getElementById('nav-user-management') : document.querySelector(`[onclick*="'${id}'"],[onclick*='"${id}"']`);
             switchUI(trigger, id, { skipRemember:true });
             document.documentElement.classList.remove('studio-route-booting');
         }
@@ -1487,11 +1485,9 @@
             } catch(e) { return; }
 
             const isAdmin = !!(me && me.is_admin);
-            // 仅 admin 显示访问控制入口
-            const acNav = document.getElementById('nav-access-control');
-            if (acNav) acNav.style.display = isAdmin ? '' : 'none';
-            const storageQuotaNav = document.getElementById('nav-storage-quota');
-            if (storageQuotaNav) storageQuotaNav.style.display = isAdmin ? '' : 'none';
+            // 仅 admin 显示用户管理入口
+            const userManagementNav = document.getElementById('nav-user-management');
+            if (userManagementNav) userManagementNav.style.display = isAdmin ? '' : 'none';
             const feedbackAdminNav = document.getElementById('nav-feedback-admin');
             if (feedbackAdminNav) feedbackAdminNav.style.display = isAdmin ? '' : 'none';
             const broadcastAdminNav = document.getElementById('nav-broadcast-admin');
@@ -1504,7 +1500,7 @@
             const allowed = new Set(me && Array.isArray(me.pages) ? me.pages : PAGE_IDS);
             let hidActive = false;
             PAGE_IDS.forEach(pid => {
-                if (pid === 'storage-quota' || pid === 'access-control' || pid === 'feedback-admin' || pid === 'broadcast-admin') return;   // 该入口仅 admin，已在上面处理
+                if (pid === 'user-management' || pid === 'feedback-admin' || pid === 'broadcast-admin') return;   // 该入口仅 admin，已在上面处理
                 if (allowed.has(pid)) return;
                 // 隐藏对应导航入口（nav-item 或 side-pill）
                 document.querySelectorAll(`[onclick*="'${pid}'"],[onclick*='"${pid}"']`).forEach(el => {
@@ -1514,7 +1510,7 @@
             });
             // 若当前激活页被裁剪，回退到第一个允许的页面
             if (hidActive) {
-                const fallback = PAGE_IDS.find(p => p !== 'storage-quota' && p !== 'access-control' && p !== 'feedback-admin' && p !== 'broadcast-admin' && allowed.has(p)) || DEFAULT_PAGE_ID;
+                const fallback = PAGE_IDS.find(p => p !== 'user-management' && p !== 'feedback-admin' && p !== 'broadcast-admin' && allowed.has(p)) || DEFAULT_PAGE_ID;
                 const trigger = document.querySelector(`[onclick*="'${fallback}'"],[onclick*='"${fallback}"']`);
                 switchUI(trigger, fallback);
             }
