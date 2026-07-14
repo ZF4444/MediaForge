@@ -2288,7 +2288,7 @@ function renderVideoGenerationConfig(){
     return `<div class="smart-control video-generation-control">
         <button class="smart-pill video-generation-summary" type="button" title="${escapeAttr(summary)}">
             <i data-lucide="sliders-horizontal"></i>
-            <span class="video-config-summary"><strong>${escapeHtml(tr('smart.videoGenerationConfig'))}</strong><span>${escapeHtml(summary)}</span></span>
+            <span class="video-config-summary"><strong>${escapeHtml(generationModeLabel)}</strong><span>${escapeHtml(`${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution || tr('smart.videoResAuto')} · ${v}s`)}</span></span>
             <i data-lucide="chevron-up" class="pill-caret"></i>
         </button>
         <div class="smart-popover video-config-popover">
