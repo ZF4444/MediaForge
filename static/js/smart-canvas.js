@@ -944,6 +944,17 @@ function candidateCountForNode(node){
 function isCandidatePanelInteractionTarget(target){
     return Boolean(target?.closest?.('[data-candidate-toggle],[data-candidate-expand],[data-candidate-prev],[data-candidate-next],[data-candidate-set-main],[data-candidate-grid-item],.candidate-panel,.candidate-toggle,.candidate-grid'));
 }
+function isExpandedCandidateGridInteractionTarget(target){
+    const grid = target?.closest?.('[data-candidate-grid]');
+    if(grid && expandedCandidateNodeIds.has(grid.dataset.candidateGrid)) return true;
+    const toggle = target?.closest?.('[data-candidate-expand]');
+    return Boolean(toggle && expandedCandidateNodeIds.has(toggle.dataset.candidateExpand));
+}
+function closeExpandedCandidateGrids(){
+    if(!expandedCandidateNodeIds.size) return false;
+    expandedCandidateNodeIds.clear();
+    return true;
+}
 function closeCandidatePanel(options={}){
     if(!candidatePanelNodeId) return false;
     const closingId = candidatePanelNodeId;
@@ -14001,6 +14012,11 @@ document.addEventListener('mousedown', event => {
             render();
         }, 0);
     }
+}, true);
+document.addEventListener('click', event => {
+    if(event.button !== 0 || !expandedCandidateNodeIds.size || didPan) return;
+    if(isExpandedCandidateGridInteractionTarget(event.target)) return;
+    if(closeExpandedCandidateGrids()) setTimeout(() => render(), 0);
 }, true);
 shell.addEventListener('mousedown', e => {
     if(!zoomPreviewState) return;
