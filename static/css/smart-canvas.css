@@ -841,7 +841,7 @@ video.node-img { object-fit:cover; background:#0f172a; }
 .video-generation-control .video-generation-summary { width:min(180px, calc(100vw - 80px)); max-width:180px; height:34px; padding:0 6px 0 7px; justify-content:flex-start; border-color:var(--line); background:var(--card); }
 .video-generation-summary > i:first-child,.video-generation-summary > svg:first-child { color:var(--strong); opacity:1; }
 .video-config-summary { min-width:0; flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-size:10.5px; line-height:1; font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:0; text-align:left; }
-.video-generation-control .video-config-popover { left:0; width:min(480px, calc(100vw - 16px)); max-width:min(480px, calc(100vw - 16px)); max-height:none; padding:8px 5px 9px; overflow-y:visible; transform:translate(0, 4px); }
+.video-generation-control .video-config-popover { left:0; width:min(263px, calc(100vw - 16px)); max-width:min(263px, calc(100vw - 16px)); max-height:none; padding:8px 5px 9px; overflow-y:visible; transform:translate(0, 4px); }
 .video-config-head { min-width:0; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:1px 2px 7px; border-bottom:1px solid var(--line); }
 .video-config-head > div { min-width:0; display:flex; flex-direction:column; gap:3px; }
 .video-config-head strong { color:var(--text); font-size:12px; line-height:1.2; font-weight:750; letter-spacing:0; }
