@@ -414,7 +414,7 @@ let settings = {
     videoAspect:'16:9',
     videoResolution:'',
     videoGenerateAudio:false,
-    videoMultimodal:false,
+    videoMultimodal:true,
     videoUseFrameRoles:false,
     msgenModel:'zimage',
     msCustomModel:'',
@@ -2266,40 +2266,38 @@ function renderVideoModelSelector(providers, models, restricted){
     </div>`;
 }
 function renderVideoGenerationConfig(){
-    const v = Math.max(1, Math.min(60, Number(settings.videoDuration) || 5));
-    const quick = [3, 4, 5, 6, 8, 10, 12, 15];
+    const quick = [5, 10, 15];
+    const durationValue = Number(settings.videoDuration);
+    const v = Number.isFinite(durationValue) && durationValue > 0 ? durationValue : 5;
+    settings.videoDuration = v;
     const aspectOptions = [
-        ['16:9','16:9'], ['9:16','9:16'], ['1:1','1:1'], ['4:3','4:3'], ['3:4','3:4'],
-        ['21:9','21:9'], ['9:21','9:21'], ['keep_ratio', tr('smart.videoAspectKeep')], ['adaptive', tr('smart.videoAspectAdaptive')]
+        ['16:9','16:9'], ['4:3','4:3'], ['1:1','1:1'], ['3:4','3:4'], ['9:16','9:16'], ['21:9','21:9']
     ];
     const aspect = settings.videoAspect || '16:9';
     const aspectLabels = Object.fromEntries(aspectOptions);
-    const resolutionOptions = [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P']];
-    const resolution = settings.videoResolution || '';
+    const resolutionOptions = [['480p','480p'], ['720p','720p'], ['1080p','1080p']];
+    const resolution = settings.videoResolution || '480p';
+    settings.videoResolution = resolution;
     const resolutionLabels = Object.fromEntries(resolutionOptions);
-    const generationMode = settings.videoUseFrameRoles ? 'frames' : settings.videoMultimodal ? 'multimodal' : 'auto';
-    const generationModes = [
-        ['auto', tr('smart.videoModeAuto')],
+    if(!settings.videoUseFrameRoles && !settings.videoMultimodal) settings.videoMultimodal = true;
+    const generationMode = settings.videoUseFrameRoles ? 'frames' : 'multimodal';
+    const generationModeOptions = [
         ['multimodal', tr('smart.videoMultimodal')],
         ['frames', tr('smart.videoUseFrameRoles')]
     ];
-    const generationModeLabel = Object.fromEntries(generationModes)[generationMode];
-    const summary = `${generationModeLabel} · ${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution || tr('smart.videoResAuto')} · ${v}s`;
+    const generationModeLabel = Object.fromEntries(generationModeOptions)[generationMode];
+    const summary = `${generationModeLabel} · ${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution} · ${v}s`;
     return `<div class="smart-control video-generation-control">
         <button class="smart-pill video-generation-summary" type="button" title="${escapeAttr(summary)}">
             <i data-lucide="sliders-horizontal"></i>
-            <span class="video-config-summary"><strong>${escapeHtml(generationModeLabel)}</strong><span>${escapeHtml(`${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution || tr('smart.videoResAuto')} · ${v}s`)}</span></span>
+            <span class="video-config-summary"><strong>${escapeHtml(generationModeLabel)}</strong><span>${escapeHtml(`${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution} · ${v}s`)}</span></span>
             <i data-lucide="chevron-up" class="pill-caret"></i>
         </button>
         <div class="smart-popover video-config-popover">
-            <div class="video-config-head">
-                <div><strong>${escapeHtml(tr('smart.videoGenerationConfig'))}</strong></div>
-                <span class="video-config-current">${escapeHtml(summary)}</span>
-            </div>
             <section class="video-config-section">
                 <div class="video-config-label">${escapeHtml(tr('smart.videoGenerationMode'))}</div>
-                <div class="video-config-mode-grid">
-                    ${generationModes.map(([value,label]) => `<button type="button" class="video-config-option ${value === generationMode ? 'active' : ''}" data-video-generation-mode="${escapeAttr(value)}"><span>${escapeHtml(label)}</span></button>`).join('')}
+                <div class="video-config-mode-single">
+                    ${generationModeOptions.map(([value,label]) => `<button type="button" class="video-config-option ${value === generationMode ? 'active' : ''}" data-video-mode="${escapeAttr(value)}"><span>${escapeHtml(label)}</span></button>`).join('')}
                 </div>
             </section>
             <section class="video-config-section">
@@ -2319,16 +2317,17 @@ function renderVideoGenerationConfig(){
                     <div class="video-config-label">${escapeHtml(tr('smart.videoDuration'))}</div>
                     <div class="duration-grid">
                         ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" data-smart-param="videoDuration" data-smart-value="${n}">${n}s</button>`).join('')}
+                        <input class="duration-custom-input ${quick.includes(v) ? '' : 'active'}" type="number" min="1" max="60" step="1" value="${quick.includes(v) ? '' : escapeAttr(v)}" placeholder="${escapeAttr(tr('smart.custom'))}" aria-label="${escapeAttr(tr('smart.videoDurationTip'))}" data-param="videoDuration">
                     </div>
-                    <label class="duration-custom">
-                        <span>${escapeHtml(tr('smart.custom'))}</span>
-                        <input type="number" min="1" max="60" step="1" data-param="videoDuration" value="${v}">
-                    </label>
                 </section>
             </div>
             <section class="video-config-section video-config-flags">
+                <div class="video-config-label">${escapeHtml(tr('smart.videoGenerateAudio'))}</div>
                 <div class="video-config-toggle-row">
-                    ${renderVideoToggleControl('videoGenerateAudio', tr('smart.videoGenerateAudio'))}
+                    <div class="video-config-audio-grid">
+                        <button type="button" class="video-config-option ${settings.videoGenerateAudio ? 'active' : ''}" data-video-audio="on"><span>${escapeHtml(tr('smart.audioOn'))}</span></button>
+                        <button type="button" class="video-config-option ${settings.videoGenerateAudio ? '' : 'active'}" data-video-audio="off"><span>${escapeHtml(tr('smart.audioOff'))}</span></button>
+                    </div>
                 </div>
             </section>
         </div>
@@ -3336,13 +3335,24 @@ function bindDynamicParams(){
             if(input.dataset.param === 'videoDuration' && event?.type === 'change') renderDynamicParams();
         };
     });
-    queryAll('[data-video-generation-mode]').forEach(btn => {
+    queryAll('[data-video-audio]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
-            const mode = btn.dataset.videoGenerationMode;
-            settings.videoMultimodal = mode === 'multimodal';
+            settings.videoGenerateAudio = btn.dataset.videoAudio === 'on';
+            reopenVideoControlAfterRender = 'config';
+            persistActiveSmartSettings();
+            renderDynamicParams();
+            scheduleSave();
+        };
+    });
+    queryAll('[data-video-mode]').forEach(btn => {
+        btn.onclick = event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const mode = btn.dataset.videoMode;
             settings.videoUseFrameRoles = mode === 'frames';
+            settings.videoMultimodal = mode === 'multimodal';
             reopenVideoControlAfterRender = 'config';
             persistActiveSmartSettings();
             renderDynamicParams();
