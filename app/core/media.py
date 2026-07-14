@@ -1,38 +1,12 @@
-"""媒体路径/URL 公共工具。
-
-从 main.py 原样迁移的本地媒体路径解析器，被多个功能域（素材库、生成、上传等）
-复用。单独成模块以避免 router 之间循环导入。
-
-依赖：app.config 的路径常量。
-"""
+"""Media helpers backed by MinIO file references."""
 import os
 import urllib.parse
 import uuid
 
-from app.config import (
-    ASSETS_DIR,
-    OUTPUT_DIR,
-    OUTPUT_INPUT_DIR,
-    OUTPUT_OUTPUT_DIR,
-)
 from app.core.logging import get_logger
 
 
 logger = get_logger("media")
-
-
-def output_storage(category="output"):
-    return (OUTPUT_INPUT_DIR, "input") if category == "input" else (OUTPUT_OUTPUT_DIR, "output")
-
-
-def output_url_for(filename, category="output"):
-    _, subdir = output_storage(category)
-    return f"/assets/{subdir}/{filename}"
-
-
-def output_path_for(filename, category="output"):
-    folder, _ = output_storage(category)
-    return os.path.join(folder, filename)
 
 
 def output_file_from_url(url):
@@ -40,36 +14,11 @@ def output_file_from_url(url):
         url = url.get("url", "")
     if not url:
         return None
-    if url.startswith("/api/files/"):
-        try:
-            from app.services.storage import materialize_media_url
-            return materialize_media_url(url)
-        except Exception:
-            return None
-    if not (url.startswith("/output/") or url.startswith("/assets/")):
+    if not url.startswith("/api/files/"):
         return None
-    clean = urllib.parse.unquote(url.split("?", 1)[0]).replace("\\", "/")
-    if clean.startswith("/assets/"):
-        root = ASSETS_DIR
-        rel = clean[len("/assets/"):]
-    else:
-        root = OUTPUT_DIR
-        rel = clean[len("/output/"):]
-    rel = rel.lstrip("/")
-    if not rel:
-        return None
-    path = os.path.abspath(os.path.join(root, rel))
-    output_root = os.path.abspath(root)
-    if os.path.commonpath([output_root, path]) != output_root:
-        return None
-    if os.path.exists(path):
-        return path
     try:
         from app.services.storage import materialize_media_url
-    except Exception:
-        return None
-    try:
-        return materialize_media_url(clean)
+        return materialize_media_url(url)
     except Exception:
         return None
 
@@ -119,18 +68,13 @@ def content_type_for_path(path):
 
 # --- 文件名/远程下载/本地导入等媒体工具（从 main.py 原样迁移，多域复用） ---
 import re
-import shutil
 import urllib.request
 
 import requests
 from fastapi import HTTPException
 from PIL import Image
 
-from app.config import (
-    ASSET_LIBRARY_DIR,
-    LOCAL_IMAGE_IMPORT_EXTS,
-    LOCAL_IMAGE_IMPORT_MAX_BYTES,
-)
+from app.config import LOCAL_IMAGE_IMPORT_EXTS, LOCAL_IMAGE_IMPORT_MAX_BYTES
 
 
 def sanitize_export_filename(name: str, fallback: str) -> str:
@@ -143,18 +87,6 @@ def local_media_file_by_basename(name: str):
     safe = os.path.basename(urllib.parse.unquote(str(name or "")))
     if not safe:
         return None
-    roots = [
-        OUTPUT_OUTPUT_DIR,
-        OUTPUT_INPUT_DIR,
-        os.path.join(ASSETS_DIR, "output"),
-        os.path.join(ASSETS_DIR, "input"),
-        os.path.join(ASSETS_DIR, "library"),
-    ]
-    for root in roots:
-        path = os.path.abspath(os.path.join(root, safe))
-        root_abs = os.path.abspath(root)
-        if os.path.commonpath([root_abs, path]) == root_abs and os.path.isfile(path):
-            return path
     try:
         from app.services.storage import materialize_media_url, media_entry_by_basename
     except Exception:
@@ -266,64 +198,34 @@ def import_local_image_file(path):
         raise HTTPException(status_code=400, detail="文件不是可识别的图片")
     filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
     display_name = os.path.basename(path) or filename
-    if storage_enabled():
-        try:
-            with open(path, "rb") as f:
-                stored = save_compat_media_bytes(
-                    "input",
-                    filename,
-                    f.read(),
-                    original_name=display_name,
-                    content_type=content_type_for_path(path),
-                    kind="image",
-                    source="imported",
-                )
-        except OSError:
-            raise HTTPException(status_code=500, detail="导入本地图片失败")
-        return {
-            "url": stored["url"],
-            "file_id": stored.get("file_id", ""),
-            "name": display_name,
-            "kind": "image",
-        }
-    dest = output_path_for(filename, "input")
     try:
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        shutil.copyfile(path, dest)
+        with open(path, "rb") as f:
+            stored = save_media_bytes(
+                "input",
+                filename,
+                f.read(),
+                original_name=display_name,
+                content_type=content_type_for_path(path),
+                kind="image",
+                source="imported",
+            )
     except OSError:
         raise HTTPException(status_code=500, detail="导入本地图片失败")
-    return {"url": output_url_for(filename, "input"), "name": display_name, "kind": "image"}
+    return {
+        "url": stored["url"],
+        "file_id": stored.get("file_id", ""),
+        "name": display_name,
+        "kind": "image",
+    }
 
 
-# --- 上游图片/视频落地到本地 output（从 main.py 原样迁移，生成域与即梦域复用） ---
+# --- 上游图片/视频写入 MinIO（生成域与即梦域复用） ---
 import base64
-import mimetypes
 
 import httpx
 
 from app.config import VIDEO_POLL_TIMEOUT
-from app.services.storage import normalize_media_ref, save_compat_media_bytes, storage_enabled
-
-
-def _register_output_file(path: str, filename: str, category: str = "output", kind: str = "") -> str:
-    if not storage_enabled():
-        return output_url_for(filename, category)
-    try:
-        with open(path, "rb") as f:
-            content = f.read()
-    except OSError:
-        return output_url_for(filename, category)
-    mime_type = mimetypes.guess_type(filename)[0] or content_type_for_path(path)
-    stored = save_compat_media_bytes(
-        category,
-        filename,
-        content,
-        original_name=filename,
-        content_type=mime_type,
-        kind=kind or ("video" if category == "output" and os.path.splitext(filename)[1].lower() in {".mp4", ".webm", ".mov", ".m4v"} else "image"),
-        source="generated",
-    )
-    return stored["url"]
+from app.services.storage import normalize_media_ref, save_media_bytes
 
 
 async def save_ai_image_to_output(image_data, prefix="online_", category="output"):
@@ -335,26 +237,22 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
         elif "webp" in mime_type:
             filename = filename[:-4] + ".webp"
         payload = base64.b64decode(image_data["value"])
-        if storage_enabled():
-            stored = save_compat_media_bytes(
-                category,
-                filename,
-                payload,
-                original_name=filename,
-                content_type=mime_type or content_type_for_path(filename),
-                kind="image",
-                source="generated",
-            )
-            return stored["url"]
-        path = output_path_for(filename, category)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as f:
-            f.write(payload)
-        return _register_output_file(path, filename, category, kind="image")
+        stored = save_media_bytes(
+            category,
+            filename,
+            payload,
+            original_name=filename,
+            content_type=mime_type or content_type_for_path(filename),
+            kind="image",
+            source="generated",
+        )
+        return stored["url"]
     value = image_data["value"]
-    if value.startswith("/output/") or value.startswith("/assets/"):
+    if value.startswith("/api/files/"):
         ref = normalize_media_ref({"url": value})
         return ref.get("url") or value
+    if value.startswith("/output/") or value.startswith("/assets/"):
+        raise RuntimeError("本地媒体 URL 已停用；请使用 MinIO file_id")
     try:
         timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
@@ -365,36 +263,32 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
                 filename = filename[:-4] + ".jpg"
             elif "webp" in content_type:
                 filename = filename[:-4] + ".webp"
-            if storage_enabled():
-                stored = save_compat_media_bytes(
-                    category,
-                    filename,
-                    response.content,
-                    original_name=filename,
-                    content_type=content_type,
-                    kind="image",
-                    source="generated",
-                )
-                return stored["url"]
-            path = output_path_for(filename, category)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "wb") as f:
-                f.write(response.content)
-            return _register_output_file(path, filename, category, kind="image")
+            stored = save_media_bytes(
+                category,
+                filename,
+                response.content,
+                original_name=filename,
+                content_type=content_type,
+                kind="image",
+                source="generated",
+            )
+            return stored["url"]
     except Exception:
         logger.exception(
             "failed to persist remote image",
             extra={"event": "remote_image_save_failed", "provider": "remote", "operation": "download"},
         )
-        return value
+        raise
 
 
 async def save_remote_video_to_output(url, prefix="video_", category="output"):
     if not url:
         return ""
-    if url.startswith("/output/") or url.startswith("/assets/"):
+    if url.startswith("/api/files/"):
         ref = normalize_media_ref({"url": url})
         return ref.get("url") or url
+    if url.startswith("/output/") or url.startswith("/assets/"):
+        raise RuntimeError("本地媒体 URL 已停用；请使用 MinIO file_id")
     filename = f"{prefix}{uuid.uuid4().hex[:10]}.mp4"
     try:
         async with httpx.AsyncClient(timeout=VIDEO_POLL_TIMEOUT) as client:
@@ -409,25 +303,19 @@ async def save_remote_video_to_output(url, prefix="video_", category="output"):
                 filename = filename[:-4] + ".webm"
             elif "quicktime" in content_type or "mov" in content_type:
                 filename = filename[:-4] + ".mov"
-            if storage_enabled():
-                stored = save_compat_media_bytes(
-                    category,
-                    filename,
-                    response.content,
-                    original_name=filename,
-                    content_type=content_type or "video/mp4",
-                    kind="video",
-                    source="generated",
-                )
-                return stored["url"]
-            path = output_path_for(filename, category)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "wb") as f:
-                f.write(response.content)
-            return _register_output_file(path, filename, category, kind="video")
+            stored = save_media_bytes(
+                category,
+                filename,
+                response.content,
+                original_name=filename,
+                content_type=content_type or "video/mp4",
+                kind="video",
+                source="generated",
+            )
+            return stored["url"]
     except Exception:
         logger.exception(
             "failed to persist remote video",
             extra={"event": "remote_video_save_failed", "provider": "remote", "operation": "download"},
         )
-        return url
+        raise

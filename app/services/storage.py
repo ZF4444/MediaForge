@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import mimetypes
 import os
 import shutil
 import subprocess
@@ -19,10 +18,8 @@ from typing import Any, BinaryIO, Dict, List, Optional
 from PIL import Image
 
 from app.config import (
-    ASSET_LIBRARY_DIR,
     DATABASE_URL,
     GLOBAL_CONFIG_LOCK,
-    LOCAL_UPLOAD_DIR,
     MINIO_ACCESS_KEY,
     MINIO_BUCKET_PRIVATE,
     MINIO_BUCKET_PUBLIC,
@@ -30,8 +27,6 @@ from app.config import (
     MINIO_ENDPOINT,
     MINIO_SECRET_KEY,
     MINIO_SECURE,
-    OUTPUT_INPUT_DIR,
-    OUTPUT_OUTPUT_DIR,
     STORAGE_CACHE_DIR,
     STORAGE_CLEANUP_BATCH_SIZE,
     STORAGE_CLEANUP_ENABLED,
@@ -54,7 +49,6 @@ _BUCKETS_READY: set[str] = set()
 _BUCKETS_LOCK = Lock()
 _DB_READY = False
 _DB_LOCK = Lock()
-_INDEX_LOCK = Lock()
 _QUOTA_CONFIG_CACHE: Optional[Dict[str, Any]] = None
 THUMB_SIZE_DEFAULT = 512
 
@@ -114,70 +108,7 @@ def file_download_url(file_id: str) -> str:
 
 
 def canonicalize_legacy_media_url(url: str) -> str:
-    text = str(url or "").strip()
-    if not text:
-        return ""
-    path = urllib.parse.urlsplit(text).path or text
-    if path.startswith("/output/"):
-        path = "/assets/output/" + path[len("/output/"):]
-    if not path.startswith("/assets/"):
-        return text
-    suffix = path[len("/assets/"):].lstrip("/")
-    if not suffix:
-        return ""
-    category, _, remainder = suffix.partition("/")
-    if category not in {"input", "output", "library", "uploads"} or not remainder:
-        return text
-    normalized = urllib.parse.quote(urllib.parse.unquote(remainder).replace("\\", "/"), safe="/._-()")
-    return f"/assets/{category}/{normalized}"
-
-
-def _legacy_category_root(category: str) -> str:
-    return {
-        "input": OUTPUT_INPUT_DIR,
-        "output": OUTPUT_OUTPUT_DIR,
-        "library": ASSET_LIBRARY_DIR,
-        "uploads": LOCAL_UPLOAD_DIR,
-    }.get(str(category or "").strip(), "")
-
-
-def _legacy_local_path(url: str) -> tuple[str, str]:
-    canonical = canonicalize_legacy_media_url(url)
-    if not canonical.startswith("/assets/"):
-        return "", ""
-    suffix = canonical[len("/assets/"):].lstrip("/")
-    category, _, remainder = suffix.partition("/")
-    root = _legacy_category_root(category)
-    if not root or not remainder:
-        return "", ""
-    rel = urllib.parse.unquote(remainder).replace("\\", "/")
-    local_path = os.path.abspath(os.path.join(root, rel))
-    root_abs = os.path.abspath(root)
-    if os.path.commonpath([root_abs, local_path]) != root_abs:
-        return "", ""
-    return canonical, local_path
-
-
-def _kind_for_path(path: str, content_type: str = "") -> str:
-    mime = str(content_type or mimetypes.guess_type(path)[0] or "").lower()
-    if mime.startswith("image/"):
-        return "image"
-    if mime.startswith("video/"):
-        return "video"
-    if mime.startswith("audio/"):
-        return "audio"
-    if mime.startswith("text/"):
-        return "text"
-    ext = os.path.splitext(str(path or "").lower())[1]
-    if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"}:
-        return "image"
-    if ext in {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}:
-        return "video"
-    if ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}:
-        return "audio"
-    if ext in {".txt", ".md", ".json", ".csv", ".srt", ".vtt"}:
-        return "text"
-    return "document"
+    return str(url or "").strip()
 
 
 def storage_enabled() -> bool:
@@ -630,51 +561,6 @@ def object_exists(bucket: str, object_key: str) -> bool:
         return False
 
 
-def _index_path() -> str:
-    raise RuntimeError("本地 JSON 文件索引已停用；必须使用 PostgreSQL")
-
-
-def _load_index() -> Dict[str, Dict[str, Any]]:
-    raise RuntimeError("本地 JSON 文件索引已停用；必须使用 PostgreSQL")
-
-
-def _save_index(index: Dict[str, Dict[str, Any]]) -> None:
-    raise RuntimeError("本地 JSON 文件索引已停用；必须使用 PostgreSQL")
-
-
-def _fallback_upsert(entry: Dict[str, Any]) -> Dict[str, Any]:
-    with _INDEX_LOCK:
-        index = _load_index()
-        index[entry["url"]] = entry
-        _save_index(index)
-    return entry
-
-
-def _fallback_lookup(url: str) -> Optional[Dict[str, Any]]:
-    with _INDEX_LOCK:
-        return _load_index().get(url)
-
-
-def _fallback_list(prefix: str = "") -> List[Dict[str, Any]]:
-    with _INDEX_LOCK:
-        items = list(_load_index().values())
-    if prefix:
-        items = [item for item in items if str(item.get("url") or "").startswith(prefix)]
-    items = [item for item in items if item.get("status") != "deleted"]
-    items.sort(key=lambda item: int(item.get("created_at") or 0), reverse=True)
-    return items
-
-
-def _fallback_remove(url: str) -> Optional[Dict[str, Any]]:
-    removed = None
-    with _INDEX_LOCK:
-        index = _load_index()
-        removed = index.pop(url, None)
-        if removed is not None:
-            _save_index(index)
-    return removed
-
-
 def _row_to_entry(row: Dict[str, Any]) -> Dict[str, Any]:
     file_id = row["id"]
     return {
@@ -705,8 +591,6 @@ def _row_to_entry(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _upsert_file_row(entry: Dict[str, Any]) -> Dict[str, Any]:
-    if not metadata_db_enabled():
-        return _fallback_upsert(entry)
     _ensure_files_table()
     with _db_connect() as conn:
         with conn.cursor() as cur:
@@ -799,8 +683,6 @@ def register_media_url(
 
 def lookup_media_url(url: str, *, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
     url = canonicalize_legacy_media_url(url)
-    if not metadata_db_enabled():
-        return _fallback_lookup(url)
     _ensure_files_table()
     deleted_filter = "" if include_deleted else " AND deleted_at IS NULL AND status <> 'deleted'"
     with _db_connect() as conn:
@@ -828,8 +710,6 @@ def lookup_media_urls(urls: List[str], *, include_deleted: bool = False) -> Dict
             seen.add(canonical)
     if not canonical_urls:
         return {}
-    if not metadata_db_enabled():
-        return {url: entry for url in canonical_urls if (entry := _fallback_lookup(url))}
     _ensure_files_table()
     deleted_filter = "" if include_deleted else " AND deleted_at IS NULL AND status <> 'deleted'"
     with _db_connect() as conn:
@@ -909,13 +789,6 @@ def get_user_files_by_ids(file_ids: List[str], *, user_id: str = "") -> Dict[str
     if not ids:
         return {}
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
-    if not metadata_db_enabled():
-        result = {}
-        for item in _fallback_list():
-            file_id = str(item.get("file_id") or "").strip()
-            if file_id and file_id in seen:
-                result[file_id] = item
-        return result
     _ensure_files_table()
     with _db_connect() as conn:
         with conn.cursor() as cur:
@@ -934,43 +807,6 @@ def get_user_files_by_ids(file_ids: List[str], *, user_id: str = "") -> Dict[str
     return {entry["file_id"]: entry for entry in entries if entry.get("file_id")}
 
 
-def ensure_local_media_registered(url: str) -> Optional[Dict[str, Any]]:
-    canonical, local_path = _legacy_local_path(url)
-    if not canonical or not local_path or not os.path.isfile(local_path) or not storage_enabled():
-        return None
-    existing = lookup_media_url(canonical)
-    if existing:
-        return existing
-    try:
-        with open(local_path, "rb") as f:
-            payload = f.read()
-    except OSError:
-        return None
-    filename = os.path.basename(local_path)
-    category = canonical[len("/assets/"):].split("/", 1)[0]
-    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    kind = _kind_for_path(local_path, content_type)
-    file_id = uuid.uuid4().hex
-    object_key = build_object_key(category, file_id, os.path.splitext(filename)[1].lower())
-    stored = save_bytes(payload, object_key, content_type=content_type)
-    entry = register_media_url(
-        canonical,
-        stored["bucket"],
-        stored["object_key"],
-        filename=filename,
-        category=category,
-        original_name=filename,
-        content_type=content_type,
-        kind=kind,
-        size=stored["size"],
-        file_id=file_id,
-        sha256=hashlib.sha256(payload).hexdigest(),
-        source="generated" if category == "output" else ("imported" if category == "library" else "upload"),
-        is_public=False,
-    )
-    return lookup_media_url(canonical) or entry
-
-
 def resolve_file_reference(url: str = "", file_id: str = "", *, allow_register: bool = True) -> Optional[Dict[str, Any]]:
     if file_id:
         entry = get_file_by_id(file_id)
@@ -987,8 +823,6 @@ def resolve_file_reference(url: str = "", file_id: str = "", *, allow_register: 
         entry = lookup_media_url(url)
         if entry:
             return entry
-        if allow_register:
-            return ensure_local_media_registered(url)
     return None
 
 
@@ -1141,25 +975,6 @@ def compact_media_refs(
 def storage_usage_summary_for_user(user_id: str = "") -> Dict[str, Any]:
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     quota_bytes = storage_quota_limit_bytes_for_user(uid)
-    if not metadata_db_enabled():
-        entries = _fallback_list()
-        total_bytes = sum(int(item.get("size") or 0) for item in entries)
-        by_category: Dict[str, Dict[str, Any]] = {}
-        for item in entries:
-            category = str(item.get("category") or "unknown")
-            bucket = by_category.setdefault(category, {"category": category, "size_bytes": 0, "file_count": 0})
-            bucket["size_bytes"] += int(item.get("size") or 0)
-            bucket["file_count"] += 1
-        categories = sorted(by_category.values(), key=lambda item: item["size_bytes"], reverse=True)
-        return {
-            "user_id": uid,
-            "quota_enabled": storage_quota_enabled(),
-            "quota_bytes": quota_bytes,
-            "used_bytes": total_bytes,
-            "remaining_bytes": max(0, quota_bytes - total_bytes) if quota_bytes > 0 else None,
-            "total_files": len(entries),
-            "usage_by_category": categories,
-        }
     _ensure_files_table()
     with _db_connect() as conn:
         with conn.cursor() as cur:
@@ -1197,8 +1012,6 @@ def storage_usage_summary_for_user(user_id: str = "") -> Dict[str, Any]:
 
 def list_media_entries(prefix: str = "", *, user_id: str = "") -> List[Dict[str, Any]]:
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
-    if not metadata_db_enabled():
-        return _fallback_list(prefix)
     _ensure_files_table()
     params: list[Any] = []
     sql = """
@@ -1226,18 +1039,6 @@ def list_media_entries_for_user(
     limit: int = 200,
 ) -> List[Dict[str, Any]]:
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
-    if not metadata_db_enabled():
-        items = _fallback_list()
-        if category:
-            items = [item for item in items if str(item.get("category") or "") == category]
-        if search:
-            q = str(search or "").strip().lower()
-            items = [
-                item for item in items
-                if q in str(item.get("original_name") or item.get("filename") or "").lower()
-                or q in str(item.get("category") or "").lower()
-            ]
-        return items[: max(1, min(int(limit or 200), 1000))]
     _ensure_files_table()
     params: List[Any] = [uid]
     sql = """
@@ -1277,34 +1078,6 @@ def list_media_entries_page_for_user(
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     q = str(search or "").strip().lower()
     normalized_sort_order = "asc" if str(sort_order or "").strip().lower() == "asc" else "desc"
-    if not metadata_db_enabled():
-        items = _fallback_list()
-        if category:
-            items = [item for item in items if str(item.get("category") or "") == category]
-        if q:
-            items = [
-                item for item in items
-                if q in str(item.get("original_name") or item.get("filename") or "").lower()
-                or q in str(item.get("category") or "").lower()
-            ]
-        items.sort(
-            key=lambda item: (int(item.get("created_at") or 0), str(item.get("file_id") or "")),
-            reverse=normalized_sort_order == "desc",
-        )
-        total = len(items)
-        page = items[safe_offset:safe_offset + safe_limit]
-        next_offset = safe_offset + len(page)
-        return {
-            "entries": page,
-            "offset": safe_offset,
-            "limit": safe_limit,
-            "next_offset": next_offset,
-            "has_more": next_offset < total,
-            "total_matches": total,
-            "category_filter": str(category or ""),
-            "search": str(search or ""),
-            "sort_order": normalized_sort_order,
-        }
     _ensure_files_table()
     params: List[Any] = [uid]
     where = """
@@ -1353,22 +1126,19 @@ def remove_media_url(url: str, *, delete_remote: bool = False) -> Optional[Dict[
     if not removed:
         removed = lookup_media_url(url)
     if not removed:
-        removed = _fallback_remove(url)
-    if not removed:
         return None
-    if metadata_db_enabled():
-        deleted_at = now_ms()
-        _ensure_files_table()
-        with _db_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE files
-                    SET status = 'deleted', deleted_at = %s, updated_at = %s
-                    WHERE id = %s
-                    """,
-                    (deleted_at, deleted_at, removed["file_id"]),
-                )
+    deleted_at = now_ms()
+    _ensure_files_table()
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE files
+                SET status = 'deleted', deleted_at = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (deleted_at, deleted_at, removed["file_id"]),
+            )
     if delete_remote:
         delete_media_objects(removed)
     cache_path = cached_media_path(removed)
@@ -1384,14 +1154,6 @@ def media_entry_by_basename(name: str, categories: Optional[set[str]] = None, *,
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     safe_name = os.path.basename(str(name or ""))
     if not safe_name:
-        return None
-    if not metadata_db_enabled():
-        for item in _fallback_list():
-            if item.get("filename") != safe_name:
-                continue
-            if categories and item.get("category") not in categories:
-                continue
-            return item
         return None
     _ensure_files_table()
     sql = """
@@ -1599,7 +1361,7 @@ def _generate_video_poster_bytes(payload: bytes, size: int = THUMB_SIZE_DEFAULT,
 
 
 def ensure_media_derivatives(entry: Dict[str, Any], *, payload: bytes = b"") -> None:
-    if not storage_enabled() or not isinstance(entry, dict):
+    if not isinstance(entry, dict):
         return
     file_id = str(entry.get("file_id") or "").strip()
     bucket = str(entry.get("bucket") or "").strip()
@@ -1629,7 +1391,7 @@ def ensure_media_derivatives(entry: Dict[str, Any], *, payload: bytes = b"") -> 
         save_bytes(poster, object_key, content_type="image/jpeg", bucket=bucket)
 
 
-def save_compat_media_bytes(
+def save_media_bytes(
     category: str,
     filename: str,
     data: bytes,

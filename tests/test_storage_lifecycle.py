@@ -32,8 +32,8 @@ def _row(file_id: str, *, category: str, created_at: int, last_accessed_at: int 
 
 
 def test_enforce_storage_quota_raises_when_limit_exceeded(monkeypatch):
-    monkeypatch.setattr(storage, "STORAGE_QUOTA_ENABLED", True)
-    monkeypatch.setattr(storage, "STORAGE_USER_QUOTA_BYTES", 100)
+    monkeypatch.setattr(storage, "storage_quota_enabled", lambda: True)
+    monkeypatch.setattr(storage, "storage_quota_limit_bytes_for_user", lambda user_id="": 100)
     monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
     monkeypatch.setattr(storage, "storage_quota_bytes_for_user", lambda user_id="": 80)
 
@@ -127,9 +127,19 @@ def test_remove_media_url_deletes_remote_derivatives(monkeypatch, tmp_path):
     }
     deleted_objects = []
 
-    monkeypatch.setattr(storage, "lookup_media_url", lambda url: removed_entry if url == removed_entry["url"] else None)
-    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: False)
-    monkeypatch.setattr(storage, "_fallback_remove", lambda url: None)
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, *_): pass
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def cursor(self): return Cursor()
+
+    monkeypatch.setattr(storage, "resolve_file_reference", lambda **_: removed_entry)
+    monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
+    monkeypatch.setattr(storage, "_db_connect", Connection)
     monkeypatch.setattr(storage, "delete_object", lambda bucket, object_key: deleted_objects.append((bucket, object_key)))
     monkeypatch.setattr(storage, "cached_media_path", lambda entry: str(cache_file))
 
@@ -190,14 +200,25 @@ def test_storage_quota_config_can_override_default_and_user_limit(monkeypatch):
 
 
 def test_storage_usage_summary_groups_sizes_by_category(monkeypatch):
-    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: False)
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, *_): pass
+        def fetchall(self):
+            return [
+                {"category": "output", "size_bytes": 500, "file_count": 2},
+                {"category": "library", "size_bytes": 200, "file_count": 1},
+            ]
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def cursor(self): return Cursor()
+
     monkeypatch.setattr(storage, "storage_quota_enabled", lambda: True)
     monkeypatch.setattr(storage, "storage_quota_limit_bytes_for_user", lambda user_id="": 1000)
-    monkeypatch.setattr(storage, "_fallback_list", lambda prefix="": [
-        {"category": "output", "size": 400},
-        {"category": "output", "size": 100},
-        {"category": "library", "size": 200},
-    ])
+    monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
+    monkeypatch.setattr(storage, "_db_connect", Connection)
 
     summary = storage.storage_usage_summary_for_user("user-1")
 

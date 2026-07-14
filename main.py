@@ -163,11 +163,6 @@ from app.config import (
     STATIC_RUNNINGHUB_THUMBNAIL_DIR,
     STATIC_RUNNINGHUB_API_PROVIDERS_FILE,
     OUTPUT_DIR,
-    ASSETS_DIR,
-    OUTPUT_INPUT_DIR,
-    OUTPUT_OUTPUT_DIR,
-    ASSET_LIBRARY_DIR,
-    LOCAL_UPLOAD_DIR,
     API_ENV_FILE,
     DATA_DIR,
     CANVAS_TRASH_RETENTION_MS,
@@ -1177,7 +1172,6 @@ def update_env_values(updates):
 
 BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(WORKFLOW_DIR, exist_ok=True)
 
@@ -1203,25 +1197,7 @@ async def static_html_page(page: str):
     return static_html_response(file_name)
 
 
-@app.get("/assets/{category}/{filename}")
-async def assets_compat_file(category: str, filename: str):
-    from app.core.media import content_type_for_path as _content_type_for_path
-    from app.core.media import output_file_from_url as _output_file_from_url
-
-    safe_category = os.path.basename(category or "")
-    safe_filename = os.path.basename(filename or "")
-    if not safe_category or not safe_filename:
-        raise HTTPException(status_code=404)
-    path = _output_file_from_url(f"/assets/{safe_category}/{safe_filename}")
-    if not path or not os.path.isfile(path):
-        raise HTTPException(status_code=404)
-    return FileResponse(path, media_type=_content_type_for_path(path))
-
-
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
-if os.path.isdir(ASSETS_DIR):
-    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 # --- Pydantic 模型 ---
 
@@ -1399,19 +1375,27 @@ def reserve_best_backend(required_images: List[str] = None):
 
 # --- 辅助工具 ---
 
+def store_generated_media_bytes(payload: bytes, filename: str, kind: str, content_type: str = "") -> str:
+    stored = save_media_bytes(
+        "output",
+        filename,
+        payload,
+        original_name=filename,
+        content_type=content_type or content_type_for_path(filename),
+        kind=kind,
+        source="generated",
+    )
+    return stored["url"]
+
 def download_image(comfy_address, comfy_url_path, prefix="studio_"):
     filename = f"{prefix}{uuid.uuid4().hex[:10]}.png"
-    local_path = output_path_for(filename, "output")
     full_url = f"http://{comfy_address}{comfy_url_path}"
     try:
-        with urllib.request.urlopen(full_url) as response, open(local_path, 'wb') as out_file:
-            shutil.copyfileobj(response, out_file)
-        return _register_output_file(local_path, filename, "output", kind="image")
+        with urllib.request.urlopen(full_url) as response:
+            return store_generated_media_bytes(response.read(), filename, "image", response.headers.get_content_type())
     except Exception:
         logger.exception("failed to download image", extra={"event": "image_download_failed", "provider": "comfyui", "operation": "download"})
-        if comfy_url_path.startswith("/view"):
-            return comfy_url_path.replace("/view", "/api/view", 1)
-        return full_url
+        raise
 
 def comfy_output_extension(item):
     filename = str((item or {}).get("filename") or "")
@@ -1468,33 +1452,34 @@ def comfy_output_kind(item):
 def download_comfy_output(comfy_address, item, prefix="studio_"):
     ext = comfy_output_extension(item)
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
-    local_path = output_path_for(filename, "output")
     subfolder = urllib.parse.quote(str(item.get("subfolder") or ""))
     file_type = urllib.parse.quote(str(item.get("type") or "output"))
     comfy_url_path = f"/view?filename={urllib.parse.quote(str(item['filename']))}&subfolder={subfolder}&type={file_type}"
     full_url = f"http://{comfy_address}{comfy_url_path}"
     try:
-        with urllib.request.urlopen(full_url) as response, open(local_path, 'wb') as out_file:
-            shutil.copyfileobj(response, out_file)
-        return _register_output_file(local_path, filename, "output", kind=comfy_output_kind(item))
+        with urllib.request.urlopen(full_url) as response:
+            return store_generated_media_bytes(
+                response.read(),
+                filename,
+                comfy_output_kind(item),
+                response.headers.get_content_type(),
+            )
     except Exception:
         logger.exception("failed to download ComfyUI output", extra={"event": "comfyui_output_download_failed", "provider": "comfyui", "operation": "download"})
-        if comfy_url_path.startswith("/view"):
-            return comfy_url_path.replace("/view", "/api/view", 1)
-        return full_url
+        raise
 
 def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "", prefix: str = "studio_"):
     ext = os.path.splitext(str(comfy_filename or ""))[1].lower() or ".bin"
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
-    local_path = output_path_for(filename, "output")
     query = urllib.parse.urlencode({
         "filename": str(comfy_filename or ""),
         "subfolder": str(subfolder or ""),
         "type": str(file_type or "output"),
     })
     full_url = f"http://{comfy_address}/view?{query}"
-    with urllib.request.urlopen(full_url, timeout=30) as response, open(local_path, 'wb') as out_file:
-        shutil.copyfileobj(response, out_file)
+    with urllib.request.urlopen(full_url, timeout=30) as response:
+        payload = response.read()
+        content_type = response.headers.get_content_type()
     kind = "file"
     if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}:
         kind = "image"
@@ -1504,7 +1489,7 @@ def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_
         kind = "audio"
     elif ext in {".txt", ".json", ".csv", ".srt", ".vtt", ".md"}:
         kind = "text"
-    return _register_output_file(local_path, filename, "output", kind=kind)
+    return store_generated_media_bytes(payload, filename, kind, content_type)
 
 
 def fetch_comfy_output_bytes_by_name(comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "") -> bytes:
@@ -1524,10 +1509,7 @@ def save_comfy_text_output(value, prefix="studio_", name=""):
     if ext.lower() not in {".txt", ".json", ".csv", ".srt", ".vtt", ".md"}:
         stem += ".txt"
     filename = f"{prefix}{uuid.uuid4().hex[:10]}_{stem}"
-    path = output_path_for(filename, "output")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
-    return _register_output_file(path, filename, "output", kind="text")
+    return store_generated_media_bytes(text.encode("utf-8"), filename, "text", content_type_for_path(filename))
 
 def comfy_text_values_from_output(node_output):
     values = []
@@ -2204,7 +2186,7 @@ def jimeng_collect_media_values(value, outputs):
         text = value.strip()
         if not text:
             return
-        if text.startswith(("http://", "https://", "/output/", "/assets/", "file://")) or media_ext.search(text):
+        if text.startswith(("http://", "https://", "/api/files/", "file://")) or media_ext.search(text):
             outputs.append(text)
         return
     if isinstance(value, list):
@@ -2372,12 +2354,6 @@ def jimeng_local_output_url(path, kind="image"):
     path = os.path.abspath(str(path or ""))
     if not os.path.isfile(path):
         return ""
-    output_root = os.path.abspath(OUTPUT_OUTPUT_DIR)
-    try:
-        if os.path.commonpath([output_root, path]) == output_root:
-            return _register_output_file(path, os.path.basename(path), "output", kind=kind)
-    except Exception:
-        pass
     ext = os.path.splitext(path)[1].lower()
     allowed = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".mp4", ".webm", ".mov", ".m4v"}
     if ext not in allowed:
@@ -2385,16 +2361,15 @@ def jimeng_local_output_url(path, kind="image"):
         ext = ".mp4" if ct.startswith("video/") else ".png"
     prefix = "jimeng_video_" if kind == "video" else "jimeng_"
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
-    dest = output_path_for(filename, "output")
-    shutil.copyfile(path, dest)
-    return _register_output_file(dest, filename, "output", kind=kind)
+    with open(path, "rb") as f:
+        return store_generated_media_bytes(f.read(), filename, kind, content_type_for_path(path))
 
 async def jimeng_store_output_value(value, kind="image"):
     text = str(value or "").strip()
     if not text:
         return ""
     if text.startswith("/output/") or text.startswith("/assets/"):
-        return text
+        raise HTTPException(status_code=400, detail="本地媒体 URL 已停用；请使用 MinIO file_id")
     if text.startswith("file://"):
         text = urllib.parse.unquote(urllib.parse.urlparse(text).path)
         if os.name == "nt" and re.match(r"^/[A-Za-z]:/", text):
@@ -2406,14 +2381,24 @@ async def jimeng_store_output_value(value, kind="image"):
             return await save_remote_video_to_output(text, prefix="jimeng_video_")
         return await save_ai_image_to_output({"type": "url", "value": text}, prefix="jimeng_")
     if os.path.isfile(text):
-        return jimeng_local_output_url(text, kind)
+        try:
+            return jimeng_local_output_url(text, kind)
+        finally:
+            parent = os.path.dirname(os.path.abspath(text))
+            if os.path.basename(parent).startswith("mediaforge_jimeng_output_"):
+                try:
+                    os.remove(text)
+                    os.rmdir(parent)
+                except OSError:
+                    pass
     return ""
 
 async def jimeng_query_result(submit_id, kind="image"):
+    download_dir = tempfile.mkdtemp(prefix="mediaforge_jimeng_output_")
     args = [
         "query_result",
         f"--submit_id={submit_id}",
-        f"--download_dir={jimeng_cli_path_arg(OUTPUT_OUTPUT_DIR)}",
+        f"--download_dir={jimeng_cli_path_arg(download_dir)}",
     ]
     return await run_jimeng_cli(args, timeout=min(300, jimeng_poll_seconds() + 60))
 
@@ -2448,7 +2433,7 @@ async def jimeng_prepare_local_media(ref_url, kind="image"):
     text = str(ref_url or "").strip()
     if not text:
         return "", []
-    if text.startswith("/output/") or text.startswith("/assets/"):
+    if text.startswith("/api/files/"):
         path = output_file_from_url(text)
         if path:
             return path, []
@@ -2704,17 +2689,10 @@ async def wait_for_image_task(client, task_id, provider=None):
     extra = f"，最后响应：{raw_text}" if raw_text else ""
     raise HTTPException(status_code=504, detail=f"生图任务超时（已等待 {int(timeout)} 秒），task_id={task_id}{extra}")
 
-# 本地媒体路径解析器已迁移至 app/core/media.py（原样迁移），多域复用。
-# 此处导入以保持原模块级名称可用。
-from app.core.media import (
-    output_storage,
-    output_url_for,
-    output_path_for,
-    output_file_from_url,
-    sanitize_export_filename,
-    _register_output_file,
-)
-from app.services.storage import save_compat_media_bytes, storage_enabled
+# MinIO media references are materialized to temporary cache files only when a
+# downstream API requires a filesystem path.
+from app.core.media import output_file_from_url, sanitize_export_filename
+from app.services.storage import save_media_bytes
 
 # --- 媒体文件/远程下载/本地导入工具 ---
 # 已迁移至 app/core/media.py（原样迁移），多域复用。此处导入以保持原模块级名称可用。
@@ -2797,7 +2775,7 @@ def is_image_reference_value(value):
         return True
     if value.startswith("data:"):
         return False
-    if value.startswith("/output/") or value.startswith("/assets/"):
+    if value.startswith("/api/files/"):
         path = output_file_from_url(value)
         return bool(path and content_type_for_path(path).startswith("image/"))
     clean = value.split("?", 1)[0].lower()
@@ -2812,7 +2790,7 @@ def is_video_reference_value(value):
         return True
     if value.startswith("data:"):
         return False
-    if value.startswith("/output/") or value.startswith("/assets/"):
+    if value.startswith("/api/files/"):
         path = output_file_from_url(value)
         return bool(path and content_type_for_path(path).startswith("video/"))
     clean = value.split("?", 1)[0].lower()
@@ -2822,10 +2800,9 @@ def convert_output_to_jpg(url, quality=88):
     path = output_file_from_url(url)
     if not path:
         return url
-    root, ext = os.path.splitext(path)
+    _, ext = os.path.splitext(path)
     if ext.lower() in [".jpg", ".jpeg"]:
         return url
-    jpg_path = f"{root}.jpg"
     try:
         with Image.open(path) as img:
             if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
@@ -2834,14 +2811,10 @@ def convert_output_to_jpg(url, quality=88):
                 img = bg
             else:
                 img = img.convert("RGB")
-            img.save(jpg_path, "JPEG", quality=quality, optimize=True)
-        try:
-            root = ASSETS_DIR if os.path.commonpath([os.path.abspath(ASSETS_DIR), os.path.abspath(jpg_path)]) == os.path.abspath(ASSETS_DIR) else OUTPUT_DIR
-        except ValueError:
-            root = OUTPUT_DIR
-        rel = os.path.relpath(jpg_path, root).replace("\\", "/")
-        prefix = "/assets" if root == ASSETS_DIR else "/output"
-        return f"{prefix}/{rel}"
+            out = BytesIO()
+            img.save(out, "JPEG", quality=quality, optimize=True)
+        filename = f"converted_{uuid.uuid4().hex[:10]}.jpg"
+        return store_generated_media_bytes(out.getvalue(), filename, "image", "image/jpeg")
     except Exception:
         logger.exception("failed to convert image to JPEG", extra={"event": "image_jpeg_conversion_failed"})
         return url
@@ -2875,7 +2848,7 @@ def reference_to_data_url(ref, max_size=None):
 def media_reference_to_url(value, max_image_size=None):
     if not isinstance(value, str) or not value:
         return ""
-    if value.startswith("/output/") or value.startswith("/assets/"):
+    if value.startswith("/api/files/"):
         return reference_to_data_url({"url": value}, max_size=max_image_size)
     return value
 
@@ -2890,7 +2863,7 @@ def volcengine_media_reference_url(value, max_image_size=1536):
         return ""
     if is_private_asset_url(value):
         return value
-    if value.startswith("/output/") or value.startswith("/assets/"):
+    if value.startswith("/api/files/"):
         return reference_to_data_url({"url": value}, max_size=max_image_size)
     return value
 
@@ -3048,7 +3021,7 @@ def compress_data_url_image(value, max_size=1536, jpeg_quality=88):
 def modelscope_image_url(value, max_size=1536):
     if not value:
         return value
-    if isinstance(value, str) and (value.startswith("/output/") or value.startswith("/assets/")):
+    if isinstance(value, str) and value.startswith("/api/files/"):
         return reference_to_data_url({"url": value}, max_size=max_size)
     return value
 
@@ -3087,7 +3060,7 @@ def public_media_url_suffix() -> str:
 
 def local_asset_public_url(value: str) -> str:
     text = str(value or "").strip()
-    if not text.startswith(("/output/", "/assets/")):
+    if not text.startswith("/api/files/"):
         return ""
     if not output_file_from_url(text):
         return ""
@@ -3106,7 +3079,7 @@ def apimart_video_reference_error(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return "空的视频地址"
-    if text.startswith(("/output/", "/assets/")):
+    if text.startswith("/api/files/"):
         if not output_file_from_url(text):
             return "这是本地画布文件路径，但后端没有找到对应文件，请重新上传视频后再试。"
         return (
@@ -3281,7 +3254,7 @@ async def apimart_upload_post(client, upload_url, headers, file_tuple, timeout=6
 async def upload_image_for_apimart(client, provider, ref_url: str) -> str:
     """把本地图片转成上游可接受的输入。
     按 APIMart 文档上传到 /v1/uploads/images，拿到可用于生成接口的 http/https URL。
-    绝不把 /output/* 或 /assets/* 这类本地路径直接传给上游。
+    MinIO 文件引用会先物化到临时缓存，再上传给上游。
     返回上游可用 URL；返回值以 "ERR:" 开头表示具体失败原因（供前端展示）。"""
     ref_url = str(ref_url or "").strip()
     if not ref_url:
@@ -3315,8 +3288,8 @@ async def upload_image_for_apimart(client, provider, ref_url: str) -> str:
         except Exception as e:
             logger.exception("APIMart data URL upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload"})
             return f"ERR:上传异常 {e}"
-    # 本地 /output/ 或 /assets/ 路径：先确认文件存在再上传
-    if ref_url.startswith("/output/") or ref_url.startswith("/assets/"):
+    # MinIO file reference: materialize a temporary cache file before upload.
+    if ref_url.startswith("/api/files/"):
         path = output_file_from_url(ref_url)
         if not path:
             logger.warning("APIMart upload skipped because local file is missing", extra={"event": "upload_source_missing", "provider": "apimart", "operation": "upload", "media_url": ref_url})
@@ -3338,7 +3311,7 @@ async def upload_image_for_apimart(client, provider, ref_url: str) -> str:
         except Exception as e:
             logger.exception("APIMart file upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload"})
             return f"ERR:上传异常 {e}"
-    return "ERR:不支持的图片来源（仅支持 http/https/asset/data 或本地 /output/ /assets/ 路径）"
+    return "ERR:不支持的图片来源（仅支持 http/https/asset/data 或 MinIO 文件引用）"
 
 async def upload_video_for_apimart(client, provider, ref_url: str) -> str:
     """尽力把本地参考视频转换为 APIMart 可接受的 http/https 或 asset:// URL。
@@ -3351,7 +3324,7 @@ async def upload_video_for_apimart(client, provider, ref_url: str) -> str:
     public_url = local_asset_public_url(ref_url)
     if public_url:
         return public_url
-    if not (ref_url.startswith("/output/") or ref_url.startswith("/assets/")):
+    if not ref_url.startswith("/api/files/"):
         return f"ERR:{apimart_video_reference_error(ref_url)}"
     path = output_file_from_url(ref_url)
     if not path:
@@ -3411,7 +3384,7 @@ async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
             return f"ERR:音频 data URL 解码失败：{exc}"
         ext = mimetypes.guess_extension(mime) or ".mp3"
         filename, content, content_type = (f"canvas_audio{ext}", raw, mime or "audio/mpeg")
-    elif ref_url.startswith("/output/") or ref_url.startswith("/assets/"):
+    elif ref_url.startswith("/api/files/"):
         path = output_file_from_url(ref_url)
         if not path:
             return "ERR:本地音频不存在或已被删除"
@@ -3671,8 +3644,8 @@ def local_media_path_for_cloud_upload(ref_url: str, allowed_prefixes=("image/", 
         raise HTTPException(status_code=400, detail="没有可上传的媒体文件")
     if ref_url.startswith("http://") or ref_url.startswith("https://"):
         return ""
-    if not (ref_url.startswith("/output/") or ref_url.startswith("/assets/")):
-        raise HTTPException(status_code=400, detail="云端上传只支持画布里的本地图片或视频文件")
+    if not ref_url.startswith("/api/files/"):
+        raise HTTPException(status_code=400, detail="云端上传只支持 MinIO 中的图片或视频文件")
     path = output_file_from_url(ref_url)
     if not path:
         raise HTTPException(status_code=404, detail="本地媒体文件不存在或已被删除")
@@ -4158,29 +4131,7 @@ def runninghub_app_headers(json_body=True):
     return headers
 
 def runninghub_local_asset_path(url):
-    text = str(url or "").strip()
-    if not text:
-        return None
-    if text.startswith("/assets/input/") or text.startswith("/input/"):
-        clean = urllib.parse.unquote(text.split("?", 1)[0]).replace("\\", "/")
-        rel = clean[len("/assets/input/"):] if clean.startswith("/assets/input/") else clean[len("/input/"):]
-        root = OUTPUT_INPUT_DIR
-    elif text.startswith("/assets/output/"):
-        clean = urllib.parse.unquote(text.split("?", 1)[0]).replace("\\", "/")
-        rel = clean[len("/assets/output/"):]
-        root = OUTPUT_OUTPUT_DIR
-    elif text.startswith("/output/") or text.startswith("/assets/"):
-        return output_file_from_url(text)
-    else:
-        return None
-    rel = rel.lstrip("/")
-    if not rel:
-        return None
-    path = os.path.abspath(os.path.join(root, rel))
-    root_abs = os.path.abspath(root)
-    if os.path.commonpath([root_abs, path]) != root_abs or not os.path.exists(path):
-        return None
-    return path
+    return output_file_from_url(str(url or "").strip())
 
 RUNNINGHUB_OUTPUT_EXTS = {"png","jpg","jpeg","webp","gif","bmp","mp4","webm","mov","m4v","mkv","mp3","wav","ogg","m4a","flac","aac","zip","gz","tar","rar","7z","ply","splat"}
 RUNNINGHUB_OUTPUT_URL_KEYS = {
@@ -4233,6 +4184,16 @@ def runninghub_output_ext(remote, content_type=""):
     if "jpeg" in ct:
         return "jpg"
     return "png"
+
+def runninghub_output_kind(ext):
+    value = str(ext or "").lower().strip(".")
+    if value in {"mp4", "webm", "mov", "m4v", "mkv"}:
+        return "video"
+    if value in {"mp3", "wav", "ogg", "m4a", "flac", "aac"}:
+        return "audio"
+    if value in {"zip", "gz", "tar", "rar", "7z", "ply", "splat"}:
+        return "file"
+    return "image"
 
 def runninghub_output_candidate(value, allow_filename=False):
     text = str(value or "").strip()
@@ -4294,14 +4255,22 @@ async def runninghub_store_remote_output(client, remote):
         return remote
     response = await client.get(remote, follow_redirects=True)
     if not response.is_success:
-        return remote
-    ext = runninghub_output_ext(remote, response.headers.get("content-type", ""))
+        raise HTTPException(status_code=502, detail=f"RunningHub 输出下载失败：HTTP {response.status_code}")
+    content_type = response.headers.get("content-type", "")
+    ext = runninghub_output_ext(remote, content_type)
     filename = f"rh_{uuid.uuid4().hex[:12]}.{ext}"
-    path = output_path_for(filename, "output")
-    with open(path, "wb") as f:
-        f.write(response.content)
-    kind = "video" if ext in {"mp4", "webm", "mov", "m4v"} else "image"
-    return _register_output_file(path, filename, "output", kind=kind)
+    kind = runninghub_output_kind(ext)
+    stored = await asyncio.to_thread(
+        save_media_bytes,
+        "output",
+        filename,
+        response.content,
+        original_name=filename,
+        content_type=content_type,
+        kind=kind,
+        source="generated",
+    )
+    return stored["url"]
 
 def runninghub_fail_reason(raw):
     data = raw.get("data") if isinstance(raw, dict) else None
@@ -4766,7 +4735,7 @@ async def generate_runninghub_app_image(prompt, reference_images, provider, entr
             if code in (0, "0"):
                 outputs = runninghub_extract_outputs(query_raw.get("data"))
                 for remote in outputs:
-                    if str(remote or "").startswith(("http://", "https://", "/output/", "/assets/")):
+                    if str(remote or "").startswith(("http://", "https://")):
                         return {"type": "url", "value": str(remote)}, query_raw
                 raise HTTPException(status_code=502, detail=f"RunningHub 任务无图片输出：{query_raw}")
             if code in (805, "805"):
@@ -5134,13 +5103,11 @@ def view_image(filename: str, type: str = "input", subfolder: str = ""):
                 return Response(content=r.content, media_type=r.headers.get('Content-Type'))
         except Exception:
             continue
-    # 后端都拿不到时回退本地 assets/<input|output>/
-    # 适用场景：画布通过 /api/ai/upload 把参考图直接落到本地 assets/input/，
-    # 但 ComfyUI 的 input 可能因为重启/清理而丢失，导致 enhance/klein 等页面预览对比图 404
+    # ComfyUI may have cleaned its input directory; fall back to the MinIO copy.
     if not subfolder and type in ("input", "output"):
         safe_name = os.path.basename(filename or "")
         if safe_name:
-            local_path = output_file_from_url(f"/assets/{'input' if type == 'input' else 'output'}/{safe_name}")
+            local_path = local_media_file_by_basename(safe_name)
             if local_path and os.path.isfile(local_path):
                 return FileResponse(local_path, media_type=content_type_for_path(local_path))
     raise HTTPException(status_code=404, detail="Image not found on any available backend")
@@ -5385,17 +5352,23 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
             raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
         code = raw.get("code") if isinstance(raw, dict) else None
         urls = []
+        media_items = []
         for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw):
+            ext = runninghub_output_ext(remote)
+            kind = runninghub_output_kind(ext)
             if not persistOutputs:
                 urls.append(remote)
+                media_items.append(media_response_item(remote, kind=kind))
                 continue
             try:
-                urls.append(await runninghub_store_remote_output(client, remote))
-            except Exception:
-                urls.append(remote)
+                local_url = await runninghub_store_remote_output(client, remote)
+            except Exception as exc:
+                logger.exception("failed to persist RunningHub output")
+                raise HTTPException(status_code=502, detail=f"RunningHub 输出写入 MinIO 失败：{exc}") from exc
+            urls.append(local_url)
+            media_items.append(media_response_item(local_url, kind=kind))
         status = runninghub_normalized_status(raw, code, urls)
-        media_items = [media_response_item(url, kind="image") for url in urls if url]
-        return {"success": True, "data": {"status": status, "urls": urls, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
+        return {"success": True, "data": {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
 
 @app.post("/api/runninghub/upload-asset")
 async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
@@ -6509,7 +6482,7 @@ def _collect_video_url(value, urls):
     if not value:
         return
     if isinstance(value, str):
-        if value.startswith("http://") or value.startswith("https://") or value.startswith("/output/") or value.startswith("/assets/"):
+        if value.startswith("http://") or value.startswith("https://") or value.startswith("/api/files/"):
             urls.append(value)
         return
     if isinstance(value, list):
@@ -7331,7 +7304,7 @@ async def check_canvas_assets(payload: CanvasAssetCheckRequest):
         text = str(url or "").strip()
         if not text:
             continue
-        if text.startswith("/output/") or text.startswith("/assets/"):
+        if text.startswith("/api/files/"):
             result[text] = bool(output_file_from_url(text))
         else:
             result[text] = True
@@ -7409,7 +7382,7 @@ def canvas_workflow_collect_resource_refs(value: Any, found: Optional[List[str]]
             canvas_workflow_collect_resource_refs(item, found)
     elif isinstance(value, str):
         text = value.strip()
-        if (text.startswith("/assets/") or text.startswith("/output/")) and output_file_from_url(text):
+        if text.startswith("/api/files/") and output_file_from_url(text):
             found.append(text)
     return found
 
@@ -7514,20 +7487,24 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
                 if not workflow_name:
                     raise HTTPException(status_code=400, detail="压缩包中没有 workflow.json")
                 workflow = json.loads(zf.read(workflow_name).decode("utf-8-sig"))
-                stamp = time.strftime("%Y%m%d-%H%M%S")
-                import_dir = os.path.join(OUTPUT_INPUT_DIR, f"workflow_import_{stamp}_{uuid.uuid4().hex[:6]}")
-                os.makedirs(import_dir, exist_ok=True)
                 for res in workflow.get("resources") or []:
                     archive = str(res.get("archive") or "").replace("\\", "/").lstrip("/")
                     if not archive or archive not in names:
                         continue
                     fallback_name = os.path.basename(archive) or "resource.bin"
                     base = sanitize_export_filename(res.get("name") or fallback_name, fallback_name)
-                    target = os.path.join(import_dir, f"{uuid.uuid4().hex[:8]}_{base}")
-                    with zf.open(archive) as src, open(target, "wb") as dst:
-                        shutil.copyfileobj(src, dst)
-                    rel = os.path.relpath(target, ASSETS_DIR).replace("\\", "/")
-                    new_url = f"/assets/{rel}"
+                    payload = zf.read(archive)
+                    kind = str(res.get("kind") or "") or runninghub_output_kind(os.path.splitext(base)[1])
+                    stored = save_media_bytes(
+                        "input",
+                        f"workflow_{uuid.uuid4().hex[:8]}_{base}",
+                        payload,
+                        original_name=base,
+                        content_type=content_type_for_path(base),
+                        kind=kind,
+                        source="imported",
+                    )
+                    new_url = stored["url"]
                     old_url = str(res.get("url") or "").strip()
                     if old_url:
                         resource_mapping[old_url] = new_url
@@ -7954,14 +7931,11 @@ async def poll_angle_cloud(req: CloudPollRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_angle_{int(time.time())}.png"
-                                file_path = output_path_for(filename, "output")
-                                with open(file_path, "wb") as f:
-                                    f.write(img_res.content)
-                                local_path = _register_output_file(file_path, filename, "output", kind="image")
+                                local_path = store_generated_media_bytes(img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
-                                local_path = img_url
-                    except Exception:
-                        local_path = img_url
+                                raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
+                    except Exception as exc:
+                        raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
 
                     record = {"timestamp": time.time(), "prompt": f"Resumed {task_id}", "images": [local_path], "type": "angle"}
                     save_to_history(record)
@@ -8045,14 +8019,11 @@ async def generate_angle_cloud(req: CloudGenRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_angle_{int(time.time())}.png"
-                                file_path = output_path_for(filename, "output")
-                                with open(file_path, "wb") as f:
-                                    f.write(img_res.content)
-                                local_path = _register_output_file(file_path, filename, "output", kind="image")
+                                local_path = store_generated_media_bytes(img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
-                                local_path = img_url
-                    except Exception:
-                        local_path = img_url
+                                raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
+                    except Exception as exc:
+                        raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
 
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "angle"}
                     save_to_history(record)
@@ -8146,15 +8117,12 @@ async def generate_cloud(req: CloudGenRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_{int(time.time())}.png"
-                                file_path = output_path_for(filename, "output")
-                                with open(file_path, "wb") as f:
-                                    f.write(img_res.content)
-                                local_path = _register_output_file(file_path, filename, "output", kind="image")
+                                local_path = store_generated_media_bytes(img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
-                                local_path = img_url
-                    except Exception:
+                                raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
+                    except Exception as exc:
                         logger.exception("ModelScope output download failed", extra={"event": "image_download_failed", "provider": "modelscope", "operation": "download"})
-                        local_path = img_url
+                        raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
 
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "cloud"}
                     save_to_history(record)
@@ -8243,14 +8211,11 @@ async def ms_generate(req: MsGenerateRequest):
                                 img_res = await dl_client.get(img_url)
                                 if img_res.status_code == 200:
                                     filename = f"ms_{req.model.replace('/', '_').replace(':', '_')}_{int(time.time())}.png"
-                                    file_path = output_path_for(filename, "output")
-                                    with open(file_path, "wb") as f:
-                                        f.write(img_res.content)
-                                    local_path = _register_output_file(file_path, filename, "output", kind="image")
+                                    local_path = store_generated_media_bytes(img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                                 else:
-                                    local_path = img_url
-                        except Exception:
-                            local_path = img_url
+                                    raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
+                        except Exception as exc:
+                            raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
 
                         record = {
                             "timestamp": time.time(),

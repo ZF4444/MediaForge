@@ -5,7 +5,6 @@
 暂留在 main.py，通过 import-back 复用本模块的 load/save/find 等函数。
 
 依赖：
-- app.config：ASSET_LIBRARY_DIR
 - app.core.auth：current_user_id（按用户隔离）
 - app.core.utils：now_ms
 - app.core.shared：sanitize_asset_name
@@ -15,15 +14,13 @@
 import asyncio
 import json
 import os
-import shutil
 import uuid
 from typing import Any, Dict, Tuple
 
-from app.config import ASSET_LIBRARY_DIR
 from app.core.shared import sanitize_asset_name
 from app.core.shared_state import get_global_loop
 from app.core.utils import now_ms
-from app.services.storage import compact_media_ref, resolve_file_reference, resolve_url_for_file_id, save_compat_media_bytes, storage_enabled
+from app.services.storage import compact_media_ref, resolve_file_reference, resolve_url_for_file_id, save_media_bytes
 from app.core.ws import manager
 import re
 
@@ -197,34 +194,21 @@ def make_asset_library_item(src: str, name: str = "") -> Tuple[str, Dict[str, An
     if not os.path.splitext(safe_name)[1]:
         safe_name += ext
     dest_name = f"lib_{uuid.uuid4().hex[:12]}_{safe_name}"
-    if storage_enabled():
-        with open(src, "rb") as f:
-            stored = save_compat_media_bytes(
-                "library",
-                dest_name,
-                f.read(),
-                original_name=safe_name,
-                content_type="",
-                kind=kind,
-                source="imported",
-            )
-        item = {
-            "id": f"asset_{uuid.uuid4().hex[:12]}",
-            "name": os.path.splitext(safe_name)[0][:120],
-            "url": stored["url"],
-            "file_id": stored.get("file_id", ""),
-            "kind": kind,
-            "created_at": now_ms(),
-        }
-        return dest_name, item
-    os.makedirs(ASSET_LIBRARY_DIR, exist_ok=True)
-    dest_path = os.path.join(ASSET_LIBRARY_DIR, dest_name)
-    shutil.copy2(src, dest_path)
+    with open(src, "rb") as f:
+        stored = save_media_bytes(
+            "library",
+            dest_name,
+            f.read(),
+            original_name=safe_name,
+            content_type="",
+            kind=kind,
+            source="imported",
+        )
     item = {
         "id": f"asset_{uuid.uuid4().hex[:12]}",
         "name": os.path.splitext(safe_name)[0][:120],
-        "url": f"/assets/library/{dest_name}",
-        "file_id": "",
+        "url": stored["url"],
+        "file_id": stored.get("file_id", ""),
         "kind": kind,
         "created_at": now_ms(),
     }

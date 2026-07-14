@@ -1681,7 +1681,7 @@ function smartNodeInputThumbsHtml(images, opts={}){
         const media = isAudioMediaItem(img)
             ? `<div class="media-thumb audio-thumb"><i data-lucide="file-audio"></i><span>${escapeHtml(img.name || 'Audio')}</span></div>`
             : isVideoMediaItem(img)
-            ? `<video src="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>`
+            ? videoPosterHtml(img)
             : `<img src="${escapeHtml(img.url)}" alt="">`;
         return `<div class="smart-node-input-thumb" title="${escapeHtml(label)}">${media}<span class="smart-node-input-badge">${escapeHtml(label)}</span></div>`;
     }).join('');
@@ -5353,20 +5353,30 @@ function resultMediaUrls(result){
                 const url = value.url || value.path || value.src || value.uri;
                 if(url) urls.push({url, file_id:value.file_id || value.fileId || '', kind:value.kind || value.type || value.mediaKind || '', name:value.name || value.filename || ''});
             }
-            ['items','outputs','videos','audios','texts','files','images','image_items','imageItems','urls','data','result','output','url'].forEach(key => add(value[key]));
+            ['items','outputs','videos','video_items','videoItems','audios','audio_items','audioItems','texts','files','file_items','fileItems','images','image_items','imageItems','urls','data','result','output','url'].forEach(key => add(value[key]));
             ['path','src','uri','output_url','outputUrl','video','video_url','videoUrl','mp4_url','mp4Url','download_url','downloadUrl','preview_url','previewUrl'].forEach(key => add(value[key]));
         }
     };
     add(result);
-    const seen = new Set();
-    return urls.map(item => {
+    const seen = new Map();
+    const deduped = [];
+    urls.map(item => {
         const url = typeof item === 'string' ? item : item?.url || item?.path || '';
         if(!url) return null;
         return typeof item === 'object' ? {...item, url} : url;
-    }).filter(item => {
+    }).filter(Boolean).forEach(item => {
         const url = typeof item === 'string' ? item : item?.url || '';
-        return url && !seen.has(url) && seen.add(url);
+        if(!url) return;
+        if(!seen.has(url)){
+            seen.set(url, deduped.length);
+            deduped.push(item);
+            return;
+        }
+        const index = seen.get(url);
+        const existing = deduped[index];
+        if(typeof existing === 'string' && typeof item === 'object') deduped[index] = item;
     });
+    return deduped;
 }
 function mediaKindForUrls(urls, fallback='image'){
     const items = (urls || []).map(item => typeof item === 'string' ? {url:item} : (item || {}));
@@ -5511,6 +5521,12 @@ function transplantSmartMediaElements(oldNodeEl, newNodeEl){
         const newUrl = newMedia?.dataset?.url || newMedia?.getAttribute?.('src') || '';
         if(!newMedia || oldUrl !== newUrl) return;
         const state = captureMediaPlaybackState(oldMedia);
+        oldMedia.className = newMedia.className;
+        oldMedia.style.cssText = newMedia.style.cssText;
+        if(oldMedia.tagName.toLowerCase() === 'video'){
+            oldMedia.poster = newMedia.poster || '';
+            oldMedia.preload = newMedia.preload || oldMedia.preload;
+        }
         newMedia.replaceWith(oldMedia);
         restoreMediaPlaybackState(oldMedia, state);
         requestAnimationFrame(() => restoreMediaPlaybackState(oldMedia, state));
@@ -5568,13 +5584,46 @@ function deactivateCanvasVideoPreview(itemEl){
     try { video.pause?.(); } catch(e) {}
     const img = document.createElement('img');
     img.className = `${video.className || ''} is-blurred`.trim();
-    img.src = frameSrc || posterSrc;
+    if(frameSrc) img.src = frameSrc;
     img.dataset.originalSrc = video.dataset.originalSrc || '';
     img.dataset.posterSrc = posterSrc;
     img.dataset.videoSrc = video.dataset.url || '';
     img.draggable = false;
     if(video.style?.cssText) img.style.cssText = video.style.cssText;
     video.replaceWith(img);
+}
+function handleCanvasVideoFullscreenExit(){
+    if(document.fullscreenElement || document.webkitFullscreenElement) return;
+    world?.querySelectorAll?.('[data-video-preview-container="1"] video[data-video-preview="1"]').forEach(video => {
+        const itemEl = video.closest('.thumb-item,.image-wrap');
+        if(itemEl && !itemEl.matches(':hover')) deactivateCanvasVideoPreview(itemEl);
+    });
+}
+document.addEventListener('fullscreenchange', handleCanvasVideoFullscreenExit);
+document.addEventListener('webkitfullscreenchange', handleCanvasVideoFullscreenExit);
+function syncActiveCanvasVideoSize(itemEl, video){
+    const nodeEl = itemEl?.closest?.('.image-node');
+    const node = nodes.find(candidate => candidate.id === nodeEl?.dataset?.id);
+    const index = Number(itemEl?.dataset?.imageIndex ?? 0);
+    const image = node?.images?.[index];
+    const w = Number(video?.videoWidth || 0);
+    const h = Number(video?.videoHeight || 0);
+    if(!node || !image || w <= 0 || h <= 0) return;
+    image.natural_w = w;
+    image.natural_h = h;
+    if((node.images || []).length === 1){
+        const layout = imageLayout(node.images, nodeScale(node), node);
+        nodeEl.style.width = `${layout.width}px`;
+        nodeEl.style.height = `${layout.height}px`;
+        itemEl.style.setProperty('--node-img-w', `${layout.width}px`);
+        itemEl.style.setProperty('--node-img-h', `${layout.height}px`);
+        const container = video.closest('[data-video-preview-container="1"]');
+        if(container){
+            container.style.width = `${layout.width}px`;
+            container.style.height = `${layout.height}px`;
+        }
+    }
+    scheduleSave();
 }
 function activateCanvasVideoPreview(itemEl){
     const container = itemEl?.querySelector?.('[data-video-preview-container="1"]');
@@ -5608,6 +5657,7 @@ function activateCanvasVideoPreview(itemEl){
     video.style.removeProperty('height');
     const resumeTime = Math.max(0, Number(container.dataset.previewTime || 0) || 0);
     const startPlayback = () => {
+        syncActiveCanvasVideoSize(itemEl, video);
         if(resumeTime > 0){
             try { video.currentTime = resumeTime; } catch(e) {}
         }
@@ -5616,14 +5666,6 @@ function activateCanvasVideoPreview(itemEl){
     };
     if(video.readyState >= 1) startPlayback();
     else video.addEventListener('loadedmetadata', startPlayback, {once:true});
-    const handleFullscreenExit = () => {
-        if(isVideoPreviewFullscreen(video)) return;
-        document.removeEventListener('fullscreenchange', handleFullscreenExit);
-        document.removeEventListener('webkitfullscreenchange', handleFullscreenExit);
-        if(!itemEl?.matches?.(':hover')) deactivateCanvasVideoPreview(itemEl);
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenExit);
-    document.addEventListener('webkitfullscreenchange', handleFullscreenExit);
     container.classList.add('is-playing');
     poster.replaceWith(video);
 }
@@ -5709,8 +5751,12 @@ function renderedThumbSrcForRef(ref){
 function videoPosterHtml(item, extraClass='', style=''){
     const cls = extraClass ? ` class="${extraClass}"` : '';
     const styleAttr = style ? ` style="${style}"` : '';
-    const posterUrl = thumbMediaUrl(item);
-    return `<img${cls} src="${escapeHtml(posterUrl)}" data-original-src="${escapeAttr(item?.url || '')}" data-poster-src="${escapeAttr(posterUrl)}" data-video-src="${escapeAttr(filePreviewUrl(item) || item?.url || '')}" draggable="false"${styleAttr}>`;
+    const fileId = String(item?.file_id || fileIdFromUrl(item?.url || '') || '').trim();
+    const explicitPoster = String(item?.poster_url || item?.posterUrl || item?.thumbnail_url || item?.thumbnailUrl || '').trim();
+    const posterUrl = explicitPoster || (fileId ? `/api/files/${encodeURIComponent(fileId)}/thumb` : '');
+    const src = filePreviewUrl(item) || item?.url || '';
+    const srcAttr = posterUrl ? ` src="${escapeAttr(posterUrl)}"` : '';
+    return `<img${cls}${srcAttr} data-original-src="${escapeAttr(item?.url || '')}" data-poster-src="${escapeAttr(posterUrl)}" data-video-src="${escapeAttr(src)}" draggable="false"${styleAttr}>`;
 }
 function displayMediaUrl(itemOrUrl, name=''){
     if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
@@ -5902,7 +5948,7 @@ function renderSmartCanvasLog(){
         const thumbs = (log.outputs || []).slice(0, 8).map(url => {
             const safe = escapeAttr(url);
             const kind = outputUrlLooksVideo(url) ? 'video' : 'image';
-            return kind === 'video' ? `<video src="${safe}" data-url="${safe}" data-kind="video" muted playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>` : `<img src="${safe}" data-url="${safe}" data-kind="image" alt="output">`;
+            return kind === 'video' ? videoPosterHtml({url, kind}) : `<img src="${safe}" data-url="${safe}" data-kind="image" alt="output">`;
         }).join('');
         const date = new Date(log.createdAt || Date.now()).toLocaleString(window.StudioI18n?.lang() === 'en' ? 'en-US' : 'zh-CN');
         const req = log.request || {};
@@ -6381,22 +6427,29 @@ function measureSmartNodeImages(){
         const index = Number(itemEl?.dataset.imageIndex ?? 0);
         const candidatePool = candidatePanel ? nodeCandidateImages(node) : [];
         const image = candidatePanel ? candidatePool[candidateIndex] : node?.images?.[index];
+        const isVideo = imgEl.tagName?.toLowerCase() === 'video';
         if(imgEl.tagName?.toLowerCase() === 'img' && image?.url) bindImageProxyFallback(imgEl, image);
-        if(!node || !image || imageResolutionLabel(image)) return;
+        if(!node || !image || (!isVideo && imageResolutionLabel(image))) return;
         const apply = () => {
             const w = imgEl.naturalWidth || imgEl.videoWidth || 0;
             const h = imgEl.naturalHeight || imgEl.videoHeight || 0;
-            if(w <= 0 || h <= 0 || imageResolutionLabel(image)) return;
+            if(w <= 0 || h <= 0) return;
+            const currentW = Number(image.natural_w || image.width || image.w || 0);
+            const currentH = Number(image.natural_h || image.height || image.h || 0);
+            if(currentW === w && currentH === h) return;
+            if(!isVideo && imageResolutionLabel(image)) return;
             image.natural_w = w;
             image.natural_h = h;
             if(candidatePanel) syncCandidateImageDimensions(node, image, w, h);
             applyThumbDisplaySizeToElement(itemEl, image, Math.max(itemEl?.clientWidth || 0, itemEl?.clientHeight || 0));
             render();
+            scheduleSave();
         };
-        const isVideo = imgEl.tagName?.toLowerCase() === 'video';
-        if(!isVideo && imgEl.complete) apply();
+        if(isVideo){
+            if(imgEl.readyState >= 1) apply();
+            else imgEl.addEventListener('loadedmetadata', apply, {once:true});
+        } else if(imgEl.complete) apply();
         else imgEl.addEventListener('load', apply, {once:true});
-        imgEl.addEventListener('loadedmetadata', apply, {once:true});
     });
 }
 function bindConnectionEvents(){
@@ -10451,7 +10504,7 @@ function mentionTokenHtml(img){
     const name = img.alias || img.name || '图片';
     const kind = mediaKindForItem(img);
     const media = kind === 'video'
-        ? `<video src="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>`
+        ? videoPosterHtml(img)
         : `<img src="${escapeHtml(img.url)}" alt="">`;
     return `<span class="mention-image-token" contenteditable="false" data-url="${escapeHtml(img.url)}" data-kind="${escapeHtml(kind)}" data-name="${escapeHtml(name)}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${escapeHtml(img.imageIndex ?? '')}">${media}<span>${escapeHtml(name)}</span></span>`;
 }
@@ -10992,7 +11045,7 @@ function renderMentionPicker(source){
     const candidates = (mentionSource === 'asset' ? assetItems : inputItems).slice(0, 36);
     const body = candidates.length ? `<div class="mention-option-grid">${candidates.map((img, i) => `
             <button class="mention-option" type="button" data-mention-index="${i}">
-                ${mediaKindForItem(img) === 'video' ? `<video src="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>` : `<img src="${escapeHtml(img.url)}" alt="">`}
+                ${mediaKindForItem(img) === 'video' ? videoPosterHtml(img) : `<img src="${escapeHtml(img.url)}" alt="">`}
                 <span>${escapeHtml(img.alias)}</span>
             </button>
         `).join('')}</div>` : `<div class="mention-empty">${escapeHtml(tr('smart.mentionEmpty'))}</div>`;
@@ -11128,7 +11181,7 @@ function insertMentionToken(img){
     token.dataset.imageIndex = String(img.imageIndex ?? '');
     token.dataset.assetUris = JSON.stringify(img.asset_uris || {});
     token.innerHTML = token.dataset.kind === 'video'
-        ? `<video src="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video><span>${escapeHtml(token.dataset.name)}</span>`
+        ? `${videoPosterHtml(img)}<span>${escapeHtml(token.dataset.name)}</span>`
         : `<img src="${escapeHtml(img.url)}" alt=""><span>${escapeHtml(token.dataset.name)}</span>`;
     range.insertNode(token);
     const spacer = document.createTextNode(' ');
@@ -12919,8 +12972,8 @@ async function pollRunningHubTask(taskId){
                 return json.data || json;
             });
             if(data.status === 'SUCCESS'){
-                const urls = data.urls || [];
-                if(urls.length) return urls;
+                const outputs = data.media_items || data.image_items || data.urls || [];
+                if(outputs.length) return outputs;
                 sawSuccessWithoutOutputs = true;
                 continue;
             }

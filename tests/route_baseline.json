@@ -483,6 +483,34 @@
     "APIRoute"
   ],
   [
+    "/api/files/{file_id}",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/files/{file_id}/download",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/files/{file_id}/preview",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/files/{file_id}/thumb",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/generate",
     [
       "POST"
@@ -784,6 +812,13 @@
     "APIRoute"
   ],
   [
+    "/api/runninghub/upload-asset-file",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/shared-folders",
     [
       "GET"
@@ -834,6 +869,41 @@
   ],
   [
     "/api/smart-canvas/prompt-templates",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/storage/config",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/storage/config",
+    [
+      "PUT"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/storage/delete",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/storage/files",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/storage/usage",
     [
       "GET"
     ],
@@ -910,11 +980,6 @@
     "APIRoute"
   ],
   [
-    "/assets",
-    [],
-    "Mount"
-  ],
-  [
     "/auth/login",
     [
       "POST"
@@ -988,11 +1053,6 @@
     "Route"
   ],
   [
-    "/output",
-    [],
-    "Mount"
-  ],
-  [
     "/redoc",
     [
       "GET",
@@ -1009,27 +1069,6 @@
     "/static/{page}.html",
     [
       "GET"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/vnccs/{vnccs_path:path}",
-    [
-      "DELETE"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/vnccs/{vnccs_path:path}",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/vnccs/{vnccs_path:path}",
-    [
-      "POST"
     ],
     "APIRoute"
   ],

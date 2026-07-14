@@ -15,25 +15,25 @@ def test_history_normalizes_image_refs_and_loads_urls(monkeypatch):
     monkeypatch.setattr(
         history,
         "urls_from_file_refs",
-        lambda refs: ["/assets/input/restored.png"] if refs and refs[0].get("file_id") == "file-1" else [],
+        lambda refs: ["/api/files/file-1/preview"] if refs and refs[0].get("file_id") == "file-1" else [],
     )
+    monkeypatch.setattr(history, "normalize_media_refs", lambda refs, allow_register=True: refs)
+    monkeypatch.setattr(history, "compact_media_refs", lambda refs: [{"file_id": ref["file_id"]} for ref in refs])
 
-    record = history.normalize_history_record({"images": ["/assets/input/original.png"], "prompt": "demo"})
+    record = history.normalize_history_record({"images": ["/api/files/file-1/preview"], "prompt": "demo"})
     assert record["image_refs"] == [{"file_id": "file-1"}]
-    assert record["images"] == ["/assets/input/restored.png"]
+    assert record["images"] == ["/api/files/file-1/preview"]
 
 
-def test_make_asset_library_item_stores_file_id_when_storage_enabled(monkeypatch, tmp_path):
+def test_make_asset_library_item_stores_file_id(monkeypatch, tmp_path):
     src = tmp_path / "source.png"
     src.write_bytes(b"png-bytes")
 
-    monkeypatch.setattr(assets, "ASSET_LIBRARY_DIR", str(tmp_path / "library"))
-    monkeypatch.setattr(assets, "storage_enabled", lambda: True)
     monkeypatch.setattr(
         assets,
-        "save_compat_media_bytes",
+        "save_media_bytes",
         lambda category, filename, content, **kwargs: {
-            "url": f"/assets/{category}/{filename}",
+            "url": "/api/files/file-lib-1/preview",
             "file_id": "file-lib-1",
         },
     )
@@ -41,8 +41,7 @@ def test_make_asset_library_item_stores_file_id_when_storage_enabled(monkeypatch
     _, item = assets.make_asset_library_item(str(src), "example.png")
 
     assert item["file_id"] == "file-lib-1"
-    assert item["url"].startswith("/assets/library/lib_")
-    assert not os.path.exists(assets.ASSET_LIBRARY_DIR)
+    assert item["url"] == "/api/files/file-lib-1/preview"
 
 
 def test_add_asset_library_item_uses_file_id(monkeypatch):

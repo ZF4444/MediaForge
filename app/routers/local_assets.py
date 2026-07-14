@@ -6,43 +6,34 @@
 - POST /api/temp-sh/upload、POST /api/cloud-video/upload（依赖 upload_local_video_to_cloud 云上传集群）
 
 依赖：
-- app.config：LOCAL_UPLOAD_DIR
-- app.core.media：output_path_for/output_url_for/output_file_from_url/content_type_for_path/
-  local_media_file_by_basename/filename_from_media_url/fetch_remote_media_bytes/
+- app.core.media：output_file_from_url/content_type_for_path/
   sanitize_export_filename/ensure_same_origin_request/normalize_local_image_path/import_local_image_file
 - app.models：LocalImageImportRequest
 """
 import os
 import re
-import urllib.parse
 import uuid
 from typing import List, Tuple
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 
-from app.config import LOCAL_UPLOAD_DIR
 from app.core.media import (
     content_type_for_path,
     ensure_same_origin_request,
-    fetch_remote_media_bytes,
-    filename_from_media_url,
     import_local_image_file,
-    local_media_file_by_basename,
     normalize_local_image_path,
-    output_path_for,
-    output_url_for,
     output_file_from_url,
     sanitize_export_filename,
 )
 from app.core.logging import audit_event
 from app.models import LocalImageImportRequest
 from app.services.storage import (
+    file_preview_url,
     list_media_entries,
     media_entry_by_basename,
     remove_media_url,
-    save_compat_media_bytes,
-    storage_enabled,
+    save_media_bytes,
 )
 
 router = APIRouter()
@@ -57,45 +48,24 @@ def _save_uploaded_media(
     content_type: str = "",
     kind: str = "",
 ) -> Tuple[str, str]:
-    if storage_enabled():
-        stored = save_compat_media_bytes(
-            category,
-            filename,
-            content,
-            original_name=original_name or filename,
-            content_type=content_type,
-            kind=kind,
-        )
-        return stored["url"], stored.get("file_id", "")
-    path = output_path_for(filename, "input" if category == "input" else "output")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(content)
-    return output_url_for(filename, "input" if category == "input" else "output"), ""
+    stored = save_media_bytes(
+        category,
+        filename,
+        content,
+        original_name=original_name or filename,
+        content_type=content_type,
+        kind=kind,
+    )
+    return stored["url"], stored.get("file_id", "")
 
 
 @router.get("/api/download-output")
 def download_output(url: str, name: str = "", inline: bool = False):
     path = output_file_from_url(url)
     if not path:
-        path = local_media_file_by_basename(filename_from_media_url(url, ""))
-    if path:
-        filename = sanitize_export_filename(os.path.basename(name) if name else os.path.basename(path), os.path.basename(path))
-        return FileResponse(path, media_type=content_type_for_path(path), filename=None if inline else filename)
-    try:
-        remote = fetch_remote_media_bytes(url)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"远程文件下载失败：{exc}")
-    if not remote:
-        raise HTTPException(status_code=404, detail="文件不存在")
-    content, content_type = remote
-    fallback = filename_from_media_url(url, "download.bin")
-    filename = sanitize_export_filename(os.path.basename(name) if name else fallback, fallback)
-    disposition = "inline" if inline else "attachment"
-    headers = {"Content-Disposition": f"{disposition}; filename*=UTF-8''{urllib.parse.quote(filename)}"}
-    return Response(content, media_type=content_type, headers=headers)
+        raise HTTPException(status_code=404, detail="MinIO 文件不存在")
+    filename = sanitize_export_filename(os.path.basename(name) if name else os.path.basename(path), os.path.basename(path))
+    return FileResponse(path, media_type=content_type_for_path(path), filename=None if inline else filename)
 
 
 @router.post("/api/ai/upload")
@@ -168,34 +138,13 @@ def _local_upload_display_name(filename):
     return m.group(1) if m else filename
 
 
-def _local_upload_item(filename):
-    path = os.path.join(LOCAL_UPLOAD_DIR, filename)
-    try:
-        stat = os.stat(path)
-        size = stat.st_size
-        created_at = stat.st_mtime
-    except OSError:
-        size = 0
-        created_at = 0
-    kind, _ = _local_upload_kind_ext(filename, "")
-    return {
-        "id": filename,
-        "file": filename,
-        "name": _local_upload_display_name(filename),
-        "url": f"/assets/uploads/{filename}",
-        "kind": kind or "image",
-        "size": size,
-        "created_at": created_at,
-    }
-
-
 def _local_upload_item_from_entry(entry):
     filename = os.path.basename(str(entry.get("filename") or entry.get("url") or ""))
     return {
         "id": filename,
         "file": filename,
         "name": _local_upload_display_name(str(entry.get("original_name") or filename)),
-        "url": entry.get("url") or f"/assets/uploads/{filename}",
+        "url": entry.get("url") or file_preview_url(entry.get("file_id") or ""),
         "file_id": entry.get("file_id") or "",
         "kind": entry.get("kind") or "image",
         "size": int(entry.get("size") or 0),
@@ -217,48 +166,24 @@ async def upload_local_assets(files: List[UploadFile] = File(...)):
         base = re.sub(r"[^0-9A-Za-z一-鿿._-]+", "_", base).strip("_") or "file"
         base = base[:60]
         filename = f"up_{uuid.uuid4().hex[:12]}_{base}{ext}"
-        if storage_enabled():
-            stored = save_compat_media_bytes(
-                "uploads",
-                filename,
-                content,
-                original_name=file.filename or filename,
-                content_type=file.content_type or "",
-                kind=kind,
-            )
-            uploaded.append(_local_upload_item_from_entry(stored["entry"]))
-        else:
-            path = os.path.join(LOCAL_UPLOAD_DIR, filename)
-            with open(path, "wb") as f:
-                f.write(content)
-            uploaded.append(_local_upload_item(filename))
+        stored = save_media_bytes(
+            "uploads",
+            filename,
+            content,
+            original_name=file.filename or filename,
+            content_type=file.content_type or "",
+            kind=kind,
+        )
+        uploaded.append(_local_upload_item_from_entry(stored["entry"]))
     return {"files": uploaded}
 
 
 @router.get("/api/local-assets")
 async def list_local_assets():
     items = []
-    seen = set()
-    if storage_enabled():
-        for entry in list_media_entries():
-            if entry.get("category") != "uploads":
-                continue
-            item = _local_upload_item_from_entry(entry)
-            seen.add(item["file"])
-            items.append(item)
-    if not storage_enabled():
-        try:
-            names = os.listdir(LOCAL_UPLOAD_DIR)
-        except OSError:
-            names = []
-        for name in names:
-            if name.startswith("."):
-                continue
-            if not os.path.isfile(os.path.join(LOCAL_UPLOAD_DIR, name)):
-                continue
-            if name in seen:
-                continue
-            items.append(_local_upload_item(name))
+    for entry in list_media_entries():
+        if entry.get("category") == "uploads":
+            items.append(_local_upload_item_from_entry(entry))
     items.sort(key=lambda it: it.get("created_at") or 0, reverse=True)
     return {"items": items}
 
@@ -275,21 +200,9 @@ async def delete_local_assets(payload: dict, request: Request):
         if not name:
             continue
         removed = None
-        if storage_enabled():
-            entry = media_entry_by_basename(name, categories={"uploads"})
-            if entry:
-                removed = remove_media_url(entry.get("url") or "", delete_remote=True)
-        else:
-            removed = remove_media_url(f"/assets/uploads/{urllib.parse.quote(name)}", delete_remote=False)
-            if not removed:
-                path = os.path.join(LOCAL_UPLOAD_DIR, name)
-                if os.path.isfile(path):
-                    try:
-                        os.remove(path)
-                        deleted.append(name)
-                    except OSError:
-                        pass
-                continue
+        entry = media_entry_by_basename(name, categories={"uploads"})
+        if entry:
+            removed = remove_media_url(entry.get("url") or "", delete_remote=True)
         if removed:
             deleted.append(name)
     audit_event(

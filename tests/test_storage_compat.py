@@ -8,26 +8,17 @@ from PIL import Image
 
 
 def test_output_file_from_url_materializes_registered_storage_object(monkeypatch, tmp_path):
-    index_file = tmp_path / "storage_objects.json"
     cache_dir = tmp_path / "cache"
-
-    monkeypatch.setattr(storage, "_index_path", lambda: str(index_file))
     monkeypatch.setattr(storage, "STORAGE_CACHE_DIR", str(cache_dir))
     monkeypatch.setattr(storage, "get_object_bytes", lambda bucket, object_key: b"hello-minio")
+    monkeypatch.setattr(storage, "get_file_by_id", lambda _: {
+        "file_id": "file-test",
+        "bucket": "mediaforge-private",
+        "object_key": "users/anonymous/inputs/2026/07/test.png",
+    })
+    monkeypatch.setattr(storage, "_touch_access", lambda _: None)
 
-    storage.register_media_url(
-        "/assets/input/test.png",
-        "mediaforge-private",
-        "users/anonymous/inputs/2026/07/test.png",
-        filename="test.png",
-        category="input",
-        original_name="test.png",
-        content_type="image/png",
-        kind="image",
-        size=11,
-    )
-
-    path = output_file_from_url("/assets/input/test.png")
+    path = output_file_from_url("/api/files/file-test/preview")
 
     assert path is not None
     assert os.path.isfile(path)
@@ -35,7 +26,7 @@ def test_output_file_from_url_materializes_registered_storage_object(monkeypatch
         assert f.read() == b"hello-minio"
 
 
-def test_upload_ai_reference_uses_storage_service_when_enabled(monkeypatch):
+def test_upload_ai_reference_uses_storage_service(monkeypatch):
     saved = []
 
     class DummyUploadFile:
@@ -47,13 +38,12 @@ def test_upload_ai_reference_uses_storage_service_when_enabled(monkeypatch):
         async def read(self):
             return self._content
 
-    monkeypatch.setattr(local_assets, "storage_enabled", lambda: True)
     monkeypatch.setattr(
         local_assets,
-        "save_compat_media_bytes",
+        "save_media_bytes",
         lambda category, filename, content, **kwargs: saved.append((category, filename, content, kwargs)) or {
-            "url": f"/assets/{category}/{filename}",
-            "entry": {"url": f"/assets/{category}/{filename}"},
+            "url": "/api/files/file-123/preview",
+            "entry": {"url": "/api/files/file-123/preview"},
             "file_id": "file-123",
         },
     )
@@ -64,7 +54,7 @@ def test_upload_ai_reference_uses_storage_service_when_enabled(monkeypatch):
 
     assert len(saved) == 1
     assert saved[0][0] == "input"
-    assert result["files"][0]["url"].startswith("/assets/input/ai_ref_")
+    assert result["files"][0]["url"] == "/api/files/file-123/preview"
     assert result["files"][0]["file_id"] == "file-123"
     assert result["files"][0]["kind"] == "image"
 
@@ -153,8 +143,31 @@ def test_storage_files_page_sorts_by_created_at_in_both_directions(monkeypatch):
         {"file_id": "oldest", "created_at": 100},
         {"file_id": "newest", "created_at": 300},
     ]
-    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: False)
-    monkeypatch.setattr(storage, "_fallback_list", lambda: list(entries))
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql, params): self.sql = sql
+        def fetchone(self): return {"total": len(entries)}
+        def fetchall(self):
+            reverse = "ORDER BY created_at DESC" in self.sql
+            return [storage_row(item) for item in sorted(entries, key=lambda item: item["created_at"], reverse=reverse)[:2]]
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def cursor(self): return Cursor()
+
+    def storage_row(item):
+        return {
+            "id": item["file_id"], "user_id": "anonymous", "bucket": "private", "object_key": item["file_id"],
+            "legacy_url": "", "category": "output", "original_name": item["file_id"], "stored_name": item["file_id"],
+            "ext": "", "mime_type": "application/octet-stream", "size_bytes": 0, "sha256": "", "kind": "file",
+            "source": "generated", "is_public": False, "status": "active", "created_at": item["created_at"],
+            "updated_at": item["created_at"], "last_accessed_at": 0, "expires_at": None, "deleted_at": None,
+        }
+
+    monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
+    monkeypatch.setattr(storage, "_db_connect", Connection)
 
     newest_first = storage.list_media_entries_page_for_user(sort_order="desc", limit=2)
     oldest_first = storage.list_media_entries_page_for_user(sort_order="asc", limit=2)
@@ -165,11 +178,9 @@ def test_storage_files_page_sorts_by_created_at_in_both_directions(monkeypatch):
     assert oldest_first["sort_order"] == "asc"
 
 
-def test_save_ai_image_to_output_registers_generated_file(monkeypatch, tmp_path):
-    monkeypatch.setattr("app.core.media.OUTPUT_OUTPUT_DIR", str(tmp_path))
-    monkeypatch.setattr("app.core.media.storage_enabled", lambda: True)
+def test_save_ai_image_to_output_registers_generated_file(monkeypatch):
     monkeypatch.setattr(
-        "app.core.media.save_compat_media_bytes",
+        "app.core.media.save_media_bytes",
         lambda category, filename, content, **kwargs: {"url": f"/api/files/generated-1/preview"},
     )
 
@@ -182,9 +193,8 @@ def test_import_local_image_file_uses_storage_without_assets_dir(monkeypatch, tm
     src = tmp_path / "demo.png"
     Image.new("RGB", (1, 1), (120, 80, 160)).save(src)
 
-    monkeypatch.setattr("app.core.media.storage_enabled", lambda: True)
     monkeypatch.setattr(
-        "app.core.media.save_compat_media_bytes",
+        "app.core.media.save_media_bytes",
         lambda category, filename, content, **kwargs: {"url": "/api/files/file-77/preview", "file_id": "file-77"},
     )
 

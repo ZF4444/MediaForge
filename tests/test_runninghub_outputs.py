@@ -48,3 +48,10 @@ def test_runninghub_extract_outputs_node_map_and_filename():
 def test_runninghub_code_zero_without_urls_stays_running():
     assert main.runninghub_normalized_status({"code": 0, "data": {}}, 0, []) == "RUNNING"
     assert main.runninghub_normalized_status({"code": 0, "data": {}}, 0, ["https://example.com/a.png"]) == "SUCCESS"
+
+
+def test_runninghub_output_kind_uses_media_extension():
+    assert main.runninghub_output_kind("mp4") == "video"
+    assert main.runninghub_output_kind("wav") == "audio"
+    assert main.runninghub_output_kind("zip") == "file"
+    assert main.runninghub_output_kind("webp") == "image"

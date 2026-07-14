@@ -187,8 +187,8 @@ class CanvasLLMRequest(BaseModel):
     messages: List[Dict[str, Any]] = []
     provider: str = "comfly"
     ms_model: str = ""
-    images: List[str] = []   # 可以是 /output/*.png、/assets/*.png 本地路径 或 http(s) URL 或 data URL
-    videos: List[str] = []   # 可以是 /output/*.mp4、/assets/*.mp4 本地路径 或 http(s) URL 或 data URL
+    images: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
+    videos: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
 
 
 class ConversationCreateRequest(BaseModel):

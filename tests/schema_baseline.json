@@ -1,6 +1,10 @@
 {
   "AIReference": {
     "properties": {
+      "file_id": {
+        "type": "string",
+        "default": ""
+      },
       "url": {
         "type": "string",
         "default": ""
@@ -184,21 +188,7 @@
           }
         ]
       },
-      "wallet_api_key": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
       "clear_key": {
-        "type": "boolean",
-        "default": false
-      },
-      "clear_wallet_key": {
         "type": "boolean",
         "default": false
       },
@@ -240,7 +230,7 @@
         "type": "string",
         "default": ""
       },
-      "url": {
+      "file_id": {
         "type": "string",
         "default": ""
       },
@@ -399,6 +389,16 @@
     ]
   },
   "Body_pose_studio_upload_fbx_api_pose_studio_upload_fbx_post": {
+    "properties": {
+      "file": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "file"
+    ]
+  },
+  "Body_runninghub_upload_asset_file_api_runninghub_upload_asset_file_post": {
     "properties": {
       "file": {
         "type": "string"
@@ -1296,10 +1296,6 @@
       "instanceType": {
         "type": "string",
         "default": ""
-      },
-      "useWallet": {
-        "type": "boolean",
-        "default": false
       }
     },
     "required": []
@@ -1309,10 +1305,6 @@
       "url": {
         "type": "string",
         "default": ""
-      },
-      "useWallet": {
-        "type": "boolean",
-        "default": false
       }
     },
     "required": []
@@ -1416,6 +1408,56 @@
           "$ref": "#/components/schemas/SmartCanvasGroupExportItem"
         },
         "default": []
+      }
+    },
+    "required": []
+  },
+  "StorageBatchDeletePayload": {
+    "properties": {
+      "file_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": []
+  },
+  "StorageQuotaConfigPayload": {
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "default_quota_bytes": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0.0
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "users": {
+        "type": "object"
+      }
+    },
+    "required": []
+  },
+  "StorageQuotaUserConfigPayload": {
+    "properties": {
+      "quota_bytes": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0.0
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": []
