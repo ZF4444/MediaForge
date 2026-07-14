@@ -2,7 +2,7 @@ import asyncio
 import os
 
 from app.core.media import import_local_image_file, output_file_from_url, save_ai_image_to_output
-from app.routers import local_assets
+from app.routers import files, local_assets
 from app.services import storage
 from PIL import Image
 
@@ -77,6 +77,74 @@ def test_file_refs_from_api_file_preview_uses_file_id(monkeypatch):
     )
     refs = storage.file_refs_from_urls(["/api/files/file-9/preview"])
     assert refs == [{"file_id": "file-9"}]
+
+
+def test_thumbnail_route_returns_fixed_derivative_with_private_cache(monkeypatch):
+    entry = {
+        "file_id": "file-thumb",
+        "kind": "image",
+        "bucket": "private",
+        "user_id": "alice",
+    }
+    monkeypatch.setattr(files, "get_file_by_id", lambda _: entry)
+    monkeypatch.setattr(files, "_materialized_path", lambda _: (_ for _ in ()).throw(AssertionError("original was materialized")))
+    monkeypatch.setattr(files, "object_exists", lambda *_: True)
+    monkeypatch.setattr(files, "get_object_bytes", lambda *_: b"fixed-thumb")
+
+    response = asyncio.run(files.thumbnail_file("file-thumb"))
+
+    assert response.body == b"fixed-thumb"
+    assert response.headers["cache-control"] == "private, max-age=31536000, immutable"
+
+
+def test_thumbnail_route_generates_missing_derivative_without_materializing_original(monkeypatch):
+    entry = {
+        "file_id": "file-thumb",
+        "kind": "image",
+        "bucket": "private",
+        "user_id": "alice",
+    }
+    exists = iter([False, True])
+    generated = []
+    monkeypatch.setattr(files, "get_file_by_id", lambda _: entry)
+    monkeypatch.setattr(files, "_materialized_path", lambda _: (_ for _ in ()).throw(AssertionError("original was materialized")))
+    monkeypatch.setattr(files, "object_exists", lambda *_: next(exists))
+    monkeypatch.setattr(files, "ensure_media_derivatives", lambda item: generated.append(item["file_id"]))
+    monkeypatch.setattr(files, "get_object_bytes", lambda *_: b"generated-thumb")
+
+    response = asyncio.run(files.thumbnail_file("file-thumb"))
+
+    assert response.body == b"generated-thumb"
+    assert generated == ["file-thumb"]
+
+
+def test_thumbnail_fallback_is_not_cached_as_immutable(monkeypatch):
+    entry = {
+        "file_id": "file-video",
+        "kind": "video",
+        "bucket": "private",
+        "user_id": "alice",
+        "original_name": "demo.mp4",
+    }
+    monkeypatch.setattr(files, "get_file_by_id", lambda _: entry)
+    monkeypatch.setattr(files, "object_exists", lambda *_: False)
+    monkeypatch.setattr(files, "ensure_media_derivatives", lambda _: None)
+
+    response = asyncio.run(files.thumbnail_file("file-video"))
+
+    assert response.media_type == "image/svg+xml"
+    assert response.headers["cache-control"] == "private, max-age=300"
+    assert "immutable" not in response.headers["cache-control"]
+
+
+def test_preview_route_uses_short_private_cache(monkeypatch, tmp_path):
+    source = tmp_path / "source.png"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(files, "_materialized_path", lambda _: ({"file_id": "file-preview"}, str(source)))
+
+    response = asyncio.run(files.preview_file("file-preview"))
+
+    assert response.headers["cache-control"] == "private, max-age=3600"
 
 
 def test_storage_files_page_sorts_by_created_at_in_both_directions(monkeypatch):

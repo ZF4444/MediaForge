@@ -5628,8 +5628,8 @@ function thumbMediaHtml(img){
         return `<div class="media-thumb file-thumb" data-media-url="${escapeAttr(img.url || '')}" data-media-kind="${escapeAttr(mediaKindForItem(img))}"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i><span>${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</span></div>`;
     }
     if(isAudioMediaItem(img)) return `<div class="media-thumb audio-thumb" data-media-url="${escapeAttr(img.url || '')}" data-media-kind="audio"><i data-lucide="file-audio"></i><span>${escapeHtml(img.name || 'Audio')}</span></div>`;
-    if(isVideoMediaItem(img)) return `<div class="media-thumb video-thumb" data-video-preview-container="1">${videoPosterHtml(img, 256, 'video-poster is-blurred')}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`;
-    return `<img src="${escapeHtml(thumbMediaUrl(img, 256))}" data-original-src="${escapeAttr(img.url || '')}" draggable="false">`;
+    if(isVideoMediaItem(img)) return `<div class="media-thumb video-thumb" data-video-preview-container="1">${videoPosterHtml(img, 'video-poster is-blurred')}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`;
+    return `<img src="${escapeHtml(thumbMediaUrl(img))}" data-original-src="${escapeAttr(img.url || '')}" draggable="false">`;
 }
 function imageResolutionLabel(img){
     const w = Number(img?.natural_w || img?.width || img?.w || 0);
@@ -5676,8 +5676,8 @@ function singleMediaHtml(img, w, h){
         return `<div class="node-img media-card media-file-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i></div><div class="media-card-title">${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</div><div class="media-card-sub">${isTextMediaItem(img) ? 'TEXT' : 'FILE'}</div></div>`;
     }
     if(isAudioMediaItem(img)) return `<div class="node-img media-card media-audio-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="file-audio"></i></div><div class="media-card-title">${escapeHtml(img.name || 'Audio')}</div><div class="media-card-sub">AUDIO</div><audio src="${escapeAttr(img.url || '')}" data-url="${escapeAttr(img.url || '')}" controls preload="metadata"></audio></div>`;
-    if(isVideoMediaItem(img)) return `<div class="node-img media-card media-video-card" data-video-preview-container="1" style="width:${w}px;height:${h}px">${videoPosterHtml(img, Math.max(192, Math.round(Math.max(w, h) * 1.25)), 'node-img video-poster is-blurred', `width:${w}px;height:${h}px`)}<span class="smart-video-badge large"><i data-lucide="play"></i></span></div>`;
-    return `<img class="node-img" src="${escapeHtml(thumbMediaUrl(img, Math.max(192, Math.round(Math.max(w, h) * 1.25))))}" data-original-src="${escapeAttr(img.url || '')}" draggable="false" style="width:${w}px;height:${h}px">`;
+    if(isVideoMediaItem(img)) return `<div class="node-img media-card media-video-card" data-video-preview-container="1" style="width:${w}px;height:${h}px">${videoPosterHtml(img, 'node-img video-poster is-blurred', `width:${w}px;height:${h}px`)}<span class="smart-video-badge large"><i data-lucide="play"></i></span></div>`;
+    return `<img class="node-img" src="${escapeHtml(thumbMediaUrl(img))}" data-original-src="${escapeAttr(img.url || '')}" draggable="false" style="width:${w}px;height:${h}px">`;
 }
 function smartNodeHasLiveMedia(node){
     return Boolean(!node?.pending && (node?.images || []).some(img => isVideoMediaItem(img) || isAudioMediaItem(img)));
@@ -5877,21 +5877,21 @@ function filePreviewUrl(item){
     if(fileId) return `/api/files/${encodeURIComponent(fileId)}/preview`;
     return String(item?.url || '');
 }
-function fileThumbnailUrl(item, size=320){
+function fileThumbnailUrl(item){
     const fileId = String(item?.file_id || '').trim();
-    if(fileId) return `/api/files/${encodeURIComponent(fileId)}/thumb?size=${Math.max(32, Math.min(1024, Number(size) || 320))}`;
+    if(fileId) return `/api/files/${encodeURIComponent(fileId)}/thumb`;
     return filePreviewUrl(item);
 }
 function proxiedMediaUrl(itemOrUrl, name=''){
     if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
     return filePreviewUrl(itemOrUrl);
 }
-function thumbMediaUrl(itemOrUrl, size=320){
+function thumbMediaUrl(itemOrUrl){
     if(typeof itemOrUrl === 'string') return String(itemOrUrl || '');
-    return fileThumbnailUrl(itemOrUrl, size);
+    return fileThumbnailUrl(itemOrUrl);
 }
-function renderedThumbSrcForRef(ref, size=160){
-    if(!ref || !world) return thumbMediaUrl(ref, size);
+function renderedThumbSrcForRef(ref){
+    if(!ref || !world) return thumbMediaUrl(ref);
     try {
         const nodeId = String(ref.nodeId || '').trim();
         const rawImageIndex = ref.imageIndex;
@@ -5931,12 +5931,12 @@ function renderedThumbSrcForRef(ref, size=160){
             if(src) return src;
         }
     } catch(e) {}
-    return thumbMediaUrl(ref, size);
+    return thumbMediaUrl(ref);
 }
-function videoPosterHtml(item, size=256, extraClass='', style=''){
+function videoPosterHtml(item, extraClass='', style=''){
     const cls = extraClass ? ` class="${extraClass}"` : '';
     const styleAttr = style ? ` style="${style}"` : '';
-    const posterUrl = thumbMediaUrl(item, size);
+    const posterUrl = thumbMediaUrl(item);
     return `<img${cls} src="${escapeHtml(posterUrl)}" data-original-src="${escapeAttr(item?.url || '')}" data-poster-src="${escapeAttr(posterUrl)}" data-video-src="${escapeAttr(filePreviewUrl(item) || item?.url || '')}" draggable="false"${styleAttr}>`;
 }
 function displayMediaUrl(itemOrUrl, name=''){
@@ -10059,13 +10059,13 @@ function rhInputKindIcon(kind){
 function renderRhInputThumb(ref, field, index, kind, node, sourceUrl){
     const isVid = kind === 'video' || isVideoMediaItem(ref);
     const title = `${field.label || field.fieldName || rhInputKindLabel(kind)} · ${ref?.name || tr('smart.inputNum').replace('{n}', String(index + 1))}`;
-    const visibleUrl = renderedThumbSrcForRef(ref, 160);
+    const visibleUrl = renderedThumbSrcForRef(ref);
     const inner = isVid
-        ? `<div class="input-thumb-video">${videoPosterHtml(ref, 160)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
+        ? `<div class="input-thumb-video">${videoPosterHtml(ref)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
         : `<img src="${escapeAttr(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
     const label = rhInputKindLabel(kind).slice(0, 3);
     const isSelf = node ? isSelfReferenceForNode(node, ref) : false;
-    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(thumbMediaUrl(ref, 160) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(thumbMediaUrl(ref) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
 }
 function renderRunningHubInputThumbsRow(node){
     const fields = rhActiveFields().filter(field => ['image','video','audio'].includes(rhFieldKind(field)));
@@ -10123,13 +10123,13 @@ function renderInputThumbsRow(node){
         const title = isSelf
             ? tr('smart.inputSelf')
             : (smartImageMode(node) === 'workflow' ? tr('smart.inputUpstreamWorkflow') : tr('smart.inputUpstream'));
-        const visibleUrl = renderedThumbSrcForRef(img, 160);
+        const visibleUrl = renderedThumbSrcForRef(img);
         const inner = isVid
-            ? `<div class="input-thumb-video">${videoPosterHtml(img, 160)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
+            ? `<div class="input-thumb-video">${videoPosterHtml(img)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
             : `<img src="${escapeHtml(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
         const label = `图${i + 1}`;
         const sourceUrl = img.originalLocalUrl || img.url || '';
-        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}" style="--preview-url:url('${escapeHtml(thumbMediaUrl(img, 160) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}" style="--preview-url:url('${escapeHtml(thumbMediaUrl(img) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
     }).join('');
     inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}${dedup.length > 1 ? `<span class="input-thumb-count">${escapeHtml(tr('smart.inputCount').replace('{n}', String(dedup.length)))}</span>` : ''}</div>`;
     bindInputThumbsDrag(node, dedup);

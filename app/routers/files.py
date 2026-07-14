@@ -2,7 +2,7 @@
 
 import os
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
 from app.core.media import content_type_for_path
@@ -17,6 +17,9 @@ from app.services.storage import (
 )
 
 router = APIRouter()
+PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=3600"}
+THUMB_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
+THUMB_FALLBACK_CACHE_HEADERS = {"Cache-Control": "private, max-age=300"}
 
 
 def _materialized_path(file_id: str):
@@ -60,29 +63,36 @@ async def get_file_meta(file_id: str):
 @router.get("/api/files/{file_id}/preview")
 async def preview_file(file_id: str):
     _, path = _materialized_path(file_id)
-    return FileResponse(path, media_type=content_type_for_path(path))
+    return FileResponse(path, media_type=content_type_for_path(path), headers=PREVIEW_CACHE_HEADERS)
 
 
 @router.get("/api/files/{file_id}/thumb")
-async def thumbnail_file(file_id: str, size: int = Query(default=256, ge=32, le=1024)):
-    entry, _path = _materialized_path(file_id)
+async def thumbnail_file(file_id: str):
+    entry = get_file_by_id(file_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="文件不存在")
     kind = str(entry.get("kind") or "").strip().lower()
     bucket = str(entry.get("bucket") or "").strip()
     object_key = media_thumb_object_key(entry) if kind == "image" else media_poster_object_key(entry)
     try:
-        if kind in {"image", "video"} and not object_exists(bucket, object_key):
-            ensure_media_derivatives(entry)
-        if kind == "image" and object_exists(bucket, object_key):
-            return Response(content=get_object_bytes(bucket, object_key), media_type="image/webp")
-        if kind == "video" and object_exists(bucket, object_key):
-            return Response(content=get_object_bytes(bucket, object_key), media_type="image/jpeg")
-        if kind == "video":
-            return Response(content=_video_placeholder_svg(entry.get("original_name") or "VIDEO"), media_type="image/svg+xml")
+        if kind in {"image", "video"}:
+            derived_exists = object_exists(bucket, object_key)
+            if not derived_exists:
+                ensure_media_derivatives(entry)
+                derived_exists = object_exists(bucket, object_key)
+            if derived_exists:
+                media_type = "image/webp" if kind == "image" else "image/jpeg"
+                return Response(content=get_object_bytes(bucket, object_key), media_type=media_type, headers=THUMB_CACHE_HEADERS)
     except Exception:
-        if kind == "video":
-            return Response(content=_video_placeholder_svg(entry.get("original_name") or "VIDEO"), media_type="image/svg+xml")
+        pass
+    if kind == "video":
+        return Response(
+            content=_video_placeholder_svg(entry.get("original_name") or "VIDEO"),
+            media_type="image/svg+xml",
+            headers=THUMB_FALLBACK_CACHE_HEADERS,
+        )
     _, path = _materialized_path(file_id)
-    return FileResponse(path, media_type=content_type_for_path(path))
+    return FileResponse(path, media_type=content_type_for_path(path), headers=THUMB_FALLBACK_CACHE_HEADERS)
 
 
 @router.get("/api/files/{file_id}/download")

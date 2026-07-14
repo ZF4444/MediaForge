@@ -141,17 +141,17 @@ function storagePageInfo(){
     const currentPage = Math.min(totalPages, Math.max(1, Number(storageFiles?.current_page || Math.floor((Number(storageFiles?.offset || 0) || 0) / limit) + 1)));
     return {totalMatches, limit, totalPages, currentPage};
 }
-function storageThumbUrl(fileId='', size=256){
+function storageThumbUrl(fileId=''){
     const id = String(fileId || '').trim();
     if(!id) return '';
-    return `/api/files/${encodeURIComponent(id)}/thumb?size=${Math.max(32, Math.min(1024, Number(size || 256) || 256))}`;
+    return `/api/files/${encodeURIComponent(id)}/thumb`;
 }
 function storageCardThumb(item){
     const fileId = String(item?.file_id || '').trim();
     const kind = String(item?.kind || '').toLowerCase();
     if(fileId && (kind === 'image' || kind === 'video')){
         return assetThumb({
-            url: storageThumbUrl(fileId, 256),
+            url: storageThumbUrl(fileId),
             name: item?.original_name || item?.filename || 'file',
             kind: item?.kind || 'document',
         });
