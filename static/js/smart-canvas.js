@@ -236,9 +236,9 @@ let smartCascadeSilentSelection = false;
 let smartCascadeRunPath = null;
 const smartCascadeRuns = new Map();
 let smartLoopContext = null;
-let transientSmartCloudLinks = [];
 let runBtnCooldownToken = 0;
 let smartRunStateToken = 0;
+let reopenVideoConfigAfterRender = false;
 const activeSmartTaskPolls = new Map();
 const activeRunningHubTaskPolls = new Map();
 const smartNodeRunTokens = new Map();
@@ -413,16 +413,9 @@ let settings = {
     videoDuration:5,
     videoAspect:'16:9',
     videoResolution:'',
-    videoEnhancePrompt:false,
-    videoEnableUpsample:false,
-    videoWatermark:false,
-    videoCameraFixed:false,
     videoGenerateAudio:false,
     videoMultimodal:false,
     videoUseFrameRoles:false,
-    videoTrustedAsset:false,
-    videoTrustedSource:'library',
-    videoTempShLinks:[],
     msgenModel:'zimage',
     msCustomModel:'',
     msRatio:'square',
@@ -484,9 +477,7 @@ function cloneSmartSettings(source=settings){
     }
 }
 function settingsForStorage(source=settings){
-    const clean = cloneSmartSettings(source);
-    clean.videoTempShLinks = (clean.videoTempShLinks || []).filter(item => item?.manual === true);
-    return clean;
+    return cloneSmartSettings(source);
 }
 function isApiLikeEngine(engine){
     return ['api', 'volcengine'].includes(String(engine || '').toLowerCase());
@@ -2112,15 +2103,6 @@ function apiProviderById(providerId){
     if(providerId === 'volcengine') return volcengineProvider();
     return (apiProviders || []).find(p => p.id === providerId) || imageProviders()[0] || null;
 }
-// 认证素材 asset:// 是平台绑定的：返回某 provider 所属的认证平台键（与后端一致）
-function videoProviderPlatform(providerId){
-    const p = (apiProviders || []).find(x => x.id === providerId);
-    const proto = String(p?.protocol || '').toLowerCase();
-    const base = String(p?.base_url || '').toLowerCase();
-    if(proto === 'apimart' || base.includes('apimart.ai')) return 'apimart';
-    if(proto === 'volcengine' || providerId === 'volcengine') return 'volcengine';
-    return '';
-}
 function providerImageModels(providerId){
     if(providerId === 'volcengine') return volcengineProvider().image_models || [];
     if(providerId === 'runninghub') return runningHubStandardImageModels(runningHubProvider());
@@ -2165,7 +2147,7 @@ function jimengVideoCommand(){
     const node = activeComposerNode() || selectedNode();
     const refs = node ? visibleReferenceImagesFor(node) : [];
     const imageRefs = imageRefsOnly(refs);
-    const hasVideoRef = videoRefsOnly(refs).length > 0 || Boolean(manualSmartVideoLink(settings));
+    const hasVideoRef = videoRefsOnly(refs).length > 0;
     if(settings.videoMultimodal || hasVideoRef) return 'multimodal2video';
     if(imageRefs.length >= 2) return settings.videoUseFrameRoles ? 'frames2video' : 'multiframe2video';
     if(imageRefs.length >= 1) return 'image2video';
@@ -2251,105 +2233,88 @@ function volcengineVideoModels(){
     const provider = (apiProviders || []).find(p => p.id === 'volcengine');
     return [...new Set(provider?.video_models || DEFAULT_VIDEO_MODELS)];
 }
-function renderVideoProviderControl(providers, restricted){
-    const current = (providers || []).find(p => p.id === settings.videoProvider) || videoProviderById(settings.videoProvider);
-    return `<div class="smart-control provider-control">
-        <button class="smart-pill" type="button"><i data-lucide="plug-zap"></i><span class="sub">${escapeHtml(current?.name || settings.videoProvider || tr('smart.platform'))}</span></button>
-        <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.videoPlatform'))}</div>
-            <div class="model-list">
-                ${providers.map(p => {
-                    const locked = restricted && (p.video_models || []).length > 0 && !(p.video_models || []).some(m => smartModelAllowed(p.id, m));
-                    return `<button type="button" class="direct-option ${p.id === settings.videoProvider ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoProvider" data-smart-value="${escapeHtml(p.id)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(p.name || p.id)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
-                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoPlatform'))}</div>`}
-            </div>
-        </div>
-    </div>`;
-}
-function renderVideoModelControl(models, restricted){
-    return `<div class="smart-control model-control">
-        <button class="smart-pill" type="button"><i data-lucide="film"></i><span class="sub">${escapeHtml(settings.videoModel ? modelDisplayName(settings.videoModel, settings.videoProvider) : tr('smart.model'))}</span></button>
-        <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.videoModel'))}</div>
-            <div class="model-list">
-                ${models.map(m => {
-                    const locked = restricted && !smartModelAllowed(settings.videoProvider, m);
-                    return `<button type="button" class="direct-option ${m === settings.videoModel ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoModel" data-smart-value="${escapeHtml(m)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(modelDisplayName(m, settings.videoProvider))}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
-                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
-            </div>
-        </div>
-    </div>`;
-}
-function renderVideoDurationControl(){
+function renderVideoGenerationConfig(providers, models, restricted){
+    const currentProvider = (providers || []).find(p => p.id === settings.videoProvider) || videoProviderById(settings.videoProvider);
+    const modelLabel = settings.videoModel ? modelDisplayName(settings.videoModel, settings.videoProvider) : tr('smart.model');
     const v = Math.max(1, Math.min(60, Number(settings.videoDuration) || 5));
     const quick = [3, 4, 5, 6, 8, 10, 12, 15];
-    return `<div class="smart-control duration-control" title="${escapeHtml(tr('smart.videoDurationTip'))}">
-        <button class="smart-pill" type="button"><i data-lucide="timer"></i><span>${v}s</span></button>
-        <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.videoDuration'))}</div>
-            <div class="duration-grid">
-                ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" data-smart-param="videoDuration" data-smart-value="${n}">${n}s</button>`).join('')}
-            </div>
-            <label class="duration-custom">
-                <span>${escapeHtml(tr('smart.custom'))}</span>
-                <input type="number" min="1" max="60" step="1" data-param="videoDuration" value="${v}">
-            </label>
-        </div>
-    </div>`;
-}
-function renderVideoAspectControl(){
-    const options = [
+    const aspectOptions = [
         ['16:9','16:9'], ['9:16','9:16'], ['1:1','1:1'], ['4:3','4:3'], ['3:4','3:4'],
         ['21:9','21:9'], ['9:21','9:21'], ['keep_ratio', tr('smart.videoAspectKeep')], ['adaptive', tr('smart.videoAspectAdaptive')]
     ];
-    const value = settings.videoAspect || '16:9';
-    const labelMap = Object.fromEntries(options);
-    return `<div class="smart-control aspect-control">
-        <button class="smart-pill" type="button"><i data-lucide="scan"></i><span>${escapeHtml(labelMap[value] || value)}</span></button>
-        <div class="smart-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.videoAspect'))}</div>
-            <div class="ratio-grid">
-                ${options.map(([v,l]) => `<button type="button" class="ratio-option ${v === value ? 'active' : ''}" data-smart-param="videoAspect" data-smart-value="${escapeHtml(v)}"><span class="ratio-icon ${videoAspectIconClass(v)}"></span><span>${escapeHtml(l)}</span></button>`).join('')}
+    const aspect = settings.videoAspect || '16:9';
+    const aspectLabels = Object.fromEntries(aspectOptions);
+    const resolutionOptions = [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P']];
+    const resolution = settings.videoResolution || '';
+    const resolutionLabels = Object.fromEntries(resolutionOptions);
+    const summary = `${v}s · ${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution || tr('smart.videoResAuto')}`;
+    return `<div class="smart-control video-generation-control">
+        <button class="smart-pill video-generation-summary" type="button" title="${escapeAttr(`${currentProvider?.name || settings.videoProvider || ''} · ${modelLabel} · ${summary}`)}">
+            <i data-lucide="sliders-horizontal"></i>
+            <span class="video-config-summary"><strong>${escapeHtml(modelLabel)}</strong><span>${escapeHtml(summary)}</span></span>
+            <i data-lucide="chevron-up" class="pill-caret"></i>
+        </button>
+        <div class="smart-popover video-config-popover">
+            <div class="video-config-head">
+                <div><strong>${escapeHtml(tr('smart.videoGenerationConfig'))}</strong><span>${escapeHtml(currentProvider?.name || settings.videoProvider || tr('smart.platform'))}</span></div>
+                <span class="video-config-current">${escapeHtml(summary)}</span>
             </div>
-        </div>
-    </div>`;
-}
-function renderVideoResolutionControl(){
-    const options = [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P']];
-    const value = settings.videoResolution || '';
-    const labelMap = Object.fromEntries(options);
-    return `<div class="smart-control resolution-control">
-        <button class="smart-pill" type="button"><i data-lucide="monitor"></i><span>${escapeHtml(labelMap[value] || value || tr('smart.videoResAuto'))}</span></button>
-        <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.videoResolution'))}</div>
-            <div class="model-list">
-                ${options.map(([v,l]) => `<button type="button" class="direct-option ${v === value ? 'active' : ''}" data-smart-param="videoResolution" data-smart-value="${escapeHtml(v)}"><span>${escapeHtml(l)}</span></button>`).join('')}
+            <section class="video-config-section">
+                <div class="video-config-label">${escapeHtml(tr('smart.videoPlatform'))}</div>
+                <div class="video-config-provider-grid">
+                    ${(providers || []).map(p => {
+                        const locked = restricted && (p.video_models || []).length > 0 && !(p.video_models || []).some(m => smartModelAllowed(p.id, m));
+                        return `<button type="button" class="video-config-option ${p.id === settings.videoProvider ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoProvider" data-smart-value="${escapeAttr(p.id)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(p.name || p.id)}</span>${locked ? '<i data-lucide="lock"></i>' : ''}</button>`;
+                    }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoPlatform'))}</div>`}
+                </div>
+            </section>
+            <section class="video-config-section">
+                <div class="video-config-label">${escapeHtml(tr('smart.videoModel'))}</div>
+                <div class="video-config-model-grid">
+                    ${(models || []).map(m => {
+                        const locked = restricted && !smartModelAllowed(settings.videoProvider, m);
+                        return `<button type="button" class="video-config-option ${m === settings.videoModel ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoModel" data-smart-value="${escapeAttr(m)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(modelDisplayName(m, settings.videoProvider))}</span>${locked ? '<i data-lucide="lock"></i>' : ''}</button>`;
+                    }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
+                </div>
+            </section>
+            <div class="video-config-detail-grid">
+                <section class="video-config-section">
+                    <div class="video-config-label">${escapeHtml(tr('smart.videoDuration'))}</div>
+                    <div class="duration-grid">
+                        ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" data-smart-param="videoDuration" data-smart-value="${n}">${n}s</button>`).join('')}
+                    </div>
+                    <label class="duration-custom">
+                        <span>${escapeHtml(tr('smart.custom'))}</span>
+                        <input type="number" min="1" max="60" step="1" data-param="videoDuration" value="${v}">
+                    </label>
+                </section>
+                <section class="video-config-section">
+                    <div class="video-config-label">${escapeHtml(tr('smart.videoResolution'))}</div>
+                    <div class="video-config-resolution-grid">
+                        ${resolutionOptions.map(([value,label]) => `<button type="button" class="video-config-option ${value === resolution ? 'active' : ''}" data-smart-param="videoResolution" data-smart-value="${escapeAttr(value)}"><span>${escapeHtml(label)}</span></button>`).join('')}
+                    </div>
+                </section>
             </div>
+            <section class="video-config-section">
+                <div class="video-config-label">${escapeHtml(tr('smart.videoAspect'))}</div>
+                <div class="ratio-grid video-config-ratio-grid">
+                    ${aspectOptions.map(([value,label]) => `<button type="button" class="ratio-option ${value === aspect ? 'active' : ''}" data-smart-param="videoAspect" data-smart-value="${escapeAttr(value)}"><span class="ratio-icon ${videoAspectIconClass(value)}"></span><span>${escapeHtml(label)}</span></button>`).join('')}
+                </div>
+            </section>
+            <section class="video-config-section video-config-flags">
+                <div class="video-config-label">${escapeHtml(tr('smart.videoAdvanced'))}</div>
+                <div class="video-config-toggle-row">
+                    ${renderVideoToggleControl('videoGenerateAudio', tr('smart.videoGenerateAudio'))}
+                    ${renderVideoToggleControl('videoMultimodal', tr('smart.videoMultimodal'))}
+                    ${renderVideoToggleControl('videoUseFrameRoles', tr('smart.videoUseFrameRoles'))}
+                </div>
+            </section>
         </div>
     </div>`;
 }
 function renderVideoToggleControl(key, label){
     const on = !!settings[key];
     return `<button type="button" class="setting-check ${on ? 'active' : ''}" data-toggle-param="${escapeHtml(key)}"><span class="check-box"></span><span>${escapeHtml(label)}</span></button>`;
-}
-function renderTempShUploadControl(){
-    return `<button type="button" class="smart-pill cloud-upload-pill" data-temp-sh-upload-video title="上传当前输入图片或视频到云端直链"><i data-lucide="upload-cloud"></i><span>上传云端</span></button>`;
-}
-function renderManualVideoUrlControl(){
-    return `<button type="button" class="smart-pill manual-video-url-pill" data-manual-video-url title="手动输入媒体 URL"><i data-lucide="link"></i><span>输入网址</span></button>`;
-}
-// 可信素材模式：打开后可选择素材来源——素材库认证链接 / 自行上传云端 / 自行输入网址。
-function renderVideoTrustedAssetControl(){
-    const on = !!settings.videoTrustedAsset;
-    let html = renderVideoToggleControl('videoTrustedAsset', tr('smart.videoTrustedAsset'));
-    if(!on) return html;
-    const src = ['library','cloud','manual'].includes(settings.videoTrustedSource) ? settings.videoTrustedSource : 'library';
-    html += `<div class="trusted-source-row">
-        <button type="button" class="smart-pill trusted-src-pill ${src === 'library' ? 'active' : ''}" data-trusted-source="library" title="使用素材库中已注册的认证素材链接（asset://）"><i data-lucide="library"></i><span>素材库链接</span></button>
-        <button type="button" class="smart-pill trusted-src-pill ${src === 'cloud' ? 'active' : ''}" data-trusted-source="cloud" title="把当前输入图片/视频上传到云端直链"><i data-lucide="upload-cloud"></i><span>上传云端</span></button>
-        <button type="button" class="smart-pill trusted-src-pill ${src === 'manual' ? 'active' : ''}" data-trusted-source="manual" title="手动输入媒体 URL 或 asset:// 地址"><i data-lucide="link"></i><span>输入网址</span></button>
-    </div>`;
-    return html;
 }
 function optionHtml(value, label, selected){
     return `<option value="${escapeHtml(value)}" ${String(value) === String(selected) ? 'selected' : ''}>${escapeHtml(label ?? value)}</option>`;
@@ -2438,6 +2403,10 @@ function renderDynamicParams(){
     renderInputThumbsRow(selectedNode());
     renderInputPromptPreview(selectedNode());
     persistActiveSmartSettings();
+    if(reopenVideoConfigAfterRender){
+        dynamicParams.querySelector('.video-generation-control')?.classList.add('pinned');
+        reopenVideoConfigAfterRender = false;
+    }
     if(window.lucide) lucide.createIcons();
 }
 function renderApiParams(){
@@ -2466,19 +2435,7 @@ function renderApiVideoParams(){
     const models = filterJimengVideoModels(providerVideoModels(settings.videoProvider));
     if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || 'veo3-fast';
     dynamicParams.innerHTML = `
-        ${renderVideoProviderControl(providers, true)}
-        ${renderVideoModelControl(models, true)}
-        ${renderVideoResolutionControl()}
-        ${renderVideoAspectControl()}
-        ${renderVideoDurationControl()}
-        ${renderVideoToggleControl('videoEnhancePrompt', tr('smart.videoEnhancePrompt'))}
-        ${renderVideoToggleControl('videoEnableUpsample', tr('smart.videoUpsample'))}
-        ${renderVideoToggleControl('videoGenerateAudio', tr('smart.videoGenerateAudio'))}
-        ${renderVideoToggleControl('videoCameraFixed', tr('smart.videoCameraFixed'))}
-        ${renderVideoToggleControl('videoWatermark', tr('smart.videoWatermark'))}
-        ${renderVideoToggleControl('videoMultimodal', tr('smart.videoMultimodal'))}
-        ${renderVideoToggleControl('videoUseFrameRoles', tr('smart.videoUseFrameRoles'))}
-        ${settings.videoProvider === 'jimeng' ? '' : renderVideoTrustedAssetControl()}
+        ${renderVideoGenerationConfig(providers, models, true)}
     `;
 }
 function renderVolcengineParams(){
@@ -2507,19 +2464,7 @@ function renderVolcengineVideoParams(){
     settings.videoProvider = 'volcengine';
     if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || 'seedance-1.0-pro';
     dynamicParams.innerHTML = `
-        ${renderVideoProviderControl(providers)}
-        ${renderVideoModelControl(models)}
-        ${renderVideoResolutionControl()}
-        ${renderVideoAspectControl()}
-        ${renderVideoDurationControl()}
-        ${renderVideoToggleControl('videoEnhancePrompt', tr('smart.videoEnhancePrompt'))}
-        ${renderVideoToggleControl('videoEnableUpsample', tr('smart.videoUpsample'))}
-        ${renderVideoToggleControl('videoGenerateAudio', tr('smart.videoGenerateAudio'))}
-        ${renderVideoToggleControl('videoCameraFixed', tr('smart.videoCameraFixed'))}
-        ${renderVideoToggleControl('videoWatermark', tr('smart.videoWatermark'))}
-        ${renderVideoToggleControl('videoMultimodal', tr('smart.videoMultimodal'))}
-        ${renderVideoToggleControl('videoUseFrameRoles', tr('smart.videoUseFrameRoles'))}
-        ${renderVideoTrustedAssetControl()}
+        ${renderVideoGenerationConfig(providers, models, false)}
     `;
 }
 function renderRunningHubParams(){
@@ -3175,172 +3120,6 @@ function rhMediaForRun(prompt, refs){
         prompt:String(prompt || '').trim()
     };
 }
-function tempShUploadedUrlFor(url, sourceSettings=settings){
-    const source = String(url || '');
-    const manualLinks = ((sourceSettings || settings).videoTempShLinks || []).filter(item => item?.manual === true);
-    const links = [...(transientSmartCloudLinks || []), ...manualLinks];
-    const match = links.find(item =>
-        item?.url && (item?.source === source || item?.originalLocalUrl === source || item?.url === source)
-    );
-    return match?.url || url;
-}
-function mediaRefSourceUrl(ref){
-    return localDisplayUrlForMediaItem(ref) || ref?.sourceUrl || ref?.originalLocalUrl || ref?.url || '';
-}
-function applyUploadedUrlsToSmartRefs(refs, sourceSettings=settings){
-    return (refs || []).map(ref => {
-        if(!ref?.url) return ref;
-        const sourceUrl = mediaRefSourceUrl(ref);
-        const url = tempShUploadedUrlFor(sourceUrl, sourceSettings);
-        return url && url !== ref.url ? {...ref, url, originalLocalUrl:ref.originalLocalUrl || ref.url} : ref;
-    });
-}
-function manualSmartVideoLink(sourceSettings=settings){
-    return ((sourceSettings || settings).videoTempShLinks || []).find(item => item?.manual === true && item?.url) || null;
-}
-function manualSmartMediaLinks(sourceSettings=settings){
-    return ((sourceSettings || settings).videoTempShLinks || []).filter(item => item?.manual === true && item?.url);
-}
-function renderedInputMediaRefs(){
-    if(!inputThumbsRow) return [];
-    return [...inputThumbsRow.querySelectorAll('.input-thumb')].map((el, index) => ({
-        file_id:el.dataset.fileId || '',
-        url:el.dataset.url || '',
-        sourceUrl:el.dataset.sourceUrl || el.dataset.url || '',
-        nodeId:el.dataset.nodeId || '',
-        imageIndex:Number.isFinite(Number(el.dataset.imageIndex)) ? Number(el.dataset.imageIndex) : index,
-        name:tr('smart.inputNum').replace('{n}', String(index + 1)),
-        role:`image_${index + 1}`
-    })).filter(ref => ref.url);
-}
-function currentSmartMediaRefs(node){
-    if(!node) return [];
-    const request = buildPromptRequest(node, null, true, smartLoopContext);
-    return (request.refs || []).filter(ref => ref?.url && ['image','video'].includes(mediaKindForItem(ref)));
-}
-function currentUploadMediaRefs(node){
-    const rendered = renderedInputMediaRefs();
-    if(rendered.length) return rendered;
-    return currentSmartMediaRefs(node);
-}
-function currentSmartMediaLinks(node=null){
-    return currentUploadMediaRefs(node || activeSettingsSubject()).map(ref => {
-        const sourceUrl = mediaRefSourceUrl(ref);
-        const uploaded = tempShUploadedUrlFor(sourceUrl);
-        return uploaded && uploaded !== sourceUrl ? uploaded : '';
-    }).filter(Boolean);
-}
-function clearManualSmartVideoUrl(){
-    settings.videoTempShLinks = (settings.videoTempShLinks || []).filter(item => item?.manual !== true);
-}
-function splitManualMediaUrls(text){
-    return String(text || '')
-        .split(/[\s,，]+/)
-        .map(url => url.trim())
-        .filter(Boolean);
-}
-async function uploadMediaRefToCloud(ref){
-    const kind = mediaKindForItem(ref);
-    const sourceUrl = mediaRefSourceUrl(ref);
-    if(!sourceUrl) throw new Error('没有可上传的媒体');
-    const existing = tempShUploadedUrlFor(sourceUrl);
-    if(existing && existing !== sourceUrl) return existing;
-    if(/^https?:\/\//i.test(sourceUrl)) return sourceUrl;
-    const response = await fetch('/api/cloud-video/upload', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({url:sourceUrl, service:'auto'})
-    });
-    if(!response.ok) throw new Error(await smartResponseErrorMessage(response, '云端上传失败'));
-    const data = await response.json();
-    const uploadedUrl = data.url || '';
-    if(!uploadedUrl) throw new Error('云端没有返回链接');
-    transientSmartCloudLinks = [
-        ...(transientSmartCloudLinks || []).filter(item => item?.source !== sourceUrl),
-        {source:sourceUrl, url:uploadedUrl, expires:data.expires || '3 days', kind}
-    ];
-    return uploadedUrl;
-}
-function applyManualVideoUrlToSmartRef(ref, manualUrl){
-    if(!manualUrl) return;
-    const sourceUrl = mediaRefSourceUrl(ref) || manualUrl;
-    settings.videoTempShLinks = [
-        ...(settings.videoTempShLinks || []).filter(item => item?.source !== sourceUrl),
-        {source:sourceUrl, url:manualUrl, manual:true}
-    ];
-}
-async function setCurrentSmartManualVideoUrl(){
-    const node = activeSettingsSubject();
-    if(!node) return '';
-    savePromptDraftForCurrent();
-    const refs = currentUploadMediaRefs(node);
-    const firstLocal = refs.find(ref => ref?.url && !isRemoteVideoReferenceUrl(ref.url));
-    const firstAny = firstLocal || refs[0] || null;
-    const linkedUrls = currentSmartMediaLinks(node);
-    const currentLinks = linkedUrls.length ? linkedUrls : (firstAny ? [tempShUploadedUrlFor(mediaRefSourceUrl(firstAny))] : []);
-    const value = await openAssetNameDialog({
-        title:refs.length > 1 ? `输入 ${refs.length} 个媒体网址 / 火山素材 URI` : '输入媒体网址 / 火山素材 URI',
-        value:currentLinks.filter(isRemoteVideoReferenceUrl).join('\n'),
-        placeholder:refs.length > 1 ? '每行一个链接，按图1/图2顺序对应' : 'https://example.com/media 或 asset://asset-xxx',
-        cancelValue:null,
-        multiline:refs.length > 1
-    });
-    if(value === null) return '';
-    const urls = splitManualMediaUrls(value);
-    if(!urls.length){
-        clearManualSmartVideoUrl();
-        persistActiveSmartSettings();
-        scheduleSave();
-        render();
-        toast('已清除手动网址');
-        return '';
-    }
-    const invalid = urls.find(url => !isRemoteVideoReferenceUrl(url));
-    if(invalid){
-        toast('请输入 http/https 媒体网址或 asset:// 火山素材 URI');
-        return '';
-    }
-    clearManualSmartVideoUrl();
-    const targets = refs.length ? refs : [firstAny].filter(Boolean);
-    urls.forEach((url, index) => {
-        const target = targets[index] || targets[targets.length - 1] || {url};
-        applyManualVideoUrlToSmartRef(target, url);
-    });
-    persistActiveSmartSettings();
-    scheduleSave();
-    render();
-    toast(`已设置 ${urls.length} 个媒体网址`);
-    return urls[0] || '';
-}
-async function uploadCurrentSmartVideosToCloud(){
-    const node = activeSettingsSubject();
-    if(!node) return [];
-    savePromptDraftForCurrent();
-    const refs = currentUploadMediaRefs(node);
-    const localRefs = refs.filter(ref => {
-        const sourceUrl = ref?.sourceUrl || ref?.originalLocalUrl || ref?.url || '';
-        if(!sourceUrl) return false;
-        const uploaded = tempShUploadedUrlFor(sourceUrl);
-        return uploaded !== sourceUrl || !isRemoteVideoReferenceUrl(sourceUrl);
-    });
-    if(!localRefs.length){
-        toast('当前输入图片或视频已是云端链接');
-        return [];
-    }
-    const btn = dynamicParams?.querySelector('[data-trusted-source="cloud"]') || inputThumbsRow?.querySelector('[data-temp-sh-upload-video]');
-    if(btn) btn.disabled = true;
-    toast(`正在上传 ${localRefs.length} 个媒体文件到云端...`);
-    try {
-        const urls = [];
-        for(const ref of localRefs){
-            urls.push(await uploadMediaRefToCloud(ref));
-        }
-        toast(`云端上传完成：${urls.length} 个媒体文件`);
-        return urls;
-    } finally {
-        if(btn) btn.disabled = false;
-    }
-}
 async function rhUploadValueIfNeeded(value, sourceSettings=settings){
     const text = String(value || '').trim();
     if(!text) return '';
@@ -3517,6 +3296,7 @@ function bindDynamicParams(){
                 toast(tr('smart.modelLocked'));
                 return;
             }
+            if(btn.closest('.video-generation-control')) reopenVideoConfigAfterRender = true;
             setDynamicSetting(btn.dataset.smartParam, btn.dataset.smartValue);
             if(btn.dataset.smartParam === 'videoDuration') renderDynamicParams();
         };
@@ -3525,6 +3305,7 @@ function bindDynamicParams(){
         input.onclick = event => event.stopPropagation();
         input.oninput = input.onchange = event => {
             event?.stopPropagation?.();
+            if(event?.type === 'change' && input.closest('.video-generation-control')) reopenVideoConfigAfterRender = true;
             setDynamicSetting(input.dataset.param, input.value);
             if(input.dataset.param === 'videoDuration' && event?.type === 'change') renderDynamicParams();
         };
@@ -3533,29 +3314,13 @@ function bindDynamicParams(){
         btn.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
+            if(btn.closest('.video-generation-control')) reopenVideoConfigAfterRender = true;
             settings[btn.dataset.toggleParam] = !settings[btn.dataset.toggleParam];
             if(btn.dataset.toggleParam === 'videoMultimodal' && settings.videoMultimodal) settings.videoUseFrameRoles = false;
             if(btn.dataset.toggleParam === 'videoUseFrameRoles' && settings.videoUseFrameRoles) settings.videoMultimodal = false;
             persistActiveSmartSettings();
             renderDynamicParams();
             scheduleSave();
-        };
-    });
-    queryAll('[data-trusted-source]').forEach(btn => {
-        btn.onclick = async event => {
-            event.preventDefault();
-            event.stopPropagation();
-            const src = btn.dataset.trustedSource;
-            settings.videoTrustedSource = ['library','cloud','manual'].includes(src) ? src : 'library';
-            persistActiveSmartSettings();
-            renderDynamicParams();
-            scheduleSave();
-            try {
-                if(src === 'cloud') await uploadCurrentSmartVideosToCloud();
-                else if(src === 'manual') await setCurrentSmartManualVideoUrl();
-            } catch(e) {
-                toast((e.message || '操作失败').slice(0, 180));
-            }
         };
     });
     queryAll('[data-comfy-bool]').forEach(btn => {
@@ -5625,9 +5390,6 @@ function looksLikeImageMediaUrl(url){
 }
 function videoRefsOnly(refs){
     return (refs || []).filter(ref => ref?.url && mediaKindForItem(ref) === 'video' && !looksLikeImageMediaUrl(ref.url));
-}
-function isRemoteVideoReferenceUrl(url){
-    return /^https?:\/\//i.test(String(url || '')) || /^asset:\/\//i.test(String(url || ''));
 }
 function audioRefsOnly(refs){
     return (refs || []).filter(ref => ref?.url && mediaKindForItem(ref) === 'audio');
@@ -10221,30 +9983,6 @@ function clearInputThumbDropMarkers(){
             el.classList.remove('drop-before', 'drop-after', 'dragging');
         });
 }
-function bindInputThumbVideoActions(){
-    inputThumbsRow?.querySelectorAll('[data-manual-video-url]').forEach(btn => {
-        btn.onclick = async event => {
-            event.preventDefault();
-            event.stopPropagation();
-            try {
-                await setCurrentSmartManualVideoUrl();
-            } catch(e) {
-                toast((e.message || '设置视频网址失败').slice(0, 180));
-            }
-        };
-    });
-    inputThumbsRow?.querySelectorAll('[data-temp-sh-upload-video]').forEach(btn => {
-        btn.onclick = async event => {
-            event.preventDefault();
-            event.stopPropagation();
-            try {
-                await uploadCurrentSmartVideosToCloud();
-            } catch(e) {
-                toast((e.message || '云端上传失败').slice(0, 180));
-            }
-        };
-    });
-}
 function movedBeforeAfterIds(ids, movedId, targetId, placement='before'){
     const list = (ids || []).filter(Boolean);
     const from = list.indexOf(movedId);
@@ -13203,63 +12941,34 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
 }
 async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
-    try {
-        const uploadedRefs = applyUploadedUrlsToSmartRefs(refs, runSettings);
-        const trustedMode = Boolean(runSettings.videoTrustedAsset);
-        const trustedSource = trustedMode ? (['library','cloud','manual'].includes(runSettings.videoTrustedSource) ? runSettings.videoTrustedSource : 'library') : 'none';
-        // 仅「素材库链接」来源才走 asset:// 认证地址 + 后端可信素材路由；上传云端/手动网址走普通直链。
-        const useAssetUris = trustedSource === 'library';
-        const targetPlatform = videoProviderPlatform(runSettings.videoProvider || 'comfly');
-        let mismatchedAsset = false;
-        const effUrl = ref => {
-            const uris = (ref && ref.asset_uris && typeof ref.asset_uris === 'object') ? ref.asset_uris : null;
-            if(useAssetUris && uris && Object.keys(uris).length){
-                // asset:// 与平台绑定：取当前视频平台对应的认证地址；该素材没注册到这个平台就回退本地 url
-                if(targetPlatform && uris[targetPlatform]) return uris[targetPlatform];
-                mismatchedAsset = true;
-            }
-            return ref?.url;
-        };
-        const refImages = imageRefsOnly(uploadedRefs).map((ref, i) => {
-            const item = {url:effUrl(ref), name:ref.name || `图${i + 1}`};
-            if(runSettings.videoUseFrameRoles){
-                if(i === 0) item.role = 'first_frame';
-                else if(i === 1) item.role = 'last_frame';
-            }
-            return item;
-        });
-        const manualVideo = manualSmartVideoLink(runSettings)?.url || '';
-        const refVideos = manualVideo ? manualSmartMediaLinks(runSettings).map(item => item.url).filter(Boolean) : videoRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean);
-        const refAudios = audioRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean).slice(0, 3);
-        if(mismatchedAsset) toast('部分认证素材属于其它平台，已回退为普通素材。切换到对应平台的视频接口才能用 asset:// 认证地址。');
-        const payload = {
-            prompt,
-            provider_id: runSettings.videoProvider || 'comfly',
-            model: runSettings.videoModel || 'veo3-fast',
-            duration: Math.max(1, Math.min(60, Number(runSettings.videoDuration) || 5)),
-            aspect_ratio: runSettings.videoAspect || '16:9',
-            resolution: runSettings.videoResolution || '',
-            images: refImages,
-            videos: refVideos,
-            audios: refAudios,
-            enhance_prompt: Boolean(runSettings.videoEnhancePrompt),
-            enable_upsample: Boolean(runSettings.videoEnableUpsample),
-            watermark: Boolean(runSettings.videoWatermark),
-            camerafixed: Boolean(runSettings.videoCameraFixed),
-            generate_audio: Boolean(runSettings.videoGenerateAudio),
-            multimodal: Boolean(runSettings.videoMultimodal),
-            trusted_asset: useAssetUris
-        };
-        const result = await fetch('/api/canvas-video', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify(payload)
-        }).then(async r => { if(!r.ok) throw new Error(await smartResponseErrorMessage(r, tr('smart.errRunFailed'))); return r.json(); });
-        if(result && result.jimeng_pending) throw new JimengPendingSignal({submitId:result.submit_id, kind:result.kind || 'video', queueInfo:result.queue_info, message:result.message});
-        return resultMediaUrls(result);
-    } finally {
-        transientSmartCloudLinks = [];
-    }
+    const refImages = imageRefsOnly(refs).map((ref, i) => {
+        const item = {url:ref.url, name:ref.name || `图${i + 1}`};
+        if(runSettings.videoUseFrameRoles){
+            if(i === 0) item.role = 'first_frame';
+            else if(i === 1) item.role = 'last_frame';
+        }
+        return item;
+    });
+    const payload = {
+        prompt,
+        provider_id: runSettings.videoProvider || 'comfly',
+        model: runSettings.videoModel || 'veo3-fast',
+        duration: Math.max(1, Math.min(60, Number(runSettings.videoDuration) || 5)),
+        aspect_ratio: runSettings.videoAspect || '16:9',
+        resolution: runSettings.videoResolution || '',
+        images: refImages,
+        videos: videoRefsOnly(refs).map(ref => ref.url).filter(Boolean),
+        audios: audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3),
+        generate_audio: Boolean(runSettings.videoGenerateAudio),
+        multimodal: Boolean(runSettings.videoMultimodal)
+    };
+    const result = await fetch('/api/canvas-video', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload)
+    }).then(async r => { if(!r.ok) throw new Error(await smartResponseErrorMessage(r, tr('smart.errRunFailed'))); return r.json(); });
+    if(result && result.jimeng_pending) throw new JimengPendingSignal({submitId:result.submit_id, kind:result.kind || 'video', queueInfo:result.queue_info, message:result.message});
+    return resultMediaUrls(result);
 }
 async function runModelscopeGeneration(prompt, refs, runSettings=settings){
     refs = imageRefsOnly(refs);

@@ -94,15 +94,10 @@ class CanvasVideoRequest(BaseModel):
     images: List[AIReference] = []
     videos: List[str] = []
     audios: List[str] = []
-    enhance_prompt: bool = False
-    enable_upsample: bool = False
-    watermark: bool = False
     seed: Optional[int] = None
-    camerafixed: bool = False
     return_last_frame: bool = False
     generate_audio: bool = False
     multimodal: bool = False
-    trusted_asset: bool = False
 
 
 class TempShUploadRequest(BaseModel):
