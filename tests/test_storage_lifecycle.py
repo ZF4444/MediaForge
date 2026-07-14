@@ -96,8 +96,8 @@ def test_run_storage_cleanup_once_marks_deleted_and_removes_cache(monkeypatch, t
     assert deleted_ids == [("expired-1", now_value)]
     assert deleted_objects == [
         ("mediaforge-private", "users/user-1/input/expired-1.png"),
-        ("mediaforge-private", "users/user-1/derived/thumbs/s320/expired-1.webp"),
-        ("mediaforge-private", "users/user-1/derived/posters/s320/expired-1.jpg"),
+        ("mediaforge-private", "users/user-1/derived/thumbs/s512/expired-1.webp"),
+        ("mediaforge-private", "users/user-1/derived/posters/s512/expired-1.jpg"),
     ]
     assert not os.path.exists(cache_file)
 
@@ -138,8 +138,8 @@ def test_remove_media_url_deletes_remote_derivatives(monkeypatch, tmp_path):
     assert removed == removed_entry
     assert deleted_objects == [
         ("mediaforge-private", "users/user-1/output/file-1.png"),
-        ("mediaforge-private", "users/user-1/derived/thumbs/s320/file-1.webp"),
-        ("mediaforge-private", "users/user-1/derived/posters/s320/file-1.jpg"),
+        ("mediaforge-private", "users/user-1/derived/thumbs/s512/file-1.webp"),
+        ("mediaforge-private", "users/user-1/derived/posters/s512/file-1.jpg"),
     ]
     assert not os.path.exists(cache_file)
 

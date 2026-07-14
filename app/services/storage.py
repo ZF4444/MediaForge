@@ -56,7 +56,7 @@ _DB_READY = False
 _DB_LOCK = Lock()
 _INDEX_LOCK = Lock()
 _QUOTA_CONFIG_CACHE: Optional[Dict[str, Any]] = None
-THUMB_SIZE_DEFAULT = 320
+THUMB_SIZE_DEFAULT = 512
 
 
 class StorageQuotaExceeded(RuntimeError):
