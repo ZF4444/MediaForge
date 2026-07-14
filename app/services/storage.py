@@ -1048,7 +1048,12 @@ def normalize_media_ref(ref: Dict[str, Any], *, allow_register: bool = True) -> 
     return normalized
 
 
-def normalize_media_refs(refs: List[Dict[str, Any]], *, allow_register: bool = False) -> List[Dict[str, Any]]:
+def normalize_media_refs(
+    refs: List[Dict[str, Any]],
+    *,
+    allow_register: bool = False,
+    preserve_missing: bool = False,
+) -> List[Dict[str, Any]]:
     normalized_refs = [dict(ref) for ref in (refs or []) if isinstance(ref, dict)]
     if not normalized_refs:
         return []
@@ -1086,7 +1091,7 @@ def normalize_media_refs(refs: List[Dict[str, Any]], *, allow_register: bool = F
             entry = entries_by_url.get(canonical_url)
         if not entry and allow_register:
             entry = resolve_file_reference(url=url, file_id=file_id, allow_register=True)
-        if file_id and not entry:
+        if file_id and not entry and not preserve_missing:
             raise RuntimeError(f"file_id={file_id} 的媒体元数据不存在或无法解析。")
         if entry:
             normalized["file_id"] = entry.get("file_id") or file_id
@@ -1111,8 +1116,16 @@ def compact_media_ref(ref: Dict[str, Any]) -> Dict[str, Any]:
     return compact
 
 
-def compact_media_refs(refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    normalized_refs = normalize_media_refs(refs, allow_register=True)
+def compact_media_refs(
+    refs: List[Dict[str, Any]],
+    *,
+    preserve_missing: bool = False,
+) -> List[Dict[str, Any]]:
+    normalized_refs = normalize_media_refs(
+        refs,
+        allow_register=True,
+        preserve_missing=preserve_missing,
+    )
     items: List[Dict[str, Any]] = []
     for ref in normalized_refs:
         compact: Dict[str, Any] = {}

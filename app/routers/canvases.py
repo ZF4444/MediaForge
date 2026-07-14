@@ -43,13 +43,19 @@ def _map_canvas_value(value, media_mapper):
 def hydrate_canvas(canvas):
     if not isinstance(canvas, dict):
         return canvas
-    return _map_canvas_value(dict(canvas), normalize_media_refs)
+    return _map_canvas_value(
+        dict(canvas),
+        lambda refs: normalize_media_refs(refs, preserve_missing=True),
+    )
 
 
 def compact_canvas(canvas):
     if not isinstance(canvas, dict):
         return canvas
-    return _map_canvas_value(dict(canvas), compact_media_refs)
+    return _map_canvas_value(
+        dict(canvas),
+        lambda refs: compact_media_refs(refs, preserve_missing=True),
+    )
 
 
 def read_canvas_json(canvas_id, *, hydrate=False):

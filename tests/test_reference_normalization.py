@@ -26,9 +26,9 @@ def test_canvas_normalizes_node_images_with_file_ids(monkeypatch):
     monkeypatch.setattr(
         canvases,
         "normalize_media_refs",
-        lambda refs: [{**refs[0], "file_id": "file-canvas-1", "url": "/assets/output/render.png"}],
+        lambda refs, **_: [{**refs[0], "file_id": "file-canvas-1", "url": "/assets/output/render.png"}],
     )
-    monkeypatch.setattr(canvases, "compact_media_refs", lambda refs: [{"file_id": "file-canvas-1"}])
+    monkeypatch.setattr(canvases, "compact_media_refs", lambda refs, **_: [{"file_id": "file-canvas-1"}])
 
     canvas = {
         "id": "canvas1",
@@ -45,6 +45,30 @@ def test_canvas_normalizes_node_images_with_file_ids(monkeypatch):
     assert raw["nodes"][0]["images"][0]["file_id"] == "file-canvas-1"
     loaded = canvases.hydrate_canvas(raw)
     assert loaded["nodes"][0]["images"][0]["url"] == "/assets/output/render.png"
+
+
+def test_canvas_preserves_missing_file_ids_on_load_and_save(monkeypatch):
+    from app.services import storage
+
+    monkeypatch.setattr(storage, "get_files_by_ids", lambda _: {})
+    monkeypatch.setattr(storage, "lookup_media_urls", lambda _: {})
+    monkeypatch.setattr(storage, "resolve_file_reference", lambda **_: None)
+
+    canvas = {
+        "id": "canvas-missing-file",
+        "nodes": [{
+            "id": "node-1",
+            "images": [{"file_id": "missing-file", "name": "lost.png", "kind": "image"}],
+        }],
+    }
+
+    loaded = canvases.hydrate_canvas(canvas)
+    assert loaded["nodes"][0]["images"] == [
+        {"file_id": "missing-file", "name": "lost.png", "kind": "image"}
+    ]
+    assert canvases.compact_canvas(loaded)["nodes"][0]["images"] == [
+        {"file_id": "missing-file", "name": "lost.png", "kind": "image"}
+    ]
 
 
 def test_canvas_save_normalizes_zero_deleted_at_to_null(monkeypatch):
