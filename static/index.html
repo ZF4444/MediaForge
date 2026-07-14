@@ -26,6 +26,10 @@
     <script src="/static/vendor/js/tailwindcss-cdn.js"></script>
     <script src="/static/js/theme.js"></script>
     <script src="/static/js/i18n.js"></script>
+    <script src="/static/vendor/js/marked-18.0.6.umd.js"></script>
+    <script src="/static/vendor/js/dompurify-3.4.12.min.js"></script>
+    <script src="/static/js/markdown-renderer.js"></script>
+    <link rel="stylesheet" href="/static/css/markdown-content.css">
     <style>
         @import url('/static/vendor/css/fonts.css');
 
@@ -1927,15 +1931,16 @@
             overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px;';
 
             var box = document.createElement('div');
-            box.style.cssText = 'background:var(--panel,#fff);color:var(--text,#1a1f29);border-radius:14px;max-width:480px;width:100%;padding:22px 22px 18px;box-shadow:0 20px 60px rgba(0,0,0,.25);border:1px solid var(--border,#e5e7eb);';
+            box.style.cssText = 'background:var(--sidebar-bg,var(--bg,#fff));color:var(--text,#1a1f29);border-radius:12px;max-width:680px;width:100%;max-height:min(82vh,760px);padding:22px 22px 18px;box-shadow:0 20px 60px rgba(0,0,0,.25);border:1px solid var(--border,#e5e7eb);display:flex;flex-direction:column;';
 
             var head = document.createElement('div');
             head.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:15px;font-weight:800;margin-bottom:12px;';
             head.innerHTML = '<span>📣</span><span>系统公告</span>';
 
             var body = document.createElement('div');
-            body.style.cssText = 'font-size:13.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;max-height:50vh;overflow:auto;margin-bottom:18px;';
-            body.textContent = announcement.content;
+            body.className = 'markdown-content';
+            body.style.cssText = 'min-height:0;max-height:60vh;overflow:auto;margin-bottom:18px;padding-right:4px;';
+            body.innerHTML = window.MediaForgeMarkdown.render(announcement.content, { emptyText: '暂无公告内容' });
 
             var footer = document.createElement('div');
             footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;';

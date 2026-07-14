@@ -18,14 +18,8 @@
     return data;
   }
 
-  function escapeHtml(raw) {
-    return String(raw == null ? '' : raw)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  function escapeHtml(raw) { return window.MediaForgeMarkdown.escapeHtml(raw); }
+  function renderMarkdown(raw, emptyText) { return window.MediaForgeMarkdown.render(raw, { emptyText: emptyText }); }
 
   function fmtTime(ms) {
     if (!ms) return '-';
@@ -45,7 +39,7 @@
       return;
     }
     box.innerHTML = ''
-      + '<div class="ba-current-content">' + escapeHtml(announcement.content) + '</div>'
+      + '<div class="ba-current-content markdown-content">' + renderMarkdown(announcement.content, '暂无公告内容') + '</div>'
       + '<div class="ba-current-meta">发送人：' + escapeHtml(announcement.created_by || '-') + ' · 发送时间：' + escapeHtml(fmtTime(announcement.created_at)) + '</div>';
     if (clearBtn) clearBtn.disabled = false;
   }
@@ -112,6 +106,8 @@
     var textarea = $('baContent');
     var counter = $('baCount');
     if (textarea && counter) counter.textContent = String(textarea.value.length);
+    var preview = $('baPreview');
+    if (textarea && preview) preview.innerHTML = renderMarkdown(textarea.value, '输入 Markdown 后在这里预览');
   }
 
   function bind() {

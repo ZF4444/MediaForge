@@ -18,6 +18,7 @@
     <script src="/static/vendor/js/lucide.js"></script>
     <script src="/static/js/theme.js"></script>
     <link rel="stylesheet" href="/static/css/theme.css">
+    <link rel="stylesheet" href="/static/css/markdown-content.css">
     <style>
         * { box-sizing: border-box; }
         body {
@@ -26,7 +27,7 @@
             background: var(--bg, #f5f6f8);
             color: var(--text, #1a1f29);
         }
-        .ba-wrap { max-width: 720px; margin: 0 auto; padding: 28px 24px 60px; }
+        .ba-wrap { max-width: 1080px; margin: 0 auto; padding: 28px 24px 60px; }
         .ba-head { margin-bottom: 18px; }
         .ba-title { font-size: 20px; font-weight: 800; }
         .ba-sub { font-size: 12.5px; color: var(--faint, #6b7280); margin-top: 6px; line-height: 1.6; }
@@ -43,13 +44,13 @@
         .ba-card-title { font-size: 13.5px; font-weight: 700; margin-bottom: 10px; }
         .ba-textarea {
             width: 100%;
-            min-height: 140px;
+            min-height: 300px;
             resize: vertical;
             border: 1px solid var(--border, #e5e7eb);
             border-radius: 9px;
             background: var(--bg, #f5f6f8);
             color: var(--text, #1a1f29);
-            font: inherit;
+            font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             padding: 12px;
             line-height: 1.6;
             outline: none;
@@ -59,6 +60,10 @@
             box-shadow: 0 0 0 3px rgba(148, 163, 184, .18);
         }
         .ba-counter { text-align: right; font-size: 11.5px; color: var(--faint, #6b7280); margin-top: 6px; }
+        .ba-compose { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+        .ba-pane { min-width: 0; }
+        .ba-pane-head { min-height: 28px; display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--faint,#6b7280); font-size:11.5px; font-weight:700; }
+        .ba-preview { min-height:300px; max-height:520px; overflow:auto; border:1px solid var(--border,#e5e7eb); border-radius:9px; background:var(--bg,#f5f6f8); padding:12px; }
         .ba-actions { display: flex; gap: 10px; margin-top: 14px; }
         .ba-btn {
             height: 38px;
@@ -76,9 +81,14 @@
         .ba-btn.primary { border-color: var(--text, #1a1f29); background: var(--text, #1a1f29); color: var(--bg, #fff); }
         .ba-btn.danger { color: #dc2626; border-color: #fecaca; }
         .ba-current-empty { font-size: 12.5px; color: var(--faint, #6b7280); }
-        .ba-current-content { font-size: 13px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+        .ba-current-content { max-height:420px; overflow:auto; border:1px solid var(--border,#e5e7eb); border-radius:9px; background:var(--bg,#f5f6f8); padding:12px; }
         .ba-current-meta { font-size: 11.5px; color: var(--faint, #6b7280); margin-top: 8px; }
         .ba-forbidden { display: none; padding: 60px 20px; text-align: center; color: var(--faint, #6b7280); font-size: 14px; }
+        @media (max-width: 780px) {
+            .ba-wrap { padding:18px 14px 40px; }
+            .ba-compose { grid-template-columns:1fr; }
+            .ba-textarea,.ba-preview { min-height:240px; }
+        }
     </style>
 </head>
 <body>
@@ -92,8 +102,16 @@
         <div id="baMain">
             <div class="ba-card">
                 <div class="ba-card-title">发送新公告</div>
-                <textarea id="baContent" class="ba-textarea" maxlength="2000" placeholder="输入要广播给所有用户的内容..."></textarea>
-                <div class="ba-counter"><span id="baCount">0</span> / 2000</div>
+                <div class="ba-compose">
+                    <div class="ba-pane">
+                        <div class="ba-pane-head"><span>Markdown</span><span><span id="baCount">0</span> / 2000</span></div>
+                        <textarea id="baContent" class="ba-textarea" maxlength="2000" placeholder="# 公告标题&#10;&#10;支持列表、表格、任务项、链接、图片、引用和代码块。"></textarea>
+                    </div>
+                    <div class="ba-pane">
+                        <div class="ba-pane-head"><span>实时预览</span><span>用户弹窗效果</span></div>
+                        <div id="baPreview" class="ba-preview markdown-content"></div>
+                    </div>
+                </div>
                 <div class="ba-actions">
                     <button id="baSendBtn" class="ba-btn primary" type="button">立即发送</button>
                 </div>
@@ -111,6 +129,9 @@
         <div id="baForbidden" class="ba-forbidden">仅管理员（用户名 admin）可访问此页面。</div>
     </div>
 
+    <script src="/static/vendor/js/marked-18.0.6.umd.js"></script>
+    <script src="/static/vendor/js/dompurify-3.4.12.min.js"></script>
+    <script src="/static/js/markdown-renderer.js"></script>
     <script src="/static/broadcast-admin.page.js"></script>
 </body>
 </html>
