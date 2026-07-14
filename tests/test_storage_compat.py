@@ -79,6 +79,24 @@ def test_file_refs_from_api_file_preview_uses_file_id(monkeypatch):
     assert refs == [{"file_id": "file-9"}]
 
 
+def test_storage_files_page_sorts_by_created_at_in_both_directions(monkeypatch):
+    entries = [
+        {"file_id": "middle", "created_at": 200},
+        {"file_id": "oldest", "created_at": 100},
+        {"file_id": "newest", "created_at": 300},
+    ]
+    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: False)
+    monkeypatch.setattr(storage, "_fallback_list", lambda: list(entries))
+
+    newest_first = storage.list_media_entries_page_for_user(sort_order="desc", limit=2)
+    oldest_first = storage.list_media_entries_page_for_user(sort_order="asc", limit=2)
+
+    assert [item["file_id"] for item in newest_first["entries"]] == ["newest", "middle"]
+    assert newest_first["sort_order"] == "desc"
+    assert [item["file_id"] for item in oldest_first["entries"]] == ["oldest", "middle"]
+    assert oldest_first["sort_order"] == "asc"
+
+
 def test_save_ai_image_to_output_registers_generated_file(monkeypatch, tmp_path):
     monkeypatch.setattr("app.core.media.OUTPUT_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr("app.core.media.storage_enabled", lambda: True)

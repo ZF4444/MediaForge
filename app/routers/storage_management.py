@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Literal, Set
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -111,12 +111,14 @@ async def get_storage_usage(
 async def get_storage_files(
     category: str = Query(default=""),
     search: str = Query(default=""),
+    sort_order: Literal["desc", "asc"] = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
     return list_media_entries_page_for_user(
         category=category,
         search=search,
+        sort_order=sort_order,
         limit=limit,
         offset=offset,
     )

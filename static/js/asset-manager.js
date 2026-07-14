@@ -58,6 +58,7 @@ let storageUsage = {usage_by_category:[]};
 let storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matches:0, total_pages:0, current_page:1};
 let storageCategoryFilter = '';
 let storageQuery = '';
+let storageSortOrder = 'desc';
 let storageSelectedIds = new Set();
 let storageManageMode = false;
 let meInfo = {is_admin:false, user_id:''};
@@ -534,6 +535,7 @@ async function loadStorageFiles({reset=false, page=null}={}){
     const params = new URLSearchParams();
     if(storageCategoryFilter) params.set('category', storageCategoryFilter);
     if(storageQuery.trim()) params.set('search', storageQuery.trim());
+    params.set('sort_order', storageSortOrder);
     params.set('limit', String(limit));
     params.set('offset', String(offset));
     const data = await apiJson(`/api/storage/files?${params.toString()}`);
@@ -646,6 +648,10 @@ function renderStorageManager(){
                     <span>${totalMatches} 个文件</span>
                 </div>
                 <div class="asset-tools">
+                    <div class="storage-sort-control" role="group" aria-label="按创建时间排序">
+                        <button class="${storageSortOrder === 'desc' ? 'active' : ''}" type="button" data-storage-sort="desc" aria-pressed="${storageSortOrder === 'desc'}" title="按创建时间倒序，最新文件在前"><i data-lucide="arrow-down"></i><span>最新</span></button>
+                        <button class="${storageSortOrder === 'asc' ? 'active' : ''}" type="button" data-storage-sort="asc" aria-pressed="${storageSortOrder === 'asc'}" title="按创建时间正序，最早文件在前"><i data-lucide="arrow-up"></i><span>最早</span></button>
+                    </div>
                     <label class="asset-search-wrap"><i data-lucide="search"></i><input id="storageSearch" class="asset-search" type="search" value="${escapeAttr(storageQuery)}" placeholder="搜索文件名或类别"></label>
                     <button class="asset-btn" type="button" data-storage-refresh><i data-lucide="refresh-cw"></i><span>刷新</span></button>
                     <button class="asset-btn ${storageManageMode ? 'primary' : ''}" type="button" data-storage-manage ${entries.length ? '' : 'disabled'}><i data-lucide="list-checks"></i><span>${storageManageMode ? '完成管理' : '批量管理'}</span></button>
@@ -668,6 +674,7 @@ function renderStorageManager(){
                             <div class="asset-card-body">
                                 <div class="asset-card-name" title="${escapeAttr(item.original_name || item.filename || '')}">${escapeHtml(item.original_name || item.filename || 'file')}</div>
                                 <div class="asset-card-meta">${escapeHtml(item.category || 'unknown')} · ${escapeHtml(formatFileSize(item.size))}</div>
+                                <div class="asset-card-time">${escapeHtml(formatDate(item.created_at || 0))}</div>
                             </div>
                         </article>
                     `).join('') || '<div class="empty-state">当前筛选下没有文件。</div>'}
@@ -1451,6 +1458,16 @@ async function handleClick(event){
     if(storagePreview){ showDetailPreview('storage', storagePreview.dataset.storagePreview || ''); return; }
     if(target.closest?.('[data-localup-upload]')){ uploadInput?.click(); return; }
     if(target.closest?.('[data-storage-refresh]')){ await Promise.all([loadStorageUsage(), loadStorageFiles({reset:true, page:1})]); render(); return; }
+    const storageSort = target.closest?.('[data-storage-sort]');
+    if(storageSort){
+        const nextOrder = storageSort.dataset.storageSort === 'asc' ? 'asc' : 'desc';
+        if(nextOrder === storageSortOrder) return;
+        storageSortOrder = nextOrder;
+        storageSelectedIds.clear();
+        await loadStorageFiles({reset:true, page:1});
+        render();
+        return;
+    }
     if(target.closest?.('[data-storage-manage]')){
         storageManageMode = !storageManageMode;
         if(!storageManageMode) storageSelectedIds.clear();

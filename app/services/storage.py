@@ -1268,6 +1268,7 @@ def list_media_entries_page_for_user(
     user_id: str = "",
     category: str = "",
     search: str = "",
+    sort_order: str = "desc",
     limit: int = 50,
     offset: int = 0,
 ) -> Dict[str, Any]:
@@ -1275,6 +1276,7 @@ def list_media_entries_page_for_user(
     safe_offset = max(0, int(offset or 0))
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     q = str(search or "").strip().lower()
+    normalized_sort_order = "asc" if str(sort_order or "").strip().lower() == "asc" else "desc"
     if not metadata_db_enabled():
         items = _fallback_list()
         if category:
@@ -1285,6 +1287,10 @@ def list_media_entries_page_for_user(
                 if q in str(item.get("original_name") or item.get("filename") or "").lower()
                 or q in str(item.get("category") or "").lower()
             ]
+        items.sort(
+            key=lambda item: (int(item.get("created_at") or 0), str(item.get("file_id") or "")),
+            reverse=normalized_sort_order == "desc",
+        )
         total = len(items)
         page = items[safe_offset:safe_offset + safe_limit]
         next_offset = safe_offset + len(page)
@@ -1297,6 +1303,7 @@ def list_media_entries_page_for_user(
             "total_matches": total,
             "category_filter": str(category or ""),
             "search": str(search or ""),
+            "sort_order": normalized_sort_order,
         }
     _ensure_files_table()
     params: List[Any] = [uid]
@@ -1318,10 +1325,11 @@ def list_media_entries_page_for_user(
             cur.execute("SELECT COUNT(*) AS total " + where, params)
             total_row = cur.fetchone() or {}
             total = int(total_row.get("total") or 0)
+            order_sql = "ASC" if normalized_sort_order == "asc" else "DESC"
             cur.execute(
                 "SELECT * "
                 + where
-                + " ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                + f" ORDER BY created_at {order_sql}, id {order_sql} LIMIT %s OFFSET %s",
                 [*params, safe_limit, safe_offset],
             )
             rows = cur.fetchall() or []
@@ -1336,6 +1344,7 @@ def list_media_entries_page_for_user(
         "total_matches": total,
         "category_filter": str(category or ""),
         "search": str(search or ""),
+        "sort_order": normalized_sort_order,
     }
 
 
