@@ -14585,7 +14585,6 @@ if(apiKindToggle){
             e.preventDefault();
             e.stopPropagation();
             const kind = btn.dataset.kind;
-            if(kind === 'video'){ toast('功能暂未开放，敬请期待'); return; }
             if(kind === settings.apiKind) return;
             settings.apiKind = kind;
             applyRecentSmartSettingsForCurrentMode();
