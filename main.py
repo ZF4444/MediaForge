@@ -3069,22 +3069,6 @@ def valid_apimart_video_image_input(value: str) -> bool:
     value = value.strip()
     return value.startswith("http://") or value.startswith("https://") or value.startswith("asset://")
 
-def apply_trusted_asset_prompt_index(prompt: str, image_count: int, video_count: int, audio_count: int) -> str:
-    """可信素材模式下，按平台规则在 prompt 里补「图片N/视频N/音频N」索引。
-    若用户已手动引用了某类素材（如已写「图片1」），则不重复追加该类。"""
-    text = str(prompt or "").strip()
-    segments = []
-    for label, count in (("图片", image_count), ("视频", video_count), ("音频", audio_count)):
-        if count <= 0:
-            continue
-        if any(f"{label}{i}" in text for i in range(1, count + 1)):
-            continue
-        segments.append("、".join(f"{label}{i}" for i in range(1, count + 1)))
-    if not segments:
-        return text
-    hint = "参考素材：" + "，".join(segments) + "。"
-    return f"{text}\n{hint}" if text else hint
-
 def public_base_url() -> str:
     value = (
         os.getenv("PUBLIC_MEDIA_BASE_URL") or
@@ -6776,7 +6760,6 @@ async def generate_yuli_openai_video(client, payload, provider, base_url, reques
         "prompt": str(payload.prompt or ""),
         "seconds": yuli_video_seconds(payload.duration),
         "size": yuli_openai_size(payload.aspect_ratio),
-        "watermark": "true" if payload.watermark else "false",
     }
     files = {}
     for ref in (payload.images or [])[:1]:
@@ -6961,11 +6944,6 @@ async def canvas_video(payload: CanvasVideoRequest):
                         raise HTTPException(status_code=400, detail=f"参考音频无法转换为 APIMart 支持的地址：{invalid_video_image_preview(first_url)}\n原因：{first_reason}")
                     if audio_payload:
                         body["audio_urls"] = audio_payload
-                    if payload.trusted_asset:
-                        img_count = len(body.get("image_urls") or []) or len(image_with_roles)
-                        body["prompt"] = apply_trusted_asset_prompt_index(
-                            body["prompt"], img_count, len(video_payload), len(audio_payload)
-                        )
                     if payload.seed is not None:
                         body["seed"] = payload.seed
                     if payload.return_last_frame:
@@ -6994,14 +6972,9 @@ async def canvas_video(payload: CanvasVideoRequest):
                     resolution = volcengine_video_resolution(payload.resolution)
                     if resolution:
                         body["resolution"] = resolution
-                    if payload.watermark:
-                        body["watermark"] = True
                     if payload.generate_audio:
                         body["generate_audio"] = True
-                    if payload.camerafixed:
-                        body["camerafixed"] = True
                     image_like_urls = set()
-                    volc_video_count = 0
                     for ref in payload.images[:9]:
                         url = volcengine_media_reference_url(ref.url, max_image_size=1536)
                         if not url:
@@ -7032,7 +7005,6 @@ async def canvas_video(payload: CanvasVideoRequest):
                             continue
                         video_items = await volcengine_video_reference_content_items(media_url)
                         body["content"].extend(video_items)
-                        volc_video_count += 1
                     for url in (payload.audios or [])[:3]:
                         audio_url = volcengine_media_reference_url(url, max_image_size=None)
                         if not audio_url:
@@ -7042,16 +7014,12 @@ async def canvas_video(payload: CanvasVideoRequest):
                             "audio_url": {"url": audio_url},
                             "role": volcengine_content_role("", "audio"),
                         })
-                    if payload.trusted_asset and body["content"] and body["content"][0].get("type") == "text":
-                        body["content"][0]["text"] = apply_trusted_asset_prompt_index(
-                            body["content"][0].get("text") or "", len(image_like_urls), volc_video_count, 0
-                        )
                     if payload.seed is not None:
                         body["seed"] = payload.seed
                 elif is_yuli:
                     # 玉玉API（yuli.host）视频走自有 veo 统一格式：POST /v1/video/create。
-                    # 字段：model / prompt / images[]（http(s) URL）/ enhance_prompt /
-                    # enable_upsample / aspect_ratio（仅 16:9、9:16）。无 duration 字段，
+                    # 字段：model / prompt / images[]（http(s) URL）/ aspect_ratio（仅 16:9、9:16）。
+                    # 无 duration 字段，
                     # 时长由模型本身决定，所以这里不传 duration/seconds。
                     yuli_images = []
                     for ref in payload.images[:3]:
@@ -7065,22 +7033,15 @@ async def canvas_video(payload: CanvasVideoRequest):
                             data_url = reference_to_data_url(ref.dict(), max_size=1536)
                             if data_url:
                                 yuli_images.append(data_url)
-                    prompt_text = str(payload.prompt or "")
-                    # veo 只支持英文提示词：仅在含中文等非 ASCII 字符时才开启翻译增强，
-                    # 纯英文原样传递（避免增强改写时引入人物等触发安全过滤的描述）。
-                    needs_enhance = any(ord(ch) > 127 for ch in prompt_text)
                     body = {
                         "model": selected_model(payload.model, "veo3.1-fast"),
-                        "prompt": prompt_text,
-                        "enhance_prompt": needs_enhance,
+                        "prompt": str(payload.prompt or ""),
                     }
                     if yuli_images:
                         body["images"] = yuli_images
                     ratio = str(payload.aspect_ratio or "").strip()
                     if ratio in {"16:9", "9:16"}:
                         body["aspect_ratio"] = ratio
-                    if payload.enable_upsample:
-                        body["enable_upsample"] = True
                 else:
                     image_payload = []
                     for ref in payload.images[:4]:
@@ -7090,7 +7051,6 @@ async def canvas_video(payload: CanvasVideoRequest):
                         "prompt": payload.prompt,
                         "model": selected_model(payload.model, "veo3-fast"),
                         "duration": payload.duration,
-                        "watermark": payload.watermark,
                     }
                     if payload.aspect_ratio:
                         body["aspect_ratio"] = payload.aspect_ratio
@@ -7103,14 +7063,8 @@ async def canvas_video(payload: CanvasVideoRequest):
                         body["images"] = image_payload
                     if payload.videos:
                         body["videos"] = [v for v in payload.videos if v]
-                    if payload.enhance_prompt:
-                        body["enhance_prompt"] = True
-                    if payload.enable_upsample:
-                        body["enable_upsample"] = True
                     if payload.seed is not None:
                         body["seed"] = payload.seed
-                    if payload.camerafixed:
-                        body["camerafixed"] = True
                     if payload.return_last_frame:
                         body["return_last_frame"] = True
                     if payload.generate_audio:

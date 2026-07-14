@@ -713,18 +713,6 @@
         },
         "default": []
       },
-      "enhance_prompt": {
-        "type": "boolean",
-        "default": false
-      },
-      "enable_upsample": {
-        "type": "boolean",
-        "default": false
-      },
-      "watermark": {
-        "type": "boolean",
-        "default": false
-      },
       "seed": {
         "anyOf": [
           {
@@ -735,10 +723,6 @@
           }
         ]
       },
-      "camerafixed": {
-        "type": "boolean",
-        "default": false
-      },
       "return_last_frame": {
         "type": "boolean",
         "default": false
@@ -748,10 +732,6 @@
         "default": false
       },
       "multimodal": {
-        "type": "boolean",
-        "default": false
-      },
-      "trusted_asset": {
         "type": "boolean",
         "default": false
       }
