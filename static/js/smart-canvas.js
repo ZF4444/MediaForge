@@ -2286,11 +2286,11 @@ function renderVideoGenerationConfig(){
         ['frames', tr('smart.videoUseFrameRoles')]
     ];
     const generationModeLabel = Object.fromEntries(generationModeOptions)[generationMode];
-    const summary = `${generationModeLabel} · ${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution} · ${v}s`;
+    const summary = `${generationModeLabel}·${aspectLabels[aspect] || aspect}·${resolutionLabels[resolution] || resolution}·${v}s`;
     return `<div class="smart-control video-generation-control">
         <button class="smart-pill video-generation-summary" type="button" title="${escapeAttr(summary)}">
             <i data-lucide="sliders-horizontal"></i>
-            <span class="video-config-summary"><strong>${escapeHtml(generationModeLabel)}</strong><span>${escapeHtml(`${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution} · ${v}s`)}</span></span>
+            <span class="video-config-summary">${escapeHtml(summary)}</span>
             <i data-lucide="chevron-up" class="pill-caret"></i>
         </button>
         <div class="smart-popover video-config-popover">
