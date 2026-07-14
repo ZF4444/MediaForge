@@ -414,7 +414,7 @@ let settings = {
     videoAspect:'16:9',
     videoResolution:'',
     videoGenerateAudio:false,
-    videoMultimodal:false,
+    videoMultimodal:true,
     videoUseFrameRoles:false,
     msgenModel:'zimage',
     msCustomModel:'',
@@ -2266,8 +2266,9 @@ function renderVideoModelSelector(providers, models, restricted){
     </div>`;
 }
 function renderVideoGenerationConfig(){
-    const quick = [5, 10];
-    const v = quick.includes(Number(settings.videoDuration)) ? Number(settings.videoDuration) : 5;
+    const quick = [5, 10, 15];
+    const durationValue = Number(settings.videoDuration);
+    const v = Number.isFinite(durationValue) && durationValue > 0 ? durationValue : 5;
     settings.videoDuration = v;
     const aspectOptions = [
         ['16:9','16:9'], ['4:3','4:3'], ['1:1','1:1'], ['3:4','3:4'], ['9:16','9:16'], ['21:9','21:9']
@@ -2278,11 +2279,13 @@ function renderVideoGenerationConfig(){
     const resolution = settings.videoResolution || '480p';
     settings.videoResolution = resolution;
     const resolutionLabels = Object.fromEntries(resolutionOptions);
-    const generationMode = settings.videoUseFrameRoles ? 'frames' : settings.videoMultimodal ? 'multimodal' : 'auto';
-    const generationModeLabel = Object.fromEntries([
+    if(!settings.videoUseFrameRoles && !settings.videoMultimodal) settings.videoMultimodal = true;
+    const generationMode = settings.videoUseFrameRoles ? 'frames' : 'multimodal';
+    const generationModeOptions = [
         ['multimodal', tr('smart.videoMultimodal')],
         ['frames', tr('smart.videoUseFrameRoles')]
-    ])[generationMode] || tr('smart.videoModeStandard');
+    ];
+    const generationModeLabel = Object.fromEntries(generationModeOptions)[generationMode];
     const summary = `${generationModeLabel} · ${aspectLabels[aspect] || aspect} · ${resolutionLabels[resolution] || resolution} · ${v}s`;
     return `<div class="smart-control video-generation-control">
         <button class="smart-pill video-generation-summary" type="button" title="${escapeAttr(summary)}">
@@ -2294,7 +2297,7 @@ function renderVideoGenerationConfig(){
             <section class="video-config-section">
                 <div class="video-config-label">${escapeHtml(tr('smart.videoGenerationMode'))}</div>
                 <div class="video-config-mode-single">
-                    <button type="button" class="video-config-option active"><span>${escapeHtml(generationModeLabel)}</span></button>
+                    ${generationModeOptions.map(([value,label]) => `<button type="button" class="video-config-option ${value === generationMode ? 'active' : ''}" data-video-mode="${escapeAttr(value)}"><span>${escapeHtml(label)}</span></button>`).join('')}
                 </div>
             </section>
             <section class="video-config-section">
@@ -2314,6 +2317,7 @@ function renderVideoGenerationConfig(){
                     <div class="video-config-label">${escapeHtml(tr('smart.videoDuration'))}</div>
                     <div class="duration-grid">
                         ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" data-smart-param="videoDuration" data-smart-value="${n}">${n}s</button>`).join('')}
+                        <input class="duration-custom-input ${quick.includes(v) ? '' : 'active'}" type="number" min="1" max="60" step="1" value="${quick.includes(v) ? '' : escapeAttr(v)}" placeholder="${escapeAttr(tr('smart.custom'))}" aria-label="${escapeAttr(tr('smart.videoDurationTip'))}" data-param="videoDuration">
                     </div>
                 </section>
             </div>
@@ -3336,6 +3340,19 @@ function bindDynamicParams(){
             event.preventDefault();
             event.stopPropagation();
             settings.videoGenerateAudio = btn.dataset.videoAudio === 'on';
+            reopenVideoControlAfterRender = 'config';
+            persistActiveSmartSettings();
+            renderDynamicParams();
+            scheduleSave();
+        };
+    });
+    queryAll('[data-video-mode]').forEach(btn => {
+        btn.onclick = event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const mode = btn.dataset.videoMode;
+            settings.videoUseFrameRoles = mode === 'frames';
+            settings.videoMultimodal = mode === 'multimodal';
             reopenVideoControlAfterRender = 'config';
             persistActiveSmartSettings();
             renderDynamicParams();
