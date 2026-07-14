@@ -3309,8 +3309,15 @@ function bindDynamicParams(){
             const ctrl = pill.parentElement;
             const wasPinned = ctrl.classList.contains('pinned');
             closeAllSmartPopovers();
-            if(!wasPinned) ctrl.classList.add('pinned');
+            if(wasPinned){
+                ctrl.classList.add('click-closed');
+                pill.blur();
+            }else{
+                ctrl.classList.remove('click-closed');
+                ctrl.classList.add('pinned');
+            }
         };
+        pill.parentElement.onmouseleave = () => pill.parentElement.classList.remove('click-closed');
     });
     queryAll('[data-smart-param]').forEach(btn => {
         btn.onclick = event => {
