@@ -14436,7 +14436,7 @@ function finishCanvasRightClick(e){
     const contextEvent = {clientX:e.clientX, clientY:e.clientY, target:e.target};
     rightMouseDownPoint = null;
     rightMouseDownViewport = null;
-    if(!moved && !e.ctrlKey && !e.metaKey && !isRKeyDown){
+    if(!moved && !e.ctrlKey && !e.metaKey){
         setTimeout(() => openCanvasContextMenu(contextEvent), 0);
     }
 }
