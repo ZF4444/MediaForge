@@ -178,6 +178,7 @@ let mentionRange = null;
 let panState = null;
 let didPan = false;
 let rightMouseDownPoint = null;
+let rightMouseDownViewport = null;
 let portDragState = null;
 let saveTimer = null;
 let suppressAutoSave = false;
@@ -14168,8 +14169,13 @@ shell.addEventListener('click', e => {
 shell.onmousedown = e => {
     if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
     if(e.button === 2){
-        if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+        if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
+        e.preventDefault();
+        closeCreateMenu();
+        didPan = false;
         rightMouseDownPoint = {x:e.clientX, y:e.clientY};
+        rightMouseDownViewport = {x:viewport.x, y:viewport.y};
+        return;
     }
     // 中键按下时，即使指针落在图片节点上也允许拖拽画布；
     // 但落在底部输入栏/小地图/弹层等真正的交互 UI 上时不平移。
@@ -14188,14 +14194,6 @@ shell.onmousedown = e => {
         didPan = false;
         selectionState = {startScreen:{x:e.clientX, y:e.clientY}, startWorld:screenToWorld(e)};
         updateSelectionBox(e);
-        return;
-    }
-    if(e.button === 2){
-        e.preventDefault();
-        didPan = false;
-        viewportInteractionActive = true;
-        panState = {button:e.button, startX:e.clientX, startY:e.clientY, ox:viewport.x, oy:viewport.y};
-        shell.classList.add('panning');
         return;
     }
 };
@@ -14229,6 +14227,21 @@ minimap?.addEventListener('mousedown', e => {
 });
 window.onmousemove = e => {
     lastMouseWorld = screenToWorld(e);
+    if(rightMouseDownPoint && rightMouseDownViewport && !panState && (e.buttons & 2)){
+        const distance = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y);
+        if(distance > 3){
+            viewportInteractionActive = true;
+            didPan = true;
+            panState = {
+                button:2,
+                startX:rightMouseDownPoint.x,
+                startY:rightMouseDownPoint.y,
+                ox:rightMouseDownViewport.x,
+                oy:rightMouseDownViewport.y
+            };
+            shell.classList.add('panning');
+        }
+    }
     if(smartMinimapDrag){
         e.preventDefault();
         centerViewportOnWorldPoint(minimapEventToWorld(e));
@@ -14398,15 +14411,11 @@ window.onmousemove = e => {
 };
 window.onmouseup = e => {
     if(e.button === 2 && rightMouseDownPoint){
-        const moved = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y) > 3;
+        const moved = panState?.button === 2;
         const contextEvent = {clientX:e.clientX, clientY:e.clientY, target:e.target};
         rightMouseDownPoint = null;
+        rightMouseDownViewport = null;
         if(!moved && !e.ctrlKey && !e.metaKey && !isRKeyDown){
-            if(panState?.button === 2){
-                viewport.x = panState.ox;
-                viewport.y = panState.oy;
-                applyViewport();
-            }
             setTimeout(() => openCanvasContextMenu(contextEvent), 0);
         }
     }
