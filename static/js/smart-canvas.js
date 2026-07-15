@@ -5018,8 +5018,8 @@ function createPromptNode(x, y, options={}){
         llmProvider:providerId,
         llmModel:resolveChatModel('', providerId),
         llmTask:'llm',
-        captionRuleId:'',
-        expandRuleId:'',
+        captionTemplateId:'',
+        expandTemplateId:'',
         llmInstruction:'',
         created_at:Date.now()
     };
@@ -6063,44 +6063,24 @@ function openSmartCanvasShortcuts(){
 function closeSmartCanvasShortcuts(){
     smartShortcutModal?.classList.remove('open');
 }
-let smartCaptionRules = [];
-let smartExpandRules = [];
-let smartCaptionRulesLoaded = false;
-let smartExpandRulesLoaded = false;
-let smartCaptionRulesLoading = false;
-let smartExpandRulesLoading = false;
-async function loadSmartPromptRules(kind){
-    const isCaption = kind === 'caption';
-    if((isCaption ? smartCaptionRulesLoaded : smartExpandRulesLoaded) || (isCaption ? smartCaptionRulesLoading : smartExpandRulesLoading)) return;
-    if(isCaption) smartCaptionRulesLoading = true;
-    else smartExpandRulesLoading = true;
-    try {
-        const response = await fetch(isCaption ? '/api/caption-rules' : '/api/expand-rules');
-        if(response.ok){
-            const data = await response.json();
-            const rules = [...(data.builtin_rules || []), ...(data.user_rules || [])];
-            if(isCaption) smartCaptionRules = rules;
-            else smartExpandRules = rules;
-        }
-    } catch(e) {
-        console.warn('Failed to load prompt rules', e);
-    } finally {
-        if(isCaption){ smartCaptionRulesLoaded = true; smartCaptionRulesLoading = false; }
-        else { smartExpandRulesLoaded = true; smartExpandRulesLoading = false; }
-        render();
-    }
+function smartRuleTemplateItems(){
+    const hidden = new Set(promptTemplateOverrides.hiddenBuiltinIds || []);
+    return promptLibraries.flatMap(library => (library.items || [])
+        .filter(template => template?.id && template?.positive && !(library.id === 'system' && hidden.has(template.id)))
+        .map(template => ({
+            ...template,
+            ...(library.id === 'system' ? (promptTemplateOverrides.editedBuiltins?.[template.id] || {}) : {}),
+            key:`${library.id}:${template.id}`,
+            libraryName:library.name || tr('smart.promptTemplateLibrary')
+        })));
 }
-function smartPromptRules(kind){ return kind === 'caption' ? smartCaptionRules : smartExpandRules; }
-function smartPromptRuleOptions(kind, selectedId){
-    const rules = smartPromptRules(kind);
-    if(!rules.length) return `<option value="">${escapeHtml(tr('smart.promptRuleLoading'))}</option>`;
-    const active = rules.find(rule => rule.active) || rules[0];
-    const selected = rules.some(rule => rule.id === selectedId) ? selectedId : active.id;
-    return rules.map(rule => `<option value="${escapeHtml(rule.id)}" ${rule.id === selected ? 'selected' : ''}>${escapeHtml(rule.name)}</option>`).join('');
+function smartRuleTemplateOptions(selectedKey){
+    const templates = smartRuleTemplateItems();
+    if(!templates.length) return `<option value="">${escapeHtml(tr('smart.promptTemplateEmpty'))}</option>`;
+    return templates.map(template => `<option value="${escapeAttr(template.key)}" ${template.key === selectedKey ? 'selected' : ''}>${escapeHtml(`${template.libraryName} · ${promptTemplateName(template)}`)}</option>`).join('');
 }
-function smartPromptRuleContent(kind, selectedId, fallback){
-    const rules = smartPromptRules(kind);
-    return (rules.find(rule => rule.id === selectedId) || rules.find(rule => rule.active) || rules[0])?.content || fallback;
+function smartRuleTemplateContent(selectedKey, fallback){
+    return smartRuleTemplateItems().find(template => template.key === selectedKey)?.positive || fallback;
 }
 function promptNodeBodyHtml(node){
     node.llmProvider = resolveChatProviderId(node.llmProvider || '');
@@ -6110,9 +6090,7 @@ function promptNodeBodyHtml(node){
     const inputThumbs = smartNodeInputThumbsHtml(promptNodeInputImages(node));
     const templateActive = activePromptTemplateNodeId() === node.id;
     const task = node.llmTask;
-    if(task === 'caption' && !smartCaptionRulesLoaded) loadSmartPromptRules('caption');
-    if(task === 'expand' && !smartExpandRulesLoaded) loadSmartPromptRules('expand');
-    const ruleHtml = task === 'caption' || task === 'expand' ? `<select class="prompt-node-control prompt-llm-rule">${smartPromptRuleOptions(task, task === 'caption' ? node.captionRuleId : node.expandRuleId)}</select>` : '';
+    const ruleHtml = task === 'caption' || task === 'expand' ? `<select class="prompt-node-control prompt-llm-rule">${smartRuleTemplateOptions(task === 'caption' ? node.captionTemplateId : node.expandTemplateId)}</select>` : '';
     const instructionHtml = task === 'expand' ? '' : `<textarea class="prompt-node-control prompt-llm-instruction" placeholder="${escapeHtml(task === 'caption' ? tr('smart.promptCaptionInstruction') : tr('smart.promptLlmInstructionPlaceholder'))}">${escapeHtml(node.llmInstruction || '')}</textarea>`;
     const runLabel = task === 'caption' ? tr('smart.promptCaptionRun') : task === 'expand' ? tr('smart.promptExpandRun') : tr('common.run');
     const llmParams = node.llmEnabled ? `
@@ -6637,8 +6615,8 @@ function bindPromptNodeControls(el, node){
     const ruleEl = el.querySelector('.prompt-llm-rule');
     if(ruleEl) ruleEl.onchange = e => {
         e.stopPropagation();
-        if(node.llmTask === 'caption') node.captionRuleId = e.target.value;
-        else if(node.llmTask === 'expand') node.expandRuleId = e.target.value;
+        if(node.llmTask === 'caption') node.captionTemplateId = e.target.value;
+        else if(node.llmTask === 'expand') node.expandTemplateId = e.target.value;
         scheduleSave();
     };
     const instructionEl = el.querySelector('.prompt-llm-instruction');
@@ -12990,9 +12968,9 @@ async function runPromptLLMNode(nodeId){
         const provider = resolveChatProviderId(node.llmProvider || '');
         const model = resolveChatModel(node.llmModel || '', provider);
         const systemPrompt = task === 'caption'
-            ? smartPromptRuleContent('caption', node.captionRuleId, '请详细描述这张图片的内容。')
+            ? smartRuleTemplateContent(node.captionTemplateId, '请详细描述这张图片的内容。')
             : task === 'expand'
-            ? smartPromptRuleContent('expand', node.expandRuleId, '')
+            ? smartRuleTemplateContent(node.expandTemplateId, '')
             : '';
         const requestImages = task === 'expand' ? [] : images;
         const requestVideos = task === 'llm' ? videos : [];
