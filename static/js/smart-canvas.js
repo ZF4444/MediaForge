@@ -4491,7 +4491,11 @@ function renderNodeAssetSaveModal(){
     const isBatch = batchItems.length > 1;
     const useOriginalNames = Boolean(nodeAssetSaveState.useOriginalNames);
     const nameField = nodeAssetSaveName.closest('.node-asset-save-field');
-    if(nameField) nameField.hidden = isBatch || useOriginalNames;
+    if(nameField){
+        const hideNameField = isBatch || useOriginalNames;
+        nameField.hidden = hideNameField;
+        nameField.style.display = hideNameField ? 'none' : '';
+    }
     nodeAssetSaveName.value = nodeAssetSaveState.name || '';
     nodeAssetSaveConfirm.textContent = isBatch ? `保存 ${batchItems.length} 项` : '保存';
     nodeAssetSaveConfirm.disabled = !(batchItems.length || nodeAssetSaveState.fileId) || !nodeAssetSaveState.categoryId;
