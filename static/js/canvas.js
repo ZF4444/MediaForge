@@ -5429,6 +5429,10 @@ function renderNode(node){
         templateBtn.onclick = e => {
             e.preventDefault();
             e.stopPropagation();
+            if(promptTemplateModal?.classList.contains('open') && promptTemplateNodeId === node.id){
+                closePromptTemplateModal();
+                return;
+            }
             openPromptTemplateModal(node.id);
         };
         bindScrollableText(textarea);
