@@ -14202,17 +14202,8 @@ shell.onmousedown = e => {
         return;
     }
 };
-shell.addEventListener('mouseup', e => {
-    if(e.button !== 2 || !rightMouseDownAt || !rightMouseDownPoint) return;
-    const heldMs = performance.now() - rightMouseDownAt;
-    const moved = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y) > 4;
-    rightMouseDownAt = 0;
-    rightMouseDownPoint = null;
-    if(heldMs >= RIGHT_CLICK_HOLD_THRESHOLD_MS || moved || e.ctrlKey || e.metaKey || isRKeyDown) return;
-    openCanvasContextMenu(e);
-});
 shell.oncontextmenu = e => {
-    if(didPan || e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
@@ -14409,6 +14400,16 @@ window.onmousemove = e => {
     if(target) setDropHighlight(target.id);
 };
 window.onmouseup = e => {
+    if(e.button === 2 && rightMouseDownAt && rightMouseDownPoint){
+        const heldMs = performance.now() - rightMouseDownAt;
+        const moved = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y) > 4;
+        const contextEvent = {clientX:e.clientX, clientY:e.clientY, target:e.target};
+        rightMouseDownAt = 0;
+        rightMouseDownPoint = null;
+        if(heldMs < RIGHT_CLICK_HOLD_THRESHOLD_MS && !moved && !e.ctrlKey && !e.metaKey && !isRKeyDown){
+            setTimeout(() => openCanvasContextMenu(contextEvent), 0);
+        }
+    }
     document.body.classList.remove('smart-node-drag');
     if(portDragState){
         const drag = portDragState;
