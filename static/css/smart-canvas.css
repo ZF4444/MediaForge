@@ -272,6 +272,15 @@ body.smart-node-drag .image-wrap:hover .image-resolution-badge { opacity:0 !impo
 .node-shortcut-btn i,.node-shortcut-btn svg { width:14px !important; height:14px !important; stroke-width:2.2; flex:0 0 14px; }
 .node-shortcut-btn:hover:not(:disabled) { background:var(--card); color:var(--text); border-color:var(--line); transform:translateY(-1px); }
 .node-shortcut-btn:disabled { opacity:.34; cursor:not-allowed; }
+.node-context-menu { position:absolute; z-index:120; width:180px; padding:6px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); box-shadow:0 16px 40px rgba(15,23,42,.2); }
+.node-context-menu[hidden] { display:none; }
+.node-context-menu-item { width:100%; height:34px; padding:0 10px; border:0; border-radius:6px; background:transparent; color:inherit; display:flex; align-items:center; gap:10px; font-size:12px; font-weight:650; text-align:left; cursor:pointer; }
+.node-context-menu-item:hover:not(:disabled), .node-context-menu-item:focus-visible { background:var(--soft); outline:none; }
+.node-context-menu-item:disabled { opacity:.38; cursor:not-allowed; }
+.node-context-menu-item.danger { color:#dc2626; }
+.node-context-menu-item i,.node-context-menu-item svg { width:15px; height:15px; flex:0 0 15px; stroke-width:2.2; }
+.node-context-menu-separator { height:1px; margin:5px 4px; background:var(--line); }
+.theme-dark .node-context-menu { box-shadow:0 18px 44px rgba(0,0,0,.42); }
 .node-count { min-width:22px; height:20px; padding:0 7px; border-radius:999px; display:flex; align-items:center; justify-content:center; background:var(--soft); border:1px solid var(--line); color:var(--muted); font-size:10px; font-weight:900; }
 .candidate-toggle { height:30px; min-width:54px; padding:0 9px 0 11px; border-radius:14px; border:1px solid rgba(148,163,184,.28); background:rgba(15,23,42,.72); color:#f8fafc; display:inline-flex; align-items:center; justify-content:center; gap:7px; cursor:pointer; box-shadow:0 10px 24px rgba(0,0,0,.2); backdrop-filter:blur(12px); transition:background .14s ease, transform .14s ease, border-color .14s ease; }
 .candidate-toggle:hover, .candidate-toggle.open { background:rgba(15,23,42,.86); border-color:rgba(226,232,240,.35); transform:translateY(-1px); }

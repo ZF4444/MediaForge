@@ -5,6 +5,7 @@ const bootLoadingOverlay = document.getElementById('bootLoadingOverlay');
 const world = document.getElementById('world');
 const composer = document.getElementById('composer');
 const nodeShortcutOverlay = document.getElementById('nodeShortcutOverlay');
+const nodeContextMenu = document.getElementById('nodeContextMenu');
 const createMenu = document.getElementById('createMenu');
 const promptInput = document.getElementById('promptInput');
 const mentionPicker = document.getElementById('mentionPicker');
@@ -4296,6 +4297,99 @@ function updateNodeShortcutBar(){
     positionNodeShortcutForNode(node);
     if(window.lucide) lucide.createIcons();
 }
+function closeNodeContextMenu(){
+    if(!nodeContextMenu) return;
+    nodeContextMenu.hidden = true;
+    nodeContextMenu.innerHTML = '';
+    delete nodeContextMenu.dataset.nodeId;
+}
+function nodeContextMenuHtml(node){
+    const target = nodeShortcutTargetFor(node);
+    const items = [
+        {action:'save', icon:'library', label:'加入资产', disabled:!target?.image?.file_id},
+        {action:'download', icon:'download', label:'下载', disabled:!target?.image?.url},
+        {separator:true},
+        {action:'copy', icon:'copy', label:'复制'},
+        {action:'paste', icon:'clipboard', label:'粘贴', disabled:!nodeClipboard?.nodes?.length},
+        {separator:true},
+        {action:'delete', icon:'trash-2', label:'删除', danger:true},
+        {action:'feedback', icon:'message-square-warning', label:'反馈问题'}
+    ];
+    return items.map(item => item.separator
+        ? '<div class="node-context-menu-separator" role="separator"></div>'
+        : `<button class="node-context-menu-item ${item.danger ? 'danger' : ''}" type="button" role="menuitem" data-node-context-action="${item.action}" ${item.disabled ? 'disabled' : ''}><i data-lucide="${item.icon}"></i><span>${item.label}</span></button>`
+    ).join('');
+}
+function openNodeContextMenu(nodeId, event){
+    const node = nodes.find(entry => entry.id === nodeId);
+    if(!node || !nodeContextMenu) return;
+    document.activeElement?.blur?.();
+    selectedId = node.id;
+    selectedIds = [];
+    const mediaItem = event.target.closest?.('[data-image-index]');
+    selectedImage = mediaItem
+        ? {nodeId:mediaItem.dataset.refNodeId || node.id, index:Number(mediaItem.dataset.refImageIndex ?? mediaItem.dataset.imageIndex ?? 0)}
+        : {nodeId:'', index:-1};
+    suppressComposerForCandidateNodeId = '';
+    lastMouseWorld = screenToWorld(event);
+    render();
+    nodeContextMenu.dataset.nodeId = node.id;
+    nodeContextMenu.innerHTML = nodeContextMenuHtml(node);
+    nodeContextMenu.hidden = false;
+    const shellRect = shell.getBoundingClientRect();
+    const requestedX = event.clientX - shellRect.left;
+    const requestedY = event.clientY - shellRect.top;
+    const gap = 8;
+    const maxX = Math.max(gap, shell.clientWidth - nodeContextMenu.offsetWidth - gap);
+    const maxY = Math.max(gap, shell.clientHeight - nodeContextMenu.offsetHeight - gap);
+    nodeContextMenu.style.left = `${Math.max(gap, Math.min(maxX, requestedX))}px`;
+    nodeContextMenu.style.top = `${Math.max(gap, Math.min(maxY, requestedY))}px`;
+    if(window.lucide) lucide.createIcons();
+}
+function openParentFeedback(){
+    try {
+        const button = window.parent?.document?.getElementById('feedbackOpenBtn');
+        if(button){ button.click(); return; }
+    } catch {}
+    toast('当前页面未提供反馈入口');
+}
+function triggerNodeContextAction(action, nodeId){
+    const node = nodes.find(entry => entry.id === nodeId);
+    closeNodeContextMenu();
+    if(!node && action !== 'paste' && action !== 'feedback') return;
+    if(action === 'save'){
+        openNodeAssetSaveModal(node).catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
+    } else if(action === 'download'){
+        const target = nodeShortcutTargetFor(node);
+        if(target?.image) downloadPreviewFile(target.image);
+    } else if(action === 'copy'){
+        copySelectedNodes();
+    } else if(action === 'paste'){
+        pasteNodes();
+    } else if(action === 'delete'){
+        deleteNode(node.id);
+    } else if(action === 'feedback'){
+        openParentFeedback();
+    }
+}
+function bindNodeContextMenuEvents(){
+    if(!nodeContextMenu || nodeContextMenu.dataset.bound === '1') return;
+    nodeContextMenu.dataset.bound = '1';
+    nodeContextMenu.addEventListener('pointerdown', event => event.stopPropagation());
+    nodeContextMenu.addEventListener('click', event => {
+        const button = event.target.closest('[data-node-context-action]');
+        if(!button || button.disabled) return;
+        event.preventDefault();
+        event.stopPropagation();
+        triggerNodeContextAction(button.dataset.nodeContextAction, nodeContextMenu.dataset.nodeId || '');
+    });
+    window.addEventListener('pointerdown', event => {
+        if(!nodeContextMenu.hidden && !nodeContextMenu.contains(event.target)) closeNodeContextMenu();
+    }, true);
+    window.addEventListener('blur', closeNodeContextMenu);
+    window.addEventListener('resize', closeNodeContextMenu);
+    shell.addEventListener('wheel', closeNodeContextMenu, {passive:true});
+}
 function renderNodeAssetSaveModal(){
     if(!nodeAssetSaveModal || !nodeAssetSaveLibraries || !nodeAssetSaveFolders || !nodeAssetSaveName || !nodeAssetSaveConfirm) return;
     const libs = assetLibraries();
@@ -6410,10 +6504,10 @@ function render(){
         const body = nodeBodyHtml(node, layout);
         const deleteBtn = `<button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button>`;
         const hint = isSmartGroup ? '拖入图片、提示词或循环节点' : isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(tr('smart.hintEmpty')));
-        const floatingActions = `${candidateControlHtml(node)}<button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button>`;
+        const floatingActions = candidateControlHtml(node);
         const html = `<div class="image-node ${isEmpty ? 'empty-node' : ''} ${isGroup ? 'group-node' : ''} ${isHistory ? 'history-group-node' : ''} ${isPrompt ? 'prompt-smart-node' : ''} ${isLoop ? 'loop-smart-node' : ''} ${isSmartGroup ? 'smart-group-node' : ''} ${isCompactMember ? 'smart-group-member-node' : ''} ${candidatePanelNodeId === node.id ? 'candidate-panel-open-node' : ''} ${isNodeSelected(node.id) ? 'selected' : ''} ${(dragState?.groupIds?.includes(node.id) || dragState?.id === node.id) ? 'dragging' : ''} ${node.running ? 'node-running' : ''} ${isPending ? 'node-pending' : ''}" data-id="${escapeHtml(node.id)}" style="left:${node.x || 0}px;top:${node.y || 0}px;width:${layout.width}px;height:${layout.height}px">
             <div class="node-head"><div class="node-title">${title}</div><div class="node-actions">${deleteBtn}</div></div>
-            ${!isEmpty ? `<div class="floating-node-actions">${floatingActions}</div>` : ''}
+            ${!isEmpty && floatingActions ? `<div class="floating-node-actions">${floatingActions}</div>` : ''}
             ${runTimePillHtml(node)}
             <div class="node-body">${body}</div>
             ${expandedCandidateGridHtml(node)}
@@ -7219,6 +7313,11 @@ function bindNodeEvents(){
             });
             port.addEventListener('click', e => { e.stopPropagation(); });
             port.addEventListener('dblclick', e => { e.stopPropagation(); });
+        });
+        el.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            openNodeContextMenu(id, e);
         });
         el.onmousedown = beginNodeDrag;
         el.ondragover = e => setSmartDropCopyEffect(e);
@@ -14349,6 +14448,11 @@ window.addEventListener('keydown', e => {
         return;
     }
     const key = String(e.key || '').toLowerCase();
+    if(e.key === 'Escape' && nodeContextMenu && !nodeContextMenu.hidden){
+        e.preventDefault();
+        closeNodeContextMenu();
+        return;
+    }
     if(key === 'r' && !isEditableTarget(e.target)) isRKeyDown = true;
     if(imageEditModal.classList.contains('open') && !isEditableTarget(e.target)){
         if(e.key === 'ArrowLeft' || e.key === 'ArrowRight'){
@@ -15200,6 +15304,7 @@ window.onload = async () => {
     showBootLoadingOverlay();
     applyTheme(localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light');
     bindNodeShortcutOverlayEvents();
+    bindNodeContextMenuEvents();
     loadPromptPresets();
     loadPromptTemplateGroups();
     loadPromptTemplateOverrides();
