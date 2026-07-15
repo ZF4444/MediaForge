@@ -32,6 +32,7 @@ const smartWorkflowExportMeta = document.getElementById('smartWorkflowExportMeta
 const smartWorkflowImportInput = document.getElementById('smartWorkflowImportInput');
 const smartWorkflowImportDropZone = document.getElementById('smartWorkflowImportDropZone');
 const selectionBox = document.getElementById('selectionBox');
+const selectionActions = document.getElementById('selectionActions');
 const assetToggle = document.getElementById('assetToggle');
 const assetPanel = document.getElementById('assetPanel');
 const assetCloseBtn = document.getElementById('assetCloseBtn');
@@ -169,7 +170,6 @@ let selectedImage = {nodeId:'', index:-1};
 let dragState = null;
 let loopInsertPreview = null;
 let selectionState = null;
-let isRKeyDown = false;
 let selectionJustFinished = false;
 let thumbDragState = null;
 let uploadTargetId = '';
@@ -201,7 +201,7 @@ let mentionSource = 'input';
 let mentionAssetCategoryId = '';
 let assetLibraryUpdatedAt = 0;
 let assetLibraryRefreshTimer = null;
-let nodeAssetSaveState = {open:false, fileId:'', name:'', libraryId:'', categoryId:''};
+let nodeAssetSaveState = {open:false, fileId:'', name:'', items:[], libraryId:'', categoryId:''};
 const PROMPT_PRESETS_KEY = 'smart_canvas_prompt_presets_v1';
 const PROMPT_TEMPLATE_GROUPS_KEY = 'smart_canvas_prompt_template_groups_v1';
 const PROMPT_TEMPLATE_OVERRIDES_KEY = 'smart_canvas_prompt_template_overrides_v1';
@@ -1792,6 +1792,7 @@ function applyViewport(){
     const active = selectedNode();
     if(active && composer?.classList?.contains('open')) positionComposerForNode(active);
     updateNodeShortcutBar();
+    updateSelectionActions();
     requestRenderMinimap();
 }
 function screenToWorld(event){
@@ -4434,13 +4435,18 @@ function renderNodeAssetSaveModal(){
             <span class="node-asset-save-folder-check"><i data-lucide="check"></i></span>
         </button>`;
     }).join('') : `<div class="node-asset-save-empty">当前资产库还没有文件夹，先新建一个文件夹再保存。</div>`;
+    const batchItems = Array.isArray(nodeAssetSaveState.items) ? nodeAssetSaveState.items : [];
+    const isBatch = batchItems.length > 1;
+    const nameField = nodeAssetSaveName.closest('.node-asset-save-field');
+    if(nameField) nameField.hidden = isBatch;
     nodeAssetSaveName.value = nodeAssetSaveState.name || '';
-    nodeAssetSaveConfirm.disabled = !nodeAssetSaveState.fileId || !nodeAssetSaveState.categoryId;
+    nodeAssetSaveConfirm.textContent = isBatch ? `保存 ${batchItems.length} 项` : '保存';
+    nodeAssetSaveConfirm.disabled = !(batchItems.length || nodeAssetSaveState.fileId) || !nodeAssetSaveState.categoryId;
     refreshIcons();
 }
 function closeNodeAssetSaveModal(){
     if(!nodeAssetSaveModal) return;
-    nodeAssetSaveState = {open:false, fileId:'', name:'', libraryId:'', categoryId:''};
+    nodeAssetSaveState = {open:false, fileId:'', name:'', items:[], libraryId:'', categoryId:''};
     nodeAssetSaveModal.classList.remove('open');
     nodeAssetSaveModal.hidden = true;
 }
@@ -4452,6 +4458,7 @@ async function openNodeAssetSaveModal(node=selectedNode()){
         open:true,
         fileId:target.image.file_id,
         name:String(target.image.name || target.ownerNode?.title || 'asset').trim(),
+        items:[{fileId:target.image.file_id, name:String(target.image.name || target.ownerNode?.title || 'asset').trim()}],
         libraryId:activeAssetLibraryId || assetLibraries()[0]?.id || '',
         categoryId:activeAssetCategoryId || activeAssetCategory()?.id || ''
     };
@@ -4461,7 +4468,42 @@ async function openNodeAssetSaveModal(node=selectedNode()){
     nodeAssetSaveName?.focus();
     nodeAssetSaveName?.select();
 }
-async function saveFileToAssetLibrarySelection(fileId, name='', libraryId='', categoryId=''){
+function selectedAssetSaveItems(){
+    const seen = new Set();
+    return selectedNodeIds().flatMap(id => {
+        const node = nodes.find(entry => entry.id === id);
+        return node ? imagesForNode(node) : [];
+    }).filter(item => {
+        const fileId = String(item?.file_id || '').trim();
+        if(!fileId || seen.has(fileId)) return false;
+        seen.add(fileId);
+        return true;
+    }).map(item => ({
+        fileId:item.file_id,
+        name:String(item.name || item.ownerNode?.title || 'asset').trim()
+    }));
+}
+async function openSelectionAssetSaveModal(){
+    const items = selectedAssetSaveItems();
+    if(!items.length) throw new Error('选中节点没有可加入资产库的素材');
+    await loadAssetLibrary();
+    nodeAssetSaveState = {
+        open:true,
+        fileId:items[0].fileId,
+        name:items[0].name,
+        items,
+        libraryId:activeAssetLibraryId || assetLibraries()[0]?.id || '',
+        categoryId:activeAssetCategoryId || activeAssetCategory()?.id || ''
+    };
+    renderNodeAssetSaveModal();
+    nodeAssetSaveModal.hidden = false;
+    nodeAssetSaveModal.classList.add('open');
+    if(items.length === 1){
+        nodeAssetSaveName?.focus();
+        nodeAssetSaveName?.select();
+    }
+}
+async function saveFileToAssetLibrarySelection(fileId, name='', libraryId='', categoryId='', options={}){
     if(!fileId) throw new Error('缺少 file_id，无法保存到资产库');
     if(!libraryId || !categoryId) throw new Error('请选择资产库文件夹');
     const data = await fetch('/api/asset-library/items', {
@@ -4475,7 +4517,7 @@ async function saveFileToAssetLibrarySelection(fileId, name='', libraryId='', ca
     activeAssetLibraryId = libraryId;
     activeAssetCategoryId = categoryId;
     setAssetLibraryFromResponse(data);
-    toast(tr('smart.assetSaved'));
+    if(!options.silent) toast(tr('smart.assetSaved'));
     return data;
 }
 function triggerNodeShortcutAction(action, nodeId=''){
@@ -6565,6 +6607,7 @@ function render(){
     if(window.lucide) lucide.createIcons();
     measureSmartNodeImages();
     refreshRunTimerPills();
+    updateSelectionActions();
     return;
     world.innerHTML = '';
     world.insertAdjacentHTML('beforeend', renderConnections());
@@ -13760,13 +13803,45 @@ function resumeSmartPendingTasks(){
 }
 function updateSelectionBox(event){
     if(!selectionState) return;
+    if(selectionActions) selectionActions.hidden = true;
+    const shellRect = shell.getBoundingClientRect();
     const sx = selectionState.startScreen.x, sy = selectionState.startScreen.y;
     const x = Math.min(sx, event.clientX), y = Math.min(sy, event.clientY);
     selectionBox.style.display = 'block';
-    selectionBox.style.left = `${x}px`;
-    selectionBox.style.top = `${y}px`;
+    selectionBox.style.left = `${x - shellRect.left}px`;
+    selectionBox.style.top = `${y - shellRect.top}px`;
     selectionBox.style.width = `${Math.abs(event.clientX - sx)}px`;
     selectionBox.style.height = `${Math.abs(event.clientY - sy)}px`;
+}
+function updateSelectionActions(){
+    if(!selectionBox || !selectionActions || selectionState) return;
+    const selectedEls = selectedIds.map(id => world.querySelector(`.image-node[data-id="${CSS.escape(id)}"]`)).filter(Boolean);
+    if(!selectedEls.length){
+        selectionBox.style.display = 'none';
+        selectionActions.hidden = true;
+        return;
+    }
+    const shellRect = shell.getBoundingClientRect();
+    const rects = selectedEls.map(el => el.getBoundingClientRect());
+    const left = Math.min(...rects.map(rect => rect.left)) - shellRect.left;
+    const top = Math.min(...rects.map(rect => rect.top)) - shellRect.top;
+    const right = Math.max(...rects.map(rect => rect.right)) - shellRect.left;
+    const bottom = Math.max(...rects.map(rect => rect.bottom)) - shellRect.top;
+    selectionBox.style.display = 'block';
+    selectionBox.style.left = `${Math.round(left)}px`;
+    selectionBox.style.top = `${Math.round(top)}px`;
+    selectionBox.style.width = `${Math.round(right - left)}px`;
+    selectionBox.style.height = `${Math.round(bottom - top)}px`;
+    selectionActions.hidden = false;
+    const actionLeft = Math.max(8, Math.min(shell.clientWidth - selectionActions.offsetWidth - 8, left));
+    const actionTop = Math.max(selectionActions.offsetHeight + 8, top - 8);
+    selectionActions.style.left = `${Math.round(actionLeft)}px`;
+    selectionActions.style.top = `${Math.round(actionTop)}px`;
+    const saveButton = selectionActions.querySelector('[data-selection-action="save"]');
+    if(saveButton) saveButton.disabled = !selectedAssetSaveItems().length;
+    const groupButton = selectionActions.querySelector('[data-selection-action="group"]');
+    if(groupButton) groupButton.disabled = !selectedIds.some(id => !isSmartGroupNode(nodes.find(node => node.id === id)));
+    refreshIcons();
 }
 function finishSelection(event){
     if(!selectionState) return;
@@ -13778,14 +13853,28 @@ function finishSelection(event){
         const r = nodeRect(node);
         return r.x < maxX && r.x + r.width > minX && r.y < maxY && r.y + r.height > minY;
     }).map(n => n.id);
-    selectedId = selectedIds.length === 1 ? selectedIds[0] : '';
+    selectedId = '';
     selectedImage = {nodeId:'', index:-1};
     selectionState = null;
     selectionJustFinished = true;
-    selectionBox.style.display = 'none';
     render();
+    updateSelectionActions();
     setTimeout(() => { selectionJustFinished = false; }, 0);
 }
+selectionActions?.addEventListener('mousedown', event => {
+    event.preventDefault();
+    event.stopPropagation();
+});
+selectionActions?.addEventListener('click', event => {
+    const button = event.target.closest('[data-selection-action]');
+    if(!button || button.disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if(button.dataset.selectionAction === 'group') groupSelectedNodes();
+    if(button.dataset.selectionAction === 'save'){
+        openSelectionAssetSaveModal().catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
+    }
+});
 function groupSelectedNodes(){
     const ids = selectedIds.length ? selectedIds.slice() : (selectedId ? [selectedId] : []);
     const selected = ids.map(id => nodes.find(n => n.id === id)).filter(n => n && !isSmartGroupNode(n));
@@ -14011,9 +14100,9 @@ shell.addEventListener('click', e => {
 }, true);
 shell.onmousedown = e => {
     if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
-    // 中键(滚轮)按下时，即使指针落在图片节点上也允许拖拽画布；
+    // 中键按下时，即使指针落在图片节点上也允许拖拽画布；
     // 但落在底部输入栏/小地图/弹层等真正的交互 UI 上时不平移。
-    if(e.button === 1 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')){
+    if(e.button === 1 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')){
         e.preventDefault();
         closeCreateMenu();
         didPan = false;
@@ -14021,34 +14110,28 @@ shell.onmousedown = e => {
         shell.classList.add('panning');
         return;
     }
-    if(e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.create-menu,.smart-minimap')) return;
+    if(e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.create-menu,.smart-minimap,.selection-actions')) return;
     closeCreateMenu();
-    if(e.button === 0 && isRKeyDown){
+    if(e.button === 0){
         e.preventDefault();
         didPan = false;
         selectionState = {startScreen:{x:e.clientX, y:e.clientY}, startWorld:screenToWorld(e)};
         updateSelectionBox(e);
         return;
     }
-    if(e.button === 0 && (e.ctrlKey || e.metaKey)){
+    if(e.button === 2){
         e.preventDefault();
         didPan = false;
-        selectionState = {startScreen:{x:e.clientX, y:e.clientY}, startWorld:screenToWorld(e)};
-        updateSelectionBox(e);
+        viewportInteractionActive = true;
+        panState = {button:e.button, startX:e.clientX, startY:e.clientY, ox:viewport.x, oy:viewport.y};
+        shell.classList.add('panning');
         return;
     }
-    if(e.button !== 0 && e.button !== 1) return;
-    e.preventDefault();
-    didPan = false;
-    viewportInteractionActive = true;
-    panState = {button:e.button, startX:e.clientX, startY:e.clientY, ox:viewport.x, oy:viewport.y};
-    shell.classList.add('panning');
 };
 shell.oncontextmenu = e => {
-    if((e.ctrlKey || e.metaKey) || isRKeyDown){
+    if(!e.target.closest('.image-node')){
         e.preventDefault();
         e.stopPropagation();
-        return;
     }
 };
 shell.ondblclick = e => {
@@ -14474,7 +14557,6 @@ window.addEventListener('keydown', e => {
         closeNodeContextMenu();
         return;
     }
-    if(key === 'r' && !isEditableTarget(e.target)) isRKeyDown = true;
     if(imageEditModal.classList.contains('open') && !isEditableTarget(e.target)){
         if(e.key === 'ArrowLeft' || e.key === 'ArrowRight'){
             e.preventDefault();
@@ -14534,16 +14616,6 @@ window.addEventListener('keydown', e => {
         e.preventDefault();
         groupSelectedNodes();
     }
-});
-window.addEventListener('keyup', e => {
-    if(isBootLoadingActive()){
-        e.stopPropagation();
-        return;
-    }
-    if(String(e.key || '').toLowerCase() === 'r') isRKeyDown = false;
-});
-window.addEventListener('blur', () => {
-    isRKeyDown = false;
 });
 engineSelect.onchange = () => {
     settings.engine = engineSelect.value;
@@ -14961,12 +15033,19 @@ nodeAssetSaveNewFolder?.addEventListener('click', async () => {
 nodeAssetSaveConfirm?.addEventListener('click', async () => {
     try {
         nodeAssetSaveConfirm.disabled = true;
-        await saveFileToAssetLibrarySelection(
-            nodeAssetSaveState.fileId,
-            String(nodeAssetSaveName?.value || nodeAssetSaveState.name || '').trim(),
-            nodeAssetSaveState.libraryId,
-            nodeAssetSaveState.categoryId
-        );
+        const items = Array.isArray(nodeAssetSaveState.items) && nodeAssetSaveState.items.length
+            ? nodeAssetSaveState.items
+            : [{fileId:nodeAssetSaveState.fileId, name:String(nodeAssetSaveName?.value || nodeAssetSaveState.name || '').trim()}];
+        for(const [index, item] of items.entries()){
+            await saveFileToAssetLibrarySelection(
+                item.fileId,
+                items.length === 1 ? String(nodeAssetSaveName?.value || item.name || '').trim() : item.name,
+                nodeAssetSaveState.libraryId,
+                nodeAssetSaveState.categoryId,
+                {silent:items.length > 1 || index < items.length - 1}
+            );
+        }
+        if(items.length > 1) toast(`已加入 ${items.length} 项资产`);
         closeNodeAssetSaveModal();
     } catch(err) {
         showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败');
