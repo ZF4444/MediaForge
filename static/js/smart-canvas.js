@@ -11071,7 +11071,8 @@ function visibleReferenceImagesFor(node){
     return uniqueReferenceImages([...base, ...collectMentionedImagesFromPrompt()]);
 }
 function inputMentionCandidateImages(node){
-    const current = node ? lineImagesFor(node) : [];
+    // @ 提及仅列出当前生成节点的直接输入，不能把整条上游链路的素材混入候选。
+    const current = node ? inputImagesFor(node) : [];
     const seen = new Set();
     return current.filter(img => {
         if(!img?.url || seen.has(img.url)) return false;
@@ -11079,9 +11080,14 @@ function inputMentionCandidateImages(node){
         return true;
     }).map((img, index) => ({
         ...img,
+        thumbnail:mentionCandidateThumbnailUrl(img),
         mentionId:`mention_${index}_${Math.random().toString(36).slice(2, 7)}`,
         alias:img.name || `图片${index + 1}`
     }));
+}
+function mentionCandidateThumbnailUrl(item){
+    const fileId = String(item?.file_id || fileIdFromUrl(item?.url || '') || '').trim();
+    return fileId ? `/api/files/${encodeURIComponent(fileId)}/thumb` : thumbMediaUrl(item);
 }
 // 一个素材可注册到多个平台：收集所有「已通过」的 asset:// 地址，按平台映射。
 function assetRegisteredUris(item){
@@ -11106,6 +11112,8 @@ function assetMentionCandidateImages(categoryId=''){
         return true;
     }).map((item, index) => ({
         url:item.url,
+        file_id:item.file_id || fileIdFromUrl(item.url || ''),
+        thumbnail:mentionCandidateThumbnailUrl(item),
         kind:assetMediaKind(item),
         name:item.name || `资产${index + 1}`,
         alias:item.name || `资产${index + 1}`,
@@ -11163,7 +11171,7 @@ function renderMentionPicker(source){
     const candidates = (mentionSource === 'asset' ? assetItems : inputItems).slice(0, 36);
     const body = candidates.length ? `<div class="mention-option-grid">${candidates.map((img, i) => `
             <button class="mention-option" type="button" data-mention-index="${i}">
-                ${mediaKindForItem(img) === 'video' ? videoPosterHtml(img) : `<img src="${escapeHtml(img.url)}" alt="">`}
+                ${mediaKindForItem(img) === 'video' ? videoPosterHtml(img) : `<img src="${escapeHtml(img.thumbnail || img.url)}" alt="">`}
                 <span>${escapeHtml(img.alias)}</span>
             </button>
         `).join('')}</div>` : `<div class="mention-empty">${escapeHtml(tr('smart.mentionEmpty'))}</div>`;
