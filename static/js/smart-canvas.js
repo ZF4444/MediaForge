@@ -201,7 +201,7 @@ let mentionSource = 'input';
 let mentionAssetCategoryId = '';
 let assetLibraryUpdatedAt = 0;
 let assetLibraryRefreshTimer = null;
-let nodeAssetSaveState = {open:false, fileId:'', name:'', items:[], libraryId:'', categoryId:''};
+let nodeAssetSaveState = {open:false, fileId:'', name:'', items:[], useOriginalNames:false, libraryId:'', categoryId:''};
 const PROMPT_PRESETS_KEY = 'smart_canvas_prompt_presets_v1';
 const PROMPT_TEMPLATE_GROUPS_KEY = 'smart_canvas_prompt_template_groups_v1';
 const PROMPT_TEMPLATE_OVERRIDES_KEY = 'smart_canvas_prompt_template_overrides_v1';
@@ -4512,8 +4512,9 @@ function renderNodeAssetSaveModal(){
     }).join('') : `<div class="node-asset-save-empty">当前资产库还没有文件夹，先新建一个文件夹再保存。</div>`;
     const batchItems = Array.isArray(nodeAssetSaveState.items) ? nodeAssetSaveState.items : [];
     const isBatch = batchItems.length > 1;
+    const useOriginalNames = Boolean(nodeAssetSaveState.useOriginalNames);
     const nameField = nodeAssetSaveName.closest('.node-asset-save-field');
-    if(nameField) nameField.hidden = isBatch;
+    if(nameField) nameField.hidden = isBatch || useOriginalNames;
     nodeAssetSaveName.value = nodeAssetSaveState.name || '';
     nodeAssetSaveConfirm.textContent = isBatch ? `保存 ${batchItems.length} 项` : '保存';
     nodeAssetSaveConfirm.disabled = !(batchItems.length || nodeAssetSaveState.fileId) || !nodeAssetSaveState.categoryId;
@@ -4521,7 +4522,7 @@ function renderNodeAssetSaveModal(){
 }
 function closeNodeAssetSaveModal(){
     if(!nodeAssetSaveModal) return;
-    nodeAssetSaveState = {open:false, fileId:'', name:'', items:[], libraryId:'', categoryId:''};
+    nodeAssetSaveState = {open:false, fileId:'', name:'', items:[], useOriginalNames:false, libraryId:'', categoryId:''};
     nodeAssetSaveModal.classList.remove('open');
     nodeAssetSaveModal.hidden = true;
 }
@@ -4534,6 +4535,7 @@ async function openNodeAssetSaveModal(node=selectedNode()){
         fileId:target.image.file_id,
         name:String(target.image.name || target.ownerNode?.title || 'asset').trim(),
         items:[{fileId:target.image.file_id, name:String(target.image.name || target.ownerNode?.title || 'asset').trim()}],
+        useOriginalNames:false,
         libraryId:activeAssetLibraryId || assetLibraries()[0]?.id || '',
         categoryId:activeAssetCategoryId || activeAssetCategory()?.id || ''
     };
@@ -4567,16 +4569,13 @@ async function openSelectionAssetSaveModal(){
         fileId:items[0].fileId,
         name:items[0].name,
         items,
+        useOriginalNames:true,
         libraryId:activeAssetLibraryId || assetLibraries()[0]?.id || '',
         categoryId:activeAssetCategoryId || activeAssetCategory()?.id || ''
     };
     renderNodeAssetSaveModal();
     nodeAssetSaveModal.hidden = false;
     nodeAssetSaveModal.classList.add('open');
-    if(items.length === 1){
-        nodeAssetSaveName?.focus();
-        nodeAssetSaveName?.select();
-    }
 }
 async function saveFileToAssetLibrarySelection(fileId, name='', libraryId='', categoryId='', options={}){
     if(!fileId) throw new Error('缺少 file_id，无法保存到资产库');
@@ -13907,8 +13906,10 @@ function updateSelectionActions(){
     selectionBox.style.top = `${Math.round(top)}px`;
     selectionBox.style.width = `${Math.round(right - left)}px`;
     selectionBox.style.height = `${Math.round(bottom - top)}px`;
-    selectionActions.hidden = false;
-    const actionLeft = Math.max(8, Math.min(shell.clientWidth - selectionActions.offsetWidth - 8, left));
+    selectionActions.hidden = selectedEls.length < 2;
+    if(selectionActions.hidden) return;
+    const selectionCenter = (left + right) / 2;
+    const actionLeft = Math.max(8, Math.min(shell.clientWidth - selectionActions.offsetWidth - 8, selectionCenter - selectionActions.offsetWidth / 2));
     const actionTop = Math.max(selectionActions.offsetHeight + 8, top - 8);
     selectionActions.style.left = `${Math.round(actionLeft)}px`;
     selectionActions.style.top = `${Math.round(actionTop)}px`;
@@ -13946,6 +13947,7 @@ selectionActions?.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();
     if(button.dataset.selectionAction === 'group') groupSelectedNodes();
+    if(button.dataset.selectionAction === 'export') openSmartWorkflowTransferModal();
     if(button.dataset.selectionAction === 'save'){
         openSelectionAssetSaveModal().catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
     }
@@ -15115,7 +15117,7 @@ nodeAssetSaveConfirm?.addEventListener('click', async () => {
         for(const [index, item] of items.entries()){
             await saveFileToAssetLibrarySelection(
                 item.fileId,
-                items.length === 1 ? String(nodeAssetSaveName?.value || item.name || '').trim() : item.name,
+                nodeAssetSaveState.useOriginalNames ? item.name : (items.length === 1 ? String(nodeAssetSaveName?.value || item.name || '').trim() : item.name),
                 nodeAssetSaveState.libraryId,
                 nodeAssetSaveState.categoryId,
                 {silent:items.length > 1 || index < items.length - 1}
