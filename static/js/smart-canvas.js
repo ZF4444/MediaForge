@@ -1689,17 +1689,17 @@ function smartNodeInputThumbsHtml(images, opts={}){
     return `<div class="smart-node-input-thumbs">${items}${more}</div>`;
 }
 function promptNodeExpandedHeight(node){
-    return (node?.llmSystemEnabled ? 344 : 292) + smartNodeInputThumbsHeight(promptNodeInputImages(node));
+    const controlsHeight = node?.llmTask === 'caption' ? 323 : 292;
+    return controlsHeight + smartNodeInputThumbsHeight(promptNodeInputImages(node));
 }
 function promptNodeLayoutSize(node){
     const oldCollapsedH = 230;
-    const oldExpandedH = node?.llmSystemEnabled ? 400 : 340;
     const explicitW = Number(node?.w);
     const explicitH = Number(node?.h);
     const width = !Number.isFinite(explicitW) || explicitW === 360 ? 316 : explicitW;
     const fallbackH = node?.llmEnabled ? promptNodeExpandedHeight(node) : 194;
-    const legacyExpandedH = node?.llmSystemEnabled ? 344 : 292;
-    const height = !Number.isFinite(explicitH) || explicitH === oldCollapsedH || explicitH === oldExpandedH || explicitH === legacyExpandedH
+    const legacyExpandedHeights = [292, 340, 344, 400];
+    const height = !Number.isFinite(explicitH) || explicitH === oldCollapsedH || legacyExpandedHeights.includes(explicitH)
         ? fallbackH
         : Math.max(explicitH, fallbackH);
     return {width:Math.round(width), height:Math.round(height)};
@@ -5017,8 +5017,9 @@ function createPromptNode(x, y, options={}){
         llmEnabled:false,
         llmProvider:providerId,
         llmModel:resolveChatModel('', providerId),
-        llmSystemEnabled:false,
-        llmSystemPrompt:'You are a helpful prompt assistant.',
+        llmTask:'llm',
+        captionRuleId:'',
+        expandRuleId:'',
         llmInstruction:'',
         created_at:Date.now()
     };
@@ -6062,24 +6063,68 @@ function openSmartCanvasShortcuts(){
 function closeSmartCanvasShortcuts(){
     smartShortcutModal?.classList.remove('open');
 }
+let smartCaptionRules = [];
+let smartExpandRules = [];
+let smartCaptionRulesLoaded = false;
+let smartExpandRulesLoaded = false;
+let smartCaptionRulesLoading = false;
+let smartExpandRulesLoading = false;
+async function loadSmartPromptRules(kind){
+    const isCaption = kind === 'caption';
+    if((isCaption ? smartCaptionRulesLoaded : smartExpandRulesLoaded) || (isCaption ? smartCaptionRulesLoading : smartExpandRulesLoading)) return;
+    if(isCaption) smartCaptionRulesLoading = true;
+    else smartExpandRulesLoading = true;
+    try {
+        const response = await fetch(isCaption ? '/api/caption-rules' : '/api/expand-rules');
+        if(response.ok){
+            const data = await response.json();
+            const rules = [...(data.builtin_rules || []), ...(data.user_rules || [])];
+            if(isCaption) smartCaptionRules = rules;
+            else smartExpandRules = rules;
+        }
+    } catch(e) {
+        console.warn('Failed to load prompt rules', e);
+    } finally {
+        if(isCaption){ smartCaptionRulesLoaded = true; smartCaptionRulesLoading = false; }
+        else { smartExpandRulesLoaded = true; smartExpandRulesLoading = false; }
+        render();
+    }
+}
+function smartPromptRules(kind){ return kind === 'caption' ? smartCaptionRules : smartExpandRules; }
+function smartPromptRuleOptions(kind, selectedId){
+    const rules = smartPromptRules(kind);
+    if(!rules.length) return `<option value="">${escapeHtml(tr('smart.promptRuleLoading'))}</option>`;
+    const active = rules.find(rule => rule.active) || rules[0];
+    const selected = rules.some(rule => rule.id === selectedId) ? selectedId : active.id;
+    return rules.map(rule => `<option value="${escapeHtml(rule.id)}" ${rule.id === selected ? 'selected' : ''}>${escapeHtml(rule.name)}</option>`).join('');
+}
+function smartPromptRuleContent(kind, selectedId, fallback){
+    const rules = smartPromptRules(kind);
+    return (rules.find(rule => rule.id === selectedId) || rules.find(rule => rule.active) || rules[0])?.content || fallback;
+}
 function promptNodeBodyHtml(node){
     node.llmProvider = resolveChatProviderId(node.llmProvider || '');
     node.llmModel = resolveChatModel(node.llmModel || '', node.llmProvider);
-    node.llmSystemEnabled = node.llmSystemEnabled === true;
+    node.llmTask = ['llm', 'caption', 'expand'].includes(node.llmTask) ? node.llmTask : 'llm';
     const readonly = node.llmEnabled ? 'readonly' : '';
-    const systemPrompt = (node.llmSystemPrompt || '').trim();
     const inputThumbs = smartNodeInputThumbsHtml(promptNodeInputImages(node));
     const templateActive = activePromptTemplateNodeId() === node.id;
+    const task = node.llmTask;
+    if(task === 'caption' && !smartCaptionRulesLoaded) loadSmartPromptRules('caption');
+    if(task === 'expand' && !smartExpandRulesLoaded) loadSmartPromptRules('expand');
+    const ruleHtml = task === 'caption' || task === 'expand' ? `<select class="prompt-node-control prompt-llm-rule">${smartPromptRuleOptions(task, task === 'caption' ? node.captionRuleId : node.expandRuleId)}</select>` : '';
+    const instructionHtml = task === 'expand' ? '' : `<textarea class="prompt-node-control prompt-llm-instruction" placeholder="${escapeHtml(task === 'caption' ? tr('smart.promptCaptionInstruction') : tr('smart.promptLlmInstructionPlaceholder'))}">${escapeHtml(node.llmInstruction || '')}</textarea>`;
+    const runLabel = task === 'caption' ? tr('smart.promptCaptionRun') : task === 'expand' ? tr('smart.promptExpandRun') : tr('common.run');
     const llmParams = node.llmEnabled ? `
         <div class="prompt-node-llm">
             <select class="prompt-node-control prompt-llm-provider">${chatProviderOptions(node.llmProvider)}</select>
             <select class="prompt-node-control prompt-llm-model">${chatModelOptions(node.llmModel, node.llmProvider)}</select>
-            <textarea class="prompt-node-control prompt-llm-instruction" placeholder="${escapeHtml(tr('smart.promptLlmInstructionPlaceholder'))}">${escapeHtml(node.llmInstruction || '')}</textarea>
+            <select class="prompt-node-control prompt-llm-task"><option value="llm" ${task === 'llm' ? 'selected' : ''}>${escapeHtml(tr('smart.promptLlmMode'))}</option><option value="caption" ${task === 'caption' ? 'selected' : ''}>${escapeHtml(tr('smart.promptCaptionMode'))}</option><option value="expand" ${task === 'expand' ? 'selected' : ''}>${escapeHtml(tr('smart.promptExpandMode'))}</option></select>
+            ${ruleHtml}
+            ${instructionHtml}
             <div class="prompt-node-llm-actions">
-                <button class="prompt-node-run prompt-node-control" type="button" ${node.running ? 'disabled' : ''}><i data-lucide="${node.running ? 'loader-2' : 'play'}"></i><span>${node.running ? escapeHtml(tr('common.running')) : escapeHtml(tr('common.run'))}</span></button>
-                <button class="prompt-node-pill prompt-node-control prompt-system-toggle ${node.llmSystemEnabled ? 'active' : ''}" type="button"><i data-lucide="${node.llmSystemEnabled ? 'toggle-right' : 'toggle-left'}"></i><span>${escapeHtml(node.llmSystemEnabled ? tr('smart.promptLlmDisableSystem') : tr('smart.promptLlmEnableSystem'))}</span></button>
+                <button class="prompt-node-run prompt-node-control" type="button" ${node.running ? 'disabled' : ''}><i data-lucide="${node.running ? 'loader-2' : 'play'}"></i><span>${node.running ? escapeHtml(tr('common.running')) : escapeHtml(runLabel)}</span></button>
             </div>
-            ${node.llmSystemEnabled ? `<textarea class="prompt-node-control prompt-llm-system" placeholder="${escapeHtml(tr('smart.promptLlmSystemPlaceholder'))}">${escapeHtml(systemPrompt || 'You are a helpful prompt assistant.')}</textarea>` : ''}
         </div>` : '';
     return `<div class="prompt-node-card">
         <textarea class="prompt-node-text prompt-node-control" ${readonly} placeholder="${escapeHtml(tr('smart.promptPlaceholderNode'))}">${escapeHtml(node.text || '')}</textarea>
@@ -6581,19 +6626,21 @@ function bindPromptNodeControls(el, node){
     };
     const modelEl = el.querySelector('.prompt-llm-model');
     if(modelEl) modelEl.onchange = e => { e.stopPropagation(); node.llmModel = e.target.value; scheduleSave(); };
-    const systemToggleEl = el.querySelector('.prompt-system-toggle');
-    if(systemToggleEl) systemToggleEl.onclick = e => {
-        e.preventDefault();
+    const taskEl = el.querySelector('.prompt-llm-task');
+    if(taskEl) taskEl.onchange = e => {
         e.stopPropagation();
-        const prevHeight = Number(node.h) || 0;
-        node.llmSystemEnabled = !node.llmSystemEnabled;
-        if(node.llmSystemEnabled) node.h = Math.max(prevHeight, promptNodeExpandedHeight(node));
-        else if(prevHeight <= 364) node.h = promptNodeExpandedHeight(node);
+        node.llmTask = e.target.value;
+        node.h = Math.max(Number(node.h) || 0, promptNodeExpandedHeight(node));
         render();
         scheduleSave();
     };
-    const systemEl = el.querySelector('.prompt-llm-system');
-    if(systemEl) { bindScrollableText(systemEl); systemEl.oninput = e => { node.llmSystemPrompt = e.target.value; scheduleSave(); }; }
+    const ruleEl = el.querySelector('.prompt-llm-rule');
+    if(ruleEl) ruleEl.onchange = e => {
+        e.stopPropagation();
+        if(node.llmTask === 'caption') node.captionRuleId = e.target.value;
+        else if(node.llmTask === 'expand') node.expandRuleId = e.target.value;
+        scheduleSave();
+    };
     const instructionEl = el.querySelector('.prompt-llm-instruction');
     if(instructionEl) { bindScrollableText(instructionEl); instructionEl.oninput = e => { node.llmInstruction = e.target.value; scheduleSave(); }; }
     const runEl = el.querySelector('.prompt-node-run');
@@ -12925,30 +12972,42 @@ async function runGeneration(){
 async function runPromptLLMNode(nodeId){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || node.type !== 'smart-prompt') return;
-    const message = (node.llmInstruction || node.text || '').trim();
+    const task = ['llm', 'caption', 'expand'].includes(node.llmTask) ? node.llmTask : 'llm';
+    const mediaRefs = promptNodeInputMediaForLLM(node);
+    const images = imageRefsOnly(mediaRefs).map(img => img.url).filter(Boolean);
+    const videos = videoRefsOnly(mediaRefs).map(video => video.url).filter(Boolean);
+    if(task === 'caption' && !images.length){ toast(tr('smart.promptCaptionNeedImage')); return; }
+    const message = task === 'caption'
+        ? (node.llmInstruction || '请描述这张图片').trim()
+        : task === 'expand'
+        ? (node.text || '').trim()
+        : (node.llmInstruction || node.text || '').trim();
     if(!message){ toast(tr('smart.promptLlmNeedText')); return; }
-    const systemPrompt = (node.llmSystemPrompt || '').trim();
     node.llmEnabled = true;
     node.running = true;
     render();
     try {
         const provider = resolveChatProviderId(node.llmProvider || '');
         const model = resolveChatModel(node.llmModel || '', provider);
-        const mediaRefs = promptNodeInputMediaForLLM(node);
-        const images = imageRefsOnly(mediaRefs).map(img => img.url).filter(Boolean);
-        const videos = videoRefsOnly(mediaRefs).map(video => video.url).filter(Boolean);
+        const systemPrompt = task === 'caption'
+            ? smartPromptRuleContent('caption', node.captionRuleId, '请详细描述这张图片的内容。')
+            : task === 'expand'
+            ? smartPromptRuleContent('expand', node.expandRuleId, '')
+            : '';
+        const requestImages = task === 'expand' ? [] : images;
+        const requestVideos = task === 'llm' ? videos : [];
         const result = await fetch('/api/canvas-llm', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
                 message,
                 messages:[],
-                images,
-                videos,
+                images:requestImages,
+                videos:requestVideos,
                 model,
                 provider,
                 ms_model: provider === 'modelscope' ? model : '',
-                system_prompt:node.llmSystemEnabled ? (systemPrompt || 'You are a helpful prompt assistant.') : ''
+                system_prompt:systemPrompt
             })
         }).then(async r => {
             if(!r.ok) throw new Error(await r.text());
