@@ -14440,7 +14440,18 @@ function finishCanvasRightClick(e){
         setTimeout(() => openCanvasContextMenu(contextEvent), 0);
     }
 }
-shell.addEventListener('pointerup', finishCanvasRightClick);
+function cancelCanvasRightClick(){
+    rightMouseDownPoint = null;
+    rightMouseDownViewport = null;
+    if(panState?.button === 2){
+        panState = null;
+        shell.classList.remove('panning');
+        flushDeferredViewportRendering();
+        setTimeout(() => { didPan = false; }, 0);
+    }
+}
+window.addEventListener('pointerup', finishCanvasRightClick, true);
+window.addEventListener('pointercancel', cancelCanvasRightClick, true);
 window.onmouseup = e => {
     finishCanvasRightClick(e);
     document.body.classList.remove('smart-node-drag');
