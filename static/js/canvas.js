@@ -9276,8 +9276,9 @@ function generatorImageInputsForPrompt(promptNodeId){
         .filter(c => c.from === promptNodeId)
         .map(c => nodes.find(n => n.id === c.to))
         .filter(gen => gen && CANVAS_GENERATOR_TYPES.includes(gen.type));
-    const videoGenerator = generators.find(gen => gen.type === 'video');
-    const scopedGenerators = videoGenerator ? [videoGenerator] : generators;
+    const scopedGenerators = generators.some(gen => gen.type === 'video')
+        ? generators.filter(gen => gen.type === 'video')
+        : generators;
     scopedGenerators
         .forEach(gen => {
             if(seen.has(gen.id)) return;
@@ -9287,21 +9288,15 @@ function generatorImageInputsForPrompt(promptNodeId){
                 .map(src => ({...src, refs:imageRefsOnly(src.refs || [])}))
                 .filter(src => src.refs?.length);
             imageInputs.forEach((src, i) => {
-                const preview = src.preview || src.refs?.[0]?.url || '';
                 result.push({
                     index:i + 1,
-                    preview,
-                    thumbnail:promptMentionThumbnailUrl(preview),
+                    preview:src.preview || src.refs?.[0]?.url || '',
                     label:src.label || `图${i + 1}`,
                     genId:gen.id
                 });
             });
         });
     return result;
-}
-function promptMentionThumbnailUrl(url){
-    const match = String(url || '').match(/(?:^|\/)api\/files\/([^/?#]+)\/(?:preview|download)(?:[?#]|$)/);
-    return match ? `/api/files/${match[1]}/thumb` : String(url || '');
 }
 // ===== 提示词 @ 图片引用菜单 =====
 let promptMentionState = null; // { textarea, nodeId, triggerPos, items, filtered, activeIndex }
@@ -9323,9 +9318,8 @@ function renderPromptMentionMenu(){
         return;
     }
     promptMentionMenu.innerHTML = items.map((item, i) => {
-        const previewUrl = item.thumbnail || item.preview;
-        const previewHtml = previewUrl && !isMissingAssetUrl(item.preview)
-            ? `<img src="${escapeAttr(previewUrl)}">`
+        const previewHtml = item.preview && !isMissingAssetUrl(item.preview)
+            ? `<img src="${escapeAttr(item.preview)}">`
             : '<i data-lucide="image" class="w-4 h-4 text-slate-400"></i>';
         const title = trf('canvas.promptMentionImage', {n:item.index});
         return `<div class="prompt-mention-item ${i === state.activeIndex ? 'active' : ''}" data-mention-index="${i}" role="option">
