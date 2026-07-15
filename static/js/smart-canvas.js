@@ -13872,6 +13872,7 @@ selectionActions?.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();
     if(button.dataset.selectionAction === 'group') groupSelectedNodes();
+    if(button.dataset.selectionAction === 'export') openSmartWorkflowTransferModal();
     if(button.dataset.selectionAction === 'save'){
         openSelectionAssetSaveModal().catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
     }
