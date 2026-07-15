@@ -141,6 +141,7 @@
         "smart.videoGenerateAudio": { zh: "生成音频", en: "Generate Audio" },
         "smart.audioOn": { zh: "开启", en: "On" },
         "smart.audioOff": { zh: "关闭", en: "Off" },
+        "smart.videoTextToVideo": { zh: "文生视频", en: "Text to Video" },
         "smart.videoMultimodal": { zh: "全能参考", en: "All-purpose Reference" },
         "smart.videoUseFrameRoles": { zh: "首尾帧", en: "First/Last Frames" },
         "smart.comfyMode": { zh: "ComfyUI 模式", en: "ComfyUI Mode" },

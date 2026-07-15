@@ -2144,6 +2144,7 @@ const JIMENG_VIDEO_MODELS_BY_COMMAND = {
     frames2video: ['3.0', '3.5pro', ...JIMENG_SEEDANCE_VIDEO_MODELS],
 };
 function jimengVideoCommand(){
+    if(videoGenerationMode() === 'text') return 'text2video';
     const node = activeComposerNode() || selectedNode();
     const refs = node ? visibleReferenceImagesFor(node) : [];
     const imageRefs = imageRefsOnly(refs);
@@ -2152,6 +2153,15 @@ function jimengVideoCommand(){
     if(imageRefs.length >= 2) return settings.videoUseFrameRoles ? 'frames2video' : 'multiframe2video';
     if(imageRefs.length >= 1) return 'image2video';
     return 'text2video';
+}
+function videoGenerationMode(sourceSettings=settings){
+    if(sourceSettings?.videoUseFrameRoles) return 'frames';
+    if(sourceSettings?.videoMultimodal) return 'multimodal';
+    return 'text';
+}
+function setVideoGenerationMode(mode){
+    settings.videoUseFrameRoles = mode === 'frames';
+    settings.videoMultimodal = mode === 'multimodal';
 }
 function filterJimengVideoModels(models){
     if(settings.videoProvider !== 'jimeng') return models;
@@ -2279,9 +2289,9 @@ function renderVideoGenerationConfig(){
     const resolution = settings.videoResolution || '480p';
     settings.videoResolution = resolution;
     const resolutionLabels = Object.fromEntries(resolutionOptions);
-    if(!settings.videoUseFrameRoles && !settings.videoMultimodal) settings.videoMultimodal = true;
-    const generationMode = settings.videoUseFrameRoles ? 'frames' : 'multimodal';
+    const generationMode = videoGenerationMode();
     const generationModeOptions = [
+        ['text', tr('smart.videoTextToVideo')],
         ['multimodal', tr('smart.videoMultimodal')],
         ['frames', tr('smart.videoUseFrameRoles')]
     ];
@@ -3352,8 +3362,7 @@ function bindDynamicParams(){
             event.preventDefault();
             event.stopPropagation();
             const mode = btn.dataset.videoMode;
-            settings.videoUseFrameRoles = mode === 'frames';
-            settings.videoMultimodal = mode === 'multimodal';
+            setVideoGenerationMode(mode);
             reopenVideoControlAfterRender = 'config';
             persistActiveSmartSettings();
             renderDynamicParams();
@@ -13044,7 +13053,9 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
 }
 async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
-    const refImages = imageRefsOnly(refs).map((ref, i) => {
+    const generationMode = videoGenerationMode(runSettings);
+    const useReferences = generationMode !== 'text';
+    const refImages = (useReferences ? imageRefsOnly(refs) : []).map((ref, i) => {
         const item = {url:ref.url, name:ref.name || `图${i + 1}`};
         if(runSettings.videoUseFrameRoles){
             if(i === 0) item.role = 'first_frame';
@@ -13060,8 +13071,8 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
         aspect_ratio: runSettings.videoAspect || '16:9',
         resolution: runSettings.videoResolution || '',
         images: refImages,
-        videos: videoRefsOnly(refs).map(ref => ref.url).filter(Boolean),
-        audios: audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3),
+        videos: useReferences ? videoRefsOnly(refs).map(ref => ref.url).filter(Boolean) : [],
+        audios: useReferences ? audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3) : [],
         generate_audio: Boolean(runSettings.videoGenerateAudio),
         multimodal: Boolean(runSettings.videoMultimodal)
     };
