@@ -4323,6 +4323,8 @@ function nodeContextMenuHtml(node){
 function openNodeContextMenu(nodeId, event){
     const node = nodes.find(entry => entry.id === nodeId);
     if(!node || !nodeContextMenu) return;
+    const composerWasOpen = composer?.classList.contains('open');
+    const shortcutsWereOpen = Boolean(nodeShortcutOverlay?.querySelector('.node-shortcut-bar'));
     document.activeElement?.blur?.();
     selectedId = node.id;
     selectedIds = [];
@@ -4332,7 +4334,13 @@ function openNodeContextMenu(nodeId, event){
         : {nodeId:'', index:-1};
     suppressComposerForCandidateNodeId = '';
     lastMouseWorld = screenToWorld(event);
-    render();
+    syncSelectionUi();
+    if(composerWasOpen || shortcutsWereOpen){
+        updateComposer();
+        if(!composerWasOpen) composer?.classList.remove('open');
+        if(!shortcutsWereOpen && nodeShortcutOverlay) nodeShortcutOverlay.innerHTML = '';
+    }
+    requestRenderMinimap();
     nodeContextMenu.dataset.nodeId = node.id;
     nodeContextMenu.innerHTML = nodeContextMenuHtml(node);
     nodeContextMenu.hidden = false;
