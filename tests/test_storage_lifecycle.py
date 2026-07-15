@@ -102,6 +102,23 @@ def test_run_storage_cleanup_once_marks_deleted_and_removes_cache(monkeypatch, t
     assert not os.path.exists(cache_file)
 
 
+def test_cleanup_does_not_mark_deleted_when_remote_delete_fails(monkeypatch):
+    now_value = 10 * 24 * 60 * 60 * 1000
+    marked = []
+    monkeypatch.setattr(storage, "STORAGE_CLEANUP_ENABLED", True)
+    monkeypatch.setattr(storage, "now_ms", lambda: now_value)
+    monkeypatch.setattr(storage, "_cleanup_candidates", lambda *_args: [
+        _row("expired-1", category="input", created_at=1, expires_at=now_value - 1),
+    ])
+    monkeypatch.setattr(storage, "delete_media_objects", lambda _entry: (_ for _ in ()).throw(storage.StorageUnavailableError("down")))
+    monkeypatch.setattr(storage, "_mark_file_deleted", lambda *args: marked.append(args))
+
+    with pytest.raises(storage.StorageUnavailableError):
+        storage.run_storage_cleanup_once(limit=10)
+
+    assert marked == []
+
+
 def test_remove_media_url_deletes_remote_derivatives(monkeypatch, tmp_path):
     cache_file = tmp_path / "cached.png"
     cache_file.write_bytes(b"stale")
@@ -152,6 +169,54 @@ def test_remove_media_url_deletes_remote_derivatives(monkeypatch, tmp_path):
         ("mediaforge-private", "users/user-1/derived/posters/s512/file-1.jpg"),
     ]
     assert not os.path.exists(cache_file)
+
+
+def test_remove_media_url_does_not_mark_deleted_when_remote_delete_fails(monkeypatch):
+    removed_entry = {
+        "file_id": "file-1",
+        "url": "/api/files/file-1/preview",
+        "bucket": "mediaforge-private",
+        "object_key": "users/user-1/output/file-1.png",
+    }
+    database_calls = []
+    monkeypatch.setattr(storage, "resolve_file_reference", lambda **_kwargs: removed_entry)
+    monkeypatch.setattr(storage, "delete_media_objects", lambda _entry: (_ for _ in ()).throw(storage.StorageUnavailableError("down")))
+    monkeypatch.setattr(storage, "_ensure_files_table", lambda: database_calls.append("ensure"))
+
+    with pytest.raises(storage.StorageUnavailableError):
+        storage.remove_media_url(removed_entry["url"], delete_remote=True)
+
+    assert database_calls == []
+
+
+def test_delete_media_objects_propagates_non_transient_error(monkeypatch):
+    entry = {
+        "file_id": "file-1",
+        "user_id": "user-1",
+        "bucket": "private",
+        "object_key": "users/user-1/output/file-1.png",
+    }
+    monkeypatch.setattr(storage, "delete_object", lambda *_args: (_ for _ in ()).throw(PermissionError("denied")))
+
+    with pytest.raises(PermissionError, match="denied"):
+        storage.delete_media_objects(entry)
+
+
+def test_save_media_bytes_rolls_back_object_when_metadata_insert_fails(monkeypatch):
+    deleted = []
+    monkeypatch.setattr(storage, "enforce_storage_quota", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(storage, "save_bytes", lambda *_args, **_kwargs: {
+        "bucket": "private",
+        "object_key": "users/user-1/uploads/file-1.png",
+        "size": 7,
+    })
+    monkeypatch.setattr(storage, "register_media_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database down")))
+    monkeypatch.setattr(storage, "delete_object", lambda bucket, key: deleted.append((bucket, key)))
+
+    with pytest.raises(RuntimeError, match="database down"):
+        storage.save_media_bytes("uploads", "file.png", b"payload")
+
+    assert deleted == [("private", "users/user-1/uploads/file-1.png")]
 
 
 def test_run_storage_metadata_purge_once_hard_deletes_only_when_objects_are_gone(monkeypatch):

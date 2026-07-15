@@ -1038,7 +1038,28 @@
     "APIRoute"
   ],
   [
+    "/health/live",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/health/ready",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
     "/login",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/metrics",
     [
       "GET"
     ],

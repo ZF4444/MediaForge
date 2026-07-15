@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Dict, Iterable, Optional
 
 from app.config import DATABASE_URL
+from app.core.database import database_connection
 
 
 BUSINESS_METADATA_SQL = """
@@ -105,9 +106,7 @@ CREATE TABLE IF NOT EXISTS help_pages (
 
 
 def _connect():
-    import psycopg
-    from psycopg.rows import dict_row
-    return psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row)
+    return database_connection()
 
 
 def initialize_business_metadata() -> bool:
