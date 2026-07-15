@@ -190,7 +190,7 @@
         "smart.promptPresetDeleted": { zh: "预设已删除", en: "Preset deleted" },
         "smart.promptPlaceholderNode": { zh: "输入提示词...", en: "Enter prompt..." },
         "smart.promptLlmInstructionPlaceholder": { zh: "输入给 LLM 的文本，运行后会写入上方提示词", en: "Text sent to the LLM. The result will be written into the prompt above." },
-        "smart.promptLlmMode": { zh: "LLM", en: "LLM" },
+        "smart.promptLlmMode": { zh: "自定义", en: "Custom" },
         "smart.promptCaptionMode": { zh: "图片反推", en: "Image Caption" },
         "smart.promptExpandMode": { zh: "提示词扩写", en: "Prompt Enhance" },
         "smart.promptCaptionInstruction": { zh: "可选：补充反推要求", en: "Optional: add caption instructions" },
