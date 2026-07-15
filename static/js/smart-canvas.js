@@ -1676,8 +1676,11 @@ function smartNodeInputThumbsHtml(images, opts={}){
     const refs = (images || []).filter(img => img?.url);
     if(!refs.length) return '';
     const limit = Math.min(10, refs.length);
+    const typeIndexes = {image:0, video:0, audio:0};
     const items = refs.slice(0, limit).map((img, index) => {
-        const label = opts.labelPrefix ? `${opts.labelPrefix}${index + 1}` : inputThumbLabel(img, index);
+        const type = inputThumbType(img);
+        const typeIndex = typeIndexes[type]++;
+        const label = opts.labelPrefix ? `${opts.labelPrefix}${index + 1}` : inputThumbLabel(img, typeIndex);
         const media = isAudioMediaItem(img)
             ? `<div class="media-thumb audio-thumb"><i data-lucide="file-audio"></i><span>${escapeHtml(img.name || 'Audio')}</span></div>`
             : isVideoMediaItem(img)
@@ -9956,9 +9959,15 @@ function inputVideoHoverPreviewHtml(item){
     const src = filePreviewUrl(item) || item?.url || '';
     return src ? `<video class="input-thumb-video-preview" src="${escapeAttr(src)}" muted loop playsinline preload="metadata" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>` : '';
 }
+function inputThumbType(item){
+    if(isVideoMediaItem(item)) return 'video';
+    if(isAudioMediaItem(item)) return 'audio';
+    return 'image';
+}
 function inputThumbLabel(item, index){
     const n = index + 1;
     if(isVideoMediaItem(item)) return window.StudioI18n?.lang?.() === 'en' ? `Video ${n}` : `视频${n}`;
+    if(isAudioMediaItem(item)) return window.StudioI18n?.lang?.() === 'en' ? `Audio ${n}` : `音频${n}`;
     return window.StudioI18n?.lang?.() === 'en' ? `Image ${n}` : `图${n}`;
 }
 function renderRunningHubInputThumbsRow(node){
@@ -10011,6 +10020,7 @@ function renderInputThumbsRow(node){
     const dedup = node ? visibleReferenceImagesFor(node) : [];
     inputThumbsRow.classList.toggle('has-items', dedup.length > 0);
     if(!dedup.length){ inputThumbsRow.innerHTML = ''; return; }
+    const typeIndexes = {image:0, video:0, audio:0};
     const thumbsHtml = dedup.map((img, i) => {
         const isVid = isVideoMediaItem(img);
         const isSelf = node ? isSelfReferenceForNode(node, img) : false;
@@ -10021,11 +10031,11 @@ function renderInputThumbsRow(node){
         const inner = isVid
             ? `<div class="input-thumb-video">${videoPosterHtml(img)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
             : `<img src="${escapeHtml(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
-        const label = inputThumbLabel(img, i);
+        const label = inputThumbLabel(img, typeIndexes[inputThumbType(img)]++);
         const sourceUrl = img.originalLocalUrl || img.url || '';
         return `<div class="input-thumb ${isVid ? 'has-video-preview' : ''} ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || label} · ${title}`)}" style="--preview-url:url('${escapeHtml(thumbMediaUrl(img) || '')}')">${inner}${isVid ? inputVideoHoverPreviewHtml(img) : ''}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
     }).join('');
-    inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}${dedup.length > 1 ? `<span class="input-thumb-count">${escapeHtml(tr('smart.inputCount').replace('{n}', String(dedup.length)))}</span>` : ''}</div>`;
+    inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}</div>`;
     bindInputThumbsDrag(node, dedup);
 }
 function bindInputThumbsDrag(node, items){
