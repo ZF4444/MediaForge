@@ -1088,7 +1088,7 @@ function normalizeLegacySmartNode(node){
         const normalized = {
             ...node,
             type:'smart-image',
-            title:images.length > 1 ? 'Group' : (images.length ? 'Image' : tr('smart.createImportNode')),
+            title:images.length > 1 ? 'Group' : (images.length ? 'Image' : tr('smart.createGenerationNode')),
             images
         };
         delete normalized.imageMode;
@@ -1330,8 +1330,8 @@ const MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE = 1.6;
 const MEDIA_GROUP_DEFAULT_SCALE = 0.8;
 const MEDIA_GROUP_THUMB_BASE = 224;
 const SMART_GROUP_MAX_VISIBLE_ROWS = 4;
-const EMPTY_UPLOAD_NODE_WIDTH = 316;
-const EMPTY_UPLOAD_NODE_HEIGHT = 194;
+const EMPTY_GENERATION_NODE_WIDTH = 316;
+const EMPTY_GENERATION_NODE_HEIGHT = 194;
 const SMART_GROUP_DEFAULT_WIDTH = 340;
 const SMART_GROUP_DEFAULT_HEIGHT = 286;
 const SMART_GROUP_LEGACY_HEIGHT = 220;
@@ -1721,8 +1721,8 @@ function imageLayout(images, scale=1, node=null){
         const pending = Number(node?.pending) > 0 || Boolean(node?.queued);
         const explicitW = pending ? Number(node?.w) : NaN;
         const explicitH = pending ? Number(node?.h) : NaN;
-        const fallbackW = pending ? 260 * s : EMPTY_UPLOAD_NODE_WIDTH;
-        const fallbackH = pending ? 180 * s : EMPTY_UPLOAD_NODE_HEIGHT;
+        const fallbackW = pending ? 260 * s : EMPTY_GENERATION_NODE_WIDTH;
+        const fallbackH = pending ? 180 * s : EMPTY_GENERATION_NODE_HEIGHT;
         return {
             cols:1,
             rows:1,
@@ -5005,7 +5005,7 @@ function inheritNodeMetaFromImage(node){
 function createNode(x, y, images=[], options={}){
     if(!options.skipUndo) pushUndo();
     const nodeImages = (images || []).map(img => ({...img}));
-    const node = {id:uid('smart'), type:options.type || 'smart-image', x, y, title:nodeImages.length > 1 ? 'Group' : nodeImages.length ? 'Image' : tr('smart.createImportNode'), images:nodeImages, created_at:Date.now()};
+    const node = {id:uid('smart'), type:options.type || 'smart-image', x, y, title:nodeImages.length > 1 ? 'Group' : nodeImages.length ? 'Image' : tr('smart.createGenerationNode'), images:nodeImages, created_at:Date.now()};
     node.scale = nodeImages.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : mediaNodeDefaultScale(node);
     inheritNodeMetaFromImage(node);
     nodes.push(node);
@@ -6293,10 +6293,10 @@ function nodeBodyHtml(node, layout){
     if(imgs.length > 1) return `<div class="thumb-grid" style="--thumb-cols:${layout.cols}; --thumb-size:${layout.thumb}px">${imgs.map((img, i) => `<div class="thumb-item ${selectedImage.nodeId === node.id && selectedImage.index === i ? 'image-selected' : ''}" data-image-index="${i}" data-media-signature="${escapeAttr(`${mediaKindForItem(img)}:${img?.url || ''}`)}">${thumbMediaHtml(img)}${imageResolutionBadgeHtml(img)}<button class="mini-x image-delete" type="button" data-image-index="${i}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`).join('')}</div>`;
     if(imgs[0]) return `<div class="image-wrap ${candidatePanelNodeId === node.id ? 'candidate-open' : ''} ${selectedImage.nodeId === node.id && selectedImage.index === 0 ? 'image-selected' : ''}" data-image-index="0" data-media-signature="${escapeAttr(`${mediaKindForItem(imgs[0])}:${imgs[0]?.url || ''}`)}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">${singleMediaHtml(imgs[0], layout.width, layout.height)}${imageResolutionBadgeHtml(imgs[0])}${candidateOverlayHtml(node, layout)}<button class="mini-x image-delete" type="button" data-image-index="0" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`;
     return `<div class="node-drop">
-        <button class="upload-node-trigger" type="button" data-upload-action="files" title="${escapeHtml(tr('smart.createImportNode'))}">
-            <span class="upload-node-main"><i data-lucide="upload-cloud"></i></span>
-            <span class="upload-node-title">${escapeHtml(tr('smart.createImportNode'))}</span>
-            <span class="upload-node-sub">拖拽 / 粘贴 / 点击上传</span>
+        <button class="generation-node-trigger" type="button" data-upload-action="files" title="${escapeHtml(tr('smart.createGenerationNode'))}">
+            <span class="generation-node-main"><i data-lucide="upload-cloud"></i></span>
+            <span class="generation-node-title">${escapeHtml(tr('smart.createGenerationNode'))}</span>
+            <span class="generation-node-sub">拖拽 / 粘贴 / 点击上传</span>
         </button>
     </div>`;
 }
@@ -6381,7 +6381,7 @@ function render(){
     const nodeHtmlEntries = nodes.map(node => {
         if(migrateGeneratedImagesToCandidatePool(node)) migratedCandidates = true;
         const imgs = node.images || [];
-        const title = node.type === 'smart-group' ? (node.title || '智能分组') : node.type === 'smart-prompt' ? 'Prompt' : node.type === 'smart-loop' ? 'Loop' : (imgs.length > 1 ? 'Group' : imgs.length ? 'Image' : escapeHtml(tr('smart.createImportNode')));
+        const title = node.type === 'smart-group' ? (node.title || '智能分组') : node.type === 'smart-prompt' ? 'Prompt' : node.type === 'smart-loop' ? 'Loop' : (imgs.length > 1 ? 'Group' : imgs.length ? 'Image' : escapeHtml(tr('smart.createGenerationNode')));
         const scale = nodeScale(node);
         const layout = imageLayout(imgs, scale, node);
         const isPrompt = node.type === 'smart-prompt';
@@ -6934,7 +6934,7 @@ function bindNodeEvents(){
                 openCreateMenu(e);
             }
         };
-        const uploadTrigger = el.querySelector('.upload-node-main');
+        const uploadTrigger = el.querySelector('.generation-node-main');
         uploadTrigger?.addEventListener('mousedown', e => {
             if(e.button !== 0) return;
             e.preventDefault();
@@ -7292,7 +7292,7 @@ function clearNodeMediaBeforeDelete(id){
     node.candidateIndex = 0;
     node.pending = 0;
     node.running = false;
-    node.title = tr('smart.createImportNode');
+    node.title = tr('smart.createGenerationNode');
     delete node.w;
     delete node.h;
     const history = historyGroupForNode(node);
@@ -11994,7 +11994,7 @@ function demoteHistoryGroupNode(group){
     delete group.isHistoryGroup;
     if(group.title === '历史分组'){
         const count = (group.images || []).length;
-        group.title = count > 1 ? 'Group' : (count ? 'Image' : tr('smart.createImportNode'));
+        group.title = count > 1 ? 'Group' : (count ? 'Image' : tr('smart.createGenerationNode'));
     }
 }
 function historyGroupForNode(node){
