@@ -4492,7 +4492,11 @@ function renderNodeAssetSaveModal(){
     const isBatch = batchItems.length > 1;
     const useOriginalNames = Boolean(nodeAssetSaveState.useOriginalNames);
     const nameField = nodeAssetSaveName.closest('.node-asset-save-field');
-    if(nameField) nameField.hidden = isBatch || useOriginalNames;
+    if(nameField){
+        const hideNameField = isBatch || useOriginalNames;
+        nameField.hidden = hideNameField;
+        nameField.style.display = hideNameField ? 'none' : '';
+    }
     nodeAssetSaveName.value = nodeAssetSaveState.name || '';
     nodeAssetSaveConfirm.textContent = isBatch ? `保存 ${batchItems.length} 项` : '保存';
     nodeAssetSaveConfirm.disabled = !(batchItems.length || nodeAssetSaveState.fileId) || !nodeAssetSaveState.categoryId;
@@ -4533,10 +4537,11 @@ function selectedAssetSaveItems(){
         if(!fileId || seen.has(fileId)) return false;
         seen.add(fileId);
         return true;
-    }).map(item => ({
-        fileId:item.file_id,
-        name:String(item.name || item.ownerNode?.title || 'asset').trim()
-    }));
+    }).map(item => {
+        const rawName = String(item.name || '').trim();
+        const originalName = rawName.split(/[\\/]/).filter(Boolean).pop() || fileNameFromUrl(item.url || '') || 'asset';
+        return {fileId:item.file_id, name:originalName};
+    });
 }
 async function openSelectionAssetSaveModal(){
     const items = selectedAssetSaveItems();
