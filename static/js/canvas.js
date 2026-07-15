@@ -9268,18 +9268,14 @@ function reorderInput(gen, movedId, targetId){
     scheduleSave();
 }
 function generatorImageInputsForPrompt(promptNodeId){
-    // 提示词连接到视频节点时，@ 引用只应对应视频节点自己的连线图片输入。
-    // 否则共享提示词会把其它生成分支的图片混入视频提示词候选。
+    // 找到该提示词节点直接连接的所有 AI 生成节点，按连线顺序取它们的有序图片输入。
+    // 返回的列表顺序即对应"图1 / 图2 / ..."。
     const seen = new Set();
     const result = [];
-    const generators = connections
+    connections
         .filter(c => c.from === promptNodeId)
         .map(c => nodes.find(n => n.id === c.to))
-        .filter(gen => gen && CANVAS_GENERATOR_TYPES.includes(gen.type));
-    const scopedGenerators = generators.some(gen => gen.type === 'video')
-        ? generators.filter(gen => gen.type === 'video')
-        : generators;
-    scopedGenerators
+        .filter(gen => gen && CANVAS_GENERATOR_TYPES.includes(gen.type))
         .forEach(gen => {
             if(seen.has(gen.id)) return;
             seen.add(gen.id);
