@@ -6284,9 +6284,9 @@ function refreshCanvasPromptTemplatesFromLibraries(){
     canvasPromptTemplates = activeCanvasPromptLibraryItems();
     renderCanvasPromptLibrarySelect();
 }
-function canvasRuleTemplateItems(){
+function canvasRuleTemplateItems(libraryId){
     const hidden = new Set(canvasPromptTemplateOverrides.hiddenBuiltinIds || []);
-    return canvasPromptLibraries.flatMap(library => (library.items || [])
+    return canvasPromptLibraries.filter(library => library.id === libraryId).flatMap(library => (library.items || [])
         .filter(template => template?.id && template?.positive && !(library.id === 'system' && hidden.has(template.id)))
         .map(template => ({
             ...template,
@@ -6295,13 +6295,14 @@ function canvasRuleTemplateItems(){
             libraryName:library.name || tr('canvas.promptTemplateLibrary')
         })));
 }
-function canvasRuleTemplateOptions(selectedKey){
-    const templates = canvasRuleTemplateItems();
+function canvasRuleTemplateOptions(libraryId, selectedKey){
+    const templates = canvasRuleTemplateItems(libraryId);
     if(!templates.length) return `<option value="">${escapeHtml(tr('canvas.promptTemplateEmpty'))}</option>`;
     return templates.map(template => `<option value="${escapeAttr(template.key)}" ${template.key === selectedKey ? 'selected' : ''}>${escapeHtml(`${template.libraryName} · ${canvasPromptTemplateName(template)}`)}</option>`).join('');
 }
-function canvasRuleTemplateContent(selectedKey, fallback){
-    return canvasRuleTemplateItems().find(template => template.key === selectedKey)?.positive || fallback;
+function canvasRuleTemplateContent(libraryId, selectedKey, fallback){
+    const templates = canvasRuleTemplateItems(libraryId);
+    return (templates.find(template => template.key === selectedKey) || templates[0])?.positive || fallback;
 }
 function renderCanvasPromptLibrarySelect(){
     if(!promptTemplateLibrarySelect) return;
@@ -7325,7 +7326,7 @@ function renderExpandBody(node){
             <select class="select-lite expand-model">${modelOpts}</select>
         </div>
         <div class="llm-row" style="gap:6px;align-items:center">
-            <select class="select-lite expand-template-select" style="flex:1">${canvasRuleTemplateOptions(selectedTemplateId)}</select>
+            <select class="select-lite expand-template-select" style="flex:1">${canvasRuleTemplateOptions('expand', selectedTemplateId)}</select>
         </div>
         <div class="llm-pane-label">Input${isReadonly?' <span style="font-size:9px;opacity:.5">(来自连接)</span>':''}</div>
         <textarea class="llm-system expand-input" ${isReadonly?'readonly':''} placeholder="${tr('canvas.expandInputHint')}" style="min-height:50px;max-height:100px;resize:vertical">${escapeHtml(inputValue)}</textarea>
@@ -7371,7 +7372,7 @@ function renderCaptionBody(node){
         </div>
         ${imgBadge}
         <div class="llm-row" style="gap:6px;align-items:center">
-            <select class="select-lite caption-template-select" style="flex:1">${canvasRuleTemplateOptions(selectedTemplateId)}</select>
+            <select class="select-lite caption-template-select" style="flex:1">${canvasRuleTemplateOptions('caption', selectedTemplateId)}</select>
         </div>
         <textarea class="llm-system caption-user" placeholder="${tr('canvas.captionUserPrompt')}" style="min-height:36px;max-height:80px;resize:vertical">${escapeHtml(node.userPrompt || '')}</textarea>
         <div class="llm-output-wrap">
@@ -10607,7 +10608,7 @@ async function runCaptionNode(nodeId, opts={}){
     try {
         const prov = resolveChatProviderId(node.captionProvider || 'comfly');
         const model = resolveChatModel(node.model, prov);
-        const systemPrompt = canvasRuleTemplateContent(node.captionTemplateId, '请详细描述这张图片的内容。');
+        const systemPrompt = canvasRuleTemplateContent('caption', node.captionTemplateId, '请详细描述这张图片的内容。');
         const message = node.userPrompt || '请描述这张图片';
         const result = await cascadeFetch('/api/canvas-llm', {
             method:'POST',
@@ -10657,7 +10658,7 @@ async function runExpandNode(nodeId, opts={}){
     try {
         const prov = resolveChatProviderId(node.expandProvider || 'comfly');
         const model = resolveChatModel(node.model, prov);
-        const systemPrompt = canvasRuleTemplateContent(node.expandTemplateId, '');
+        const systemPrompt = canvasRuleTemplateContent('expand', node.expandTemplateId, '');
         const result = await cascadeFetch('/api/canvas-llm', {
             method:'POST',
             headers:{'Content-Type':'application/json'},

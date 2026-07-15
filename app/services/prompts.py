@@ -181,10 +181,50 @@ def seed_system_prompt_library():
     }
 
 
+def seed_caption_prompt_library():
+    return {
+        "id": "caption",
+        "name": "反推提示词库",
+        "type": "prompt",
+        "items": [{
+            "id": "caption_default",
+            "name": "通用图片反推",
+            "category": "custom",
+            "scene": "将输入图片详细描述为可用于 AI 绘画的提示词。",
+            "positive": "请详细描述这张图片的内容，包括主体、场景、风格、光照、色彩、构图等信息，用自然语言输出，适合作为 AI 绘画的提示词。",
+            "negative": "",
+            "params": {},
+        }],
+        "categories": [],
+    }
+
+
+def seed_expand_prompt_library():
+    return {
+        "id": "expand",
+        "name": "扩写提示词库",
+        "type": "prompt",
+        "items": [{
+            "id": "expand_default",
+            "name": "通用提示词扩写",
+            "category": "custom",
+            "scene": "将简短提示词扩写为更完整、可执行的图像生成提示词。",
+            "positive": "将用户输入扩写为清晰、具体且适合 AI 图像生成的提示词。保留原始意图，补充主体细节、场景、构图、光线、色彩和风格；只输出最终提示词。",
+            "negative": "",
+            "params": {},
+        }],
+        "categories": [],
+    }
+
+
+def reserved_prompt_libraries():
+    return [seed_system_prompt_library(), seed_caption_prompt_library(), seed_expand_prompt_library()]
+
+
 def default_prompt_libraries():
     return {
         "active_library_id": "system",
-        "libraries": [seed_system_prompt_library()],
+        "libraries": reserved_prompt_libraries(),
         "updated_at": now_ms(),
     }
 
@@ -229,8 +269,11 @@ def normalize_prompt_libraries(data):
         data = default_prompt_libraries()
     raw_libraries = data.get("libraries") if isinstance(data.get("libraries"), list) else []
     raw_libraries = [lib for lib in raw_libraries if isinstance(lib, dict)]
-    if not any(lib.get("id") == "system" for lib in raw_libraries):
-        raw_libraries = [seed_system_prompt_library()] + raw_libraries
+    reserved_ids = {library["id"] for library in reserved_prompt_libraries()}
+    existing_reserved = {lib.get("id"): lib for lib in raw_libraries if lib.get("id") in reserved_ids}
+    raw_libraries = [existing_reserved.get(seed["id"], seed) for seed in reserved_prompt_libraries()] + [
+        lib for lib in raw_libraries if lib.get("id") not in reserved_ids
+    ]
     libraries = []
     seen_lib_ids = set()
     for raw in raw_libraries:
@@ -253,7 +296,12 @@ def normalize_prompt_libraries(data):
                 continue
             seen_items.add(item_id)
             items.append(item)
-        default_name = "系统提示词库" if is_system else "提示词库"
+        default_names = {
+            "system": "系统提示词库",
+            "caption": "反推提示词库",
+            "expand": "扩写提示词库",
+        }
+        default_name = default_names.get(lib_id, "提示词库")
         raw_categories = raw.get("categories") if isinstance(raw.get("categories"), list) else []
         if not is_system:
             # 非系统库不保留任何内置分组（视角/分镜等），仅保留用户自建分组
