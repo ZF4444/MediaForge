@@ -14,7 +14,7 @@ import os
 import re
 import uuid
 
-from app.config import STATIC_DIR
+from app.config import DATA_DIR, STATIC_DIR
 from app.core.auth import current_user_id
 from app.services.business_metadata import get_user_setting, set_user_setting
 from app.core.shared import sanitize_asset_name
@@ -322,13 +322,61 @@ def normalize_prompt_libraries(data):
     return {"active_library_id": active, "libraries": libraries, "updated_at": int(data.get("updated_at") or now_ms())}
 
 
+def _legacy_rule_items(kind, user_id):
+    filename = f"{kind}_rules_builtin.json"
+    builtin_rules = []
+    try:
+        with open(os.path.join(DATA_DIR, filename), "r", encoding="utf-8") as file:
+            loaded = json.load(file)
+            builtin_rules = loaded if isinstance(loaded, list) else []
+    except (OSError, ValueError, TypeError):
+        pass
+    user_rules = get_user_setting(user_id, f"{kind}_rules", [])
+    user_rules = user_rules if isinstance(user_rules, list) else []
+    return [rule for rule in [*builtin_rules, *user_rules] if isinstance(rule, dict) and str(rule.get("content") or "").strip()]
+
+
+def _migrate_legacy_rules(data, kind, rules):
+    library = find_prompt_library(data, kind)
+    if not library:
+        return False
+    existing_ids = {str(item.get("id") or "") for item in library.get("items", []) if isinstance(item, dict)}
+    migrated = False
+    for index, rule in enumerate(rules):
+        rule_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(rule.get("id") or index))[:48] or str(index)
+        item_id = f"legacy_{kind}_{rule_id}"
+        if item_id in existing_ids:
+            continue
+        library.setdefault("items", []).append(normalize_prompt_library_item({
+            "id": item_id,
+            "name": rule.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
+            "category": "custom",
+            "scene": "从普通画布旧规则迁移",
+            "positive": rule.get("content") or "",
+        }))
+        existing_ids.add(item_id)
+        migrated = True
+    return migrated
+
+
 def load_prompt_libraries():
-    data = get_user_setting(current_user_id(), "prompt_libraries", default_prompt_libraries())
+    user_id = current_user_id()
+    data = get_user_setting(user_id, "prompt_libraries", default_prompt_libraries())
     if not isinstance(data, dict):
         data = default_prompt_libraries()
     normalized = normalize_prompt_libraries(data)
-    if normalized.get("active_library_id") != data.get("active_library_id") or normalized.get("libraries") != data.get("libraries"):
-        return save_prompt_libraries(normalized)
+    migration_state = get_user_setting(user_id, "prompt_library_rule_migrations", {})
+    migration_state = migration_state if isinstance(migration_state, dict) else {}
+    migrated = False
+    for kind in ("caption", "expand"):
+        if migration_state.get(kind):
+            continue
+        migrated = _migrate_legacy_rules(normalized, kind, _legacy_rule_items(kind, user_id)) or migrated
+        migration_state[kind] = True
+    if normalized.get("active_library_id") != data.get("active_library_id") or normalized.get("libraries") != data.get("libraries") or migrated:
+        normalized = save_prompt_libraries(normalized)
+    if migration_state != get_user_setting(user_id, "prompt_library_rule_migrations", {}):
+        set_user_setting(user_id, "prompt_library_rule_migrations", migration_state)
     return normalized
 
 
