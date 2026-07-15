@@ -177,6 +177,9 @@ let pendingGroupUploadPoint = null;
 let mentionRange = null;
 let panState = null;
 let didPan = false;
+let rightMouseDownAt = 0;
+let rightMouseDownPoint = null;
+const RIGHT_CLICK_HOLD_THRESHOLD_MS = 450;
 let portDragState = null;
 let saveTimer = null;
 let suppressAutoSave = false;
@@ -4375,7 +4378,7 @@ function canvasContextMenuHtml(){
         {action:'loop', icon:'repeat-2', label:'循环节点'},
         {separator:true},
         {action:'fit-view', icon:'scan', label:'适应视图'},
-        {action:'paste', icon:'clipboard', label:'粘贴'},
+        {action:'paste', icon:'clipboard', label:'粘贴', disabled:!nodeClipboard?.nodes?.length},
         {action:'undo', icon:'undo-2', label:'撤销', disabled:!undoStack.length}
     ];
     return items.map(item => item.separator
@@ -4401,32 +4404,7 @@ function openCanvasContextMenu(event){
     nodeContextMenu.style.top = `${Math.max(gap, Math.min(maxY, requestedY))}px`;
     if(window.lucide) lucide.createIcons();
 }
-async function pasteFromCanvasContextMenu(point){
-    if(nodeClipboard?.nodes?.length){
-        pasteNodes();
-        return;
-    }
-    if(!navigator.clipboard?.read){
-        toast('剪贴板中没有可粘贴的节点或素材');
-        return;
-    }
-    try {
-        const clipboardItems = await navigator.clipboard.read();
-        const files = [];
-        for(const item of clipboardItems){
-            const type = item.types.find(value => /^(image|video|audio)\//.test(value));
-            if(!type) continue;
-            const blob = await item.getType(type);
-            const extension = type.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
-            files.push(new File([blob], `clipboard-${Date.now()}.${extension}`, {type}));
-        }
-        if(files.length) await handleFiles(files, '', {point, forceNew:true});
-        else toast('剪贴板中没有可粘贴的节点或素材');
-    } catch {
-        toast('无法读取系统剪贴板');
-    }
-}
-async function triggerCanvasContextAction(action){
+function triggerCanvasContextAction(action){
     const point = lastMouseWorld || viewportCenter();
     closeNodeContextMenu();
     if(action === 'generation') createImageNodeAt(point);
@@ -4434,7 +4412,7 @@ async function triggerCanvasContextAction(action){
     else if(action === 'prompt') createPromptNode(point.x - 158, point.y - 97);
     else if(action === 'loop') createLoopNode(point.x - 135, point.y - 95);
     else if(action === 'fit-view') toggleZoomPreview();
-    else if(action === 'paste') await pasteFromCanvasContextMenu(point);
+    else if(action === 'paste') pasteNodes();
     else if(action === 'undo') performUndo();
 }
 function openParentFeedback(){
@@ -4473,7 +4451,7 @@ function bindNodeContextMenuEvents(){
         event.preventDefault();
         event.stopPropagation();
         if(button.dataset.canvasContextAction){
-            triggerCanvasContextAction(button.dataset.canvasContextAction).catch(err => toast(err.message || '操作失败'));
+            triggerCanvasContextAction(button.dataset.canvasContextAction);
         } else {
             triggerNodeContextAction(button.dataset.nodeContextAction, nodeContextMenu.dataset.nodeId || '');
         }
@@ -14086,6 +14064,12 @@ shell.addEventListener('click', e => {
 }, true);
 shell.onmousedown = e => {
     if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+    if(e.button === 2){
+        if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+        rightMouseDownAt = performance.now();
+        rightMouseDownPoint = {x:e.clientX, y:e.clientY};
+        return;
+    }
     // 中键(滚轮)按下时，即使指针落在图片节点上也允许拖拽画布；
     // 但落在底部输入栏/小地图/弹层等真正的交互 UI 上时不平移。
     if(e.button === 1 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')){
@@ -14119,15 +14103,20 @@ shell.onmousedown = e => {
     panState = {button:e.button, startX:e.clientX, startY:e.clientY, ox:viewport.x, oy:viewport.y};
     shell.classList.add('panning');
 };
+shell.addEventListener('mouseup', e => {
+    if(e.button !== 2 || !rightMouseDownAt || !rightMouseDownPoint) return;
+    const heldMs = performance.now() - rightMouseDownAt;
+    const moved = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y) > 4;
+    rightMouseDownAt = 0;
+    rightMouseDownPoint = null;
+    if(heldMs >= RIGHT_CLICK_HOLD_THRESHOLD_MS || moved || e.ctrlKey || e.metaKey || isRKeyDown) return;
+    openCanvasContextMenu(e);
+});
 shell.oncontextmenu = e => {
     if(didPan || e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
-    if((e.ctrlKey || e.metaKey) || isRKeyDown){
-        return;
-    }
-    openCanvasContextMenu(e);
 };
 shell.ondblclick = e => {
     if(didPan || e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
