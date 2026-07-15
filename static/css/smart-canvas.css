@@ -518,6 +518,9 @@ video.node-img { object-fit:contain; background:#0f172a; }
 .input-thumb:hover .input-thumb-x { display:inline-flex; }
 .input-thumb::after { content:''; position:absolute; bottom:100%; left:50%; transform:translateX(-50%); width:140px; height:140px; background:var(--panel); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.18); margin-bottom:8px; opacity:0; pointer-events:none; transition:opacity .15s; z-index:20; background-size:contain; background-repeat:no-repeat; background-position:center; }
 .input-thumb:hover::after { opacity:1; background-image:var(--preview-url); }
+.input-thumb.has-video-preview::after { display:none; }
+.input-thumb .input-thumb-video-preview { position:absolute; bottom:100%; left:50%; z-index:20; display:block; width:140px; height:140px; margin-bottom:8px; transform:translateX(-50%); border:1px solid var(--line); border-radius:10px; background:#0f172a; box-shadow:0 8px 24px rgba(0,0,0,.18); object-fit:contain; opacity:0; pointer-events:none; transition:opacity .15s; }
+.input-thumb.has-video-preview:hover .input-thumb-video-preview { opacity:1; }
 .input-thumb.input-self { cursor:default; border-color:var(--strong); box-shadow:inset 0 0 0 1px var(--strong); }
 .input-thumb.input-self[draggable="true"] { cursor:grab; }
 .input-thumb.input-self:hover { transform:none; box-shadow:inset 0 0 0 1px var(--strong); }

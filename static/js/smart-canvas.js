@@ -1677,7 +1677,7 @@ function smartNodeInputThumbsHtml(images, opts={}){
     if(!refs.length) return '';
     const limit = Math.min(10, refs.length);
     const items = refs.slice(0, limit).map((img, index) => {
-        const label = opts.labelPrefix ? `${opts.labelPrefix}${index + 1}` : (window.StudioI18n?.lang?.() === 'en' ? `Image ${index + 1}` : `图${index + 1}`);
+        const label = opts.labelPrefix ? `${opts.labelPrefix}${index + 1}` : inputThumbLabel(img, index);
         const media = isAudioMediaItem(img)
             ? `<div class="media-thumb audio-thumb"><i data-lucide="file-audio"></i><span>${escapeHtml(img.name || 'Audio')}</span></div>`
             : isVideoMediaItem(img)
@@ -9950,7 +9950,16 @@ function renderRhInputThumb(ref, field, index, kind, node, sourceUrl){
         : `<img src="${escapeAttr(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
     const label = rhInputKindLabel(kind).slice(0, 3);
     const isSelf = node ? isSelfReferenceForNode(node, ref) : false;
-    return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(thumbMediaUrl(ref) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+    return `<div class="input-thumb ${isVid ? 'has-video-preview' : ''} ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(thumbMediaUrl(ref) || '')}')">${inner}${isVid ? inputVideoHoverPreviewHtml(ref) : ''}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+}
+function inputVideoHoverPreviewHtml(item){
+    const src = filePreviewUrl(item) || item?.url || '';
+    return src ? `<video class="input-thumb-video-preview" src="${escapeAttr(src)}" muted loop playsinline preload="metadata" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>` : '';
+}
+function inputThumbLabel(item, index){
+    const n = index + 1;
+    if(isVideoMediaItem(item)) return window.StudioI18n?.lang?.() === 'en' ? `Video ${n}` : `视频${n}`;
+    return window.StudioI18n?.lang?.() === 'en' ? `Image ${n}` : `图${n}`;
 }
 function renderRunningHubInputThumbsRow(node){
     const fields = rhActiveFields().filter(field => ['image','video','audio'].includes(rhFieldKind(field)));
@@ -10012,9 +10021,9 @@ function renderInputThumbsRow(node){
         const inner = isVid
             ? `<div class="input-thumb-video">${videoPosterHtml(img)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
             : `<img src="${escapeHtml(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
-        const label = `图${i + 1}`;
+        const label = inputThumbLabel(img, i);
         const sourceUrl = img.originalLocalUrl || img.url || '';
-        return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}" style="--preview-url:url('${escapeHtml(thumbMediaUrl(img) || '')}')">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
+        return `<div class="input-thumb ${isVid ? 'has-video-preview' : ''} ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || label} · ${title}`)}" style="--preview-url:url('${escapeHtml(thumbMediaUrl(img) || '')}')">${inner}${isVid ? inputVideoHoverPreviewHtml(img) : ''}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
     }).join('');
     inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}${dedup.length > 1 ? `<span class="input-thumb-count">${escapeHtml(tr('smart.inputCount').replace('{n}', String(dedup.length)))}</span>` : ''}</div>`;
     bindInputThumbsDrag(node, dedup);
@@ -10030,6 +10039,21 @@ function bindInputThumbsDrag(node, items){
             e.preventDefault();
             e.stopPropagation();
         });
+        const videoPreview = el.querySelector('.input-thumb-video-preview');
+        if(videoPreview){
+            el.addEventListener('mouseenter', () => {
+                const play = () => {
+                    const promise = videoPreview.play?.();
+                    if(promise?.catch) promise.catch(() => {});
+                };
+                if(videoPreview.readyState >= 1) play();
+                else videoPreview.addEventListener('loadedmetadata', play, {once:true});
+            });
+            el.addEventListener('mouseleave', () => {
+                videoPreview.pause();
+                try { videoPreview.currentTime = 0; } catch(e) {}
+            });
+        }
         const disconnectBtn = el.querySelector('.input-thumb-x');
         if(disconnectBtn){
             disconnectBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
