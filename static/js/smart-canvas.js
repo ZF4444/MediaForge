@@ -4537,11 +4537,10 @@ function selectedAssetSaveItems(){
         if(!fileId || seen.has(fileId)) return false;
         seen.add(fileId);
         return true;
-    }).map(item => {
-        const rawName = String(item.name || '').trim();
-        const originalName = rawName.split(/[\\/]/).filter(Boolean).pop() || fileNameFromUrl(item.url || '') || 'asset';
-        return {fileId:item.file_id, name:originalName};
-    });
+    }).map(item => ({
+        fileId:item.file_id,
+        name:String(item.name || item.ownerNode?.title || 'asset').trim()
+    }));
 }
 async function openSelectionAssetSaveModal(){
     const items = selectedAssetSaveItems();
