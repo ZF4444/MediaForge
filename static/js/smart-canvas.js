@@ -14166,15 +14166,26 @@ shell.addEventListener('click', e => {
     if(nodeEl?.dataset?.id) exitZoomPreviewToNode(nodeEl.dataset.id);
     else exitZoomPreview(screenToWorld(e));
 }, true);
+shell.addEventListener('pointerdown', e => {
+    if(e.button !== 2) return;
+    if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
+    closeCreateMenu();
+    didPan = false;
+    rightMouseDownPoint = {x:e.clientX, y:e.clientY};
+    rightMouseDownViewport = {x:viewport.x, y:viewport.y};
+    shell.setPointerCapture?.(e.pointerId);
+});
 shell.onmousedown = e => {
     if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
     if(e.button === 2){
         if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
         e.preventDefault();
-        closeCreateMenu();
-        didPan = false;
-        rightMouseDownPoint = {x:e.clientX, y:e.clientY};
-        rightMouseDownViewport = {x:viewport.x, y:viewport.y};
+        if(!rightMouseDownPoint){
+            closeCreateMenu();
+            didPan = false;
+            rightMouseDownPoint = {x:e.clientX, y:e.clientY};
+            rightMouseDownViewport = {x:viewport.x, y:viewport.y};
+        }
         return;
     }
     // 中键按下时，即使指针落在图片节点上也允许拖拽画布；
@@ -14225,23 +14236,33 @@ minimap?.addEventListener('mousedown', e => {
     smartMinimapDrag = true;
     centerViewportOnWorldPoint(minimapEventToWorld(e));
 });
+function updateCanvasRightPan(e){
+    if(!rightMouseDownPoint || !rightMouseDownViewport || !(e.buttons & 2)) return false;
+    const distance = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y);
+    if(!panState && distance > 3){
+        viewportInteractionActive = true;
+        didPan = true;
+        panState = {
+            button:2,
+            startX:rightMouseDownPoint.x,
+            startY:rightMouseDownPoint.y,
+            ox:rightMouseDownViewport.x,
+            oy:rightMouseDownViewport.y
+        };
+        shell.classList.add('panning');
+    }
+    if(panState?.button !== 2) return false;
+    viewport.x = panState.ox + e.clientX - panState.startX;
+    viewport.y = panState.oy + e.clientY - panState.startY;
+    applyViewport();
+    return true;
+}
+shell.addEventListener('pointermove', e => {
+    if(updateCanvasRightPan(e)) e.preventDefault();
+});
 window.onmousemove = e => {
     lastMouseWorld = screenToWorld(e);
-    if(rightMouseDownPoint && rightMouseDownViewport && !panState && (e.buttons & 2)){
-        const distance = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y);
-        if(distance > 3){
-            viewportInteractionActive = true;
-            didPan = true;
-            panState = {
-                button:2,
-                startX:rightMouseDownPoint.x,
-                startY:rightMouseDownPoint.y,
-                ox:rightMouseDownViewport.x,
-                oy:rightMouseDownViewport.y
-            };
-            shell.classList.add('panning');
-        }
-    }
+    if(updateCanvasRightPan(e)) return;
     if(smartMinimapDrag){
         e.preventDefault();
         centerViewportOnWorldPoint(minimapEventToWorld(e));
@@ -14409,16 +14430,19 @@ window.onmousemove = e => {
     updateLoopInsertPreview();
     if(target) setDropHighlight(target.id);
 };
-window.onmouseup = e => {
-    if(e.button === 2 && rightMouseDownPoint){
-        const moved = panState?.button === 2;
-        const contextEvent = {clientX:e.clientX, clientY:e.clientY, target:e.target};
-        rightMouseDownPoint = null;
-        rightMouseDownViewport = null;
-        if(!moved && !e.ctrlKey && !e.metaKey && !isRKeyDown){
-            setTimeout(() => openCanvasContextMenu(contextEvent), 0);
-        }
+function finishCanvasRightClick(e){
+    if(e.button !== 2 || !rightMouseDownPoint) return;
+    const moved = panState?.button === 2;
+    const contextEvent = {clientX:e.clientX, clientY:e.clientY, target:e.target};
+    rightMouseDownPoint = null;
+    rightMouseDownViewport = null;
+    if(!moved && !e.ctrlKey && !e.metaKey && !isRKeyDown){
+        setTimeout(() => openCanvasContextMenu(contextEvent), 0);
     }
+}
+shell.addEventListener('pointerup', finishCanvasRightClick);
+window.onmouseup = e => {
+    finishCanvasRightClick(e);
     document.body.classList.remove('smart-node-drag');
     if(portDragState){
         const drag = portDragState;
