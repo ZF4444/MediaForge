@@ -25,6 +25,30 @@ import shlex
 import functools
 from typing import List, Dict, Any, Optional, Tuple
 from threading import Lock, Thread
+
+
+def _load_bootstrap_env() -> None:
+    """Load API/.env before importing modules that read configuration values."""
+    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "API", ".env")
+    if not os.path.exists(env_file):
+        return
+    try:
+        with open(env_file, "r", encoding="utf-8-sig") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key:
+                    os.environ.setdefault(key, value.strip().strip('"').strip("'"))
+    except OSError:
+        # Full logging is not configured until imports below complete.
+        pass
+
+
+_load_bootstrap_env()
+
 import httpx
 from PIL import Image
 from io import BytesIO
@@ -57,8 +81,12 @@ AUTH_PUBLIC_PATHS = {
     "/login",
     "/auth/login",
     "/auth/logout",
+    "/health/live",
+    "/health/ready",
+    "/metrics",
     "/favicon.ico",
 }
+HEALTH_PATHS = {"/health/live", "/health/ready", "/metrics"}
 AUTH_PUBLIC_PREFIXES = (
     "/static/",   # css/js/字体/图片等前端静态资源
     "/auth/",     # 认证相关接口
@@ -68,6 +96,8 @@ AUTH_PUBLIC_PREFIXES = (
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+    if path in HEALTH_PATHS:
+        return await call_next(request)
     # 放行静态资源与登录相关路径
     is_public = path in AUTH_PUBLIC_PATHS or any(path.startswith(p) for p in AUTH_PUBLIC_PREFIXES)
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
@@ -118,24 +148,75 @@ APP_VERSION = "2026.05.19"
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
-from app.services.storage import StorageQuotaExceeded, storage_cleanup_loop, verify_storage_startup
+from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, refresh_storage_metrics, storage_cleanup_loop, storage_readiness_status, verify_storage_startup
 from app.services.business_metadata import initialize_business_metadata
+from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
+from app.core.metrics import render_metrics
 
 @app.on_event("startup")
 async def startup_event():
     global GLOBAL_LOOP, STORAGE_CLEANUP_TASK
-    await asyncio.to_thread(verify_storage_startup)
-    # Business metadata is a separate schema layer above ``files``.  Keep
-    # initialization in startup so new deployments and existing databases are
-    # upgraded automatically before serving requests.
-    await asyncio.to_thread(initialize_business_metadata)
-    await asyncio.to_thread(load_users_registry)
-    await asyncio.to_thread(load_sessions)
-    GLOBAL_LOOP = asyncio.get_running_loop()
-    shared_state.set_global_loop(GLOBAL_LOOP)
-    if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
-        STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
-    logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
+    try:
+        await asyncio.to_thread(open_database_pool)
+        await asyncio.to_thread(verify_storage_startup)
+        # Business metadata is a separate schema layer above ``files``.  Keep
+        # initialization in startup so new deployments and existing databases are
+        # upgraded automatically before serving requests.
+        await asyncio.to_thread(initialize_business_metadata)
+        await asyncio.to_thread(load_users_registry)
+        await asyncio.to_thread(load_sessions)
+        GLOBAL_LOOP = asyncio.get_running_loop()
+        shared_state.set_global_loop(GLOBAL_LOOP)
+        if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
+            STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
+        logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
+    except Exception:
+        await asyncio.to_thread(close_database_pool)
+        raise
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global STORAGE_CLEANUP_TASK
+    if STORAGE_CLEANUP_TASK is not None:
+        STORAGE_CLEANUP_TASK.cancel()
+        STORAGE_CLEANUP_TASK = None
+    await asyncio.to_thread(close_database_pool)
+
+
+@app.get("/health/live", include_in_schema=False)
+async def health_live():
+    """Liveness probe: the ASGI process is responsive."""
+    return JSONResponse(status_code=200, headers={"Cache-Control": "no-store"}, content={"status": "ok"})
+
+
+@app.get("/health/ready", include_in_schema=False)
+async def health_ready():
+    """Readiness probe: PostgreSQL and all required MinIO buckets are reachable."""
+    report = await asyncio.to_thread(storage_readiness_status)
+    status_code = 200 if report["ready"] else 503
+    headers = {"Cache-Control": "no-store"}
+    if not report["ready"]:
+        headers["Retry-After"] = "5"
+    return JSONResponse(
+        status_code=status_code,
+        headers=headers,
+        content={"status": "ok" if report["ready"] else "not_ready", **report},
+    )
+
+
+@app.get("/metrics", include_in_schema=False)
+async def prometheus_metrics():
+    """Prometheus scrape endpoint for database, object storage, and background jobs."""
+    await asyncio.gather(
+        asyncio.to_thread(refresh_database_metrics),
+        asyncio.to_thread(refresh_storage_metrics),
+    )
+    return Response(
+        content=render_metrics(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
@@ -479,6 +560,24 @@ async def storage_quota_exception_handler(request: Request, exc: StorageQuotaExc
             "used_bytes": exc.used_bytes,
             "incoming_bytes": exc.incoming_bytes,
         },
+    )
+
+
+@app.exception_handler(DatabaseUnavailableError)
+async def database_unavailable_exception_handler(request: Request, exc: DatabaseUnavailableError):
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": "3"},
+        content={"detail": str(exc), "error": "database_unavailable", "retry_after_seconds": 3},
+    )
+
+
+@app.exception_handler(StorageUnavailableError)
+async def storage_unavailable_exception_handler(request: Request, exc: StorageUnavailableError):
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": "3"},
+        content={"detail": str(exc), "error": "storage_unavailable", "retry_after_seconds": 3},
     )
 
 def model_list(env_name, primary, defaults):

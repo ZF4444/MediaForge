@@ -1,0 +1,56 @@
+groups:
+  - name: mediaforge
+    rules:
+      - alert: MediaForgeBackgroundJobFailure
+        expr: increase(mediaforge_background_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MediaForge background job failed"
+          description: "A storage cleanup or metadata purge job failed in the last 5 minutes."
+
+      - alert: MediaForgePostgresPoolWaiting
+        expr: mediaforge_pg_pool_waiting > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MediaForge PostgreSQL pool has waiting requests"
+          description: "Requests have waited for a PostgreSQL connection for more than 2 minutes."
+
+      - alert: MediaForgePostgresLockWaiting
+        expr: mediaforge_pg_lock_waiting > 0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MediaForge PostgreSQL sessions are waiting on locks"
+          description: "At least one PostgreSQL session has been waiting on a lock for 3 minutes."
+
+      - alert: MediaForgePostgresSlowQueries
+        expr: increase(mediaforge_pg_slow_queries_total[5m]) >= 10
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MediaForge PostgreSQL slow-query rate increased"
+          description: "At least 10 queries exceeded the slow-query threshold in 5 minutes."
+
+      - alert: MediaForgeMinioFailures
+        expr: increase(mediaforge_minio_failures_total[5m]) >= 3
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MediaForge MinIO operations are failing"
+          description: "At least 3 MinIO operations failed in 5 minutes."
+
+      - alert: MediaForgeTransientRetrySpike
+        expr: increase(mediaforge_transient_retries_total[5m]) >= 10
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MediaForge dependency retries increased"
+          description: "At least 10 PostgreSQL or MinIO transient retries occurred in 5 minutes."

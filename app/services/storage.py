@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.parse
 import uuid
 from datetime import datetime, timedelta
@@ -20,11 +21,14 @@ from PIL import Image
 from app.config import (
     DATABASE_URL,
     GLOBAL_CONFIG_LOCK,
+    HEALTH_CHECK_TIMEOUT_SECONDS,
     MINIO_ACCESS_KEY,
     MINIO_BUCKET_PRIVATE,
     MINIO_BUCKET_PUBLIC,
     MINIO_BUCKET_TEMP,
+    MINIO_CONNECT_TIMEOUT_SECONDS,
     MINIO_ENDPOINT,
+    MINIO_READ_TIMEOUT_SECONDS,
     MINIO_SECRET_KEY,
     MINIO_SECURE,
     STORAGE_CACHE_DIR,
@@ -41,9 +45,23 @@ from app.config import (
     STORAGE_USER_QUOTA_BYTES,
 )
 from app.core.auth import current_user_id
+from app.core.database import database_connection
+from app.core.logging import get_logger
+from app.core.metrics import (
+    BACKGROUND_FAILURES,
+    BACKGROUND_RUNS,
+    MINIO_BUCKET_BYTES,
+    MINIO_BUCKET_OBJECTS,
+    MINIO_FAILURES,
+    MINIO_OPERATION_SECONDS,
+    TRANSIENT_RETRIES,
+)
+from app.core.retry import retry_delay_seconds, retry_max_attempts, retry_operation_id
 from app.core.utils import now_ms
 
+logger = get_logger("storage")
 _CLIENT = None
+_HEALTH_CLIENT = None
 _CLIENT_LOCK = Lock()
 _BUCKETS_READY: set[str] = set()
 _BUCKETS_LOCK = Lock()
@@ -67,6 +85,10 @@ class StorageQuotaExceeded(RuntimeError):
             f"存储空间不足：当前已使用 {self.used_bytes} 字节，"
             f"本次写入 {self.incoming_bytes} 字节，配额上限 {self.quota_bytes} 字节。"
         )
+
+
+class StorageUnavailableError(RuntimeError):
+    """A transient MinIO failure that should be exposed as HTTP 503."""
 
 
 FILES_TABLE_SQL = """
@@ -132,6 +154,73 @@ def verify_storage_startup() -> None:
     _ensure_files_table()
     for bucket in (MINIO_BUCKET_PRIVATE, MINIO_BUCKET_PUBLIC, MINIO_BUCKET_TEMP):
         _ensure_bucket(bucket)
+
+
+def storage_readiness_status() -> Dict[str, Any]:
+    """Probe required PostgreSQL and MinIO dependencies without mutating them."""
+    components: Dict[str, str] = {}
+
+    if not metadata_db_enabled():
+        components["postgres"] = "not_configured"
+    else:
+        try:
+            with database_connection(max_attempts=1) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
+            components["postgres"] = "ok"
+        except Exception:
+            logger.warning("PostgreSQL readiness check failed", extra={"event": "postgres_readiness_failed"})
+            components["postgres"] = "unavailable"
+
+    if not storage_enabled():
+        components["minio"] = "not_configured"
+    else:
+        try:
+            client = _get_health_client()
+            buckets = (MINIO_BUCKET_PRIVATE, MINIO_BUCKET_PUBLIC, MINIO_BUCKET_TEMP)
+            missing = [
+                bucket
+                for bucket in buckets
+                if not _minio_call(
+                    "bucket_exists",
+                    lambda name=bucket: client.bucket_exists(name),
+                    max_attempts=1,
+                )
+            ]
+            components["minio"] = "missing_bucket" if missing else "ok"
+        except Exception:
+            logger.warning("MinIO readiness check failed", extra={"event": "minio_readiness_failed"})
+            components["minio"] = "unavailable"
+
+    return {"ready": all(value == "ok" for value in components.values()), "components": components}
+
+
+def refresh_storage_metrics() -> None:
+    """Refresh registered object counts and bytes for each configured bucket."""
+    buckets = (MINIO_BUCKET_PRIVATE, MINIO_BUCKET_PUBLIC, MINIO_BUCKET_TEMP)
+    for bucket in buckets:
+        MINIO_BUCKET_BYTES.labels(bucket=bucket).set(0)
+        MINIO_BUCKET_OBJECTS.labels(bucket=bucket).set(0)
+    if not metadata_db_enabled():
+        return
+    try:
+        with _db_connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT bucket, COALESCE(SUM(size_bytes), 0) AS size_bytes, COUNT(*) AS object_count
+                FROM files
+                WHERE deleted_at IS NULL AND status <> 'deleted'
+                GROUP BY bucket
+                """
+            )
+            rows = cur.fetchall() or []
+        for row in rows:
+            bucket = str(row.get("bucket") or "unknown")
+            MINIO_BUCKET_BYTES.labels(bucket=bucket).set(int(row.get("size_bytes") or 0))
+            MINIO_BUCKET_OBJECTS.labels(bucket=bucket).set(int(row.get("object_count") or 0))
+    except Exception:
+        logger.exception("failed to refresh storage metrics", extra={"event": "storage_metrics_refresh_failed"})
 
 
 def _retention_days_for_category(category: str) -> int:
@@ -383,8 +472,8 @@ def run_storage_cleanup_once(limit: int = 0) -> Dict[str, int]:
         }, now_ms_value=now_value):
             continue
         deleted_at_ms = now_ms()
-        _mark_file_deleted(entry.get("file_id") or "", deleted_at_ms)
         delete_media_objects(entry)
+        _mark_file_deleted(entry.get("file_id") or "", deleted_at_ms)
         cache_path = cached_media_path(entry)
         if cache_path and os.path.isfile(cache_path):
             try:
@@ -416,22 +505,26 @@ def run_storage_metadata_purge_once(limit: int = 0) -> Dict[str, int]:
 async def storage_cleanup_loop() -> None:
     while True:
         try:
-            await asyncio.to_thread(run_storage_cleanup_once)
+            result = await asyncio.to_thread(run_storage_cleanup_once)
+            BACKGROUND_RUNS.labels(job="storage_cleanup", status="success").inc()
+            logger.info("storage cleanup completed", extra={"event": "storage_cleanup_completed", **result})
         except Exception:
-            pass
+            BACKGROUND_FAILURES.labels(job="storage_cleanup").inc()
+            BACKGROUND_RUNS.labels(job="storage_cleanup", status="failed").inc()
+            logger.exception("storage cleanup failed", extra={"event": "storage_cleanup_failed", "alert": True})
         try:
-            await asyncio.to_thread(run_storage_metadata_purge_once)
+            result = await asyncio.to_thread(run_storage_metadata_purge_once)
+            BACKGROUND_RUNS.labels(job="storage_metadata_purge", status="success").inc()
+            logger.info("storage metadata purge completed", extra={"event": "storage_metadata_purge_completed", **result})
         except Exception:
-            pass
+            BACKGROUND_FAILURES.labels(job="storage_metadata_purge").inc()
+            BACKGROUND_RUNS.labels(job="storage_metadata_purge", status="failed").inc()
+            logger.exception("storage metadata purge failed", extra={"event": "storage_metadata_purge_failed", "alert": True})
         await asyncio.sleep(max(60, int(STORAGE_CLEANUP_INTERVAL_SECONDS or 3600)))
 
 
 def _storage_import_error() -> RuntimeError:
     return RuntimeError("MinIO SDK unavailable. Run `uv sync` to install the `minio` dependency.")
-
-
-def _database_import_error() -> RuntimeError:
-    return RuntimeError("PostgreSQL driver unavailable. Run `uv sync` to install the `psycopg` dependency.")
 
 
 def _get_client():
@@ -440,28 +533,134 @@ def _get_client():
         raise RuntimeError("MinIO is not configured")
     with _CLIENT_LOCK:
         if _CLIENT is None:
-            try:
-                from minio import Minio
-            except ImportError as exc:
-                raise _storage_import_error() from exc
-            _CLIENT = Minio(
-                MINIO_ENDPOINT,
-                access_key=MINIO_ACCESS_KEY,
-                secret_key=MINIO_SECRET_KEY,
-                secure=MINIO_SECURE,
-            )
+            _CLIENT = _create_minio_client(MINIO_CONNECT_TIMEOUT_SECONDS, MINIO_READ_TIMEOUT_SECONDS, maxsize=20)
         return _CLIENT
+
+
+def _get_health_client():
+    global _HEALTH_CLIENT
+    if not storage_enabled():
+        raise RuntimeError("MinIO is not configured")
+    with _CLIENT_LOCK:
+        if _HEALTH_CLIENT is None:
+            _HEALTH_CLIENT = _create_minio_client(
+                HEALTH_CHECK_TIMEOUT_SECONDS,
+                HEALTH_CHECK_TIMEOUT_SECONDS,
+                maxsize=4,
+            )
+        return _HEALTH_CLIENT
+
+
+def _create_minio_client(connect_timeout: float, read_timeout: float, *, maxsize: int):
+    try:
+        from minio import Minio
+        import urllib3
+    except ImportError as exc:
+        raise _storage_import_error() from exc
+    http_client = urllib3.PoolManager(
+        timeout=urllib3.Timeout(connect=connect_timeout, read=read_timeout),
+        retries=False,
+        maxsize=maxsize,
+        num_pools=4,
+    )
+    return Minio(
+        MINIO_ENDPOINT,
+        access_key=MINIO_ACCESS_KEY,
+        secret_key=MINIO_SECRET_KEY,
+        secure=MINIO_SECURE,
+        http_client=http_client,
+    )
+
+
+def _is_transient_storage_error(exc: BaseException) -> bool:
+    try:
+        import urllib3
+        from minio.error import S3Error
+    except ImportError:
+        return isinstance(exc, (TimeoutError, OSError))
+    if isinstance(exc, (TimeoutError, OSError, urllib3.exceptions.HTTPError)):
+        return True
+    if isinstance(exc, S3Error):
+        response = getattr(exc, "response", None)
+        try:
+            status = int(getattr(response, "status", 0) or 0)
+        except (TypeError, ValueError):
+            status = 0
+        return status >= 500 or str(getattr(exc, "code", "")) in {
+            "InternalError", "RequestTimeout", "ServiceUnavailable", "SlowDown",
+        }
+    return False
+
+
+def _is_storage_not_found_error(exc: BaseException) -> bool:
+    try:
+        from minio.error import S3Error
+    except ImportError:
+        return False
+    return isinstance(exc, S3Error) and str(getattr(exc, "code", "")) in {
+        "NoSuchBucket",
+        "NoSuchKey",
+        "NoSuchObject",
+        "NotFound",
+    }
+
+
+def _minio_call(operation: str, callback, *, object_id: str = "", max_attempts: Optional[int] = None):
+    attempts = retry_max_attempts() if max_attempts is None else max(1, int(max_attempts))
+    operation_id = retry_operation_id("minio")
+    for attempt in range(1, attempts + 1):
+        started = time.perf_counter()
+        status = "success"
+        try:
+            return callback()
+        except StorageUnavailableError:
+            status = "error"
+            raise
+        except Exception as exc:
+            status = "error"
+            MINIO_FAILURES.labels(operation=operation, error_type=type(exc).__name__).inc()
+            is_transient = _is_transient_storage_error(exc)
+            if not is_transient:
+                raise
+            if attempt < attempts:
+                delay = retry_delay_seconds(attempt)
+                TRANSIENT_RETRIES.labels(backend="minio", operation=operation).inc()
+                logger.warning(
+                    "retrying MinIO operation",
+                    extra={
+                        "event": "storage_retry_scheduled",
+                        "operation": operation,
+                        "operation_id": operation_id,
+                        "object_id": object_id or None,
+                        "attempt": attempt,
+                        "max_attempts": attempts,
+                        "delay_seconds": round(delay, 3),
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                time.sleep(delay)
+                continue
+            logger.warning(
+                "MinIO unavailable",
+                extra={
+                    "event": "storage_unavailable",
+                    "operation": operation,
+                    "operation_id": operation_id,
+                    "object_id": object_id or None,
+                    "attempts": attempts,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise StorageUnavailableError("对象存储服务暂时不可用，请稍后重试") from exc
+        finally:
+            MINIO_OPERATION_SECONDS.labels(operation=operation, status=status).observe(time.perf_counter() - started)
+    raise StorageUnavailableError("对象存储服务暂时不可用，请稍后重试")
 
 
 def _db_connect():
     if not metadata_db_enabled():
         return None
-    try:
-        import psycopg
-        from psycopg.rows import dict_row
-    except ImportError as exc:
-        raise _database_import_error() from exc
-    return psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row)
+    return database_connection()
 
 
 def _ensure_files_table() -> None:
@@ -482,8 +681,8 @@ def _ensure_bucket(bucket: str) -> None:
     with _BUCKETS_LOCK:
         if bucket in _BUCKETS_READY:
             return
-        if not client.bucket_exists(bucket):
-            client.make_bucket(bucket)
+        if not _minio_call("bucket_exists", lambda: client.bucket_exists(bucket)):
+            _minio_call("make_bucket", lambda: client.make_bucket(bucket))
         _BUCKETS_READY.add(bucket)
 
 
@@ -492,12 +691,16 @@ def save_bytes(data: bytes, object_key: str, content_type: str = "", bucket: str
     _ensure_bucket(bucket_name)
     payload = data if isinstance(data, bytes) else bytes(data or b"")
     client = _get_client()
-    result = client.put_object(
-        bucket_name,
-        object_key,
-        BytesIO(payload),
-        len(payload),
-        content_type=content_type or "application/octet-stream",
+    result = _minio_call(
+        "put_object",
+        lambda: client.put_object(
+            bucket_name,
+            object_key,
+            BytesIO(payload),
+            len(payload),
+            content_type=content_type or "application/octet-stream",
+        ),
+        object_id=object_key,
     )
     return {
         "bucket": bucket_name,
@@ -512,12 +715,30 @@ def save_fileobj(fileobj: BinaryIO, object_key: str, length: int, content_type: 
     bucket_name = (bucket or MINIO_BUCKET_PRIVATE).strip() or MINIO_BUCKET_PRIVATE
     _ensure_bucket(bucket_name)
     client = _get_client()
-    result = client.put_object(
-        bucket_name,
-        object_key,
-        fileobj,
-        length,
-        content_type=content_type or "application/octet-stream",
+    try:
+        initial_position = fileobj.tell()
+        fileobj.seek(initial_position)
+        retryable = True
+    except (AttributeError, OSError):
+        initial_position = 0
+        retryable = False
+
+    def _put_fileobj():
+        if retryable:
+            fileobj.seek(initial_position)
+        return client.put_object(
+            bucket_name,
+            object_key,
+            fileobj,
+            length,
+            content_type=content_type or "application/octet-stream",
+        )
+
+    result = _minio_call(
+        "put_object",
+        _put_fileobj,
+        object_id=object_key,
+        max_attempts=retry_max_attempts() if retryable else 1,
     )
     return {
         "bucket": bucket_name,
@@ -529,36 +750,42 @@ def save_fileobj(fileobj: BinaryIO, object_key: str, length: int, content_type: 
 
 
 def get_presigned_get_url(bucket: str, object_key: str, expires_seconds: int = 900) -> str:
-    return _get_client().presigned_get_object(bucket, object_key, expires=timedelta(seconds=max(1, int(expires_seconds or 900))))
+    return _minio_call("presigned_get_object", lambda: _get_client().presigned_get_object(bucket, object_key, expires=timedelta(seconds=max(1, int(expires_seconds or 900)))))
 
 
 def get_presigned_put_url(bucket: str, object_key: str, expires_seconds: int = 900) -> str:
-    return _get_client().presigned_put_object(bucket, object_key, expires=timedelta(seconds=max(1, int(expires_seconds or 900))))
+    return _minio_call("presigned_put_object", lambda: _get_client().presigned_put_object(bucket, object_key, expires=timedelta(seconds=max(1, int(expires_seconds or 900)))))
 
 
 def delete_object(bucket: str, object_key: str) -> None:
-    _get_client().remove_object(bucket, object_key)
+    _minio_call("remove_object", lambda: _get_client().remove_object(bucket, object_key), object_id=object_key)
 
 
 def stat_object(bucket: str, object_key: str):
-    return _get_client().stat_object(bucket, object_key)
+    return _minio_call("stat_object", lambda: _get_client().stat_object(bucket, object_key), object_id=object_key)
 
 
 def get_object_bytes(bucket: str, object_key: str) -> bytes:
-    response = _get_client().get_object(bucket, object_key)
-    try:
-        return response.read()
-    finally:
-        response.close()
-        response.release_conn()
+    def _read_object() -> bytes:
+        response = _get_client().get_object(bucket, object_key)
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()
+    return _minio_call("get_object", _read_object, object_id=object_key)
 
 
 def object_exists(bucket: str, object_key: str) -> bool:
     try:
         stat_object(bucket, object_key)
         return True
-    except Exception:
-        return False
+    except StorageUnavailableError:
+        raise
+    except Exception as exc:
+        if _is_storage_not_found_error(exc):
+            return False
+        raise
 
 
 def _row_to_entry(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -1127,6 +1354,8 @@ def remove_media_url(url: str, *, delete_remote: bool = False) -> Optional[Dict[
         removed = lookup_media_url(url)
     if not removed:
         return None
+    if delete_remote:
+        delete_media_objects(removed)
     deleted_at = now_ms()
     _ensure_files_table()
     with _db_connect() as conn:
@@ -1139,14 +1368,22 @@ def remove_media_url(url: str, *, delete_remote: bool = False) -> Optional[Dict[
                 """,
                 (deleted_at, deleted_at, removed["file_id"]),
             )
-    if delete_remote:
-        delete_media_objects(removed)
     cache_path = cached_media_path(removed)
     if cache_path and os.path.isfile(cache_path):
         try:
             os.remove(cache_path)
         except OSError:
             pass
+    logger.info(
+        "media file deleted",
+        extra={
+            "event": "media_file_deleted",
+            "object_id": removed.get("file_id"),
+            "file_id": removed.get("file_id"),
+            "bucket": removed.get("bucket"),
+            "delete_remote": delete_remote,
+        },
+    )
     return removed
 
 
@@ -1280,10 +1517,7 @@ def delete_media_objects(entry: Dict[str, Any]) -> None:
         if not key or key in seen:
             continue
         seen.add(key)
-        try:
-            delete_object(bucket, key)
-        except Exception:
-            pass
+        delete_object(bucket, key)
 
 
 def media_objects_exist(entry: Dict[str, Any]) -> bool:
@@ -1409,25 +1643,52 @@ def save_media_bytes(
     object_key = build_object_key(category, file_id, ext)
     stored = save_bytes(payload, object_key, content_type=content_type, bucket=bucket)
     url = file_preview_url(file_id)
-    entry = register_media_url(
-        url,
-        stored["bucket"],
-        stored["object_key"],
-        filename=filename,
-        category=category,
-        original_name=original_name or filename,
-        content_type=content_type,
-        kind=kind,
-        size=stored["size"],
-        file_id=file_id,
-        sha256=hashlib.sha256(payload).hexdigest(),
-        source=source,
-        is_public=False,
-        expires_at=(
-            now_ms() + STORAGE_TEMP_RETENTION_DAYS * 24 * 60 * 60 * 1000
-            if category == "temp" and int(STORAGE_TEMP_RETENTION_DAYS or 0) > 0
-            else None
-        ),
-    )
+    try:
+        entry = register_media_url(
+            url,
+            stored["bucket"],
+            stored["object_key"],
+            filename=filename,
+            category=category,
+            original_name=original_name or filename,
+            content_type=content_type,
+            kind=kind,
+            size=stored["size"],
+            file_id=file_id,
+            sha256=hashlib.sha256(payload).hexdigest(),
+            source=source,
+            is_public=False,
+            expires_at=(
+                now_ms() + STORAGE_TEMP_RETENTION_DAYS * 24 * 60 * 60 * 1000
+                if category == "temp" and int(STORAGE_TEMP_RETENTION_DAYS or 0) > 0
+                else None
+            ),
+        )
+    except Exception:
+        try:
+            delete_object(stored["bucket"], stored["object_key"])
+        except Exception:
+            logger.exception(
+                "failed to roll back orphaned media object",
+                extra={
+                    "event": "media_object_rollback_failed",
+                    "alert": True,
+                    "object_id": file_id,
+                    "file_id": file_id,
+                    "bucket": stored["bucket"],
+                },
+            )
+        raise
     ensure_media_derivatives(entry, payload=payload)
+    logger.info(
+        "media file stored",
+        extra={
+            "event": "media_file_stored",
+            "object_id": file_id,
+            "file_id": file_id,
+            "bucket": stored["bucket"],
+            "category": category,
+            "size_bytes": stored["size"],
+        },
+    )
     return {**stored, "url": url, "entry": entry, "file_id": file_id}
