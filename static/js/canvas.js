@@ -2048,7 +2048,7 @@ function addCaptionNode(point){
         y:p.y,
         captionProvider:providerId,
         model:resolveChatModel('', providerId),
-        systemPrompt:'请详细描述这张图片的内容，包括主体、场景、风格、光照、色彩、构图等信息，用自然语言输出，适合作为AI绘画的提示词。',
+        captionTemplateId:'',
         userPrompt:'',
         outputText:'',
         running:false
@@ -2064,7 +2064,7 @@ function addExpandNode(point){
         y:p.y,
         expandProvider:providerId,
         model:resolveChatModel('', providerId),
-        systemPrompt:'',
+        expandTemplateId:'',
         expandInput:'',
         outputText:'',
         running:false
@@ -6284,6 +6284,25 @@ function refreshCanvasPromptTemplatesFromLibraries(){
     canvasPromptTemplates = activeCanvasPromptLibraryItems();
     renderCanvasPromptLibrarySelect();
 }
+function canvasRuleTemplateItems(){
+    const hidden = new Set(canvasPromptTemplateOverrides.hiddenBuiltinIds || []);
+    return canvasPromptLibraries.flatMap(library => (library.items || [])
+        .filter(template => template?.id && template?.positive && !(library.id === 'system' && hidden.has(template.id)))
+        .map(template => ({
+            ...template,
+            ...(library.id === 'system' ? (canvasPromptTemplateOverrides.editedBuiltins?.[template.id] || {}) : {}),
+            key:`${library.id}:${template.id}`,
+            libraryName:library.name || tr('canvas.promptTemplateLibrary')
+        })));
+}
+function canvasRuleTemplateOptions(selectedKey){
+    const templates = canvasRuleTemplateItems();
+    if(!templates.length) return `<option value="">${escapeHtml(tr('canvas.promptTemplateEmpty'))}</option>`;
+    return templates.map(template => `<option value="${escapeAttr(template.key)}" ${template.key === selectedKey ? 'selected' : ''}>${escapeHtml(`${template.libraryName} · ${canvasPromptTemplateName(template)}`)}</option>`).join('');
+}
+function canvasRuleTemplateContent(selectedKey, fallback){
+    return canvasRuleTemplateItems().find(template => template.key === selectedKey)?.positive || fallback;
+}
 function renderCanvasPromptLibrarySelect(){
     if(!promptTemplateLibrarySelect) return;
     promptTemplateLibrarySelect.innerHTML = canvasPromptLibraries.map(lib => `<option value="${escapeAttr(lib.id)}" ${lib.id === activePromptLibraryId ? 'selected' : ''}>${escapeHtml(lib.name || '提示词库')}</option>`).join('');
@@ -7289,16 +7308,14 @@ function openExpandRuleManager(){
     document.body.appendChild(overlay);
 }
 function renderExpandBody(node){
-    if(!expandRulesLoaded) loadExpandRules().then(()=>render());
+    if(!canvasPromptTemplatesLoaded) loadCanvasPromptTemplates().then(()=>render());
     const wrap = document.createElement('div');
     wrap.className = 'llm-body';
     node.expandProvider = resolveChatProviderId(node.expandProvider || 'comfly');
     const prov = node.expandProvider;
     if(!providerChatModels(prov).includes(node.model)) node.model = providerChatModels(prov)[0] || node.model;
     const modelOpts = chatModelOptions(node.model, prov);
-    const activeRule = getActiveExpandRule();
-    const selectedRuleId = node.expandRuleId || activeRule.id;
-    const customEnabled = Boolean(node.expandCustomRule);
+    const selectedTemplateId = node.expandTemplateId || '';
     const connectedInput = llmInputText(node);
     const isReadonly = connectedInput.length > 0;
     const inputValue = connectedInput || node.expandInput || '';
@@ -7308,13 +7325,8 @@ function renderExpandBody(node){
             <select class="select-lite expand-model">${modelOpts}</select>
         </div>
         <div class="llm-row" style="gap:6px;align-items:center">
-            <select class="select-lite expand-rule-select" style="flex:1" ${customEnabled?'disabled':''}>${expandRuleOptions(selectedRuleId)}</select>
-            <button class="expand-rule-mgr-btn llm-run" type="button" style="flex:none;width:auto;height:34px;padding:0 12px;font-size:11px">${tr('canvas.expandRuleManager')}</button>
+            <select class="select-lite expand-template-select" style="flex:1">${canvasRuleTemplateOptions(selectedTemplateId)}</select>
         </div>
-        <div style="display:flex;align-items:center;gap:6px">
-            <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;white-space:nowrap;cursor:pointer"><input type="checkbox" class="expand-custom-toggle" ${customEnabled?'checked':''}>${tr('canvas.captionCustomRule')}</label>
-        </div>
-        ${customEnabled?`<textarea class="llm-system expand-system" placeholder="${tr('canvas.expandSystemPrompt')}" style="min-height:50px;max-height:100px;resize:vertical">${escapeHtml(node.systemPrompt||'')}</textarea>`:''}
         <div class="llm-pane-label">Input${isReadonly?' <span style="font-size:9px;opacity:.5">(来自连接)</span>':''}</div>
         <textarea class="llm-system expand-input" ${isReadonly?'readonly':''} placeholder="${tr('canvas.expandInputHint')}" style="min-height:50px;max-height:100px;resize:vertical">${escapeHtml(inputValue)}</textarea>
         <div class="llm-output-wrap">
@@ -7332,10 +7344,7 @@ function renderExpandBody(node){
     provSel.value=prov; modSel.value=resolveChatModel(node.model,prov);
     provSel.onchange=e=>{e.stopPropagation();node.expandProvider=e.target.value;node.model=providerChatModels(node.expandProvider)[0]||'';render();scheduleSave();};
     modSel.onchange=e=>{e.stopPropagation();node.model=e.target.value;scheduleSave();};
-    const ruleSel=wrap.querySelector('.expand-rule-select'); ruleSel.onmousedown=e=>e.stopPropagation(); ruleSel.onchange=e=>{e.stopPropagation();node.expandRuleId=e.target.value;scheduleSave();};
-    const custTog=wrap.querySelector('.expand-custom-toggle'); custTog.onmousedown=e=>e.stopPropagation(); custTog.onchange=e=>{e.stopPropagation();node.expandCustomRule=e.target.checked;render();scheduleSave();};
-    wrap.querySelector('.expand-rule-mgr-btn').onclick=e=>{e.stopPropagation();openExpandRuleManager();};
-    const sysEl=wrap.querySelector('.expand-system'); if(sysEl){sysEl.oninput=e=>{node.systemPrompt=e.target.value;scheduleSave();};bindScrollableText(sysEl);}
+    const templateSel=wrap.querySelector('.expand-template-select'); templateSel.onmousedown=e=>e.stopPropagation(); templateSel.onchange=e=>{e.stopPropagation();node.expandTemplateId=e.target.value;scheduleSave();};
     const inEl=wrap.querySelector('.expand-input'); if(!isReadonly) inEl.oninput=e=>{node.expandInput=e.target.value;scheduleSave();}; bindScrollableText(inEl);
     bindScrollableText(wrap.querySelector('.expand-result-output'));
     wrap.querySelector('.expand-run').onclick=e=>{e.stopPropagation();runExpandNode(node.id);};
@@ -7345,7 +7354,7 @@ function renderExpandBody(node){
     return wrap;
 }
 function renderCaptionBody(node){
-    if(!captionRulesLoaded) loadCaptionRules().then(()=>render());
+    if(!canvasPromptTemplatesLoaded) loadCanvasPromptTemplates().then(()=>render());
     const wrap = document.createElement('div');
     wrap.className = 'llm-body';
     node.captionProvider = resolveChatProviderId(node.captionProvider || 'comfly');
@@ -7354,9 +7363,7 @@ function renderCaptionBody(node){
     const modelOpts = chatModelOptions(node.model, prov);
     const imgs = llmInputImages(node);
     const imgBadge = imgs.length ? `<div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:rgba(16,185,129,.12);color:#047857;font-size:10.5px;font-weight:700;width:fit-content;line-height:1.4"><i data-lucide="image" class="w-3 h-3"></i>已连接 ${imgs.length} 张图片</div>` : '';
-    const activeRule = getActiveCaptionRule();
-    const selectedRuleId = node.captionRuleId || activeRule.id;
-    const customEnabled = Boolean(node.captionCustomRule);
+    const selectedTemplateId = node.captionTemplateId || '';
     wrap.innerHTML = `
         <div class="llm-row">
             <select class="select-lite caption-provider-select" style="flex:1">${chatProviderOptions(prov)}</select>
@@ -7364,13 +7371,8 @@ function renderCaptionBody(node){
         </div>
         ${imgBadge}
         <div class="llm-row" style="gap:6px;align-items:center">
-            <select class="select-lite caption-rule-select" style="flex:1" ${customEnabled?'disabled':''}>${captionRuleOptions(selectedRuleId)}</select>
-            <button class="caption-rule-mgr-btn llm-run" type="button" style="flex:none;width:auto;height:34px;padding:0 12px;font-size:11px">${tr('canvas.captionRuleManager')}</button>
+            <select class="select-lite caption-template-select" style="flex:1">${canvasRuleTemplateOptions(selectedTemplateId)}</select>
         </div>
-        <div style="display:flex;align-items:center;gap:6px">
-            <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;white-space:nowrap;cursor:pointer"><input type="checkbox" class="caption-custom-toggle" ${customEnabled?'checked':''}>${tr('canvas.captionCustomRule')}</label>
-        </div>
-        ${customEnabled ? `<textarea class="llm-system caption-system" placeholder="${tr('canvas.captionSystemPrompt')}" style="min-height:60px;max-height:120px;resize:vertical">${escapeHtml(node.systemPrompt || '')}</textarea>` : ''}
         <textarea class="llm-system caption-user" placeholder="${tr('canvas.captionUserPrompt')}" style="min-height:36px;max-height:80px;resize:vertical">${escapeHtml(node.userPrompt || '')}</textarea>
         <div class="llm-output-wrap">
             <button class="llm-copy-btn caption-output-copy" type="button" title="复制"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>
@@ -7397,15 +7399,9 @@ function renderCaptionBody(node){
         render(); scheduleSave();
     };
     modelSelect.onchange = e => { e.stopPropagation(); node.model = e.target.value; scheduleSave(); };
-    const ruleSelect = wrap.querySelector('.caption-rule-select');
-    ruleSelect.onmousedown = e => e.stopPropagation();
-    ruleSelect.onchange = e => { e.stopPropagation(); node.captionRuleId = e.target.value; scheduleSave(); };
-    const customToggle = wrap.querySelector('.caption-custom-toggle');
-    customToggle.onmousedown = e => e.stopPropagation();
-    customToggle.onchange = e => { e.stopPropagation(); node.captionCustomRule = e.target.checked; render(); scheduleSave(); };
-    wrap.querySelector('.caption-rule-mgr-btn').onclick = e => { e.stopPropagation(); openCaptionRuleManager(); };
-    const sysEl = wrap.querySelector('.caption-system');
-    if(sysEl){ sysEl.oninput = e => { node.systemPrompt = e.target.value; scheduleSave(); }; bindScrollableText(sysEl); }
+    const templateSelect = wrap.querySelector('.caption-template-select');
+    templateSelect.onmousedown = e => e.stopPropagation();
+    templateSelect.onchange = e => { e.stopPropagation(); node.captionTemplateId = e.target.value; scheduleSave(); };
     const userEl = wrap.querySelector('.caption-user');
     userEl.oninput = e => { node.userPrompt = e.target.value; scheduleSave(); };
     bindScrollableText(userEl);
@@ -10615,7 +10611,7 @@ async function runCaptionNode(nodeId, opts={}){
     try {
         const prov = resolveChatProviderId(node.captionProvider || 'comfly');
         const model = resolveChatModel(node.model, prov);
-        const systemPrompt = node.captionCustomRule ? (node.systemPrompt || '请详细描述这张图片的内容。') : ((allCaptionRules().find(r => r.id === node.captionRuleId) || getActiveCaptionRule()).content || '请详细描述这张图片的内容。');
+        const systemPrompt = canvasRuleTemplateContent(node.captionTemplateId, '请详细描述这张图片的内容。');
         const message = node.userPrompt || '请描述这张图片';
         const result = await cascadeFetch('/api/canvas-llm', {
             method:'POST',
@@ -10665,7 +10661,7 @@ async function runExpandNode(nodeId, opts={}){
     try {
         const prov = resolveChatProviderId(node.expandProvider || 'comfly');
         const model = resolveChatModel(node.model, prov);
-        const systemPrompt = node.expandCustomRule ? (node.systemPrompt || '') : ((allExpandRules().find(r => r.id === node.expandRuleId) || getActiveExpandRule()).content || '');
+        const systemPrompt = canvasRuleTemplateContent(node.expandTemplateId, '');
         const result = await cascadeFetch('/api/canvas-llm', {
             method:'POST',
             headers:{'Content-Type':'application/json'},

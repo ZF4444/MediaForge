@@ -197,7 +197,7 @@
         "smart.promptCaptionRun": { zh: "反推", en: "Caption" },
         "smart.promptExpandRun": { zh: "扩写", en: "Enhance" },
         "smart.promptCaptionNeedImage": { zh: "请先连接图片节点", en: "Connect an image node first" },
-        "smart.promptRuleLoading": { zh: "加载规则中...", en: "Loading rules..." },
+        "smart.promptTemplateEmpty": { zh: "没有可用模板", en: "No templates available" },
         "smart.promptLlmNeedText": { zh: "请先输入给 LLM 的文本", en: "Enter text for the LLM first" },
         "smart.promptLlmFailed": { zh: "LLM 运行失败", en: "LLM run failed" },
         "smart.loopPromptHintFound": { zh: "识别到 {n} 条提示词，按计数轮流输出", en: "Found {n} prompt(s); outputs rotate by count" },
