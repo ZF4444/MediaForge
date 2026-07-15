@@ -31,6 +31,7 @@ from app.services.prompts import (
 router = APIRouter()
 
 PROMPT_BUILTIN_CATEGORY_IDS = {"view", "storyboard", "character", "product", "lighting", "custom"}
+PROMPT_RESERVED_LIBRARY_IDS = {"system", "caption", "expand"}
 
 
 @router.get("/api/prompt-libraries")
@@ -57,6 +58,8 @@ async def create_prompt_library(payload: PromptLibraryRequest):
 
 @router.patch("/api/prompt-libraries/{library_id}")
 async def rename_prompt_library(library_id: str, payload: PromptLibraryRequest):
+    if library_id in PROMPT_RESERVED_LIBRARY_IDS:
+        raise HTTPException(status_code=400, detail="内置提示词库不能改名")
     data = load_prompt_libraries()
     library = find_prompt_library(data, library_id)
     if not library or library.get("id") != library_id:
@@ -68,8 +71,8 @@ async def rename_prompt_library(library_id: str, payload: PromptLibraryRequest):
 
 @router.delete("/api/prompt-libraries/{library_id}")
 async def delete_prompt_library(library_id: str):
-    if library_id == "system":
-        raise HTTPException(status_code=400, detail="系统提示词库不能删除，可以删除其中的提示词")
+    if library_id in PROMPT_RESERVED_LIBRARY_IDS:
+        raise HTTPException(status_code=400, detail="内置提示词库不能删除，可以删除其中的提示词")
     data = load_prompt_libraries()
     libraries = data.get("libraries", []) or []
     kept = [lib for lib in libraries if lib.get("id") != library_id]
