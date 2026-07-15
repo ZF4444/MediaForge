@@ -13877,15 +13877,46 @@ function resumeSmartPendingTasks(){
 }
 function updateSelectionBox(event){
     if(!selectionState) return;
-    if(selectionActions) selectionActions.hidden = true;
     const shellRect = shell.getBoundingClientRect();
     const sx = selectionState.startScreen.x, sy = selectionState.startScreen.y;
     const x = Math.min(sx, event.clientX), y = Math.min(sy, event.clientY);
+    const currentWorld = screenToWorld(event);
+    selectionState.currentWorld = currentWorld;
     selectionBox.style.display = 'block';
     selectionBox.style.left = `${x - shellRect.left}px`;
     selectionBox.style.top = `${y - shellRect.top}px`;
     selectionBox.style.width = `${Math.abs(event.clientX - sx)}px`;
     selectionBox.style.height = `${Math.abs(event.clientY - sy)}px`;
+    selectedIds = nodesInSelectionBounds(selectionState.startWorld, currentWorld);
+    selectedId = '';
+    selectedImage = {nodeId:'', index:-1};
+    syncSelectionUi();
+    const boxLeft = x - shellRect.left;
+    const boxRight = Math.max(sx, event.clientX) - shellRect.left;
+    const boxTop = y - shellRect.top;
+    positionSelectionActions(boxLeft, boxTop, boxRight, selectedIds.length);
+}
+function nodesInSelectionBounds(a, b){
+    const minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
+    const maxX = Math.max(a.x, b.x), maxY = Math.max(a.y, b.y);
+    return nodes.filter(node => {
+        const rect = nodeRect(node);
+        return rect.x < maxX && rect.x + rect.width > minX && rect.y < maxY && rect.y + rect.height > minY;
+    }).map(node => node.id);
+}
+function positionSelectionActions(left, top, right, selectedCount){
+    if(!selectionActions) return;
+    selectionActions.hidden = selectedCount < 2;
+    if(selectionActions.hidden) return;
+    const selectionCenter = (left + right) / 2;
+    const actionLeft = Math.max(8, Math.min(shell.clientWidth - selectionActions.offsetWidth - 8, selectionCenter - selectionActions.offsetWidth / 2));
+    const actionTop = Math.max(selectionActions.offsetHeight + 8, top - 8);
+    selectionActions.style.left = `${Math.round(actionLeft)}px`;
+    selectionActions.style.top = `${Math.round(actionTop)}px`;
+    const saveButton = selectionActions.querySelector('[data-selection-action="save"]');
+    if(saveButton) saveButton.disabled = !selectedAssetSaveItems().length;
+    const groupButton = selectionActions.querySelector('[data-selection-action="group"]');
+    if(groupButton) groupButton.disabled = !selectedIds.some(id => !isSmartGroupNode(nodes.find(node => node.id === id)));
 }
 function updateSelectionActions(){
     if(!selectionBox || !selectionActions || selectionState) return;
@@ -13906,29 +13937,12 @@ function updateSelectionActions(){
     selectionBox.style.top = `${Math.round(top)}px`;
     selectionBox.style.width = `${Math.round(right - left)}px`;
     selectionBox.style.height = `${Math.round(bottom - top)}px`;
-    selectionActions.hidden = selectedEls.length < 2;
-    if(selectionActions.hidden) return;
-    const selectionCenter = (left + right) / 2;
-    const actionLeft = Math.max(8, Math.min(shell.clientWidth - selectionActions.offsetWidth - 8, selectionCenter - selectionActions.offsetWidth / 2));
-    const actionTop = Math.max(selectionActions.offsetHeight + 8, top - 8);
-    selectionActions.style.left = `${Math.round(actionLeft)}px`;
-    selectionActions.style.top = `${Math.round(actionTop)}px`;
-    const saveButton = selectionActions.querySelector('[data-selection-action="save"]');
-    if(saveButton) saveButton.disabled = !selectedAssetSaveItems().length;
-    const groupButton = selectionActions.querySelector('[data-selection-action="group"]');
-    if(groupButton) groupButton.disabled = !selectedIds.some(id => !isSmartGroupNode(nodes.find(node => node.id === id)));
+    positionSelectionActions(left, top, right, selectedEls.length);
     refreshIcons();
 }
 function finishSelection(event){
     if(!selectionState) return;
-    const a = selectionState.startWorld;
-    const b = screenToWorld(event);
-    const minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
-    const maxX = Math.max(a.x, b.x), maxY = Math.max(a.y, b.y);
-    selectedIds = nodes.filter(node => {
-        const r = nodeRect(node);
-        return r.x < maxX && r.x + r.width > minX && r.y < maxY && r.y + r.height > minY;
-    }).map(n => n.id);
+    selectedIds = nodesInSelectionBounds(selectionState.startWorld, selectionState.currentWorld || screenToWorld(event));
     selectedId = '';
     selectedImage = {nodeId:'', index:-1};
     selectionState = null;
