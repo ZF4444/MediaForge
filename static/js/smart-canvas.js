@@ -6589,6 +6589,10 @@ function bindPromptNodeControls(el, node){
     if(presetEdit) presetEdit.onclick = e => {
         e.preventDefault();
         e.stopPropagation();
+        if(promptTemplatePanel?.classList.contains('open') && promptTemplatePanel.dataset.target === 'node' && promptTemplatePanel.dataset.nodeId === node.id){
+            closePromptTemplatePanel();
+            return;
+        }
         editPromptPresetForNode(node);
     };
     const toggle = el.querySelector('.prompt-llm-toggle');
