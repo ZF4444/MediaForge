@@ -177,9 +177,7 @@ let pendingGroupUploadPoint = null;
 let mentionRange = null;
 let panState = null;
 let didPan = false;
-let rightMouseDownAt = 0;
 let rightMouseDownPoint = null;
-const RIGHT_CLICK_HOLD_THRESHOLD_MS = 450;
 let portDragState = null;
 let saveTimer = null;
 let suppressAutoSave = false;
@@ -14171,7 +14169,6 @@ shell.onmousedown = e => {
     if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
     if(e.button === 2){
         if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
-        rightMouseDownAt = performance.now();
         rightMouseDownPoint = {x:e.clientX, y:e.clientY};
     }
     // 中键按下时，即使指针落在图片节点上也允许拖拽画布；
@@ -14400,13 +14397,16 @@ window.onmousemove = e => {
     if(target) setDropHighlight(target.id);
 };
 window.onmouseup = e => {
-    if(e.button === 2 && rightMouseDownAt && rightMouseDownPoint){
-        const heldMs = performance.now() - rightMouseDownAt;
-        const moved = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y) > 4;
+    if(e.button === 2 && rightMouseDownPoint){
+        const moved = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y) > 3;
         const contextEvent = {clientX:e.clientX, clientY:e.clientY, target:e.target};
-        rightMouseDownAt = 0;
         rightMouseDownPoint = null;
-        if(heldMs < RIGHT_CLICK_HOLD_THRESHOLD_MS && !moved && !e.ctrlKey && !e.metaKey && !isRKeyDown){
+        if(!moved && !e.ctrlKey && !e.metaKey && !isRKeyDown){
+            if(panState?.button === 2){
+                viewport.x = panState.ox;
+                viewport.y = panState.oy;
+                applyViewport();
+            }
             setTimeout(() => openCanvasContextMenu(contextEvent), 0);
         }
     }
