@@ -6352,10 +6352,9 @@ function smartGroupBodyHtml(node){
             const ref = refThumbs[0];
             const innerW = Math.max(24, Number(groupThumbLayout.innerW || groupThumbLayout.width || SMART_GROUP_DEFAULT_WIDTH));
             const innerH = Math.max(24, Number(groupThumbLayout.innerH || groupThumbLayout.height || SMART_GROUP_DEFAULT_HEIGHT));
-            const canDelete = ref.nodeId === node.id;
             return `<div class="smart-group-card has-thumbs">
                 <div class="smart-group-summary"><i data-lucide="group"></i><span>${escapeHtml(summary)}</span></div>
-                <div class="image-wrap smart-group-single-thumb ${selectedImage.nodeId === ref.nodeId && Number(selectedImage.index) === Number(ref.index) ? 'image-selected' : ''}" data-ref-node-id="${escapeAttr(ref.nodeId)}" data-ref-image-index="${ref.index}" data-image-index="${ref.index}" data-media-signature="${escapeAttr(`${mediaKindForItem(ref.item)}:${ref.item?.url || ''}`)}" style="--node-img-w:${innerW}px;--node-img-h:${innerH}px">${singleMediaHtml(ref.item, innerW, innerH)}${imageResolutionBadgeHtml(ref.item)}${canDelete ? `<button class="mini-x image-delete" type="button" data-image-index="${ref.index}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button>` : ''}</div>
+                <div class="image-wrap smart-group-single-thumb ${selectedImage.nodeId === ref.nodeId && Number(selectedImage.index) === Number(ref.index) ? 'image-selected' : ''}" data-ref-node-id="${escapeAttr(ref.nodeId)}" data-ref-image-index="${ref.index}" data-image-index="${ref.index}" data-media-signature="${escapeAttr(`${mediaKindForItem(ref.item)}:${ref.item?.url || ''}`)}" style="--node-img-w:${innerW}px;--node-img-h:${innerH}px">${singleMediaHtml(ref.item, innerW, innerH)}${imageResolutionBadgeHtml(ref.item)}</div>
             </div>`;
         }
         const groupMaxVisibleRows = (groupThumbLayout.compactMembers || []).length ? Number(groupThumbLayout.rows || 1) : SMART_GROUP_MAX_VISIBLE_ROWS;
@@ -6364,8 +6363,7 @@ function smartGroupBodyHtml(node){
         return `<div class="smart-group-card has-thumbs">
             <div class="smart-group-summary"><i data-lucide="group"></i><span>${escapeHtml(summary)}</span></div>
             <div class="thumb-grid smart-group-thumb-grid" data-thumb-scroll="1" style="--thumb-cols:${groupThumbLayout.cols}; --thumb-size:${groupThumbLayout.thumb}px; --thumb-max-height:${maxHeight}px">${refThumbs.map(ref => {
-                const canDelete = ref.nodeId === node.id;
-                return `<div class="thumb-item ${selectedImage.nodeId === ref.nodeId && Number(selectedImage.index) === Number(ref.index) ? 'image-selected' : ''}" data-ref-node-id="${escapeAttr(ref.nodeId)}" data-ref-image-index="${ref.index}" data-image-index="${ref.index}" data-media-signature="${escapeAttr(`${mediaKindForItem(ref.item)}:${ref.item?.url || ''}`)}">${thumbMediaHtml(ref.item)}${imageResolutionBadgeHtml(ref.item)}${canDelete ? `<button class="mini-x image-delete" type="button" data-image-index="${ref.index}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button>` : ''}</div>`;
+                return `<div class="thumb-item ${selectedImage.nodeId === ref.nodeId && Number(selectedImage.index) === Number(ref.index) ? 'image-selected' : ''}" data-ref-node-id="${escapeAttr(ref.nodeId)}" data-ref-image-index="${ref.index}" data-image-index="${ref.index}" data-media-signature="${escapeAttr(`${mediaKindForItem(ref.item)}:${ref.item?.url || ''}`)}">${thumbMediaHtml(ref.item)}${imageResolutionBadgeHtml(ref.item)}</div>`;
             }).join('')}</div>
         </div>`;
     }
@@ -6396,8 +6394,8 @@ function nodeBodyHtml(node, layout){
         const rows = Math.ceil(count / cols);
         return `<div class="loading-skeleton" style="grid-template-columns:repeat(${cols}, 1fr);grid-template-rows:repeat(${rows}, 1fr);width:${layout.width}px;height:${layout.height}px;padding:8px;box-sizing:border-box">${Array.from({length:count}).map(() => `<div class="loading-cell"></div>`).join('')}</div>`;
     }
-    if(imgs.length > 1) return `<div class="thumb-grid" style="--thumb-cols:${layout.cols}; --thumb-size:${layout.thumb}px">${imgs.map((img, i) => `<div class="thumb-item ${selectedImage.nodeId === node.id && selectedImage.index === i ? 'image-selected' : ''}" data-image-index="${i}" data-media-signature="${escapeAttr(`${mediaKindForItem(img)}:${img?.url || ''}`)}">${thumbMediaHtml(img)}${imageResolutionBadgeHtml(img)}<button class="mini-x image-delete" type="button" data-image-index="${i}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`).join('')}</div>`;
-    if(imgs[0]) return `<div class="image-wrap ${candidatePanelNodeId === node.id ? 'candidate-open' : ''} ${selectedImage.nodeId === node.id && selectedImage.index === 0 ? 'image-selected' : ''}" data-image-index="0" data-media-signature="${escapeAttr(`${mediaKindForItem(imgs[0])}:${imgs[0]?.url || ''}`)}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">${singleMediaHtml(imgs[0], layout.width, layout.height)}${imageResolutionBadgeHtml(imgs[0])}${candidateOverlayHtml(node, layout)}<button class="mini-x image-delete" type="button" data-image-index="0" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`;
+    if(imgs.length > 1) return `<div class="thumb-grid" style="--thumb-cols:${layout.cols}; --thumb-size:${layout.thumb}px">${imgs.map((img, i) => `<div class="thumb-item ${selectedImage.nodeId === node.id && selectedImage.index === i ? 'image-selected' : ''}" data-image-index="${i}" data-media-signature="${escapeAttr(`${mediaKindForItem(img)}:${img?.url || ''}`)}">${thumbMediaHtml(img)}${imageResolutionBadgeHtml(img)}</div>`).join('')}</div>`;
+    if(imgs[0]) return `<div class="image-wrap ${candidatePanelNodeId === node.id ? 'candidate-open' : ''} ${selectedImage.nodeId === node.id && selectedImage.index === 0 ? 'image-selected' : ''}" data-image-index="0" data-media-signature="${escapeAttr(`${mediaKindForItem(imgs[0])}:${imgs[0]?.url || ''}`)}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">${singleMediaHtml(imgs[0], layout.width, layout.height)}${imageResolutionBadgeHtml(imgs[0])}${candidateOverlayHtml(node, layout)}</div>`;
     return `<div class="node-drop">
         <button class="upload-node-trigger" type="button" data-upload-action="files" title="${escapeHtml(tr('smart.createImportNode'))}">
             <span class="upload-node-main"><i data-lucide="upload-cloud"></i></span>
@@ -6502,11 +6500,10 @@ function render(){
         const isGroup = isImageNode && imgs.length > 1;
         const isPending = ((node.pending || isQueued || isJimengPending) && imgs.length === 0);
         const body = nodeBodyHtml(node, layout);
-        const deleteBtn = `<button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button>`;
         const hint = isSmartGroup ? '拖入图片、提示词或循环节点' : isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(tr('smart.hintEmpty')));
         const floatingActions = candidateControlHtml(node);
         const html = `<div class="image-node ${isEmpty ? 'empty-node' : ''} ${isGroup ? 'group-node' : ''} ${isHistory ? 'history-group-node' : ''} ${isPrompt ? 'prompt-smart-node' : ''} ${isLoop ? 'loop-smart-node' : ''} ${isSmartGroup ? 'smart-group-node' : ''} ${isCompactMember ? 'smart-group-member-node' : ''} ${candidatePanelNodeId === node.id ? 'candidate-panel-open-node' : ''} ${isNodeSelected(node.id) ? 'selected' : ''} ${(dragState?.groupIds?.includes(node.id) || dragState?.id === node.id) ? 'dragging' : ''} ${node.running ? 'node-running' : ''} ${isPending ? 'node-pending' : ''}" data-id="${escapeHtml(node.id)}" style="left:${node.x || 0}px;top:${node.y || 0}px;width:${layout.width}px;height:${layout.height}px">
-            <div class="node-head"><div class="node-title">${title}</div><div class="node-actions">${deleteBtn}</div></div>
+            <div class="node-head"><div class="node-title">${title}</div></div>
             ${!isEmpty && floatingActions ? `<div class="floating-node-actions">${floatingActions}</div>` : ''}
             ${runTimePillHtml(node)}
             <div class="node-body">${body}</div>
@@ -7065,12 +7062,6 @@ function bindNodeEvents(){
             updateComposer();
             pickMediaForSmartNode(id);
         });
-        el.querySelectorAll('.node-delete').forEach(btn => {
-            btn.addEventListener('click', e => {
-                e.preventDefault(); e.stopPropagation();
-                deleteNodeFromButton(id);
-            });
-        });
         el.querySelectorAll('[data-candidate-toggle]').forEach(btn => {
             btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
             btn.addEventListener('click', e => {
@@ -7159,12 +7150,6 @@ function bindNodeEvents(){
                 querySmartImageTaskNow(btn.dataset.imageTaskQuery, btn.dataset.taskId);
             });
         });
-        el.querySelectorAll('.image-delete').forEach(btn => {
-            btn.addEventListener('click', e => {
-                e.preventDefault(); e.stopPropagation();
-                deleteImage(btn.dataset.refNodeId || id, Number(btn.dataset.imageIndex));
-            });
-        });
         el.querySelectorAll('.thumb-item,.image-wrap').forEach(item => {
             const refNodeId = item.dataset.refNodeId || id;
             const refIndex = Number(item.dataset.refImageIndex ?? item.dataset.imageIndex ?? 0);
@@ -7194,7 +7179,7 @@ function bindNodeEvents(){
             }
             item.addEventListener('mousedown', e => {
                 if(isCandidatePanelInteractionTarget(e.target)) return;
-                if(e.button !== 0 || e.target.closest('.image-delete')) return;
+                if(e.button !== 0) return;
                 if(e.detail < 2) return;
                 e.preventDefault();
                 e.stopPropagation();
@@ -7210,7 +7195,6 @@ function bindNodeEvents(){
             }, true);
             item.addEventListener('click', e => {
                 if(isCandidatePanelInteractionTarget(e.target)) return;
-                if(e.target.closest('.image-delete')) return;
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
@@ -7248,7 +7232,6 @@ function bindNodeEvents(){
             });
         item.addEventListener('dblclick', e => {
             if(isCandidatePanelInteractionTarget(e.target)) return;
-            if(e.target.closest('.image-delete')) return;
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
@@ -7398,40 +7381,6 @@ function deleteNode(id){
     render();
     scheduleSave();
 }
-function clearNodeMediaBeforeDelete(id){
-    const node = nodes.find(n => n.id === id);
-    if(!node || (node.type && node.type !== 'smart-image')) return false;
-    const hadMedia = Boolean((node.images || []).length || (node.candidateImages || []).length || node.pending);
-    if(!hadMedia) return false;
-    pushUndo();
-    node.images = [];
-    node.candidateImages = [];
-    node.candidateIndex = 0;
-    node.pending = 0;
-    node.running = false;
-    node.title = tr('smart.createImportNode');
-    delete node.w;
-    delete node.h;
-    const history = historyGroupForNode(node);
-    if(history){
-        nodes = nodes.filter(n => n.id !== history.id);
-        if(canvas) canvas.connections = (canvas.connections || []).filter(c => c.from !== history.id && c.to !== history.id);
-    }
-    if(candidatePanelNodeId === id){
-        candidatePanelNodeId = '';
-        candidatePanelIndex = 0;
-    }
-    if(selectedImage.nodeId === id) selectedImage = {nodeId:'', index:-1};
-    selectedId = id;
-    selectedIds = [];
-    render();
-    scheduleSave();
-    return true;
-}
-function deleteNodeFromButton(id){
-    if(clearNodeMediaBeforeDelete(id)) return;
-    deleteNode(id);
-}
 function disconnectConnection(index){
     if(!canvas || !Array.isArray(canvas.connections)) return;
     const conn = canvas.connections[index];
@@ -7502,29 +7451,6 @@ function updateLoopInsertPreview(){
     loopInsertPreview = nextPreview;
     if(changed) refreshConnectionLayer();
     return next;
-}
-function deleteImage(id, imageIndex){
-    const node = nodes.find(n => n.id === id);
-    if(!node || imageIndex < 0) return;
-    pushUndo();
-    const removed = node.images?.[imageIndex];
-    node.images = (node.images || []).filter((_, index) => index !== imageIndex);
-    if(removed?.url && Array.isArray(node.candidateImages)){
-        node.candidateImages = node.candidateImages.filter(img => img?.url !== removed.url);
-        node.candidateIndex = Math.max(0, Math.min(node.candidateImages.length - 1, Number(node.candidateIndex) || 0));
-        if(!node.images.length && node.candidateImages.length){
-            setNodeMainCandidate(node, node.candidateIndex);
-        }
-        if(candidatePanelNodeId === id && node.candidateImages.length <= 1){
-            candidatePanelNodeId = '';
-            candidatePanelIndex = 0;
-        }
-    }
-    if(node.images.length <= 1) node.title = 'Image';
-    if(selectedImage.nodeId === id) selectedImage = {nodeId:id, index:Math.min(selectedImage.index, node.images.length - 1)};
-    if(selectedImage.index < 0) selectedImage = {nodeId:'', index:-1};
-    render();
-    scheduleSave();
 }
 function currentEditImage(){
     const node = nodes.find(n => n.id === cropState?.nodeId);
