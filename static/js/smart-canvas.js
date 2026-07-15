@@ -4314,6 +4314,7 @@ function closeNodeContextMenu(){
     nodeContextMenu.hidden = true;
     nodeContextMenu.innerHTML = '';
     delete nodeContextMenu.dataset.nodeId;
+    delete nodeContextMenu.dataset.canvasContext;
 }
 function nodeContextMenuHtml(node){
     const target = nodeShortcutTargetFor(node);
@@ -4366,6 +4367,76 @@ function openNodeContextMenu(nodeId, event){
     nodeContextMenu.style.top = `${Math.max(gap, Math.min(maxY, requestedY))}px`;
     if(window.lucide) lucide.createIcons();
 }
+function canvasContextMenuHtml(){
+    const items = [
+        {action:'generation', icon:'sparkles', label:'生成节点'},
+        {action:'group', icon:'group', label:'分组'},
+        {action:'prompt', icon:'text-cursor-input', label:'提示词'},
+        {action:'loop', icon:'repeat-2', label:'循环节点'},
+        {separator:true},
+        {action:'fit-view', icon:'scan', label:'适应视图'},
+        {action:'paste', icon:'clipboard', label:'粘贴'},
+        {action:'undo', icon:'undo-2', label:'撤销', disabled:!undoStack.length}
+    ];
+    return items.map(item => item.separator
+        ? '<div class="node-context-menu-separator" role="separator"></div>'
+        : `<button class="node-context-menu-item" type="button" role="menuitem" data-canvas-context-action="${item.action}" ${item.disabled ? 'disabled' : ''}><i data-lucide="${item.icon}"></i><span>${item.label}</span></button>`
+    ).join('');
+}
+function openCanvasContextMenu(event){
+    if(!nodeContextMenu) return;
+    closeCreateMenu();
+    closeNodeContextMenu();
+    lastMouseWorld = screenToWorld(event);
+    nodeContextMenu.dataset.canvasContext = '1';
+    nodeContextMenu.innerHTML = canvasContextMenuHtml();
+    nodeContextMenu.hidden = false;
+    const shellRect = shell.getBoundingClientRect();
+    const requestedX = event.clientX - shellRect.left;
+    const requestedY = event.clientY - shellRect.top;
+    const gap = 8;
+    const maxX = Math.max(gap, shell.clientWidth - nodeContextMenu.offsetWidth - gap);
+    const maxY = Math.max(gap, shell.clientHeight - nodeContextMenu.offsetHeight - gap);
+    nodeContextMenu.style.left = `${Math.max(gap, Math.min(maxX, requestedX))}px`;
+    nodeContextMenu.style.top = `${Math.max(gap, Math.min(maxY, requestedY))}px`;
+    if(window.lucide) lucide.createIcons();
+}
+async function pasteFromCanvasContextMenu(point){
+    if(nodeClipboard?.nodes?.length){
+        pasteNodes();
+        return;
+    }
+    if(!navigator.clipboard?.read){
+        toast('剪贴板中没有可粘贴的节点或素材');
+        return;
+    }
+    try {
+        const clipboardItems = await navigator.clipboard.read();
+        const files = [];
+        for(const item of clipboardItems){
+            const type = item.types.find(value => /^(image|video|audio)\//.test(value));
+            if(!type) continue;
+            const blob = await item.getType(type);
+            const extension = type.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
+            files.push(new File([blob], `clipboard-${Date.now()}.${extension}`, {type}));
+        }
+        if(files.length) await handleFiles(files, '', {point, forceNew:true});
+        else toast('剪贴板中没有可粘贴的节点或素材');
+    } catch {
+        toast('无法读取系统剪贴板');
+    }
+}
+async function triggerCanvasContextAction(action){
+    const point = lastMouseWorld || viewportCenter();
+    closeNodeContextMenu();
+    if(action === 'generation') createImageNodeAt(point);
+    else if(action === 'group') createSmartGroupNode(point.x - 170, point.y - 110);
+    else if(action === 'prompt') createPromptNode(point.x - 158, point.y - 97);
+    else if(action === 'loop') createLoopNode(point.x - 135, point.y - 95);
+    else if(action === 'fit-view') toggleZoomPreview();
+    else if(action === 'paste') await pasteFromCanvasContextMenu(point);
+    else if(action === 'undo') performUndo();
+}
 function openParentFeedback(){
     try {
         const button = window.parent?.document?.getElementById('feedbackOpenBtn');
@@ -4397,11 +4468,15 @@ function bindNodeContextMenuEvents(){
     nodeContextMenu.dataset.bound = '1';
     nodeContextMenu.addEventListener('pointerdown', event => event.stopPropagation());
     nodeContextMenu.addEventListener('click', event => {
-        const button = event.target.closest('[data-node-context-action]');
+        const button = event.target.closest('[data-node-context-action],[data-canvas-context-action]');
         if(!button || button.disabled) return;
         event.preventDefault();
         event.stopPropagation();
-        triggerNodeContextAction(button.dataset.nodeContextAction, nodeContextMenu.dataset.nodeId || '');
+        if(button.dataset.canvasContextAction){
+            triggerCanvasContextAction(button.dataset.canvasContextAction).catch(err => toast(err.message || '操作失败'));
+        } else {
+            triggerNodeContextAction(button.dataset.nodeContextAction, nodeContextMenu.dataset.nodeId || '');
+        }
     });
     window.addEventListener('pointerdown', event => {
         if(!nodeContextMenu.hidden && !nodeContextMenu.contains(event.target)) closeNodeContextMenu();
@@ -14045,11 +14120,14 @@ shell.onmousedown = e => {
     shell.classList.add('panning');
 };
 shell.oncontextmenu = e => {
+    if(didPan || e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+    if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
+    e.preventDefault();
+    e.stopPropagation();
     if((e.ctrlKey || e.metaKey) || isRKeyDown){
-        e.preventDefault();
-        e.stopPropagation();
         return;
     }
+    openCanvasContextMenu(e);
 };
 shell.ondblclick = e => {
     if(didPan || e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
