@@ -5379,7 +5379,8 @@ function pasteClipboardContent(files, options={}){
         preventDefault();
         lastImagePasteAt = Date.now();
         lastClipImageSig = signature;
-        handleFiles(supportedFiles, selectedId);
+        const point = lastMouseWorld ? {...lastMouseWorld} : viewportCenter();
+        handleFiles(supportedFiles, selectedId, {point});
     };
     const pasteInternalNodes = () => {
         preventDefault();
