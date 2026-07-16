@@ -4319,7 +4319,7 @@ function nodeContextMenuHtml(node){
         {action:'download', icon:'download', label:'下载', disabled:!target?.image?.url},
         {separator:true},
         {action:'copy', icon:'copy', label:'复制'},
-        {action:'paste', icon:'clipboard', label:'粘贴', disabled:!nodeClipboard?.nodes?.length},
+        {action:'paste', icon:'clipboard', label:'粘贴', disabled:!nodeClipboard?.nodes?.length && !canReadSystemClipboard()},
         {separator:true},
         {action:'delete', icon:'trash-2', label:'删除', danger:true},
         {action:'feedback', icon:'message-square-warning', label:'反馈问题'}
@@ -4371,7 +4371,7 @@ function canvasContextMenuHtml(){
         {action:'loop', icon:'repeat-2', label:'循环节点'},
         {separator:true},
         {action:'fit-view', icon:'scan', label:'适应视图'},
-        {action:'paste', icon:'clipboard', label:'粘贴', disabled:!nodeClipboard?.nodes?.length},
+        {action:'paste', icon:'clipboard', label:'粘贴', disabled:!nodeClipboard?.nodes?.length && !canReadSystemClipboard()},
         {action:'undo', icon:'undo-2', label:'撤销', disabled:!undoStack.length}
     ];
     return items.map(item => item.separator
@@ -4405,7 +4405,7 @@ function triggerCanvasContextAction(action){
     else if(action === 'prompt') createPromptNode(point.x - 158, point.y - 97);
     else if(action === 'loop') createLoopNode(point.x - 135, point.y - 95);
     else if(action === 'fit-view') toggleZoomPreview();
-    else if(action === 'paste') pasteNodes();
+    else if(action === 'paste') void pasteFromContextMenu();
     else if(action === 'undo') performUndo();
 }
 function openParentFeedback(){
@@ -4427,7 +4427,7 @@ function triggerNodeContextAction(action, nodeId){
     } else if(action === 'copy'){
         copySelectedNodes();
     } else if(action === 'paste'){
-        pasteNodes();
+        void pasteFromContextMenu();
     } else if(action === 'delete'){
         deleteNode(node.id);
     } else if(action === 'feedback'){
@@ -4438,6 +4438,7 @@ function bindNodeContextMenuEvents(){
     if(!nodeContextMenu || nodeContextMenu.dataset.bound === '1') return;
     nodeContextMenu.dataset.bound = '1';
     nodeContextMenu.addEventListener('pointerdown', event => event.stopPropagation());
+    nodeContextMenu.addEventListener('mousedown', event => event.stopPropagation());
     nodeContextMenu.addEventListener('click', event => {
         const button = event.target.closest('[data-node-context-action],[data-canvas-context-action]');
         if(!button || button.disabled) return;
@@ -5325,6 +5326,98 @@ function pasteNodes(){
     selectedImage = {nodeId:'', index:-1};
     render();
     scheduleSave();
+}
+function canReadSystemClipboard(){
+    return Boolean(navigator.clipboard && typeof navigator.clipboard.read === 'function');
+}
+function clipboardMediaExtension(type){
+    const extensions = {
+        'image/png':'png', 'image/jpeg':'jpg', 'image/webp':'webp', 'image/gif':'gif',
+        'video/mp4':'mp4', 'video/webm':'webm', 'audio/mpeg':'mp3', 'audio/wav':'wav',
+        'audio/x-wav':'wav', 'audio/mp4':'m4a', 'audio/aac':'aac', 'audio/ogg':'ogg', 'audio/flac':'flac'
+    };
+    return extensions[String(type || '').toLowerCase()] || 'bin';
+}
+async function readSystemClipboardMediaFiles(){
+    if(!canReadSystemClipboard()) return [];
+    const items = await navigator.clipboard.read();
+    const files = [];
+    for(const item of items){
+        const type = (item.types || []).find(value => /^(image|video|audio)\//i.test(value));
+        if(!type) continue;
+        const blob = await item.getType(type);
+        const name = `clipboard-${files.length + 1}.${clipboardMediaExtension(type)}`;
+        files.push(new File([blob], name, {type:blob.type || type, lastModified:Date.now()}));
+    }
+    return files.filter(isSupportedUploadFile);
+}
+function clipboardEventMediaFiles(clipboardData){
+    const directFiles = [...(clipboardData?.files || [])].filter(isSupportedUploadFile);
+    const itemFiles = [...(clipboardData?.items || [])]
+        .filter(item => item.kind === 'file' && /^(image|video|audio)\//i.test(String(item.type || '')))
+        .map(item => {
+            try { return item.getAsFile?.() || null; } catch(e) { return null; }
+        })
+        .filter(isSupportedUploadFile);
+    const seen = new Set();
+    return [...directFiles, ...itemFiles].filter(file => {
+        const key = `${file.name}|${file.type}|${file.size}|${file.lastModified}`;
+        if(seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+function pasteClipboardContent(files, options={}){
+    const supportedFiles = [...(files || [])].filter(isSupportedUploadFile);
+    const hasNodeClip = Boolean(canvas && nodeClipboard?.nodes?.length);
+    const editable = Boolean(options.editable);
+    const preventDefault = typeof options.preventDefault === 'function' ? options.preventDefault : () => {};
+    const signature = supportedFiles.length
+        ? supportedFiles.map(file => `${file.name}|${file.size}|${file.lastModified}`).join('~')
+        : null;
+    const pasteMedia = () => {
+        preventDefault();
+        lastImagePasteAt = Date.now();
+        lastClipImageSig = signature;
+        handleFiles(supportedFiles, selectedId);
+    };
+    const pasteInternalNodes = () => {
+        preventDefault();
+        if(Date.now() - lastNodePasteAt > 80) pasteNodes();
+    };
+
+    // Keep context-menu paste and native Ctrl+V on the same media-vs-node priority path.
+    if(supportedFiles.length && signature !== lastClipImageSig){
+        pasteMedia();
+        return true;
+    }
+    if(hasNodeClip && !editable && lastNodeCopyAt > lastImagePasteAt){
+        pasteInternalNodes();
+        return true;
+    }
+    if(supportedFiles.length){
+        pasteMedia();
+        return true;
+    }
+    if(hasNodeClip && !editable){
+        pasteInternalNodes();
+        return true;
+    }
+    return false;
+}
+async function pasteFromContextMenu(){
+    if(!canReadSystemClipboard()){
+        toast('浏览器不允许右键读取系统剪贴板，请使用 Ctrl+V');
+        return;
+    }
+    let files;
+    try {
+        files = await readSystemClipboardMediaFiles();
+    } catch(e) {
+        toast('浏览器不允许右键读取系统剪贴板，请使用 Ctrl+V');
+        return;
+    }
+    if(!pasteClipboardContent(files, {editable:false})) toast('剪贴板中没有可粘贴的内容');
 }
 function duplicateForAltDrag(node){
     const ids = (isNodeSelected(node.id) ? selectedNodeIds() : [node.id]);
@@ -14633,44 +14726,8 @@ window.addEventListener('paste', e => {
         return;
     }
     const editable = isEditableTarget(e.target) || isEditableTarget(document.activeElement);
-    const files = [...(e.clipboardData?.files || [])].filter(isSupportedUploadFile);
-    const hasNodeClip = !!(canvas && nodeClipboard?.nodes?.length);
-    // 浏览器无法用 JS 清空系统剪贴板，外部复制的图片会一直残留在 clipboardData 里，
-    // 因此用“图片签名(名称+大小+修改时间)”来区分这次剪贴板里的图片是新复制的还是旧残留。
-    const sig = files.length
-        ? files.map(f => `${f.name}|${f.size}|${f.lastModified}`).join('~')
-        : null;
-    const pasteImage = () => {
-        e.preventDefault();
-        lastImagePasteAt = Date.now();
-        lastClipImageSig = sig;
-        handleFiles(files, selectedId);
-    };
-    const pasteNodesNow = () => {
-        e.preventDefault();
-        if(Date.now() - lastNodePasteAt > 80) pasteNodes();
-    };
-
-    // 1) 剪贴板里有图片，且与上次粘贴过的图片不同 —— 这是用户新复制的图片，优先粘贴它。
-    if(files.length && sig !== lastClipImageSig){
-        pasteImage();
-        return;
-    }
-    // 2) 自上次“因图片消费剪贴板”以来又在画布内复制过节点 —— 用户最新意图是粘贴节点，
-    //    即使剪贴板里还残留着同一张旧图片，也优先粘贴节点。
-    if(hasNodeClip && !editable && lastNodeCopyAt > lastImagePasteAt){
-        pasteNodesNow();
-        return;
-    }
-    // 3) 兜底：有图片就粘图片，否则有节点就粘节点。
-    if(files.length){
-        pasteImage();
-        return;
-    }
-    if(hasNodeClip && !editable){
-        pasteNodesNow();
-        return;
-    }
+    const files = clipboardEventMediaFiles(e.clipboardData);
+    pasteClipboardContent(files, {editable, preventDefault:() => e.preventDefault()});
 });
 window.addEventListener('keydown', e => {
     if(isBootLoadingActive()){
