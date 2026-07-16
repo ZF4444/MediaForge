@@ -1332,7 +1332,6 @@ const MEDIA_NODE_DEFAULT_SCALE = 2;
 const MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE = 1.6;
 const MEDIA_GROUP_DEFAULT_SCALE = 0.8;
 const MEDIA_GROUP_THUMB_BASE = 224;
-const SMART_GROUP_MAX_VISIBLE_ROWS = 4;
 const EMPTY_GENERATION_NODE_WIDTH = 316;
 const EMPTY_GENERATION_NODE_HEIGHT = 194;
 const SMART_GROUP_DEFAULT_WIDTH = 340;
@@ -1485,24 +1484,18 @@ function smartGroupThumbLayout(node){
         };
     }
     const gap = 8;
-    const maxVisibleRows = compactMembers.length ? count : SMART_GROUP_MAX_VISIBLE_ROWS;
-    if(hasExplicit){
-        const fitted = groupImageGridLayout(count, Math.max(72, explicitW - outerPad), Math.max(56, explicitH - outerPad - summarySpace), 100000, 0, gap, maxVisibleRows);
-        return {...fitted, refs, compactMembers, width:Math.round(explicitW), height:Math.round(explicitH)};
-    }
     const thumb = Math.round(MEDIA_GROUP_THUMB_BASE * scale);
     const cell = thumb + gap;
     const cols = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(count))));
     const rows = Math.ceil(count / cols);
-    const visibleRows = Math.min(maxVisibleRows, rows);
     const gridW = cols * thumb + (cols - 1) * gap;
-    const gridH = visibleRows * cell - gap;
+    const gridH = rows * cell - gap;
     return {
         refs,
         compactMembers,
         cols,
         rows,
-        visibleRows,
+        visibleRows:rows,
         thumb,
         width:Math.max(SMART_GROUP_MIN_WIDTH, Math.round(gridW + outerPad)),
         height:Math.max(SMART_GROUP_MIN_HEIGHT, Math.round(gridH + outerPad + summarySpace))
@@ -6474,12 +6467,9 @@ function smartGroupBodyHtml(node){
                 <div class="image-wrap smart-group-single-thumb ${selectedImage.nodeId === ref.nodeId && Number(selectedImage.index) === Number(ref.index) ? 'image-selected' : ''}" data-ref-node-id="${escapeAttr(ref.nodeId)}" data-ref-image-index="${ref.index}" data-image-index="${ref.index}" data-media-signature="${escapeAttr(`${mediaKindForItem(ref.item)}:${ref.item?.url || ''}`)}" style="--node-img-w:${innerW}px;--node-img-h:${innerH}px">${singleMediaHtml(ref.item, innerW, innerH)}${imageResolutionBadgeHtml(ref.item)}</div>
             </div>`;
         }
-        const groupMaxVisibleRows = (groupThumbLayout.compactMembers || []).length ? Number(groupThumbLayout.rows || 1) : SMART_GROUP_MAX_VISIBLE_ROWS;
-        const visibleRows = Math.max(1, Math.min(groupMaxVisibleRows, Number(groupThumbLayout.visibleRows || groupThumbLayout.rows || 1)));
-        const maxHeight = Math.max(44, visibleRows * Number(groupThumbLayout.thumb || 96) + Math.max(0, visibleRows - 1) * 8);
         return `<div class="smart-group-card has-thumbs">
             <div class="smart-group-summary"><i data-lucide="group"></i><span>${escapeHtml(summary)}</span></div>
-            <div class="thumb-grid smart-group-thumb-grid" data-thumb-scroll="1" style="--thumb-cols:${groupThumbLayout.cols}; --thumb-size:${groupThumbLayout.thumb}px; --thumb-max-height:${maxHeight}px">${refThumbs.map(ref => {
+            <div class="thumb-grid smart-group-thumb-grid" style="--thumb-cols:${groupThumbLayout.cols}; --thumb-size:${groupThumbLayout.thumb}px">${refThumbs.map(ref => {
                 return `<div class="thumb-item ${selectedImage.nodeId === ref.nodeId && Number(selectedImage.index) === Number(ref.index) ? 'image-selected' : ''}" data-ref-node-id="${escapeAttr(ref.nodeId)}" data-ref-image-index="${ref.index}" data-image-index="${ref.index}" data-media-signature="${escapeAttr(`${mediaKindForItem(ref.item)}:${ref.item?.url || ''}`)}">${thumbMediaHtml(ref.item)}${imageResolutionBadgeHtml(ref.item)}</div>`;
             }).join('')}</div>
         </div>`;
