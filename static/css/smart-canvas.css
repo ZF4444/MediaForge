@@ -263,9 +263,10 @@ body.smart-node-drag .image-wrap:hover .image-resolution-badge { opacity:0 !impo
 .image-node.selected .floating-node-actions, .image-node.candidate-panel-open-node .floating-node-actions { opacity:1; pointer-events:auto; }
 .image-node.dragging .floating-node-actions { opacity:0 !important; pointer-events:none !important; }
 .node-shortcut-overlay { position:absolute; z-index:31; inset:0; pointer-events:none; }
-.node-shortcut-bar { position:absolute; z-index:1; width:680px; max-width:calc(100vw - 48px); display:grid; grid-template-columns:repeat(8, minmax(0, 1fr)); align-items:center; gap:6px; padding:6px; border-radius:16px; background:rgba(255,255,255,.92); border:1px solid rgba(148,163,184,.26); box-shadow:0 16px 40px rgba(15,23,42,.16); backdrop-filter:blur(18px); pointer-events:auto; }
+.node-shortcut-bar { position:absolute; z-index:1; width:680px; max-width:calc(100vw - 48px); display:grid; grid-template-columns:repeat(9, minmax(0, 1fr)); align-items:center; gap:4px; padding:6px; border-radius:16px; background:rgba(255,255,255,.92); border:1px solid rgba(148,163,184,.26); box-shadow:0 16px 40px rgba(15,23,42,.16); backdrop-filter:blur(18px); pointer-events:auto; }
 .theme-dark .node-shortcut-bar { background:rgba(15,23,42,.88); border-color:rgba(148,163,184,.24); box-shadow:0 18px 42px rgba(0,0,0,.34); }
-.node-shortcut-btn { width:100%; min-width:0; height:34px; padding:0 8px; border-radius:12px; border:1px solid transparent; background:transparent; color:var(--muted); display:inline-flex; align-items:center; justify-content:center; gap:6px; font-size:10.5px; font-weight:800; white-space:nowrap; transition:background .14s ease, color .14s ease, border-color .14s ease, transform .14s ease; }
+.node-shortcut-btn { width:100%; min-width:0; height:34px; padding:0 3px; border-radius:10px; border:1px solid transparent; background:transparent; color:var(--muted); display:inline-flex; align-items:center; justify-content:center; gap:3px; font-size:10px; font-weight:800; white-space:nowrap; transition:background .14s ease, color .14s ease, border-color .14s ease, transform .14s ease; }
+.node-shortcut-btn span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .node-shortcut-btn i,.node-shortcut-btn svg { width:14px !important; height:14px !important; stroke-width:2.2; flex:0 0 14px; }
 .node-shortcut-btn:hover:not(:disabled) { background:var(--card); color:var(--text); border-color:var(--line); transform:translateY(-1px); }
 .node-shortcut-btn:disabled { opacity:.34; cursor:not-allowed; }

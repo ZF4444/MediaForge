@@ -4238,12 +4238,14 @@ function nodeShortcutBarHtml(node){
     const target = nodeShortcutTargetFor(node);
     if(!shouldShowNodeShortcutBar(node) || !target) return '';
     const isImage = target.kind === 'image';
+    const canCompare = isImage && compareSourcesForNode(target.node).length > 0;
     const items = [
         {action:'crop', icon:'crop', label:'裁剪', disabled:!isImage},
         {action:'outpaint', icon:'expand', label:'扩图', disabled:!isImage},
         {action:'mask', icon:'brush', label:'遮罩', disabled:!isImage},
         {action:'brush', icon:'paintbrush', label:'画笔', disabled:!isImage},
         {action:'grid', icon:'grid-3x3', label:'宫格切分', disabled:!isImage},
+        {action:'compare', icon:'columns-2', label:'对比', disabled:!canCompare},
         {action:'save', icon:'library', label:'加入资产', disabled:!target.image?.file_id},
         {action:'download', icon:'download', label:'下载', disabled:false},
         {action:'fullscreen', icon:'maximize', label:'全屏', disabled:false}
@@ -4583,6 +4585,14 @@ function triggerNodeShortcutAction(action, nodeId=''){
     }
     if(action === 'fullscreen'){
         openImagePreview(target.node.id, target.index);
+        return;
+    }
+    if(action === 'compare'){
+        if(target.kind !== 'image' || !compareSourcesForNode(target.node).length) return;
+        openImagePreview(target.node.id, target.index);
+        previewCompareOn = true;
+        previewCompareIndex = 0;
+        refreshComparePanel();
         return;
     }
     if(target.kind !== 'image') return;
@@ -8524,9 +8534,7 @@ function rememberPreviewImageResolution(){
         scheduleSave();
     }
 }
-function previewCompareSources(){
-    const editing = currentEditImage();
-    const node = editing.node;
+function compareSourcesForNode(node){
     if(!node) return [];
     const savedRefs = Array.isArray(node.runInputRefs) ? node.runInputRefs.filter(ref => ref?.url) : [];
     const upstream = savedRefs.length ? savedRefs : inputImagesFor(node);
@@ -8550,6 +8558,9 @@ function previewCompareSources(){
         }
     }
     return dedup;
+}
+function previewCompareSources(){
+    return compareSourcesForNode(currentEditImage().node);
 }
 function refreshComparePanel(){
     const stage = document.getElementById('previewStage');
