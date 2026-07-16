@@ -6737,7 +6737,12 @@ function measureSmartNodeImages(){
 }
 function bindConnectionEvents(){
     world.querySelectorAll('[data-conn-index]').forEach(el => {
+        el.addEventListener('mousedown', e => {
+            if(e.button !== 0) return;
+            e.stopPropagation();
+        });
         if(el.classList.contains('conn-hit')){
+            el.addEventListener('click', e => e.stopPropagation());
             el.addEventListener('dblclick', e => {
                 e.preventDefault(); e.stopPropagation();
                 disconnectConnection(Number(el.dataset.connIndex));
