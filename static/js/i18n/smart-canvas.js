@@ -267,6 +267,7 @@
         "smart.mediaDrawerAdd": { zh: "放入画布", en: "Add to canvas" },
         "smart.mediaDrawerSave": { zh: "存资产", en: "Save asset" },
         "smart.shortcuts": { zh: "快捷键", en: "Shortcuts" },
+        "smart.thumbnailPreviewNotice": { zh: "画布显示的是缩略图,全屏可以查看原图", en: "The canvas shows thumbnails. Open fullscreen to view the original." },
         "smart.shortcutSectionNavigate": { zh: "画布导航", en: "Canvas Navigation" },
         "smart.shortcutSectionNodes": { zh: "节点操作", en: "Node Actions" },
         "smart.shortcutSectionPreview": { zh: "预览与面板", en: "Preview and Panels" },

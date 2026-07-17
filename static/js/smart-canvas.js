@@ -79,8 +79,11 @@ function showBootLoadingOverlay(){
     bootLoadingOverlay.classList.remove('is-hidden', 'is-fading');
     bootLoadingOverlay.setAttribute('aria-busy', 'true');
 }
-function hideBootLoadingOverlay(){
-    if(!bootLoadingOverlay) return;
+function hideBootLoadingOverlay(onHidden){
+    if(!bootLoadingOverlay){
+        if(typeof onHidden === 'function') onHidden();
+        return;
+    }
     bootLoadingOverlay.classList.add('is-fading');
     bootLoadingOverlay.setAttribute('aria-busy', 'false');
     const finalize = () => {
@@ -88,6 +91,7 @@ function hideBootLoadingOverlay(){
         bootLoadingOverlay.classList.add('is-hidden');
         bootLoadingOverlay.classList.remove('is-fading');
         if(shell) shell.classList.remove('boot-loading');
+        if(typeof onHidden === 'function') onHidden();
     };
     bootLoadingOverlay.addEventListener('transitionend', finalize, {once:true});
 }
@@ -15707,5 +15711,7 @@ window.onload = async () => {
     syncApiKindToggleVisibility();
     render();
     await waitForVisibleBootMedia();
-    requestAnimationFrame(() => hideBootLoadingOverlay());
+    requestAnimationFrame(() => hideBootLoadingOverlay(() => {
+        toast(tr('smart.thumbnailPreviewNotice'));
+    }));
 };
