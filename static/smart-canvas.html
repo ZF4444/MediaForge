@@ -261,18 +261,25 @@
                     <button class="preview-icon-btn" type="button" onclick="closeSmartCanvasShortcuts()" title="关闭" data-i18n-title="common.close"><i data-lucide="x" class="w-4 h-4"></i></button>
                 </div>
                 <div class="shortcut-list">
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>左键</kbd></span><span data-i18n="smart.shortcutBoxSelect">空白处拖拽框选节点</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>G</kbd></span><span data-i18n="smart.shortcutGroup">合并选中的图片为组</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>G</kbd></span><span data-i18n="smart.shortcutUngroup">释放选中的分组</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>Z</kbd></span><span data-i18n="smart.shortcutUndo">撤销上一步操作</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>C</kbd></span><span data-i18n="smart.shortcutCopy">复制选中的节点</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>V</kbd></span><span data-i18n="smart.shortcutPaste">粘贴节点或剪贴板图片</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>A</kbd></span><span data-i18n="smart.shortcutAssets">打开/关闭资源库</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Z</kbd></span><span data-i18n="smart.shortcutOverview">缩小画布视图</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>双击</kbd></span><span data-i18n="smart.shortcutCreateMenu">打开快捷菜单</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>右键</kbd></span><span data-i18n="smart.shortcutPan">空白处拖动画布</span></div>
+                    <div class="shortcut-section-title" data-i18n="smart.shortcutSectionNavigate">画布导航</div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>空格 + 左键</kbd><span class="shortcut-key-separator">/</span><kbd>右键</kbd><span class="shortcut-key-separator">/</span><kbd>中键</kbd></span><span data-i18n="smart.shortcutPan">拖动画布</span></div>
                     <div class="shortcut-item"><span class="shortcut-keys"><kbd>滚轮</kbd></span><span data-i18n="smart.shortcutZoom">缩放画布或预览图片</span></div>
-                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Del</kbd></span><span data-i18n="smart.shortcutDelete">删除选中节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>左键</kbd></span><span data-i18n="smart.shortcutBoxSelect">空白处拖拽框选节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>双击空白</kbd></span><span data-i18n="smart.shortcutCreateMenu">打开快捷菜单</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Z</kbd></span><span data-i18n="smart.shortcutOverview">缩小画布视图</span></div>
+                    <div class="shortcut-section-title" data-i18n="smart.shortcutSectionNodes">节点操作</div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>C</kbd></span><span data-i18n="smart.shortcutCopy">复制选中的节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>V</kbd></span><span data-i18n="smart.shortcutPaste">粘贴节点或剪贴板图片</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>Z</kbd></span><span data-i18n="smart.shortcutUndo">撤销上一步操作</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Del</kbd><kbd>Backspace</kbd></span><span data-i18n="smart.shortcutDelete">删除选中节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Alt</kbd><kbd>拖拽</kbd></span><span data-i18n="smart.shortcutDuplicate">拖拽时复制节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>G</kbd></span><span data-i18n="smart.shortcutGroup">将选中节点打组</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>Shift</kbd><kbd>G</kbd></span><span data-i18n="smart.shortcutUngroup">释放选中的分组</span></div>
+                    <div class="shortcut-section-title" data-i18n="smart.shortcutSectionPreview">预览与面板</div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>双击图片</kbd></span><span data-i18n="smart.shortcutPreview">打开图片或视频预览</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>←</kbd><kbd>→</kbd></span><span data-i18n="smart.shortcutPreviewNav">切换图片或视频帧</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>A</kbd></span><span data-i18n="smart.shortcutAssets">打开/关闭资源库</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Esc</kbd></span><span data-i18n="smart.shortcutClosePanels">关闭预览窗口</span></div>
                 </div>
             </div>
         </div>
@@ -383,8 +390,6 @@
                     <span id="gridJoinCount" class="image-edit-sub"></span>
                 </div>
                 <div id="imageEditStage" class="image-edit-stage">
-                    <button id="previewPrevBtn" class="preview-nav-btn prev" type="button" onclick="navigatePreviewImage(-1)" title="上一张"><i data-lucide="chevron-left"></i></button>
-                    <button id="previewNextBtn" class="preview-nav-btn next" type="button" onclick="navigatePreviewImage(1)" title="下一张"><i data-lucide="chevron-right"></i></button>
                     <div class="image-edit-stage-inner">
                         <div id="previewStage" class="preview-stage" style="display:none">
                             <div id="previewFrame" class="preview-frame">
@@ -398,6 +403,11 @@
                                     <img id="previewCompareImage" alt="original">
                                 </div>
                                 <div id="previewCompareHandle" class="preview-compare-handle" data-i18n-title="smart.compareDrag" title="拖动对比"></div>
+                            </div>
+                            <div id="previewNavBar" class="preview-nav-bar" aria-label="图片切换">
+                                <button id="previewPrevBtn" class="preview-nav-btn" type="button" onclick="navigatePreviewImage(-1)" title="上一张" aria-label="上一张"><i data-lucide="chevron-left"></i></button>
+                                <span id="previewNavIndex" class="preview-nav-index" aria-live="polite"></span>
+                                <button id="previewNextBtn" class="preview-nav-btn" type="button" onclick="navigatePreviewImage(1)" title="下一张" aria-label="下一张"><i data-lucide="chevron-right"></i></button>
                             </div>
                         </div>
                         <div id="cropCanvas" class="crop-canvas">

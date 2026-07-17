@@ -176,6 +176,7 @@ let uploadTargetId = '';
 let pendingGroupUploadPoint = null;
 let mentionRange = null;
 let panState = null;
+let spacePanActive = false;
 let didPan = false;
 let rightMouseDownPoint = null;
 let rightMouseDownViewport = null;
@@ -224,6 +225,7 @@ let imageClickTimer = null;
 let suppressImageClickUntil = 0;
 let candidatePanelNodeId = '';
 let candidatePanelIndex = 0;
+let candidatePanelAttentionNodeId = '';
 let expandedCandidateNodeIds = new Set();
 let suppressComposerForCandidateNodeId = '';
 let lastMouseWorld = null;
@@ -360,7 +362,7 @@ let previewPanDrag = null;
 let previewCompareDrag = false;
 let previewComparePos = 50;
 let imageEditPanDrag = null;
-let previewNavState = {nodeId:'', index:0, count:0};
+let previewNavState = {nodeId:'', index:0, count:0, source:'images'};
 const PANORAMA_RATIO_PRESETS = {
     square:{w:1, h:1},
     portrait:{w:2, h:3},
@@ -954,6 +956,7 @@ function closeCandidatePanel(options={}){
     const closingId = candidatePanelNodeId;
     candidatePanelNodeId = '';
     candidatePanelIndex = 0;
+    candidatePanelAttentionNodeId = '';
     if(options.suppressComposer !== false && selectedId === closingId) suppressComposerForCandidateNodeId = closingId;
     return true;
 }
@@ -1039,7 +1042,8 @@ function candidateOverlayHtml(node, layout){
     const current = Math.max(0, Math.min(pool.length - 1, Number(node.candidateIndex) || 0));
     const indexText = `${index + 1} / ${pool.length}`;
     const dots = pool.map((_, i) => `<span class="candidate-dot ${i === index ? 'active' : ''}"></span>`).join('');
-    return `<div class="candidate-panel" data-candidate-panel="${escapeAttr(node.id)}" data-candidate-index="${index}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">
+    const attentionClass = candidatePanelAttentionNodeId === node.id ? ' candidate-panel-attention' : '';
+    return `<div class="candidate-panel${attentionClass}" data-candidate-panel="${escapeAttr(node.id)}" data-candidate-index="${index}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">
         ${singleMediaHtml(preview, layout.width, layout.height)}
         ${imageResolutionBadgeHtml(preview)}
         <button class="candidate-nav candidate-prev" type="button" data-candidate-prev="${escapeAttr(node.id)}" title="上一张"><i data-lucide="chevron-left"></i></button>
@@ -6175,8 +6179,7 @@ function downloadNameForMediaItem(item, fallbackPrefix='canvas-output'){
     return name;
 }
 function downloadPreviewImage(){
-    const node = nodes.find(n => n.id === previewNavState.nodeId);
-    const image = node?.images?.[previewNavState.index];
+    const image = currentEditImage().image;
     if(!image?.url) return;
     const name = downloadNameForMediaItem(image, 'image');
     const link = document.createElement('a');
@@ -6198,7 +6201,7 @@ function downloadPreviewFile(item){
 }
 function previewDownloadGroupItems(){
     const node = nodes.find(n => n.id === previewNavState.nodeId);
-    return (node?.images || [])
+    return previewSourceImages(node, previewNavState.source)
         .filter(item => item?.url)
         .map((item, index) => ({...item, __index:index}))
         .sort((a, b) => {
@@ -7295,8 +7298,23 @@ function bindNodeEvents(){
                 } else {
                     candidatePanelNodeId = id;
                     candidatePanelIndex = Math.max(0, Math.min(count - 1, Number(node?.candidateIndex) || 0));
+                    candidatePanelAttentionNodeId = id;
                 }
                 render();
+                candidatePanelAttentionNodeId = '';
+            });
+        });
+        el.querySelectorAll('[data-candidate-panel]').forEach(panel => {
+            panel.addEventListener('dblclick', e => {
+                if(e.target.closest('button')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                clearImageClickTimer();
+                suppressImageClickUntil = Date.now() + 260;
+                const candidateIndex = Number(panel.dataset.candidateIndex) || 0;
+                selectedIds = [];
+                openImagePreview(id, candidateIndex, {source:'candidates'});
             });
         });
         el.querySelectorAll('[data-candidate-prev],[data-candidate-next]').forEach(btn => {
@@ -7706,7 +7724,17 @@ function updateLoopInsertPreview(){
 function currentEditImage(){
     const node = nodes.find(n => n.id === cropState?.nodeId);
     const index = Number(cropState?.imageIndex || 0);
-    return {node, index, image:imageForDisplay(node?.images?.[index])};
+    const source = previewNavState.nodeId === node?.id ? previewNavState.source : 'images';
+    return {node, index, image:imageForDisplay(previewSourceImages(node, source)[index])};
+}
+function previewSourceImages(node, source='images'){
+    if(!node) return [];
+    return source === 'candidates' ? nodeCandidateImages(node) : (node.images || []);
+}
+function previewSourceEntries(node, source=previewNavState.source){
+    return previewSourceImages(node, source)
+        .map((image, index) => ({image, index}))
+        .filter(entry => entry.image?.url);
 }
 function cropImageDisplaySize(){
     const img = document.getElementById('cropImage');
@@ -8267,7 +8295,8 @@ function resizePanoramaViewer(){
     const ratio = panoramaRatioValue();
     const aspect = Math.max(0.08, Math.min(12, ratio.w / ratio.h));
     const maxW = Math.max(260, Math.min(1180, window.innerWidth - 116));
-    const maxH = Math.max(220, Math.min(780, window.innerHeight - 220));
+    const hasPreviewNav = previewNavState.count > 1;
+    const maxH = Math.max(220, Math.min(hasPreviewNav ? 760 : 780, window.innerHeight - (hasPreviewNav ? 270 : 220)));
     let w = maxW;
     let h = w / aspect;
     if(h > maxH){
@@ -9649,28 +9678,51 @@ function resetCropBox(){
 }
 function updatePreviewNavButtons(){
     const node = nodes.find(n => n.id === previewNavState.nodeId);
-    const count = Math.max(0, (node?.images || []).filter(img => img?.url).length);
+    const images = previewSourceEntries(node);
+    const count = images.length;
     previewNavState.count = count;
     const show = imageEditModal.classList.contains('open') && count > 1;
-    document.getElementById('previewPrevBtn')?.classList.toggle('visible', show);
-    document.getElementById('previewNextBtn')?.classList.toggle('visible', show);
+    document.getElementById('previewNavBar')?.classList.toggle('visible', show);
+    document.getElementById('previewStage')?.classList.toggle('has-preview-nav', show);
+    const indexEl = document.getElementById('previewNavIndex');
+    if(indexEl){
+        const current = images.findIndex(entry => entry.index === Number(previewNavState.index));
+        const index = current >= 0 ? current : 0;
+        indexEl.textContent = show ? `${index + 1} / ${count}` : '';
+    }
 }
 function navigatePreviewImage(delta){
     if(!imageEditModal.classList.contains('open')) return;
     const node = nodes.find(n => n.id === previewNavState.nodeId);
-    const images = (node?.images || []).filter(img => img?.url);
+    const images = previewSourceEntries(node);
     if(!node || images.length <= 1) return;
     const count = images.length;
-    const next = (Number(previewNavState.index || 0) + Number(delta || 0) + count) % count;
-    openImageEditor(node.id, next);
+    const current = images.findIndex(entry => entry.index === Number(previewNavState.index));
+    const next = ((current >= 0 ? current : 0) + Number(delta || 0) + count) % count;
+    openImageEditor(node.id, images[next].index, {source:previewNavState.source});
 }
-function openImagePreview(nodeId, imageIndex=0){
-    openImageEditor(nodeId, imageIndex);
+function openImagePreview(nodeId, imageIndex=0, options={}){
+    const node = nodes.find(n => n.id === nodeId);
+    const candidates = nodeCandidateImages(node);
+    const regularImages = (node?.images || []).filter(image => image?.url);
+    const useCandidates = options.source === 'candidates'
+        || (options.source !== 'images' && candidates.length > 1 && regularImages.length <= 1);
+    let targetIndex = Number(imageIndex) || 0;
+    if(useCandidates && options.source !== 'candidates'){
+        const currentUrl = node?.images?.[targetIndex]?.url || '';
+        const matchingIndex = candidates.findIndex(image => image?.url === currentUrl);
+        targetIndex = matchingIndex >= 0
+            ? matchingIndex
+            : Math.max(0, Math.min(candidates.length - 1, Number(node?.candidateIndex) || 0));
+    }
+    openImageEditor(nodeId, targetIndex, {source:useCandidates ? 'candidates' : 'images'});
     setImageEditMode('preview');
 }
-function openImageEditor(nodeId, imageIndex=0){
+function openImageEditor(nodeId, imageIndex=0, options={}){
     const node = nodes.find(n => n.id === nodeId);
-    const image = imageForDisplay(node?.images?.[imageIndex]);
+    const source = options.source === 'candidates' ? 'candidates' : 'images';
+    const sourceImages = previewSourceImages(node, source);
+    const image = imageForDisplay(sourceImages[imageIndex]);
     if(!image?.url) return;
     const kind = mediaKindForItem(image);
     if(kind !== 'image' && kind !== 'video'){
@@ -9678,8 +9730,8 @@ function openImageEditor(nodeId, imageIndex=0){
         return;
     }
     selectedId = nodeId;
-    selectedImage = {nodeId, index:imageIndex};
-    previewNavState = {nodeId, index:imageIndex, count:(node.images || []).filter(img => img?.url).length};
+    selectedImage = {nodeId, index:source === 'candidates' ? 0 : imageIndex};
+    previewNavState = {nodeId, index:imageIndex, count:sourceImages.filter(img => img?.url).length, source};
     cropState = {nodeId, imageIndex, x:0, y:0, w:0, h:0};
     gridCustomMode = false; gridCustomLines = []; gridCustomHistory = []; gridCustomDrag = null; gridCustomOrientation = 'h';
     gridOperationMode = 'split'; gridJoinLayout = null; gridJoinDrag = null; gridJoinImageCache = new Map();
@@ -9712,10 +9764,11 @@ function openImageEditor(nodeId, imageIndex=0){
         return;
     }
     img.onload = () => {
-        const targetImage = node.images?.[imageIndex];
+        const targetImage = currentEditImage().image;
         if(targetImage && img.naturalWidth && img.naturalHeight && (!targetImage.natural_w || !targetImage.natural_h)){
             targetImage.natural_w = img.naturalWidth;
             targetImage.natural_h = img.naturalHeight;
+            if(source === 'candidates') syncCandidateImageDimensions(node, targetImage, img.naturalWidth, img.naturalHeight);
             scheduleSave();
         }
         imageEditBaseW = img.clientWidth; imageEditBaseH = img.clientHeight;
@@ -9756,7 +9809,7 @@ function closeImageEditor(){
     }
     clearEditDrawing(true);
     cropState = null; cropDrag = null; editDrawState = null; resetEditDrawingHistory(); gridCustomDrag = null; gridJoinDrag = null; gridJoinLayout = null; gridJoinImageCache = new Map(); gridOperationMode = 'split';
-    previewNavState = {nodeId:'', index:0, count:0};
+    previewNavState = {nodeId:'', index:0, count:0, source:'images'};
     imageEditZoom = 1.0; imageEditBaseW = 0; imageEditBaseH = 0; imageEditModeTouched = false;
     disposePanoramaPreview();
     previewPanDrag = null; previewCompareDrag = false; imageEditPanDrag = null; resetPreviewTransform();
@@ -14253,6 +14306,21 @@ document.addEventListener('click', event => {
     if(isExpandedCandidateGridInteractionTarget(event.target)) return;
     if(closeExpandedCandidateGrids()) setTimeout(() => render(), 0);
 }, true);
+function spacePanBlockedTarget(target){
+    return Boolean(target?.closest?.('button,input,textarea,select,[contenteditable="true"],.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions,.node-context-menu'));
+}
+shell.addEventListener('mousedown', e => {
+    if(e.button !== 0 || !spacePanActive || spacePanBlockedTarget(e.target)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    closeCreateMenu();
+    closeNodeContextMenu();
+    selectionState = null;
+    didPan = true;
+    viewportInteractionActive = true;
+    panState = {button:0, space:true, startX:e.clientX, startY:e.clientY, ox:viewport.x, oy:viewport.y};
+    shell.classList.add('panning');
+}, true);
 shell.addEventListener('mousedown', e => {
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
@@ -14263,6 +14331,7 @@ shell.addEventListener('mousedown', e => {
 shell.addEventListener('click', e => {
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
+    if(didPan){ e.preventDefault(); e.stopPropagation(); return; }
     if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
@@ -14748,6 +14817,14 @@ window.addEventListener('keydown', e => {
         return;
     }
     const key = String(e.key || '').toLowerCase();
+    if(e.code === 'Space' && !isEditableTarget(e.target) && !imageEditModal.classList.contains('open')){
+        e.preventDefault();
+        if(!e.repeat){
+            spacePanActive = true;
+            shell.classList.add('space-pan-ready');
+        }
+        return;
+    }
     if(e.key === 'Escape' && nodeContextMenu && !nodeContextMenu.hidden){
         e.preventDefault();
         closeNodeContextMenu();
@@ -14811,6 +14888,21 @@ window.addEventListener('keydown', e => {
     if((e.ctrlKey || e.metaKey) && key === 'g' && !e.shiftKey && !isEditableTarget(e.target)){
         e.preventDefault();
         groupSelectedNodes();
+    }
+});
+window.addEventListener('keyup', e => {
+    if(e.code !== 'Space') return;
+    spacePanActive = false;
+    shell.classList.remove('space-pan-ready');
+});
+window.addEventListener('blur', () => {
+    spacePanActive = false;
+    shell.classList.remove('space-pan-ready');
+    if(panState?.space){
+        panState = null;
+        shell.classList.remove('panning');
+        flushDeferredViewportRendering();
+        setTimeout(() => { didPan = false; }, 0);
     }
 });
 engineSelect.onchange = () => {
@@ -15375,7 +15467,7 @@ imageEditModal.addEventListener('wheel', event => {
 }, {passive:false});
 document.getElementById('previewStage').addEventListener('mousedown', event => {
     if(imageEditMode !== 'preview' || event.button !== 0) return;
-    if(event.target.closest('.preview-tools-overlay, .preview-download-overlay')) return;
+    if(event.target.closest('.preview-tools-overlay, .preview-download-overlay, .preview-nav-bar')) return;
     if(event.target.closest('.preview-compare-handle')) return;
     if(event.target.closest('video')) return;
     event.preventDefault();
