@@ -131,6 +131,7 @@ const logList = document.getElementById('logList');
 const errorModal = document.getElementById('errorModal');
 const errorTitle = document.getElementById('errorTitle');
 const errorMessage = document.getElementById('errorMessage');
+const classicCanvasDeprecationModal = document.getElementById('classicCanvasDeprecationModal');
 let canvases = [];
 let deletedCanvases = [];
 let canvas = null;
@@ -612,6 +613,14 @@ async function responseErrorMessage(response, fallback='请求失败'){
 }
 function closeErrorModal(){
     if(errorModal) errorModal.classList.remove('open');
+}
+function openClassicCanvasDeprecationModal(){
+    classicCanvasDeprecationModal?.classList.add('open');
+    refreshIcons();
+    classicCanvasDeprecationModal?.querySelector('button')?.focus({preventScroll:true});
+}
+function closeClassicCanvasDeprecationModal(){
+    classicCanvasDeprecationModal?.classList.remove('open');
 }
 async function copyErrorMessage(){
     const text = errorMessage?.textContent || '';
@@ -1447,6 +1456,7 @@ async function createCanvas(){
         setCreateMode(false);
         await loadCanvasList(false);
         renderCanvasList();
+        requestAnimationFrame(openClassicCanvasDeprecationModal);
     } catch(e) {
         setStatus(tr('canvas.createFailed'));
         console.error(e);
@@ -1602,6 +1612,7 @@ async function openCanvas(id){
         resumeCanvasImageTasks();
         startCanvasRemotePolling();
         setStatus('Ready');
+        requestAnimationFrame(openClassicCanvasDeprecationModal);
     } catch(e) {
         setStatus(tr('canvas.openFailed'));
         console.error(e);
@@ -13158,6 +13169,10 @@ window.addEventListener('paste', e => {
     else uploadImages(files);
 });
 window.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && classicCanvasDeprecationModal?.classList.contains('open')){
+        closeClassicCanvasDeprecationModal();
+        return;
+    }
     if(!canvas) return;
     if(String(e.key || '').toLowerCase() === 'r' && !isEditableTarget(e.target)) isRKeyDown = true;
     if(e.key === 'Shift' && !isEditableTarget(document.activeElement)) setKnifeMode(true);

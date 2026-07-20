@@ -329,6 +329,16 @@
                 </div>
             </div>
         </div>
+        <div id="classicCanvasDeprecationModal" class="classic-canvas-deprecation-modal" role="dialog" aria-modal="true" aria-labelledby="classicCanvasDeprecationTitle" onclick="closeClassicCanvasDeprecationModal()">
+            <div class="classic-canvas-deprecation-panel" onclick="event.stopPropagation()">
+                <div class="classic-canvas-deprecation-icon"><i data-lucide="triangle-alert"></i></div>
+                <div id="classicCanvasDeprecationTitle" class="classic-canvas-deprecation-title" data-i18n="canvas.classicDeprecationTitle">普通画布即将弃用</div>
+                <div class="classic-canvas-deprecation-message" data-i18n="canvas.classicDeprecationMessage">普通画布未来将会弃用，现在仅支持打开用于数据保存迁移，如需使用AI请创建智能画布</div>
+                <div class="classic-canvas-deprecation-actions">
+                    <button class="classic-canvas-deprecation-confirm" type="button" onclick="closeClassicCanvasDeprecationModal()" data-i18n="canvas.classicDeprecationConfirm">我知道了</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="/static/js/ltx-director-timeline.js"></script>
