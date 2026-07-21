@@ -29,7 +29,7 @@ def _current_username(request: Request, user_id: str) -> str:
 
 
 @router.post("/api/feedback")
-async def feedback_create(payload: FeedbackCreatePayload, request: Request):
+def feedback_create(payload: FeedbackCreatePayload, request: Request):
     content = payload.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="反馈内容不能为空。")
@@ -48,7 +48,7 @@ async def feedback_create(payload: FeedbackCreatePayload, request: Request):
 
 
 @router.get("/api/feedback/admin")
-async def feedback_admin_list(
+def feedback_admin_list(
     status: str = Query(default=""),
     type: str = Query(default=""),
     user_id: str = Query(default=""),
@@ -68,7 +68,7 @@ async def feedback_admin_list(
 
 
 @router.patch("/api/feedback/admin/{feedback_id}")
-async def feedback_admin_update(feedback_id: str, payload: FeedbackUpdatePayload):
+def feedback_admin_update(feedback_id: str, payload: FeedbackUpdatePayload):
     _require_admin()
     if payload.status is not None and normalize_feedback_status(payload.status) is None:
         raise HTTPException(status_code=400, detail="反馈状态无效。")
@@ -83,7 +83,7 @@ async def feedback_admin_update(feedback_id: str, payload: FeedbackUpdatePayload
 
 
 @router.delete("/api/feedback/admin/{feedback_id}")
-async def feedback_admin_delete(feedback_id: str):
+def feedback_admin_delete(feedback_id: str):
     _require_admin()
     if not delete_feedback(feedback_id):
         raise HTTPException(status_code=404, detail="反馈不存在。")

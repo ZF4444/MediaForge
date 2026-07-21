@@ -45,7 +45,7 @@ def _video_placeholder_svg(label: str = "VIDEO") -> bytes:
 
 
 @router.get("/api/files/{file_id}")
-async def get_file_meta(file_id: str):
+def get_file_meta(file_id: str):
     entry = get_file_by_id(file_id)
     if not entry:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -61,13 +61,13 @@ async def get_file_meta(file_id: str):
 
 
 @router.get("/api/files/{file_id}/preview")
-async def preview_file(file_id: str):
+def preview_file(file_id: str):
     _, path = _materialized_path(file_id)
     return FileResponse(path, media_type=content_type_for_path(path), headers=PREVIEW_CACHE_HEADERS)
 
 
 @router.get("/api/files/{file_id}/thumb")
-async def thumbnail_file(file_id: str):
+def thumbnail_file(file_id: str):
     entry = get_file_by_id(file_id)
     if not entry:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -96,7 +96,7 @@ async def thumbnail_file(file_id: str):
 
 
 @router.get("/api/files/{file_id}/download")
-async def download_file(file_id: str):
+def download_file(file_id: str):
     entry, path = _materialized_path(file_id)
     filename = entry.get("original_name") or entry.get("filename") or os.path.basename(path)
     return FileResponse(path, media_type=content_type_for_path(path), filename=filename)

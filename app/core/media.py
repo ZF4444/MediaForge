@@ -1,4 +1,5 @@
 """Media helpers backed by MinIO file references."""
+import asyncio
 import os
 import urllib.parse
 import uuid
@@ -237,7 +238,8 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
         elif "webp" in mime_type:
             filename = filename[:-4] + ".webp"
         payload = base64.b64decode(image_data["value"])
-        stored = save_media_bytes(
+        stored = await asyncio.to_thread(
+            save_media_bytes,
             category,
             filename,
             payload,
@@ -249,7 +251,7 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
         return stored["url"]
     value = image_data["value"]
     if value.startswith("/api/files/"):
-        ref = normalize_media_ref({"url": value})
+        ref = await asyncio.to_thread(normalize_media_ref, {"url": value})
         return ref.get("url") or value
     if value.startswith("/output/") or value.startswith("/assets/"):
         raise RuntimeError("本地媒体 URL 已停用；请使用 MinIO file_id")
@@ -263,7 +265,8 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
                 filename = filename[:-4] + ".jpg"
             elif "webp" in content_type:
                 filename = filename[:-4] + ".webp"
-            stored = save_media_bytes(
+            stored = await asyncio.to_thread(
+                save_media_bytes,
                 category,
                 filename,
                 response.content,
@@ -285,7 +288,7 @@ async def save_remote_video_to_output(url, prefix="video_", category="output"):
     if not url:
         return ""
     if url.startswith("/api/files/"):
-        ref = normalize_media_ref({"url": url})
+        ref = await asyncio.to_thread(normalize_media_ref, {"url": url})
         return ref.get("url") or url
     if url.startswith("/output/") or url.startswith("/assets/"):
         raise RuntimeError("本地媒体 URL 已停用；请使用 MinIO file_id")
@@ -303,7 +306,8 @@ async def save_remote_video_to_output(url, prefix="video_", category="output"):
                 filename = filename[:-4] + ".webm"
             elif "quicktime" in content_type or "mov" in content_type:
                 filename = filename[:-4] + ".mov"
-            stored = save_media_bytes(
+            stored = await asyncio.to_thread(
+                save_media_bytes,
                 category,
                 filename,
                 response.content,

@@ -1,5 +1,8 @@
+import asyncio
 import sys
 from types import SimpleNamespace
+
+import pytest
 
 from app.core import database
 
@@ -14,10 +17,10 @@ class FakePool:
         self.connection_calls = []
         FakePool.instances.append(self)
 
-    def open(self, **kwargs):
+    async def open(self, **kwargs):
         self.open_calls.append(kwargs)
 
-    def close(self, **kwargs):
+    async def close(self, **kwargs):
         self.close_calls.append(kwargs)
 
     def connection(self, **kwargs):
@@ -26,10 +29,10 @@ class FakePool:
 
 
 class FakeConnection:
-    def __enter__(self):
+    async def __aenter__(self):
         return "connection"
 
-    def __exit__(self, *_args):
+    async def __aexit__(self, *_args):
         return False
 
 
@@ -41,24 +44,27 @@ def test_database_pool_is_shared_and_uses_configured_timeouts(monkeypatch):
     monkeypatch.setattr(database, "DATABASE_POOL_MAX_SIZE", 8)
     monkeypatch.setattr(database, "DATABASE_POOL_TIMEOUT_SECONDS", 4.0)
     monkeypatch.setattr(database, "DATABASE_CONNECT_TIMEOUT_SECONDS", 6)
-    monkeypatch.setitem(sys.modules, "psycopg_pool", SimpleNamespace(ConnectionPool=FakePool))
+    monkeypatch.setitem(sys.modules, "psycopg_pool", SimpleNamespace(AsyncConnectionPool=FakePool))
 
-    first = database.open_database_pool()
-    second = database.open_database_pool()
+    async def scenario():
+        first = await database.open_database_pool()
+        second = await database.open_database_pool()
 
-    assert first is second
-    assert len(FakePool.instances) == 1
-    assert first.kwargs["min_size"] == 2
-    assert first.kwargs["max_size"] == 8
-    assert first.kwargs["kwargs"]["connect_timeout"] == 6
-    assert "statement_timeout=" in first.kwargs["kwargs"]["options"]
-    assert first.open_calls == [{"wait": True, "timeout": 4.0}]
-    with database.database_connection() as conn:
-        assert conn == "connection"
-    assert first.connection_calls == [{"timeout": 4.0}]
+        assert first is second
+        assert len(FakePool.instances) == 1
+        assert first.kwargs["min_size"] == 2
+        assert first.kwargs["max_size"] == 8
+        assert first.kwargs["kwargs"]["connect_timeout"] == 6
+        assert "statement_timeout=" in first.kwargs["kwargs"]["options"]
+        assert first.open_calls == [{"wait": True, "timeout": 4.0}]
+        async with database.database_connection() as conn:
+            assert conn == "connection"
+        assert first.connection_calls == [{"timeout": 4.0}]
 
-    database.close_database_pool()
-    assert first.close_calls == [{"timeout": 4.0}]
+        await database.close_database_pool()
+        assert first.close_calls == [{"timeout": 4.0}]
+
+    asyncio.run(scenario())
 
 
 def test_database_pool_rejects_invalid_sizes(monkeypatch):
@@ -68,8 +74,18 @@ def test_database_pool_rejects_invalid_sizes(monkeypatch):
     monkeypatch.setattr(database, "DATABASE_POOL_MAX_SIZE", 2)
 
     try:
-        database.open_database_pool()
+        asyncio.run(database.open_database_pool())
     except RuntimeError as exc:
         assert "DATABASE_POOL_MAX_SIZE" in str(exc)
     else:
         raise AssertionError("invalid pool sizes should fail before opening a pool")
+
+
+def test_sync_database_bridge_rejects_event_loop_calls(monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(database, "_DATABASE_LOOP", asyncio.get_running_loop())
+        with pytest.raises(RuntimeError, match="事件循环中禁止使用同步数据库桥"):
+            with database.database_connection_sync():
+                pass
+
+    asyncio.run(scenario())

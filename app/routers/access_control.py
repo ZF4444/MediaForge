@@ -52,7 +52,7 @@ def _registered_users():
 
 
 @router.get("/api/access-control/me")
-async def access_control_me():
+def access_control_me():
     """当前登录用户的有效权限。所有登录用户均可访问。"""
     uid = current_user_id()
     perms = effective_permissions(uid)
@@ -65,7 +65,7 @@ async def access_control_me():
 
 
 @router.get("/api/access-control/config")
-async def access_control_get_config():
+def access_control_get_config():
     """全集清单 + 默认配置 + 全部用户配置 + 已注册用户列表（仅 admin）。"""
     _require_admin()
     config = load_config()
@@ -79,7 +79,7 @@ async def access_control_get_config():
 
 
 @router.put("/api/access-control/config")
-async def access_control_put_config(payload: AccessControlConfigPayload):
+def access_control_put_config(payload: AccessControlConfigPayload):
     """保存默认配置与全部用户配置（仅 admin）。"""
     _require_admin()
     data = {
@@ -106,7 +106,7 @@ async def access_control_put_config(payload: AccessControlConfigPayload):
 
 
 @router.get("/api/access-control/users")
-async def access_control_users():
+def access_control_users():
     """已注册用户列表（仅 admin）。"""
     _require_admin()
     return {"users": _registered_users()}

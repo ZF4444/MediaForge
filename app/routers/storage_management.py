@@ -1,6 +1,7 @@
 """Storage usage, cleanup, and quota management routes."""
-
 from __future__ import annotations
+
+import asyncio
 
 from typing import Any, Dict, List, Literal, Optional, Set
 
@@ -99,7 +100,7 @@ def _prune_user_media_references(entries: List[Dict[str, Any]]) -> None:
 
 
 @router.get("/api/storage/usage")
-async def get_storage_usage(
+def get_storage_usage(
 ):
     usage = storage_usage_summary_for_user()
     return {
@@ -109,7 +110,7 @@ async def get_storage_usage(
 
 
 @router.get("/api/storage/files")
-async def get_storage_files(
+def get_storage_files(
     category: str = Query(default=""),
     search: str = Query(default=""),
     sort_order: Literal["desc", "asc"] = Query(default="desc"),
@@ -132,6 +133,10 @@ async def get_storage_files(
 @router.post("/api/storage/delete")
 async def batch_delete_storage_entries(request: Request, payload: StorageBatchDeletePayload):
     raw = await request.json()
+    return await asyncio.to_thread(_batch_delete_storage_entries_sync, raw, payload)
+
+
+def _batch_delete_storage_entries_sync(raw, payload: StorageBatchDeletePayload):
     all_matching = bool(raw.get("all_matching")) if isinstance(raw, dict) else False
     category = str(raw.get("category") or "")[:128] if isinstance(raw, dict) else ""
     search = str(raw.get("search") or "")[:256] if isinstance(raw, dict) else ""
@@ -181,7 +186,7 @@ async def batch_delete_storage_entries(request: Request, payload: StorageBatchDe
 
 
 @router.get("/api/storage/config")
-async def get_storage_quota_config():
+def get_storage_quota_config():
     _require_admin()
     users = []
     for item in _registered_users():
@@ -196,7 +201,7 @@ async def get_storage_quota_config():
 
 
 @router.put("/api/storage/config")
-async def put_storage_quota_config(payload: StorageQuotaConfigPayload):
+def put_storage_quota_config(payload: StorageQuotaConfigPayload):
     _require_admin()
     data = {
         "enabled": bool(payload.enabled),

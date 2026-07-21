@@ -130,25 +130,25 @@ def list_conversations(user_id):
 
 
 @router.get("/api/conversations")
-async def conversations(request: Request, x_user_id: str = Header(default="")):
+def conversations(request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     return {"user_id": user_id, "conversations": list_conversations(user_id)}
 
 
 @router.post("/api/conversations")
-async def create_conversation(payload: ConversationCreateRequest, request: Request, x_user_id: str = Header(default="")):
+def create_conversation(payload: ConversationCreateRequest, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     return {"conversation": new_conversation(user_id, payload.title)}
 
 
 @router.get("/api/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
+def get_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     return {"conversation": load_conversation(user_id, conversation_id)}
 
 
 @router.delete("/api/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
+def delete_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM conversations WHERE id=%s AND user_id=%s", (conversation_id, user_id))

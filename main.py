@@ -101,7 +101,7 @@ async def auth_middleware(request: Request, call_next):
     # 放行静态资源与登录相关路径
     is_public = path in AUTH_PUBLIC_PATHS or any(path.startswith(p) for p in AUTH_PUBLIC_PREFIXES)
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    sess = get_session(token) if token else None
+    sess = await asyncio.to_thread(get_session, token) if token else None
 
     if sess:
         # 已登录：注入当前用户到 ContextVar，供数据路径解析器使用。
@@ -148,7 +148,7 @@ APP_VERSION = "2026.05.19"
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
-from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, refresh_storage_metrics, storage_cleanup_loop, storage_readiness_status, verify_storage_startup
+from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cleanup_loop, storage_readiness_status, verify_storage_startup
 from app.services.business_metadata import initialize_business_metadata
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
 from app.core.metrics import render_metrics
@@ -157,7 +157,7 @@ from app.core.metrics import render_metrics
 async def startup_event():
     global GLOBAL_LOOP, STORAGE_CLEANUP_TASK
     try:
-        await asyncio.to_thread(open_database_pool)
+        await open_database_pool()
         await asyncio.to_thread(verify_storage_startup)
         # Business metadata is a separate schema layer above ``files``.  Keep
         # initialization in startup so new deployments and existing databases are
@@ -165,13 +165,16 @@ async def startup_event():
         await asyncio.to_thread(initialize_business_metadata)
         await asyncio.to_thread(load_users_registry)
         await asyncio.to_thread(load_sessions)
+        await asyncio.to_thread(refresh_api_providers_cache)
+        await asyncio.to_thread(access_control.warm_access_control_cache)
+        await asyncio.to_thread(load_storage_quota_config)
         GLOBAL_LOOP = asyncio.get_running_loop()
         shared_state.set_global_loop(GLOBAL_LOOP)
         if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
             STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
         logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
     except Exception:
-        await asyncio.to_thread(close_database_pool)
+        await close_database_pool()
         raise
 
 
@@ -181,7 +184,7 @@ async def shutdown_event():
     if STORAGE_CLEANUP_TASK is not None:
         STORAGE_CLEANUP_TASK.cancel()
         STORAGE_CLEANUP_TASK = None
-    await asyncio.to_thread(close_database_pool)
+    await close_database_pool()
 
 
 @app.get("/health/live", include_in_schema=False)
@@ -209,7 +212,7 @@ async def health_ready():
 async def prometheus_metrics():
     """Prometheus scrape endpoint for database, object storage, and background jobs."""
     await asyncio.gather(
-        asyncio.to_thread(refresh_database_metrics),
+        refresh_database_metrics(),
         asyncio.to_thread(refresh_storage_metrics),
     )
     return Response(
@@ -1134,20 +1137,36 @@ def normalize_provider(item):
         "volcengine_region": volc_region,
     }
 
-def load_api_providers():
+_API_PROVIDERS_CACHE = None
+
+
+def refresh_api_providers_cache():
+    global _API_PROVIDERS_CACHE
     defaults = default_api_providers()
     try:
         from app.services.business_metadata import get_app_setting
         raw = get_app_setting("api_providers", [])
         providers = [normalize_provider(item) for item in raw if isinstance(item, dict)]
-        return merge_default_api_providers(providers or defaults)
+        _API_PROVIDERS_CACHE = merge_default_api_providers(providers or defaults)
     except Exception:
         logger.exception("failed to load API provider config", extra={"event": "api_provider_config_load_failed"})
-        return defaults
+        _API_PROVIDERS_CACHE = defaults
+    return [dict(item) for item in _API_PROVIDERS_CACHE]
+
+
+def load_api_providers():
+    providers = _API_PROVIDERS_CACHE
+    if providers is None:
+        return default_api_providers()
+    return [dict(item) for item in providers]
 
 def save_api_providers(providers):
+    global _API_PROVIDERS_CACHE
     from app.services.business_metadata import set_app_setting
     set_app_setting("api_providers", providers)
+    _API_PROVIDERS_CACHE = merge_default_api_providers([
+        normalize_provider(item) for item in providers if isinstance(item, dict)
+    ])
 
 # 依赖注入：把 load_api_providers 交给 access_control 模块，用于动态枚举
 # 智能画布「AI生成」引擎下的可选模型清单（画布节点访问控制）。避免 access_control
@@ -2529,7 +2548,7 @@ async def jimeng_prepare_local_media(ref_url, kind="image"):
     if not text:
         return "", []
     if text.startswith("/api/files/"):
-        path = output_file_from_url(text)
+        path = await asyncio.to_thread(output_file_from_url, text)
         if path:
             return path, []
         raise HTTPException(status_code=404, detail=f"即梦参考素材不存在：{text}")
@@ -2713,7 +2732,8 @@ async def generate_jimeng_video(payload: CanvasVideoRequest, provider):
                 args.append(f"--model_version={model_version}")
         raw = await run_jimeng_cli(args, timeout=jimeng_poll_seconds() + 180)
         urls = await jimeng_store_outputs(raw, "video")
-        return {"videos": urls, "video_items": media_response_items(urls, kind="video"), "task_id": jimeng_submit_id(raw) or None, "raw": raw}
+        video_items = await asyncio.to_thread(media_response_items, urls, "video")
+        return {"videos": urls, "video_items": video_items, "task_id": jimeng_submit_id(raw) or None, "raw": raw}
     finally:
         for path in temp_paths:
             try:
@@ -3032,7 +3052,7 @@ async def volcengine_video_reference_content_items(value, max_frames=4, max_size
 async def video_reference_to_frame_data_urls(value, max_frames=6, max_size=768):
     if not isinstance(value, str) or not value:
         return []
-    path = output_file_from_url(value)
+    path = await asyncio.to_thread(output_file_from_url, value)
     cleanup_path = ""
     if not path and value.startswith(("http://", "https://")):
         suffix = os.path.splitext(urllib.parse.urlparse(value).path)[1] or ".mp4"
@@ -3385,7 +3405,7 @@ async def upload_image_for_apimart(client, provider, ref_url: str) -> str:
             return f"ERR:上传异常 {e}"
     # MinIO file reference: materialize a temporary cache file before upload.
     if ref_url.startswith("/api/files/"):
-        path = output_file_from_url(ref_url)
+        path = await asyncio.to_thread(output_file_from_url, ref_url)
         if not path:
             logger.warning("APIMart upload skipped because local file is missing", extra={"event": "upload_source_missing", "provider": "apimart", "operation": "upload", "media_url": ref_url})
             return "ERR:本地文件不存在或已被删除"
@@ -3416,19 +3436,19 @@ async def upload_video_for_apimart(client, provider, ref_url: str) -> str:
         return "ERR:空地址"
     if valid_apimart_video_image_input(ref_url):
         return ref_url
-    public_url = local_asset_public_url(ref_url)
+    public_url = await asyncio.to_thread(local_asset_public_url, ref_url)
     if public_url:
         return public_url
     if not ref_url.startswith("/api/files/"):
-        return f"ERR:{apimart_video_reference_error(ref_url)}"
-    path = output_file_from_url(ref_url)
+        return f"ERR:{await asyncio.to_thread(apimart_video_reference_error, ref_url)}"
+    path = await asyncio.to_thread(output_file_from_url, ref_url)
     if not path:
         return "ERR:本地视频不存在或已被删除"
     ct = content_type_for_path(path)
     if not ct.startswith("video/"):
         return "ERR:参考视频不是可识别的视频文件"
     if str(os.getenv("APIMART_TRY_VIDEO_UPLOAD") or "").strip().lower() not in {"1", "true", "yes", "on"}:
-        return f"ERR:{apimart_video_reference_error(ref_url)}"
+        return f"ERR:{await asyncio.to_thread(apimart_video_reference_error, ref_url)}"
     base_url = video_api_root(provider)
     filename, content, content_type = apimart_upload_raw_file_payload(path)
     upload_paths = ("/v1/uploads/videos", "/v1/uploads/files", "/v1/uploads/images")
@@ -3462,7 +3482,7 @@ async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
         return "ERR:空地址"
     if valid_apimart_video_image_input(ref_url):
         return ref_url
-    public_url = local_asset_public_url(ref_url)
+    public_url = await asyncio.to_thread(local_asset_public_url, ref_url)
     if public_url:
         return public_url
     base_url = video_api_root(provider)
@@ -3480,7 +3500,7 @@ async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
         ext = mimetypes.guess_extension(mime) or ".mp3"
         filename, content, content_type = (f"canvas_audio{ext}", raw, mime or "audio/mpeg")
     elif ref_url.startswith("/api/files/"):
-        path = output_file_from_url(ref_url)
+        path = await asyncio.to_thread(output_file_from_url, ref_url)
         if not path:
             return "ERR:本地音频不存在或已被删除"
         ct = content_type_for_path(path)
@@ -3488,7 +3508,7 @@ async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
             return "ERR:参考音频不是可识别的音频文件"
         filename, content, content_type = apimart_upload_raw_file_payload(path)
     else:
-        return f"ERR:{apimart_video_reference_error(ref_url)}"
+        return f"ERR:{await asyncio.to_thread(apimart_video_reference_error, ref_url)}"
     for upload_path in upload_paths:
         upload_url = f"{base_url}{upload_path}"
         try:
@@ -3800,7 +3820,7 @@ async def upload_local_video_to_cloud(ref_url: str, service: str = "auto") -> Di
     ref_url = str(ref_url or "").strip()
     if ref_url.startswith("http://") or ref_url.startswith("https://"):
         return {"url": ref_url, "source": ref_url, "service": "existing"}
-    path = local_media_path_for_cloud_upload(ref_url)
+    path = await asyncio.to_thread(local_media_path_for_cloud_upload, ref_url)
     service = str(service or os.getenv("CLOUD_VIDEO_UPLOAD_SERVICE", "auto") or "auto").strip().lower()
     if service in {"litterbox", "catbox"}:
         return await upload_video_to_litterbox(path, ref_url)
@@ -4066,7 +4086,7 @@ async def generate_modelscope_provider_image(prompt, size, model, reference_imag
         if not ref.get("url"):
             continue
         # 本地参考图转为 data URL；前端已生成的 data URL 保持原样，贴近旧版稳定链路。
-        refs.append(modelscope_image_url(ref.get("url", ""), max_size=1536))
+        refs.append(await asyncio.to_thread(modelscope_image_url, ref.get("url", ""), 1536))
     headers = {
         "Authorization": f"Bearer {clean_token}",
         "Content-Type": "application/json",
@@ -4154,7 +4174,7 @@ async def generate_gemini_provider_image(prompt, size, model, reference_images=N
     endpoint = gemini_endpoint_url(provider, model_name)
     parts = [{"text": prompt.strip()}]
     for ref in (reference_images or [])[:16]:
-        part = gemini_reference_part(ref)
+        part = await asyncio.to_thread(gemini_reference_part, ref)
         if part:
             parts.append(part)
     body = {
@@ -4188,7 +4208,10 @@ async def generate_volcengine_provider_image(prompt, size, model, reference_imag
         "size": size,
         "response_format": "url",
     }
-    images = [volcengine_image_payload(ref) for ref in (reference_images or [])[:10]]
+    images = [
+        await asyncio.to_thread(volcengine_image_payload, ref)
+        for ref in (reference_images or [])[:10]
+    ]
     images = [value for value in images if value]
     if images:
         body["image"] = images
@@ -4545,7 +4568,7 @@ async def runninghub_upload_reference(client, provider, ref):
             if uploaded:
                 return str(uploaded)
         raise HTTPException(status_code=502, detail=f"RunningHub 上传图片未返回 download_url：{raw}")
-    path = output_file_from_url(value)
+    path = await asyncio.to_thread(output_file_from_url, value)
     if not path:
         return value if value.startswith(("http://", "https://")) else ""
     upload_url = runninghub_endpoint_url(provider, "/openapi/v2/media/upload/binary")
@@ -4734,7 +4757,7 @@ async def runninghub_upload_local_to_filename(client, provider, url):
     text = str(url or "").strip()
     if not text:
         return ""
-    path = runninghub_local_asset_path(text)
+    path = await asyncio.to_thread(runninghub_local_asset_path, text)
     if path:
         filename = os.path.basename(path)
         content_type = content_type_for_path(path)
@@ -5013,7 +5036,7 @@ async def generate_omnilojo_provider_image(prompt, size, model, reference_images
     chat_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/chat/completions")
     content = [{"type": "text", "text": str(prompt or "").strip()}]
     for ref in (reference_images or [])[:16]:
-        ref_url = reference_to_data_url(ref, max_size=1536) if ref.get("url") else ""
+        ref_url = await asyncio.to_thread(reference_to_data_url, ref, 1536) if ref.get("url") else ""
         if ref_url:
             content.append({"type": "image_url", "image_url": {"url": ref_url}})
     body = {"model": model, "messages": [{"role": "user", "content": content}]}
@@ -5079,7 +5102,10 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 "official_fallback": False,
             }
             if image_refs:
-                body["image_urls"] = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:16]]
+                body["image_urls"] = [
+                    await asyncio.to_thread(reference_to_data_url, ref, 1536)
+                    for ref in image_refs[:16]
+                ]
             response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
         elif is_gpt2 and not image_refs and not mask_refs:
             body = {"model": model, "prompt": prompt, "size": size}
@@ -5097,14 +5123,14 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             edit_failed_text = ""
             try:
                 for ref in image_refs[:4]:
-                    path = output_file_from_url(ref.get("url", ""))
+                    path = await asyncio.to_thread(output_file_from_url, ref.get("url", ""))
                     if not path:
                         continue
                     fh = open(path, "rb")
                     opened.append(fh)
                     files.append(("image", (os.path.basename(path), fh, content_type_for_path(path))))
                 if mask_refs:
-                    mask_path = output_file_from_url(mask_refs[0].get("url", ""))
+                    mask_path = await asyncio.to_thread(output_file_from_url, mask_refs[0].get("url", ""))
                     if mask_path:
                         fh = open(mask_path, "rb")
                         opened.append(fh)
@@ -5130,7 +5156,10 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                         detail=f"GPT-Image-2 编辑接口 /images/edits 调用失败：{edit_failed_text[:300] or edit_failed_status}。已停止自动重试，避免上游可能已扣费后再次请求。"
                     )
                 logger.warning("image edit endpoint failed; using generation fallback", extra={"event": "image_edit_fallback", "provider": provider.get("id"), "operation": "image_edit", "status_code": edit_failed_status, "response_excerpt": edit_failed_text[:200]})
-                image_payload = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:4]]
+                image_payload = [
+                    await asyncio.to_thread(reference_to_data_url, ref, 1536)
+                    for ref in image_refs[:4]
+                ]
                 body = {
                     "model": model, "prompt": prompt, "size": size,
                     "response_format": "url", "n": 1,
@@ -5453,7 +5482,7 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
             kind = runninghub_output_kind(ext)
             if not persistOutputs:
                 urls.append(remote)
-                media_items.append(media_response_item(remote, kind=kind))
+                media_items.append(await asyncio.to_thread(media_response_item, remote, "", kind))
                 continue
             try:
                 local_url = await runninghub_store_remote_output(client, remote)
@@ -5461,7 +5490,7 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
                 logger.exception("failed to persist RunningHub output")
                 raise HTTPException(status_code=502, detail=f"RunningHub 输出写入 MinIO 失败：{exc}") from exc
             urls.append(local_url)
-            media_items.append(media_response_item(local_url, kind=kind))
+            media_items.append(await asyncio.to_thread(media_response_item, local_url, "", kind))
         status = runninghub_normalized_status(raw, code, urls)
         return {"success": True, "data": {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
 
@@ -5476,8 +5505,8 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     content_type = "application/octet-stream"
     content = b""
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0), follow_redirects=True) as client:
-        entry = resolve_file_reference(url=source_url) if source_url else None
-        path = None if entry else runninghub_local_asset_path(source_url)
+        entry = await asyncio.to_thread(resolve_file_reference, url=source_url) if source_url else None
+        path = None if entry else await asyncio.to_thread(runninghub_local_asset_path, source_url)
         if entry:
             filename = (
                 entry.get("original_name")
@@ -5486,7 +5515,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
                 or filename
             )
             content_type = entry.get("mime_type") or entry.get("content_type") or content_type
-            content = get_object_bytes(str(entry.get("bucket") or ""), str(entry.get("object_key") or ""))
+            content = await asyncio.to_thread(get_object_bytes, str(entry.get("bucket") or ""), str(entry.get("object_key") or ""))
         elif path:
             filename = os.path.basename(path)
             content_type = content_type_for_path(path)
@@ -5681,7 +5710,7 @@ async def jimeng_query_media(payload: JimengQueryMediaRequest):
     try:
         urls = await jimeng_store_outputs(queried, kind, allow_query=False)
         payload = {"status": "succeeded", "submit_id": submit_id, "kind": kind, "urls": urls}
-        items = media_response_items(urls, kind=kind)
+        items = await asyncio.to_thread(media_response_items, urls, kind)
         if kind == "video":
             payload["video_items"] = items
         elif kind == "audio":
@@ -5721,7 +5750,7 @@ async def api_providers():
     return {"providers": public_api_providers()}
 
 @app.put("/api/providers")
-async def save_providers(payload: List[ApiProviderPayload]):
+def save_providers(payload: List[ApiProviderPayload]):
     providers = []
     env_updates = {}
     # 收集每个 item 的 primary 字段
@@ -6310,7 +6339,10 @@ async def build_online_image_result(payload: OnlineImageRequest):
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游生图接口失败：{exc}") from exc
 
-    media_items = [media_response_item(url, kind="image") for url, _raw in generated if url]
+    media_items = [
+        await asyncio.to_thread(media_response_item, url, "", "image")
+        for url, _raw in generated if url
+    ]
     local_urls = [item["url"] for item in media_items if item.get("url")]
     raw = generated[0][1] if generated else {}
     if not local_urls:
@@ -6331,7 +6363,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
         "params": {"provider_id": provider["id"], "model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
-    save_to_history(result)
+    await asyncio.to_thread(save_to_history, result)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
     return result
@@ -6367,7 +6399,10 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         local_url = await save_ai_image_to_output(image_item, prefix="online_")
         if local_url:
             local_urls.append(local_url)
-        media_items = [media_response_item(url, kind="image") for url in local_urls if url]
+        media_items = [
+            await asyncio.to_thread(media_response_item, url, "", "image")
+            for url in local_urls if url
+        ]
         result = {
             "status": "succeeded",
             "prompt": "",
@@ -6383,7 +6418,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "params": {"provider_id": provider["id"]},
             "raw": raw,
         }
-        save_to_history(result)
+        await asyncio.to_thread(save_to_history, result)
         if GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
         return result
@@ -6799,7 +6834,7 @@ async def yuli_fetch_reference_bytes(client, ref_url):
             return None
         ext = (mime.split("/")[-1] or "png").split("+")[0]
         return (f"input_reference.{ext}", raw, mime)
-    path = output_file_from_url(ref_url)
+    path = await asyncio.to_thread(output_file_from_url, ref_url)
     if path:
         try:
             with open(path, "rb") as f:
@@ -6857,7 +6892,8 @@ async def generate_yuli_openai_video(client, payload, provider, base_url, reques
     if not urls:
         raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
     local_urls = [await save_remote_video_to_output(url) for url in urls]
-    return {"videos": local_urls, "video_items": media_response_items(local_urls, kind="video"), "task_id": task_id, "raw": result}
+    video_items = await asyncio.to_thread(media_response_items, local_urls, "video")
+    return {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}
 
 def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
     text = str(prompt or "").strip()
@@ -7044,7 +7080,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                         body["generate_audio"] = True
                     image_like_urls = set()
                     for ref in payload.images[:9]:
-                        url = volcengine_media_reference_url(ref.url, max_image_size=1536)
+                        url = await asyncio.to_thread(volcengine_media_reference_url, ref.url, 1536)
                         if not url:
                             continue
                         item = {
@@ -7060,7 +7096,11 @@ async def canvas_video(payload: CanvasVideoRequest):
                         text_url = str(url or "").strip()
                         if not text_url:
                             continue
-                        media_url = volcengine_media_reference_url(text_url, max_image_size=1536 if looks_like_image_media_url(text_url) else None)
+                        media_url = await asyncio.to_thread(
+                            volcengine_media_reference_url,
+                            text_url,
+                            1536 if looks_like_image_media_url(text_url) else None,
+                        )
                         if not media_url:
                             continue
                         if media_url in image_like_urls or looks_like_image_media_url(media_url):
@@ -7074,7 +7114,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                         video_items = await volcengine_video_reference_content_items(media_url)
                         body["content"].extend(video_items)
                     for url in (payload.audios or [])[:3]:
-                        audio_url = volcengine_media_reference_url(url, max_image_size=None)
+                        audio_url = await asyncio.to_thread(volcengine_media_reference_url, url, None)
                         if not audio_url:
                             continue
                         body["content"].append({
@@ -7098,7 +7138,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                             yuli_images.append(ref_url)
                         else:
                             # 本地/dataURL 图片转成 data URL 兜底传递
-                            data_url = reference_to_data_url(ref.dict(), max_size=1536)
+                            data_url = await asyncio.to_thread(reference_to_data_url, ref.dict(), 1536)
                             if data_url:
                                 yuli_images.append(data_url)
                     body = {
@@ -7114,7 +7154,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                     image_payload = []
                     for ref in payload.images[:4]:
                         if ref.url:
-                            image_payload.append(reference_to_data_url(ref.dict(), max_size=1536))
+                            image_payload.append(await asyncio.to_thread(reference_to_data_url, ref.dict(), 1536))
                     body = {
                         "prompt": payload.prompt,
                         "model": selected_model(payload.model, "veo3-fast"),
@@ -7178,7 +7218,8 @@ async def canvas_video(payload: CanvasVideoRequest):
             if not urls:
                 raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
             local_urls = [await save_remote_video_to_output(url) for url in urls]
-            return {"videos": local_urls, "video_items": media_response_items(local_urls, kind="video"), "task_id": task_id, "raw": result}
+            video_items = await asyncio.to_thread(media_response_items, local_urls, "video")
+            return {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}
     except httpx.HTTPStatusError as exc:
         text = exc.response.text
         try:
@@ -7258,28 +7299,28 @@ def _load_builtin_expand_rules():
 
 
 @app.get("/api/caption-rules")
-async def get_caption_rules():
+def get_caption_rules():
     from app.services.business_metadata import get_user_setting
     user_rules = get_user_setting(current_user_id(), "caption_rules", [])
     return {"builtin_rules": _load_builtin_caption_rules(), "user_rules": user_rules}
 
 
 @app.post("/api/caption-rules")
-async def save_caption_rules(payload: dict):
+def save_caption_rules(payload: dict):
     from app.services.business_metadata import set_user_setting
     set_user_setting(current_user_id(), "caption_rules", payload.get("user_rules", []))
     return {"ok": True}
 
 
 @app.get("/api/expand-rules")
-async def get_expand_rules():
+def get_expand_rules():
     from app.services.business_metadata import get_user_setting
     user_rules = get_user_setting(current_user_id(), "expand_rules", [])
     return {"builtin_rules": _load_builtin_expand_rules(), "user_rules": user_rules}
 
 
 @app.post("/api/expand-rules")
-async def save_expand_rules(payload: dict):
+def save_expand_rules(payload: dict):
     from app.services.business_metadata import set_user_setting
     set_user_setting(current_user_id(), "expand_rules", payload.get("user_rules", []))
     return {"ok": True}
@@ -7299,15 +7340,21 @@ async def canvas_llm(payload: CanvasLLMRequest):
         if role in {"user", "assistant"} and content:
             upstream_messages.append({"role": role, "content": content})
     # 构造用户消息：有图片/视频时用 OpenAI/Gemini 多模态格式
-    image_inputs = [img for img in (payload.images or []) if is_image_reference_value(img)]
-    video_inputs = [video for video in (payload.videos or []) if is_video_reference_value(video)]
+    image_flags = await asyncio.gather(*(
+        asyncio.to_thread(is_image_reference_value, img) for img in (payload.images or [])
+    ))
+    video_flags = await asyncio.gather(*(
+        asyncio.to_thread(is_video_reference_value, video) for video in (payload.videos or [])
+    ))
+    image_inputs = [img for img, valid in zip(payload.images or [], image_flags) if valid]
+    video_inputs = [video for video, valid in zip(payload.videos or [], video_flags) if valid]
     if image_inputs or video_inputs:
         content_parts = [{"type": "text", "text": payload.message}]
         ok_imgs = 0
         for img in image_inputs[:8]:
             if not img or not isinstance(img, str):
                 continue
-            ref_url = media_reference_to_url(img, max_image_size=1024)
+            ref_url = await asyncio.to_thread(media_reference_to_url, img, 1024)
             if not ref_url:
                 continue
             content_parts.append({"type": "image_url", "image_url": {"url": ref_url}})
@@ -7400,7 +7447,7 @@ async def check_canvas_assets(payload: CanvasAssetCheckRequest):
         if not text:
             continue
         if text.startswith("/api/files/"):
-            result[text] = bool(output_file_from_url(text))
+            result[text] = bool(await asyncio.to_thread(output_file_from_url, text))
         else:
             result[text] = True
     return {"exists": result}
@@ -7421,7 +7468,7 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
                 requested_name = ""
             if not text:
                 continue
-            path = output_file_from_url(text)
+            path = await asyncio.to_thread(output_file_from_url, text)
             content = None
             content_type = ""
             if path and os.path.isfile(path):
@@ -7556,7 +7603,7 @@ def build_canvas_workflow_archive(payload: CanvasWorkflowExportRequest) -> Tuple
 
 @app.post("/api/canvas-workflows/export")
 async def export_canvas_workflow(payload: CanvasWorkflowExportRequest):
-    archive, _ = build_canvas_workflow_archive(payload)
+    archive, _ = await asyncio.to_thread(build_canvas_workflow_archive, payload)
     filename = sanitize_export_filename(payload.filename or "canvas-workflow.zip", "canvas-workflow.zip")
     if not filename.lower().endswith(".zip"):
         filename += ".zip"
@@ -7590,7 +7637,8 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
                     base = sanitize_export_filename(res.get("name") or fallback_name, fallback_name)
                     payload = zf.read(archive)
                     kind = str(res.get("kind") or "") or runninghub_output_kind(os.path.splitext(base)[1])
-                    stored = save_media_bytes(
+                    stored = await asyncio.to_thread(
+                        save_media_bytes,
                         "input",
                         f"workflow_{uuid.uuid4().hex[:8]}_{base}",
                         payload,
@@ -7677,7 +7725,7 @@ async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest):
                 f.write(text)
             count += 1
             continue
-        src = output_file_from_url(item.url)
+        src = await asyncio.to_thread(output_file_from_url, item.url)
         if not src or not os.path.isfile(src):
             continue
         base = sanitize_export_filename(item.name or os.path.basename(src), os.path.basename(src) or f"asset-{count + 1}")
@@ -7711,7 +7759,7 @@ async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest):
 
 @app.post("/api/asset-library/items/{item_id}/register-avatar")
 async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
-    lib = load_asset_library()
+    lib = await asyncio.to_thread(load_asset_library)
     target_item = find_asset_item_in_library(lib, item_id, payload.library_id)
     if not target_item:
         raise HTTPException(status_code=404, detail="资产不存在")
@@ -7760,12 +7808,12 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
         "registered_at": now_ms(),
     }
     target_item["registrations"] = regs
-    save_asset_library(lib)
+    await asyncio.to_thread(save_asset_library, lib)
     return {"library": lib, "item": target_item}
 
 @app.post("/api/asset-library/items/{item_id}/avatar-status")
 async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
-    lib = load_asset_library()
+    lib = await asyncio.to_thread(load_asset_library)
     target_item = find_asset_item_in_library(lib, item_id, payload.library_id)
     if not target_item:
         raise HTTPException(status_code=404, detail="资产不存在")
@@ -7793,7 +7841,7 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
         reg["asset_id"] = result["asset_uri"].replace("asset://", "")
     regs[platform] = reg
     target_item["registrations"] = regs
-    save_asset_library(lib)
+    await asyncio.to_thread(save_asset_library, lib)
     return {"library": lib, "item": target_item}
 
 # items DELETE / delete / move / crop 路由已迁移至 app/routers/assets.py。
@@ -7805,11 +7853,10 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
 @app.post("/api/chat")
 async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
-    conversation = (
-        load_conversation(user_id, payload.conversation_id)
-        if payload.conversation_id
-        else new_conversation(user_id, display_title(payload.message))
-    )
+    if payload.conversation_id:
+        conversation = await asyncio.to_thread(load_conversation, user_id, payload.conversation_id)
+    else:
+        conversation = await asyncio.to_thread(new_conversation, user_id, display_title(payload.message))
     if not conversation.get("messages"):
         conversation["title"] = display_title(payload.message)
 
@@ -7824,7 +7871,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
     }
     conversation["messages"].append(user_message)
     conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    await asyncio.to_thread(save_conversation, user_id, conversation)
 
     if payload.mode == "image":
         image_provider_id = payload.provider if payload.provider not in {"modelscope"} else "comfly"
@@ -7857,7 +7904,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
         upstream_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for item in history:
-            msg = upstream_message_from_record(item)
+            msg = await asyncio.to_thread(upstream_message_from_record, item)
             if msg:
                 upstream_messages.append(msg)
         try:
@@ -7890,7 +7937,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
 
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    await asyncio.to_thread(save_conversation, user_id, conversation)
     return {"conversation": conversation, "message": assistant_message}
 
 @app.post("/api/chat/stream")
@@ -7899,11 +7946,10 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         raise HTTPException(status_code=400, detail="图片模式请使用 /api/chat")
 
     user_id = safe_user_id(x_user_id, request)
-    conversation = (
-        load_conversation(user_id, payload.conversation_id)
-        if payload.conversation_id
-        else new_conversation(user_id, display_title(payload.message))
-    )
+    if payload.conversation_id:
+        conversation = await asyncio.to_thread(load_conversation, user_id, payload.conversation_id)
+    else:
+        conversation = await asyncio.to_thread(new_conversation, user_id, display_title(payload.message))
     if not conversation.get("messages"):
         conversation["title"] = display_title(payload.message)
 
@@ -7918,14 +7964,14 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     }
     conversation["messages"].append(user_message)
     conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    await asyncio.to_thread(save_conversation, user_id, conversation)
 
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
     _stream_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
     history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
     upstream_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for item in history:
-        msg = upstream_message_from_record(item)
+        msg = await asyncio.to_thread(upstream_message_from_record, item)
         if msg:
             upstream_messages.append(msg)
 
@@ -7978,7 +8024,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         }
         conversation["messages"].append(assistant_message)
         conversation["updated_at"] = now_ms()
-        save_conversation(user_id, conversation)
+        await asyncio.to_thread(save_conversation, user_id, conversation)
         yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -8026,17 +8072,17 @@ async def poll_angle_cloud(req: CloudPollRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_angle_{int(time.time())}.png"
-                                local_path = store_generated_media_bytes(img_res.content, filename, "image", img_res.headers.get("content-type", ""))
+                                local_path = await asyncio.to_thread(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
                                 raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
                     except Exception as exc:
                         raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
 
                     record = {"timestamp": time.time(), "prompt": f"Resumed {task_id}", "images": [local_path], "type": "angle"}
-                    save_to_history(record)
+                    await asyncio.to_thread(save_to_history, record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
-                    return media_response_item(local_path, kind="image")
+                    return await asyncio.to_thread(media_response_item, local_path, "", "image")
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     if req.client_id:
@@ -8075,7 +8121,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
     payload = {
         "model": model,
         "prompt": req.prompt.strip(),
-        "image_url": [modelscope_image_url(url, max_size=1536) for url in req.image_urls]
+        "image_url": [await asyncio.to_thread(modelscope_image_url, url, 1536) for url in req.image_urls]
     }
     if req.resolution:
         payload["size"] = modelscope_size(req.resolution)
@@ -8114,19 +8160,19 @@ async def generate_angle_cloud(req: CloudGenRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_angle_{int(time.time())}.png"
-                                local_path = store_generated_media_bytes(img_res.content, filename, "image", img_res.headers.get("content-type", ""))
+                                local_path = await asyncio.to_thread(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
                                 raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
                     except Exception as exc:
                         raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
 
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "angle"}
-                    save_to_history(record)
+                    await asyncio.to_thread(save_to_history, record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
                     if GLOBAL_LOOP:
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
-                    item = media_response_item(local_path, kind="image")
+                    item = await asyncio.to_thread(media_response_item, local_path, "", "image")
                     item["task_id"] = task_id
                     return item
 
@@ -8212,7 +8258,7 @@ async def generate_cloud(req: CloudGenRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_{int(time.time())}.png"
-                                local_path = store_generated_media_bytes(img_res.content, filename, "image", img_res.headers.get("content-type", ""))
+                                local_path = await asyncio.to_thread(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
                                 raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
                     except Exception as exc:
@@ -8220,12 +8266,12 @@ async def generate_cloud(req: CloudGenRequest):
                         raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
 
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "cloud"}
-                    save_to_history(record)
+                    await asyncio.to_thread(save_to_history, record)
                     try:
                         await manager.broadcast_new_image(record)
                     except Exception:
                         pass
-                    return media_response_item(local_path, kind="image")
+                    return await asyncio.to_thread(media_response_item, local_path, "", "image")
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
@@ -8263,7 +8309,10 @@ async def ms_generate(req: MsGenerateRequest):
     elif req.size:
         payload["size"] = modelscope_size(req.size)
     if req.image_urls:
-        payload["image_url"] = [modelscope_image_url(url, max_size=1536) for url in req.image_urls]
+        payload["image_url"] = [
+            await asyncio.to_thread(modelscope_image_url, url, 1536)
+            for url in req.image_urls
+        ]
     if req.loras is not None:
         payload["loras"] = req.loras
 
@@ -8306,7 +8355,7 @@ async def ms_generate(req: MsGenerateRequest):
                                 img_res = await dl_client.get(img_url)
                                 if img_res.status_code == 200:
                                     filename = f"ms_{req.model.replace('/', '_').replace(':', '_')}_{int(time.time())}.png"
-                                    local_path = store_generated_media_bytes(img_res.content, filename, "image", img_res.headers.get("content-type", ""))
+                                    local_path = await asyncio.to_thread(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                                 else:
                                     raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
                         except Exception as exc:
@@ -8319,10 +8368,10 @@ async def ms_generate(req: MsGenerateRequest):
                             "type": "klein",
                             "model": req.model,
                         }
-                        save_to_history(record)
+                        await asyncio.to_thread(save_to_history, record)
                         if GLOBAL_LOOP:
                             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
-                        item = media_response_item(local_path, kind="image")
+                        item = await asyncio.to_thread(media_response_item, local_path, "", "image")
                         item["task_id"] = task_id
                         return item
 

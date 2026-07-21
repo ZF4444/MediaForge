@@ -8,6 +8,7 @@
 权限：管理员判定为 current_user_id() == ADMIN_USER_ID（用户名 "admin"）。
 非 admin 访问 POST/DELETE 返回 403。
 """
+import asyncio
 from fastapi import APIRouter, HTTPException
 
 from app.core.access_control import is_admin
@@ -31,7 +32,7 @@ def _require_admin() -> str:
 
 
 @router.get("/api/announcement/latest")
-async def announcement_latest():
+def announcement_latest():
     """所有登录用户均可访问：返回当前最新公告（若无则 announcement 为 null）。"""
     return {"announcement": get_latest_announcement()}
 
@@ -43,13 +44,13 @@ async def announcement_create(payload: AnnouncementPayload):
     if not content:
         raise HTTPException(status_code=400, detail="公告内容不能为空。")
     uid = current_user_id()
-    item = create_announcement(content, uid)
+    item = await asyncio.to_thread(create_announcement, content, uid)
     await manager.broadcast_announcement(item)
     return {"ok": True, "announcement": item}
 
 
 @router.delete("/api/announcement")
-async def announcement_delete():
+def announcement_delete():
     _require_admin()
     clear_announcement()
     return {"ok": True}

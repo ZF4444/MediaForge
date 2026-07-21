@@ -63,10 +63,8 @@ def test_add_asset_library_item_uses_file_id(monkeypatch):
     )
     monkeypatch.setattr(asset_router, "save_asset_library", lambda lib: saved.setdefault("library", lib))
 
-    result = asyncio.run(
-        asset_router.add_asset_library_item(
-            AssetLibraryAddRequest(library_id="lib1", category_id="cat1", file_id="file-asset-1", name="demo.png")
-        )
+    result = asset_router.add_asset_library_item(
+        AssetLibraryAddRequest(library_id="lib1", category_id="cat1", file_id="file-asset-1", name="demo.png")
     )
 
     assert result["item"]["id"] == "asset1"

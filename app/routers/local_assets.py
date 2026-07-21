@@ -10,6 +10,7 @@
   sanitize_export_filename/ensure_same_origin_request/normalize_local_image_path/import_local_image_file
 - app.models：LocalImageImportRequest
 """
+import asyncio
 import os
 import re
 import uuid
@@ -96,7 +97,8 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
         else:
             continue
         filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
-        url, file_id = _save_uploaded_media(
+        url, file_id = await asyncio.to_thread(
+            _save_uploaded_media,
             "input",
             filename,
             content,
@@ -166,7 +168,8 @@ async def upload_local_assets(files: List[UploadFile] = File(...)):
         base = re.sub(r"[^0-9A-Za-z一-鿿._-]+", "_", base).strip("_") or "file"
         base = base[:60]
         filename = f"up_{uuid.uuid4().hex[:12]}_{base}{ext}"
-        stored = save_media_bytes(
+        stored = await asyncio.to_thread(
+            save_media_bytes,
             "uploads",
             filename,
             content,
@@ -179,7 +182,7 @@ async def upload_local_assets(files: List[UploadFile] = File(...)):
 
 
 @router.get("/api/local-assets")
-async def list_local_assets():
+def list_local_assets():
     items = []
     for entry in list_media_entries():
         if entry.get("category") == "uploads":
@@ -189,7 +192,7 @@ async def list_local_assets():
 
 
 @router.post("/api/local-assets/delete")
-async def delete_local_assets(payload: dict, request: Request):
+def delete_local_assets(payload: dict, request: Request):
     ensure_same_origin_request(request)
     names = payload.get("names") if isinstance(payload, dict) else None
     if not isinstance(names, list):
@@ -217,7 +220,7 @@ async def delete_local_assets(payload: dict, request: Request):
 
 
 @router.post("/api/ai/import-local-image")
-async def import_local_ai_reference(payload: LocalImageImportRequest, request: Request):
+def import_local_ai_reference(payload: LocalImageImportRequest, request: Request):
     ensure_same_origin_request(request)
     requested = [payload.path] if payload.path else []
     requested.extend(payload.paths or [])

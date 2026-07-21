@@ -91,12 +91,12 @@ def _issue_session_response(user_id: str, username: str):
 
 
 @router.get("/")
-async def index():
+def index():
     return static_html_response("index.html")
 
 
 @router.get("/login")
-async def login_page(request: Request):
+def login_page(request: Request):
     # 已登录则直接回首页
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
     if token and get_session(token):
@@ -105,7 +105,7 @@ async def login_page(request: Request):
 
 
 @router.post("/auth/register")
-async def auth_register(payload: LoginRequest):
+def auth_register(payload: LoginRequest):
     user_id = clean_user_id(payload.username)
     if not user_id:
         audit_event("registration_failed", action="register", resource_type="user", result="failure", reason="invalid_username")
@@ -122,7 +122,7 @@ async def auth_register(payload: LoginRequest):
 
 
 @router.post("/auth/login")
-async def auth_login(payload: LoginRequest):
+def auth_login(payload: LoginRequest):
     user_id = clean_user_id(payload.username)
     if not user_id:
         audit_event("login_failed", action="login", resource_type="session", result="failure", reason="invalid_username")
@@ -137,7 +137,7 @@ async def auth_login(payload: LoginRequest):
 
 
 @router.post("/auth/logout")
-async def auth_logout(request: Request):
+def auth_logout(request: Request):
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
     destroy_session(token)
     user_id = getattr(request.state, "user_id", None)
@@ -150,7 +150,7 @@ async def auth_logout(request: Request):
 
 
 @router.get("/auth/sso")
-async def auth_sso(request: Request):
+def auth_sso(request: Request):
     """飞书等外部平台 SSO 跳转入口。
 
     接收 query 参数中的用户信息，自动注册（若首次）并登录，然后 302 重定向到首页。
@@ -192,7 +192,7 @@ async def auth_sso(request: Request):
 
 
 @router.get("/auth/me")
-async def auth_me(request: Request):
+def auth_me(request: Request):
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
     sess = get_session(token) if token else None
     if not sess:
