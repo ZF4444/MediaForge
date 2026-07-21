@@ -6,6 +6,7 @@ assets/
 data/
 docs/*
 !docs/日志系统说明.md
+!docs/50人使用容量评估与优化建议.md
 backups/
 logs/
 workflows/

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -47,35 +48,47 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _run_cleanup(*, dry_run: bool, force_orphan_scan: bool):
+    await open_database_pool()
+    try:
+        return await asyncio.to_thread(
+            run_storage_cache_cleanup_once,
+            dry_run=dry_run,
+            force_orphan_scan=force_orphan_scan,
+        )
+    finally:
+        await close_database_pool()
+
+
 def main() -> int:
     args = _parser().parse_args()
-    database_open = False
-    try:
-        if args.command == "status":
-            result = storage_cache_status()
-        elif args.command == "cleanup":
-            if DATABASE_URL:
-                open_database_pool()
-                database_open = True
+    if args.command == "status":
+        result = storage_cache_status()
+    elif args.command == "cleanup":
+        if DATABASE_URL:
+            result = asyncio.run(
+                _run_cleanup(
+                    dry_run=args.dry_run,
+                    force_orphan_scan=args.force_orphan_scan,
+                )
+            )
+        else:
             result = run_storage_cache_cleanup_once(
                 dry_run=args.dry_run,
                 force_orphan_scan=args.force_orphan_scan,
             )
-        elif args.command == "clear":
-            if not args.dry_run and not args.yes:
-                print("Refusing to clear the cache without --yes.", file=sys.stderr)
-                return 2
-            result = clear_storage_cache(dry_run=args.dry_run)
-        else:
-            if not args.dry_run and not args.yes:
-                print("Refusing to clear lock files without --yes.", file=sys.stderr)
-                return 2
-            result = clear_storage_cache_locks(dry_run=args.dry_run)
-        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-        return 0
-    finally:
-        if database_open:
-            close_database_pool()
+    elif args.command == "clear":
+        if not args.dry_run and not args.yes:
+            print("Refusing to clear the cache without --yes.", file=sys.stderr)
+            return 2
+        result = clear_storage_cache(dry_run=args.dry_run)
+    else:
+        if not args.dry_run and not args.yes:
+            print("Refusing to clear lock files without --yes.", file=sys.stderr)
+            return 2
+        result = clear_storage_cache_locks(dry_run=args.dry_run)
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":

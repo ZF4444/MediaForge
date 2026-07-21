@@ -21,7 +21,7 @@ def _require_admin() -> str:
 
 
 @router.get("/api/help")
-async def help_get(page: str = "index"):
+def help_get(page: str = "index"):
     uid = current_user_id()
     return {
         "content": read_help_markdown(page),
@@ -31,7 +31,7 @@ async def help_get(page: str = "index"):
 
 
 @router.put("/api/help")
-async def help_put(payload: HelpMarkdownPayload):
+def help_put(payload: HelpMarkdownPayload):
     _require_admin()
     return {
         "ok": True,

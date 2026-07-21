@@ -20,6 +20,7 @@
 """
 import os
 import re
+import copy
 from threading import Lock
 from typing import Any, Dict, List
 
@@ -34,6 +35,7 @@ from app.services.business_metadata import get_app_setting, set_app_setting
 ADMIN_USER_ID = "admin"
 
 ACCESS_CONTROL_LOCK = Lock()
+_ACCESS_CONTROL_CACHE = None
 
 # 侧边栏首页文件（唯一真实来源）：页面清单从这里动态解析，避免与本文件的硬编码列表脱节。
 STUDIO_INDEX_HTML_FILE = os.path.join(STATIC_DIR, "index.html")
@@ -193,12 +195,24 @@ def is_admin(user_id: str) -> bool:
 
 
 def _load_config_unlocked() -> Dict[str, Any]:
+    global _ACCESS_CONTROL_CACHE
+    if _ACCESS_CONTROL_CACHE is not None:
+        return copy.deepcopy(_ACCESS_CONTROL_CACHE)
     data = get_app_setting("access_control", {})
     if isinstance(data, dict) and isinstance(data.get("users"), dict):
         if "default" not in data or not isinstance(data.get("default"), dict):
             data["default"] = None
-        return data
-    return {"default": None, "users": {}}
+        _ACCESS_CONTROL_CACHE = data
+    else:
+        _ACCESS_CONTROL_CACHE = {"default": None, "users": {}}
+    return copy.deepcopy(_ACCESS_CONTROL_CACHE)
+
+
+def warm_access_control_cache() -> Dict[str, Any]:
+    global _ACCESS_CONTROL_CACHE
+    with ACCESS_CONTROL_LOCK:
+        _ACCESS_CONTROL_CACHE = None
+        return _load_config_unlocked()
 
 
 def load_config() -> Dict[str, Any]:
@@ -245,8 +259,10 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
             # admin 不可被裁剪，忽略针对 admin 的配置。
             continue
         sanitized["users"][uid] = _sanitize_user_entry(entry)
+    global _ACCESS_CONTROL_CACHE
     with ACCESS_CONTROL_LOCK:
         set_app_setting("access_control", sanitized)
+        _ACCESS_CONTROL_CACHE = copy.deepcopy(sanitized)
     return sanitized
 
 

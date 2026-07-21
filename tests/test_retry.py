@@ -1,3 +1,4 @@
+import asyncio
 from io import BytesIO
 
 import pytest
@@ -94,12 +95,12 @@ def test_database_retries_only_connection_checkout(monkeypatch):
 
     class Checkout:
         def __init__(self, pool): self.pool = pool
-        def __enter__(self):
+        async def __aenter__(self):
             self.pool.calls += 1
             if self.pool.calls < 3:
                 raise PoolTimeout("pool exhausted")
             return "connection"
-        def __exit__(self, *_args): return False
+        async def __aexit__(self, *_args): return False
 
     class Pool:
         calls = 0
@@ -107,10 +108,14 @@ def test_database_retries_only_connection_checkout(monkeypatch):
 
     pool = Pool()
     monkeypatch.setattr(database, "_POOL", pool)
-    monkeypatch.setattr(database.time, "sleep", lambda delay: sleeps.append(delay))
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+    monkeypatch.setattr(database.asyncio, "sleep", fake_sleep)
 
-    with database.database_connection() as conn:
-        assert conn == "connection"
+    async def scenario():
+        async with database.database_connection() as conn:
+            assert conn == "connection"
 
+    asyncio.run(scenario())
     assert pool.calls == 3
     assert len(sleeps) == 2

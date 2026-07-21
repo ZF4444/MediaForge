@@ -158,7 +158,7 @@ def scan_shared_tree(folder_id, folder_abs, rel_prefix="", display="", counter=N
 
 
 @router.get("/api/shared-folders")
-async def list_shared_folders():
+def list_shared_folders():
     data = shared_folders_load()
     folders = []
     for entry in data.get("folders", []):
@@ -175,7 +175,7 @@ async def list_shared_folders():
 
 
 @router.post("/api/shared-folders")
-async def register_shared_folder(payload: SharedFolderRegister):
+def register_shared_folder(payload: SharedFolderRegister):
     abs_path, rel = shared_resolve_register(payload.path)
     name = sanitize_asset_name(payload.name or os.path.basename(abs_path), "共享文件夹")
     with SHARED_FOLDERS_LOCK:
@@ -199,7 +199,7 @@ async def register_shared_folder(payload: SharedFolderRegister):
 
 
 @router.delete("/api/shared-folders/{folder_id}")
-async def unregister_shared_folder(folder_id: str):
+def unregister_shared_folder(folder_id: str):
     with SHARED_FOLDERS_LOCK:
         data = shared_folders_load()
         before = len(data.get("folders", []))
@@ -212,7 +212,7 @@ async def unregister_shared_folder(folder_id: str):
 
 
 @router.get("/api/shared-folders/{folder_id}/tree")
-async def get_shared_folder_tree(folder_id: str):
+def get_shared_folder_tree(folder_id: str):
     entry = shared_folder_by_id(folder_id)
     if not entry:
         raise HTTPException(status_code=404, detail="共享文件夹不存在")
@@ -224,7 +224,7 @@ async def get_shared_folder_tree(folder_id: str):
 
 
 @router.get("/api/shared-folders/{folder_id}/file")
-async def get_shared_folder_file(folder_id: str, path: str = ""):
+def get_shared_folder_file(folder_id: str, path: str = ""):
     entry = shared_folder_by_id(folder_id)
     if not entry:
         raise HTTPException(status_code=404, detail="共享文件夹不存在")
@@ -239,7 +239,7 @@ async def get_shared_folder_file(folder_id: str, path: str = ""):
 
 
 @router.post("/api/shared-folders/import")
-async def import_shared_folder_files(payload: SharedFolderImport):
+def import_shared_folder_files(payload: SharedFolderImport):
     entry = shared_folder_by_id(payload.folder_id)
     if not entry:
         raise HTTPException(status_code=404, detail="共享文件夹不存在")

@@ -8,6 +8,7 @@
 - app.core.ws：manager（广播画布更新）
 - app.models：CanvasCreateRequest / CanvasMetaUpdate / CanvasSaveRequest
 """
+import asyncio
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -162,17 +163,17 @@ def list_canvases():
     )
 
 @router.get("/api/canvases")
-async def canvases():
+def canvases():
     return {"canvases": list_canvases()}
 
 
 @router.post("/api/canvases")
-async def create_canvas(payload: CanvasCreateRequest):
+def create_canvas(payload: CanvasCreateRequest):
     return {"canvas": new_canvas(payload.title, payload.icon, payload.kind)}
 
 
 @router.get("/api/canvases/{canvas_id}/meta")
-async def get_canvas_meta(canvas_id: str):
+def get_canvas_meta(canvas_id: str):
     canvas = load_canvas_raw(canvas_id)
     return {
         "id": canvas.get("id"),
@@ -184,7 +185,7 @@ async def get_canvas_meta(canvas_id: str):
 
 
 @router.post("/api/canvases/{canvas_id}/meta")
-async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
+def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
     canvas = load_canvas_raw(canvas_id)
@@ -203,12 +204,12 @@ async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
 
 
 @router.get("/api/canvases/{canvas_id}")
-async def get_canvas(canvas_id: str):
+def get_canvas(canvas_id: str):
     return {"canvas": load_canvas(canvas_id)}
 
 
 @router.post("/api/canvases/{canvas_id}/touch")
-async def touch_canvas(canvas_id: str):
+def touch_canvas(canvas_id: str):
     canvas = load_canvas_raw(canvas_id)
     save_canvas_raw(canvas, update_timestamp=True)
     return {"canvas": canvas_record(canvas), "updated_at": canvas.get("updated_at", 0)}
@@ -216,13 +217,13 @@ async def touch_canvas(canvas_id: str):
 
 @router.put("/api/canvases/{canvas_id}")
 async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
-    canvas = load_canvas_raw(canvas_id)
+    canvas = await asyncio.to_thread(load_canvas_raw, canvas_id)
     current_updated_at = int(canvas.get("updated_at") or 0)
     last_client_id = str(canvas.get("last_client_id") or "")
     incoming_client_id = str(payload.client_id or "")
     same_client_retry = bool(incoming_client_id and incoming_client_id == last_client_id)
     if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at and not same_client_retry:
-        hydrated = hydrate_canvas(canvas)
+        hydrated = await asyncio.to_thread(hydrate_canvas, canvas)
         raise HTTPException(status_code=409, detail={
             "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
             "canvas": hydrated,
@@ -241,13 +242,13 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
     canvas["settings"] = payload.settings or {}
     if incoming_client_id:
         canvas["last_client_id"] = incoming_client_id
-    save_canvas(canvas)
+    await asyncio.to_thread(save_canvas, canvas)
     await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
     return {"canvas": {"id": canvas_id, "updated_at": canvas.get("updated_at", 0)}}
 
 
 @router.delete("/api/canvases/{canvas_id}")
-async def delete_canvas(canvas_id: str):
+def delete_canvas(canvas_id: str):
     load_canvas_raw(canvas_id)
     delete_canvas_payload(current_user_id(), canvas_id)
     return {"ok": True}

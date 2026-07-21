@@ -20,7 +20,7 @@ def test_storage_readiness_requires_postgres_and_minio(monkeypatch):
 
     monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
     monkeypatch.setattr(storage, "storage_enabled", lambda: True)
-    monkeypatch.setattr(storage, "database_connection", lambda **_kwargs: Connection())
+    monkeypatch.setattr(storage, "database_connection_sync", lambda **_kwargs: Connection())
     monkeypatch.setattr(storage, "_get_health_client", lambda: Client())
 
     assert storage.storage_readiness_status() == {

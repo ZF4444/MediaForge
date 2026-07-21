@@ -21,7 +21,7 @@ logger = get_logger("history")
 
 
 @router.get("/api/history")
-async def get_history_api(type: str = None):
+def get_history_api(type: str = None):
     try:
         data = load_history_records()
         if type:
@@ -42,7 +42,7 @@ async def get_history_api(type: str = None):
 
 
 @router.post("/api/history/save")
-async def save_history_api(req: SaveHistoryRequest):
+def save_history_api(req: SaveHistoryRequest):
     images = [u for u in (req.images or []) if u]
     if not images:
         return {"success": False, "message": "no images"}
@@ -58,7 +58,7 @@ async def save_history_api(req: SaveHistoryRequest):
 
 
 @router.post("/api/history/delete")
-async def delete_history(req: DeleteHistoryRequest):
+def delete_history(req: DeleteHistoryRequest):
     try:
         from app.services.business_metadata import metadata_connection
         from app.core.auth import current_user_id

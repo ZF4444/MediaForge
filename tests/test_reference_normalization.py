@@ -108,7 +108,7 @@ def test_canvas_delete_permanently_removes_payload(monkeypatch):
         lambda user_id, canvas_id: deleted.append((user_id, canvas_id)),
     )
 
-    result = asyncio.run(canvases.delete_canvas("canvas1"))
+    result = canvases.delete_canvas("canvas1")
 
     assert result == {"ok": True}
     assert deleted == [("user1", "canvas1")]

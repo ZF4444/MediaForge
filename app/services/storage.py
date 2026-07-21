@@ -59,7 +59,7 @@ from app.config import (
     STORAGE_USER_QUOTA_BYTES,
 )
 from app.core.auth import current_user_id
-from app.core.database import database_connection
+from app.core.database import database_connection_sync
 from app.core.logging import get_logger
 from app.core.metrics import (
     BACKGROUND_FAILURES,
@@ -189,7 +189,7 @@ def storage_readiness_status() -> Dict[str, Any]:
         components["postgres"] = "not_configured"
     else:
         try:
-            with database_connection(max_attempts=1) as conn:
+            with database_connection_sync(max_attempts=1) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     cur.fetchone()
@@ -705,7 +705,7 @@ def _minio_call(operation: str, callback, *, object_id: str = "", max_attempts: 
 def _db_connect():
     if not metadata_db_enabled():
         return None
-    return database_connection()
+    return database_connection_sync()
 
 
 def _ensure_files_table() -> None:

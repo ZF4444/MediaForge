@@ -11,7 +11,7 @@ import uuid
 from typing import Any, Dict, Iterable, Optional
 
 from app.config import DATABASE_URL
-from app.core.database import database_connection
+from app.core.database import database_connection_sync
 
 
 BUSINESS_METADATA_SQL = """
@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS help_pages (
 
 
 def _connect():
-    return database_connection()
+    return database_connection_sync()
 
 
 def initialize_business_metadata() -> bool:
