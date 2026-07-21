@@ -10,10 +10,12 @@
   sanitize_export_filename/ensure_same_origin_request/normalize_local_image_path/import_local_image_file
 - app.models：LocalImageImportRequest
 """
+import hashlib
 import os
 import re
+import tempfile
 import uuid
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -34,30 +36,67 @@ from app.services.storage import (
     list_media_entries,
     media_entry_by_basename,
     remove_media_url,
-    save_media_bytes,
+    save_media_fileobj,
 )
 
 router = APIRouter()
+
+# 超过该大小的上传改为流式落盘：分块读取 + 边读边算 SHA256，写入
+# SpooledTemporaryFile（内存中超过阈值会自动转存磁盘），不会在应用进程内
+# 一次性持有整个文件的 bytes。小文件（参考图等，占绝大多数请求）仍走内存，
+# 避免为几十 KB 的小文件也创建临时文件的额外开销。
+STREAMED_UPLOAD_SPOOL_BYTES = 4 * 1024 * 1024
+UPLOAD_COPY_CHUNK_BYTES = 1024 * 1024
+
+
+async def _spool_upload(file: UploadFile) -> Optional[Tuple[tempfile.SpooledTemporaryFile, int, str]]:
+    """流式拷贝 ``file`` 到 spooled 临时文件，同时增量计算大小和 SHA256。
+
+    不会调用 ``await file.read()`` 一次性读取全部内容；返回 ``None`` 表示
+    上传为空，行为与原来 ``if not content: continue`` 一致。
+    """
+    tmp = tempfile.SpooledTemporaryFile(max_size=STREAMED_UPLOAD_SPOOL_BYTES)
+    digest = hashlib.sha256()
+    size = 0
+    while True:
+        chunk = await file.read(UPLOAD_COPY_CHUNK_BYTES)
+        if not chunk:
+            break
+        digest.update(chunk)
+        size += len(chunk)
+        tmp.write(chunk)
+    if size == 0:
+        tmp.close()
+        return None
+    tmp.seek(0)
+    return tmp, size, digest.hexdigest()
 
 
 def _save_uploaded_media(
     category: str,
     filename: str,
-    content: bytes,
+    fileobj: tempfile.SpooledTemporaryFile,
+    size: int,
+    sha256: str,
     *,
     original_name: str = "",
     content_type: str = "",
     kind: str = "",
-) -> Tuple[str, str]:
-    stored = save_media_bytes(
-        category,
-        filename,
-        content,
-        original_name=original_name or filename,
-        content_type=content_type,
-        kind=kind,
-    )
-    return stored["url"], stored.get("file_id", "")
+) -> dict:
+    try:
+        stored = save_media_fileobj(
+            category,
+            filename,
+            fileobj,
+            size,
+            original_name=original_name or filename,
+            content_type=content_type,
+            kind=kind,
+            sha256=sha256,
+        )
+    finally:
+        fileobj.close()
+    return stored["entry"]
 
 
 @router.get("/api/download-output")
@@ -76,9 +115,10 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
     video_exts = {".mp4", ".webm", ".mov", ".m4v"}
     audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
     for file in files:
-        content = await file.read()
-        if not content:
+        spooled = await _spool_upload(file)
+        if spooled is None:
             continue
+        fileobj, size, sha256 = spooled
         ext = os.path.splitext(file.filename or "")[1].lower()
         content_type = (file.content_type or "").lower()
         kind = "image"
@@ -95,20 +135,23 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
             if ext not in image_exts:
                 ext = ".jpg" if "jpeg" in content_type else ".webp" if "webp" in content_type else ".gif" if "gif" in content_type else ".png"
         else:
+            fileobj.close()
             continue
         filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
-        url, file_id = await run_storage_io(
+        entry = await run_storage_io(
             _save_uploaded_media,
             "input",
             filename,
-            content,
+            fileobj,
+            size,
+            sha256,
             original_name=file.filename or filename,
             content_type=file.content_type or "",
             kind=kind,
         )
-        item = {"url": url, "name": file.filename or filename, "kind": kind}
-        if file_id:
-            item["file_id"] = file_id
+        item = {"url": entry.get("url") or file_preview_url(entry.get("file_id") or ""), "name": file.filename or filename, "kind": kind}
+        if entry.get("file_id"):
+            item["file_id"] = entry["file_id"]
         uploaded.append(item)
     return {"files": uploaded}
 
@@ -158,26 +201,30 @@ def _local_upload_item_from_entry(entry):
 async def upload_local_assets(files: List[UploadFile] = File(...)):
     uploaded = []
     for file in files:
-        content = await file.read()
-        if not content:
+        spooled = await _spool_upload(file)
+        if spooled is None:
             continue
+        fileobj, size, sha256 = spooled
         kind, ext = _local_upload_kind_ext(file.filename, file.content_type)
         if kind is None:
+            fileobj.close()
             continue
         base = os.path.splitext(os.path.basename(file.filename or "file"))[0]
         base = re.sub(r"[^0-9A-Za-z一-鿿._-]+", "_", base).strip("_") or "file"
         base = base[:60]
         filename = f"up_{uuid.uuid4().hex[:12]}_{base}{ext}"
-        stored = await run_storage_io(
-            save_media_bytes,
+        entry = await run_storage_io(
+            _save_uploaded_media,
             "uploads",
             filename,
-            content,
+            fileobj,
+            size,
+            sha256,
             original_name=file.filename or filename,
             content_type=file.content_type or "",
             kind=kind,
         )
-        uploaded.append(_local_upload_item_from_entry(stored["entry"]))
+        uploaded.append(_local_upload_item_from_entry(entry))
     return {"files": uploaded}
 
 

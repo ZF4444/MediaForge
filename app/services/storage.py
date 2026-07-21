@@ -2354,6 +2354,96 @@ def ensure_media_derivatives(entry: Dict[str, Any], *, payload: bytes = b"") -> 
         save_bytes(poster, object_key, content_type="image/jpeg", bucket=bucket)
 
 
+def save_media_fileobj(
+    category: str,
+    filename: str,
+    fileobj: BinaryIO,
+    length: int,
+    *,
+    original_name: str = "",
+    content_type: str = "",
+    kind: str = "",
+    bucket: str = "",
+    source: str = "upload",
+    sha256: str = "",
+) -> Dict[str, Any]:
+    """Stream ``fileobj`` straight into MinIO without buffering it in memory.
+
+    ``fileobj`` must already be seeked to position 0 and support ``.seek()``
+    (SpooledTemporaryFile / UploadFile.file both qualify). ``length`` and
+    ``sha256`` should be computed by the caller while copying the upload to
+    ``fileobj``, since re-reading a large object here to hash it would defeat
+    the purpose of streaming.
+    """
+    size = int(length or 0)
+    enforce_storage_quota(size, category=category)
+    file_id = uuid.uuid4().hex
+    ext = os.path.splitext(filename)[1].lower()
+    object_key = build_object_key(category, file_id, ext)
+    stored = save_fileobj(fileobj, object_key, size, content_type=content_type, bucket=bucket)
+    url = file_preview_url(file_id)
+    try:
+        entry = register_media_url(
+            url,
+            stored["bucket"],
+            stored["object_key"],
+            filename=filename,
+            category=category,
+            original_name=original_name or filename,
+            content_type=content_type,
+            kind=kind,
+            size=stored["size"],
+            file_id=file_id,
+            sha256=sha256,
+            source=source,
+            is_public=False,
+            expires_at=(
+                now_ms() + STORAGE_TEMP_RETENTION_DAYS * 24 * 60 * 60 * 1000
+                if category == "temp" and int(STORAGE_TEMP_RETENTION_DAYS or 0) > 0
+                else None
+            ),
+        )
+    except Exception:
+        try:
+            delete_object(stored["bucket"], stored["object_key"])
+        except Exception:
+            logger.exception(
+                "failed to roll back orphaned media object",
+                extra={
+                    "event": "media_object_rollback_failed",
+                    "alert": True,
+                    "object_id": file_id,
+                    "file_id": file_id,
+                    "bucket": stored["bucket"],
+                },
+            )
+        raise
+    try:
+        fileobj.seek(0)
+    except (AttributeError, OSError):
+        pass
+    else:
+        try:
+            ensure_media_derivatives(entry, payload=fileobj.read())
+        except Exception:
+            logger.exception(
+                "failed to generate media derivatives after streamed upload",
+                extra={"event": "media_derivatives_failed", "file_id": file_id},
+            )
+    logger.info(
+        "media file stored",
+        extra={
+            "event": "media_file_stored",
+            "object_id": file_id,
+            "file_id": file_id,
+            "bucket": stored["bucket"],
+            "category": category,
+            "size_bytes": stored["size"],
+        },
+    )
+    return {**stored, "url": url, "entry": entry, "file_id": file_id}
+
+
 def save_media_bytes(
     category: str,
     filename: str,

@@ -1,3 +1,4 @@
+import hashlib
 import asyncio
 import os
 
@@ -36,20 +37,27 @@ def test_upload_ai_reference_uses_storage_service(monkeypatch):
         def __init__(self, filename: str, content: bytes, content_type: str):
             self.filename = filename
             self._content = content
+            self._offset = 0
             self.content_type = content_type
 
-        async def read(self):
-            return self._content
+        async def read(self, size: int = -1):
+            if size is None or size < 0:
+                chunk = self._content[self._offset:]
+            else:
+                chunk = self._content[self._offset:self._offset + size]
+            self._offset += len(chunk)
+            return chunk
 
-    monkeypatch.setattr(
-        local_assets,
-        "save_media_bytes",
-        lambda category, filename, content, **kwargs: saved.append((category, filename, content, kwargs)) or {
+    def fake_save_media_fileobj(category, filename, fileobj, length, **kwargs):
+        content = fileobj.read()
+        saved.append((category, filename, content, length, kwargs))
+        return {
             "url": "/api/files/file-123/preview",
-            "entry": {"url": "/api/files/file-123/preview"},
+            "entry": {"url": "/api/files/file-123/preview", "file_id": "file-123"},
             "file_id": "file-123",
-        },
-    )
+        }
+
+    monkeypatch.setattr(local_assets, "save_media_fileobj", fake_save_media_fileobj)
 
     upload = DummyUploadFile("demo.png", b"png-bytes", "image/png")
 
@@ -57,6 +65,8 @@ def test_upload_ai_reference_uses_storage_service(monkeypatch):
 
     assert len(saved) == 1
     assert saved[0][0] == "input"
+    assert saved[0][2] == b"png-bytes"
+    assert saved[0][3] == len(b"png-bytes")
     assert result["files"][0]["url"] == "/api/files/file-123/preview"
     assert result["files"][0]["file_id"] == "file-123"
     assert result["files"][0]["kind"] == "image"
@@ -288,3 +298,47 @@ def test_import_local_image_file_uses_storage_without_assets_dir(monkeypatch, tm
     assert result["url"] == "/api/files/file-77/preview"
     assert result["file_id"] == "file-77"
     assert result["name"] == "demo.png"
+
+
+def test_spool_upload_hashes_and_sizes_without_reading_whole_file_at_once(monkeypatch):
+    payload = os.urandom(200_000)
+
+    class ChunkedUploadFile:
+        """Mimics Starlette's UploadFile.read(size): only ever returns `size`
+        bytes per call, so a caller that (incorrectly) called `.read()` with
+        no arguments would get a short read instead of the full payload."""
+
+        def __init__(self, content: bytes):
+            self._content = content
+            self._offset = 0
+
+        async def read(self, size: int = -1):
+            assert size and size > 0, "must request bounded chunks, not the whole file"
+            chunk = self._content[self._offset:self._offset + size]
+            self._offset += len(chunk)
+            return chunk
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(local_assets, "STREAMED_UPLOAD_SPOOL_BYTES", 1024)
+    monkeypatch.setattr(local_assets, "UPLOAD_COPY_CHUNK_BYTES", 4096)
+
+    spooled = asyncio.run(local_assets._spool_upload(ChunkedUploadFile(payload)))
+
+    assert spooled is not None
+    fileobj, size, sha256 = spooled
+    assert size == len(payload)
+    assert sha256 == hashlib.sha256(payload).hexdigest()
+    assert fileobj.read() == payload
+    fileobj.close()
+
+
+def test_spool_upload_returns_none_for_empty_file():
+    class EmptyUploadFile:
+        async def read(self, size: int = -1):
+            return b""
+
+    result = asyncio.run(local_assets._spool_upload(EmptyUploadFile()))
+
+    assert result is None

@@ -316,6 +316,68 @@ def test_save_media_bytes_rolls_back_object_when_metadata_insert_fails(monkeypat
     assert deleted == [("private", "users/user-1/uploads/file-1.png")]
 
 
+def test_save_media_fileobj_streams_without_buffering_full_payload(monkeypatch):
+    import io
+
+    payload = b"x" * 5_000_000  # 5MB: large enough that a whole-file bytes() copy would be conspicuous
+    fileobj = io.BytesIO(payload)
+
+    put_lengths = []
+    monkeypatch.setattr(storage, "enforce_storage_quota", lambda *_args, **_kwargs: None)
+
+    def fake_save_fileobj(fobj, object_key, length, content_type="", bucket=""):
+        # Simulate MinIO's put_object reading the stream without the caller
+        # ever materializing `payload` as a second in-memory bytes object.
+        read_back = fobj.read()
+        put_lengths.append(length)
+        assert read_back == payload
+        return {"bucket": "private", "object_key": object_key, "etag": "", "version_id": "", "size": length}
+
+    monkeypatch.setattr(storage, "save_fileobj", fake_save_fileobj)
+    monkeypatch.setattr(storage, "register_media_url", lambda *_args, **kwargs: {
+        "url": "/api/files/file-1/preview",
+        "file_id": "file-1",
+        "kind": kwargs.get("kind"),
+        "size": kwargs.get("size"),
+        "sha256": kwargs.get("sha256"),
+        "created_at": 123,
+    })
+    monkeypatch.setattr(storage, "ensure_media_derivatives", lambda *_args, **_kwargs: None)
+
+    result = storage.save_media_fileobj(
+        "uploads",
+        "file.png",
+        fileobj,
+        len(payload),
+        content_type="image/png",
+        kind="image",
+        sha256="deadbeef",
+    )
+
+    assert put_lengths == [len(payload)]
+    assert result["entry"]["sha256"] == "deadbeef"
+    assert result["size"] == len(payload)
+
+
+def test_save_media_fileobj_rolls_back_object_when_metadata_insert_fails(monkeypatch):
+    import io
+
+    deleted = []
+    monkeypatch.setattr(storage, "enforce_storage_quota", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(storage, "save_fileobj", lambda *_args, **_kwargs: {
+        "bucket": "private",
+        "object_key": "users/user-1/uploads/file-1.png",
+        "size": 4,
+    })
+    monkeypatch.setattr(storage, "register_media_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database down")))
+    monkeypatch.setattr(storage, "delete_object", lambda bucket, key: deleted.append((bucket, key)))
+
+    with pytest.raises(RuntimeError, match="database down"):
+        storage.save_media_fileobj("uploads", "file.png", io.BytesIO(b"data"), 4)
+
+    assert deleted == [("private", "users/user-1/uploads/file-1.png")]
+
+
 def test_run_storage_metadata_purge_once_hard_deletes_only_when_objects_are_gone(monkeypatch):
     deleted_rows = []
     monkeypatch.setattr(storage, "STORAGE_METADATA_PURGE_ENABLED", True)
