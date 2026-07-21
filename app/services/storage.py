@@ -496,11 +496,21 @@ def _deleted_metadata_candidates(limit: int, deleted_before_ms: int) -> List[Dic
 
 
 def _hard_delete_file_row(file_id: str) -> None:
+    """Permanently remove a file metadata row and all referencing rows.
+
+    Called during metadata purge for files that are already soft-deleted AND
+    whose MinIO objects have been confirmed gone.  The referencing tables use
+    ON DELETE RESTRICT, so we must delete the child rows first.
+    """
     if not file_id or not metadata_db_enabled():
         return
-    with _db_connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM files WHERE id = %s", (file_id,))
+    with _db_connect() as conn, conn.transaction(), conn.cursor() as cur:
+        # Remove all foreign-key references to this file before deleting the row.
+        cur.execute("DELETE FROM history_record_files WHERE file_id = %s", (file_id,))
+        cur.execute("DELETE FROM asset_items WHERE file_id = %s", (file_id,))
+        cur.execute("DELETE FROM conversation_message_files WHERE file_id = %s", (file_id,))
+        cur.execute("DELETE FROM smart_canvas_node_files WHERE file_id = %s", (file_id,))
+        cur.execute("DELETE FROM files WHERE id = %s", (file_id,))
 
 
 def run_storage_cleanup_once(limit: int = 0) -> Dict[str, int]:
