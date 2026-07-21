@@ -3523,7 +3523,7 @@ async function uploadMediaFiles(files, point, onlyImages=false, opts={}){
     if(!supported.length) return [];
     const form = new FormData();
     supported.forEach(file => form.append('files', file));
-    const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r=>r.json());
+    const data = await window.MediaForgeUpload.upload(form);
     const base = point || screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
     const created = [];
     (data.files || []).forEach((file, i) => {
@@ -3690,7 +3690,7 @@ async function fillImageNode(nodeId, files, opts={}){
     }
     const form = new FormData();
     form.append('files', imgs[0]);
-    const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r=>r.json());
+    const data = await window.MediaForgeUpload.upload(form);
     const file = data.files?.[0];
     const node = nodes.find(n => n.id === nodeId);
     if(file && node){
@@ -4935,13 +4935,13 @@ window.addEventListener('mouseup', () => { cropDrag = null; document.getElementB
 async function uploadCroppedBlob(blob, name){
     const form = new FormData();
     form.append('files', blob, name);
-    const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r=>r.json());
+    const data = await window.MediaForgeUpload.upload(form);
     return data.files?.[0];
 }
 async function uploadImageBlobs(blobs){
     const form = new FormData();
     blobs.forEach(item => form.append('files', item.blob, item.name));
-    const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r=>r.json());
+    const data = await window.MediaForgeUpload.upload(form);
     return data.files || [];
 }
 async function applyImageCrop(){
@@ -6078,7 +6078,7 @@ async function addFileToCanvasAssetLibrary(fileId, name=''){
 async function uploadFilesToLibrary(files, libraryId, categoryId){
     const form = new FormData();
     [...files].forEach(file => form.append('files', file));
-    const uploaded = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r => r.json());
+    const uploaded = await window.MediaForgeUpload.upload(form);
     const items = (uploaded.files || []).filter(file => file?.file_id).map(file => ({library_id:libraryId, category_id:categoryId, file_id:file.file_id, name:file.name || 'asset'}));
     if(!items.length) return null;
     return fetch('/api/asset-library/items/batch', {

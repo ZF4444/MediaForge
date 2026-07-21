@@ -1012,11 +1012,7 @@ async function pickRhPreviewMedia(key, kind){
         const form = new FormData();
         form.append('files', file);
         try {
-            const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(async r => {
-                const json = await r.json();
-                if(!r.ok) throw new Error(json.detail || '上传失败');
-                return json;
-            });
+            const data = await window.MediaForgeUpload.upload(form);
             const uploaded = data.files?.[0];
             rhWorkflowEditorState.previewParams[key] = {
                 ...(rhWorkflowEditorState.previewParams[key] || {}),

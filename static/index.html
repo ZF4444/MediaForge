@@ -1419,6 +1419,18 @@
         window.addEventListener('message', event => {
             if (event.origin && event.origin !== location.origin) return;
             const d = event.data || {};
+            if (d.type === 'studio-open-asset-storage') {
+                try { localStorage.setItem('asset_manager_requested_tab', 'storage'); } catch(e) {}
+                const trigger = document.querySelector(`[onclick*="'asset-manager'"],[onclick*='"asset-manager"']`);
+                const frame = document.getElementById('frame-asset-manager');
+                const notifyStorageTab = () => {
+                    try { frame?.contentWindow?.postMessage({type:'asset-manager-open-tab', tab:'storage'}, location.origin); } catch(e) {}
+                };
+                if(frame && !frame.src) frame.addEventListener('load', notifyStorageTab, {once:true});
+                switchUI(trigger, 'asset-manager');
+                notifyStorageTab();
+                return;
+            }
             // 子页面声明/取消"离开需确认"守卫
             if (d.type === 'page-guard' && d.page) {
                 window.__pageLeaveGuards[d.page] = !!d.active;

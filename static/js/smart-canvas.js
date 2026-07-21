@@ -9862,13 +9862,13 @@ function resizeOutpaintFromDrag(dx, dy){
 async function uploadCroppedBlob(blob, name){
     const form = new FormData();
     form.append('files', blob, name);
-    const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r => r.json());
+    const data = await window.MediaForgeUpload.upload(form);
     return data.files?.[0];
 }
 async function uploadImageBlobs(blobs){
     const form = new FormData();
     blobs.forEach(item => form.append('files', item.blob, item.name));
-    const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r => r.json());
+    const data = await window.MediaForgeUpload.upload(form);
     return data.files || [];
 }
 function replaceEditedImage(file){
@@ -10765,10 +10765,7 @@ async function uploadFiles(files){
     if(!supported.length) return [];
     const form = new FormData();
     supported.forEach(file => form.append('files', file, file.name || 'media'));
-    const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(async r => {
-        if(!r.ok) throw new Error((await r.text()) || tr('smart.toastUploadFail'));
-        return r.json();
-    });
+    const data = await window.MediaForgeUpload.upload(form);
     return (data.files || []).map((file, index) => ({
         ...file,
         kind:file.kind || mediaKindForFile(supported[index])

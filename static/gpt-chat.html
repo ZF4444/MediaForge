@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/images/logo.png" type="image/png">
     <title>GPT 对话</title>
+    <script src="/static/js/upload-quota-dialog.js"></script>
     <script>
         (function(){
             try {
@@ -493,7 +494,7 @@
             if(!files?.length) return;
             const form = new FormData();
             [...files].slice(0, 4 - refs.length).forEach(file => form.append('files', file));
-            const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r=>r.json());
+            const data = await window.MediaForgeUpload.upload(form);
             refs.push(...(data.files || []));
             renderRefs();
         }

@@ -3,7 +3,13 @@ const statusEl = document.getElementById('assetStatus');
 const refreshBtn = document.getElementById('refreshBtn');
 const uploadInput = document.getElementById('assetUploadInput');
 
-let activeTab = 'assets';
+const ASSET_MANAGER_TABS = new Set(['assets', 'prompts', 'canvas-assets', 'local', 'storage']);
+let requestedInitialTab = '';
+try {
+    requestedInitialTab = new URLSearchParams(location.search).get('tab') || localStorage.getItem('asset_manager_requested_tab') || '';
+    localStorage.removeItem('asset_manager_requested_tab');
+} catch (_) {}
+let activeTab = ASSET_MANAGER_TABS.has(requestedInitialTab) ? requestedInitialTab : 'assets';
 let assetLibrary = {libraries:[], categories:[]};
 let promptLibrary = {libraries:[]};
 let apiProviders = [];
@@ -1384,7 +1390,11 @@ async function uploadFiles(files){
     if(!cat) throw new Error('请先创建图片分组');
     const form = new FormData();
     [...files].forEach(file => form.append('files', file));
-    const uploaded = await apiJson('/api/ai/upload', {method:'POST', body:form});
+    const uploaded = await window.MediaForgeUpload.upload(form);
+    if(uploaded.quota_exceeded){
+        setStatus('存储空间不足');
+        return;
+    }
     const items = (uploaded.files || []).filter(file => file?.file_id).map(file => ({
         library_id:activeAssetLibraryId,
         category_id:activeAssetCategoryId,
@@ -2602,6 +2612,10 @@ document.querySelectorAll('[data-tab]').forEach(btn => {
 });
 refreshBtn?.addEventListener('click', () => loadAll().catch(err => setStatus(err.message || '加载失败')));
 window.addEventListener('message', event => {
+    if(event.origin && event.origin !== location.origin) return;
     if(event.data?.type === 'studio-theme') window.StudioTheme?.apply?.(event.data.theme);
+    if(event.data?.type === 'asset-manager-open-tab' && ASSET_MANAGER_TABS.has(event.data.tab)) {
+        switchTab(event.data.tab).catch(err => setStatus(err.message || '加载失败'));
+    }
 });
 document.addEventListener('DOMContentLoaded', () => loadAll().catch(err => setStatus(err.message || '加载失败')));
