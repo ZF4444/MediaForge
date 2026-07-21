@@ -39,6 +39,13 @@ DATABASE_POOL_MAX_LIFETIME_SECONDS = float(os.getenv("DATABASE_POOL_MAX_LIFETIME
 DATABASE_STATEMENT_TIMEOUT_MS = int(os.getenv("DATABASE_STATEMENT_TIMEOUT_MS", "10000"))
 DATABASE_LOCK_TIMEOUT_MS = int(os.getenv("DATABASE_LOCK_TIMEOUT_MS", "3000"))
 DATABASE_SLOW_QUERY_THRESHOLD_MS = float(os.getenv("DATABASE_SLOW_QUERY_THRESHOLD_MS", "500"))
+REDIS_URL = str(os.getenv("REDIS_URL", "")).strip()
+REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "20"))
+REDIS_CONNECT_TIMEOUT_SECONDS = float(os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "1"))
+REDIS_SOCKET_TIMEOUT_SECONDS = float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "1"))
+REDIS_SESSION_PREFIX = str(os.getenv("REDIS_SESSION_PREFIX", "mediaforge:session:")).strip()
+REDIS_LAST_SEEN_WRITE_INTERVAL_SECONDS = int(os.getenv("REDIS_LAST_SEEN_WRITE_INTERVAL_SECONDS", "60"))
+REDIS_LAST_SEEN_FLUSH_INTERVAL_SECONDS = int(os.getenv("REDIS_LAST_SEEN_FLUSH_INTERVAL_SECONDS", "300"))
 MINIO_ENDPOINT = str(os.getenv("MINIO_ENDPOINT", "")).strip()
 MINIO_ACCESS_KEY = str(os.getenv("MINIO_ACCESS_KEY", "")).strip()
 MINIO_SECRET_KEY = str(os.getenv("MINIO_SECRET_KEY", "")).strip()
@@ -59,9 +66,6 @@ STORAGE_CACHE_DIR = str(
 STORAGE_CACHE_CLEANUP_ENABLED = str(
     os.getenv("STORAGE_CACHE_CLEANUP_ENABLED", os.getenv("STORAGE_CACHE_ENABLED", "true"))
 ).strip().lower() in {"1", "true", "yes", "on"}
-# Deprecated compatibility alias. Materialization itself is always available
-# because several downstream integrations require a local filesystem path.
-STORAGE_CACHE_ENABLED = STORAGE_CACHE_CLEANUP_ENABLED
 STORAGE_CACHE_MAX_BYTES = int(os.getenv("STORAGE_CACHE_MAX_BYTES", str(10 * 1024 * 1024 * 1024)))
 STORAGE_CACHE_TARGET_BYTES = int(os.getenv("STORAGE_CACHE_TARGET_BYTES", str(8 * 1024 * 1024 * 1024)))
 STORAGE_CACHE_IDLE_TTL_SECONDS = int(os.getenv("STORAGE_CACHE_IDLE_TTL_SECONDS", str(7 * 24 * 60 * 60)))
@@ -85,6 +89,13 @@ STORAGE_INPUT_RETENTION_DAYS = int(os.getenv("STORAGE_INPUT_RETENTION_DAYS", "30
 STORAGE_UPLOAD_RETENTION_DAYS = int(os.getenv("STORAGE_UPLOAD_RETENTION_DAYS", "30"))
 STORAGE_OUTPUT_RETENTION_DAYS = int(os.getenv("STORAGE_OUTPUT_RETENTION_DAYS", "30"))
 STORAGE_TEMP_RETENTION_DAYS = int(os.getenv("STORAGE_TEMP_RETENTION_DAYS", "3"))
+
+# --- 有界阻塞 IO 适配层（同步 MinIO SDK 统一入口） ---
+# 所有异步路由调用同步 MinIO SDK 时必须经过 app.core.blocking_io.run_storage_io，
+# 不允许在业务代码中直接使用 asyncio.to_thread()/anyio.to_thread.run_sync()，
+# 否则无法统一控制并发、队列长度和指标。
+BLOCKING_IO_WORKERS = int(os.getenv("BLOCKING_IO_WORKERS", "12"))
+BLOCKING_IO_QUEUE_LIMIT = int(os.getenv("BLOCKING_IO_QUEUE_LIMIT", "50"))
 
 # --- 模型字段默认值/校验所需常量 ---
 VOLCENGINE_DEFAULT_PROJECT_NAME = "default"

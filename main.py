@@ -98,10 +98,19 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
     if path in HEALTH_PATHS:
         return await call_next(request)
+    if path == "/favicon.ico" or path.startswith("/static/"):
+        return await call_next(request)
     # 放行静态资源与登录相关路径
     is_public = path in AUTH_PUBLIC_PATHS or any(path.startswith(p) for p in AUTH_PUBLIC_PREFIXES)
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    sess = await asyncio.to_thread(get_session, token) if token else None
+    try:
+        sess = await get_session(token) if token else None
+    except RedisUnavailableError as exc:
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "3"},
+            content={"detail": str(exc), "error": "redis_unavailable", "retry_after_seconds": 3},
+        )
 
     if sess:
         # 已登录：注入当前用户到 ContextVar，供数据路径解析器使用。
@@ -145,20 +154,24 @@ from app.core.ws import ConnectionManager, manager
 GLOBAL_LOOP = None
 STORAGE_CLEANUP_TASK = None
 STORAGE_CACHE_CLEANUP_TASK = None
+SESSION_LAST_SEEN_TASK = None
 APP_VERSION = "2026.05.19"
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
 from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup
+from app.core.blocking_io import BlockingIOQueueFullError
 from app.services.business_metadata import initialize_business_metadata
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
+from app.core.redis_client import RedisUnavailableError, close_redis_client, open_redis_client, redis_readiness_status
 from app.core.metrics import render_metrics
 
 @app.on_event("startup")
 async def startup_event():
-    global GLOBAL_LOOP, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
+    global GLOBAL_LOOP, SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
     try:
         await open_database_pool()
+        await open_redis_client()
         await asyncio.to_thread(verify_storage_startup)
         # Business metadata is a separate schema layer above ``files``.  Keep
         # initialization in startup so new deployments and existing databases are
@@ -175,21 +188,32 @@ async def startup_event():
             STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
         if STORAGE_CACHE_CLEANUP_ENABLED and STORAGE_CACHE_CLEANUP_TASK is None:
             STORAGE_CACHE_CLEANUP_TASK = asyncio.create_task(storage_cache_cleanup_loop())
+        if SESSION_LAST_SEEN_TASK is None:
+            SESSION_LAST_SEEN_TASK = asyncio.create_task(session_last_seen_flush_loop())
         logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
     except Exception:
+        await close_redis_client()
         await close_database_pool()
         raise
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
+    global SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
     if STORAGE_CLEANUP_TASK is not None:
         STORAGE_CLEANUP_TASK.cancel()
         STORAGE_CLEANUP_TASK = None
     if STORAGE_CACHE_CLEANUP_TASK is not None:
         STORAGE_CACHE_CLEANUP_TASK.cancel()
         STORAGE_CACHE_CLEANUP_TASK = None
+    if SESSION_LAST_SEEN_TASK is not None:
+        SESSION_LAST_SEEN_TASK.cancel()
+        SESSION_LAST_SEEN_TASK = None
+    try:
+        await flush_session_last_seen()
+    except Exception:
+        logger.exception("final session last_seen flush failed", extra={"event": "session_last_seen_final_flush_failed"})
+    await close_redis_client()
     await close_database_pool()
 
 
@@ -201,8 +225,14 @@ async def health_live():
 
 @app.get("/health/ready", include_in_schema=False)
 async def health_ready():
-    """Readiness probe: PostgreSQL and all required MinIO buckets are reachable."""
-    report = await asyncio.to_thread(storage_readiness_status)
+    """Readiness probe: PostgreSQL, Redis, and required MinIO buckets are reachable."""
+    storage_report, redis_report = await asyncio.gather(
+        asyncio.to_thread(storage_readiness_status),
+        redis_readiness_status(),
+    )
+    components = dict(storage_report["components"])
+    components["redis"] = redis_report["component"]
+    report = {"ready": storage_report["ready"] and redis_report["ready"], "components": components}
     status_code = 200 if report["ready"] else 503
     headers = {"Cache-Control": "no-store"}
     if not report["ready"]:
@@ -288,6 +318,8 @@ from app.core.auth import (
     create_session,
     get_session,
     destroy_session,
+    flush_session_last_seen,
+    session_last_seen_flush_loop,
     current_user_id,
 )
 
@@ -581,12 +613,30 @@ async def database_unavailable_exception_handler(request: Request, exc: Database
     )
 
 
+@app.exception_handler(RedisUnavailableError)
+async def redis_unavailable_exception_handler(request: Request, exc: RedisUnavailableError):
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": "3"},
+        content={"detail": str(exc), "error": "redis_unavailable", "retry_after_seconds": 3},
+    )
+
+
 @app.exception_handler(StorageUnavailableError)
 async def storage_unavailable_exception_handler(request: Request, exc: StorageUnavailableError):
     return JSONResponse(
         status_code=503,
         headers={"Retry-After": "3"},
         content={"detail": str(exc), "error": "storage_unavailable", "retry_after_seconds": 3},
+    )
+
+
+@app.exception_handler(BlockingIOQueueFullError)
+async def blocking_io_queue_full_exception_handler(request: Request, exc: BlockingIOQueueFullError):
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": "1"},
+        content={"detail": str(exc), "error": "blocking_io_queue_full", "retry_after_seconds": 1},
     )
 
 def model_list(env_name, primary, defaults):

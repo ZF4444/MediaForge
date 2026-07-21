@@ -32,6 +32,25 @@ DB_SLOW_QUERIES = Counter(
 DB_ACTIVE_CONNECTIONS = Gauge("mediaforge_pg_active_connections", "Active PostgreSQL sessions for the current database.", registry=REGISTRY)
 DB_LOCK_WAITING = Gauge("mediaforge_pg_lock_waiting", "PostgreSQL sessions waiting on locks.", registry=REGISTRY)
 
+REDIS_AVAILABLE = Gauge(
+    "mediaforge_redis_available",
+    "Whether the required Redis authentication cache is reachable.",
+    registry=REGISTRY,
+)
+REDIS_OPERATION_SECONDS = Histogram(
+    "mediaforge_redis_operation_seconds",
+    "Redis operation duration.",
+    ("operation",),
+    buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1),
+    registry=REGISTRY,
+)
+AUTH_SESSION_CACHE_REQUESTS = Counter(
+    "mediaforge_auth_session_cache_requests_total",
+    "Authentication session cache lookups by result.",
+    ("result",),
+    registry=REGISTRY,
+)
+
 MINIO_OPERATION_SECONDS = Histogram(
     "mediaforge_minio_operation_seconds",
     "MinIO operation duration by operation and result.",
@@ -119,6 +138,29 @@ TRANSIENT_RETRIES = Counter(
     "mediaforge_transient_retries_total",
     "Retries of transient dependency failures.",
     ("backend", "operation"),
+    registry=REGISTRY,
+)
+
+BLOCKING_IO_ACTIVE = Gauge(
+    "mediaforge_blocking_io_active",
+    "In-flight calls currently running in the bounded blocking-IO thread pool.",
+    registry=REGISTRY,
+)
+BLOCKING_IO_QUEUED = Gauge(
+    "mediaforge_blocking_io_queued",
+    "Callers currently waiting for a free bounded blocking-IO worker thread.",
+    registry=REGISTRY,
+)
+BLOCKING_IO_QUEUE_REJECTIONS = Counter(
+    "mediaforge_blocking_io_queue_rejections_total",
+    "Requests rejected because the bounded blocking-IO queue was full.",
+    registry=REGISTRY,
+)
+BLOCKING_IO_SECONDS = Histogram(
+    "mediaforge_blocking_io_seconds",
+    "Duration of calls executed through the bounded blocking-IO adapter.",
+    ("status",),
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
     registry=REGISTRY,
 )
 

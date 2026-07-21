@@ -12,6 +12,7 @@
 - app.core.auth：会话/用户注册等
 - app.models：LoginRequest
 """
+import asyncio
 import os
 import re
 import urllib.parse
@@ -26,7 +27,6 @@ from app.core.auth import (
     clean_user_id,
     create_session,
     destroy_session,
-    get_session,
     register_user,
     user_exists,
 )
@@ -76,8 +76,8 @@ def static_html_response(filename: str):
     )
 
 
-def _issue_session_response(user_id: str, username: str):
-    token = create_session(user_id, username)
+async def _issue_session_response(user_id: str, username: str):
+    token = await create_session(user_id, username)
     resp = JSONResponse({"ok": True, "user_id": user_id, "username": username})
     resp.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -96,16 +96,15 @@ def index():
 
 
 @router.get("/login")
-def login_page(request: Request):
+async def login_page(request: Request):
     # 已登录则直接回首页
-    token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    if token and get_session(token):
+    if getattr(request.state, "user_id", None):
         return RedirectResponse(url="/", status_code=302)
     return static_html_response("login.html")
 
 
 @router.post("/auth/register")
-def auth_register(payload: LoginRequest):
+async def auth_register(payload: LoginRequest):
     user_id = clean_user_id(payload.username)
     if not user_id:
         audit_event("registration_failed", action="register", resource_type="user", result="failure", reason="invalid_username")
@@ -114,15 +113,15 @@ def auth_register(payload: LoginRequest):
         audit_event("registration_failed", action="register", resource_type="user", resource_id=user_id, result="failure", reason="username_too_short")
         raise HTTPException(status_code=400, detail="用户名至少需要 5 位。")
     username = payload.username.strip()[:60]
-    if not register_user(user_id, username):
+    if not await asyncio.to_thread(register_user, user_id, username):
         audit_event("registration_failed", action="register", resource_type="user", resource_id=user_id, result="failure", reason="username_taken")
         raise HTTPException(status_code=409, detail="该用户名已被占用，请换一个或直接登录。")
     audit_event("user_registered", action="register", resource_type="user", resource_id=user_id)
-    return _issue_session_response(user_id, username)
+    return await _issue_session_response(user_id, username)
 
 
 @router.post("/auth/login")
-def auth_login(payload: LoginRequest):
+async def auth_login(payload: LoginRequest):
     user_id = clean_user_id(payload.username)
     if not user_id:
         audit_event("login_failed", action="login", resource_type="session", result="failure", reason="invalid_username")
@@ -131,15 +130,15 @@ def auth_login(payload: LoginRequest):
         audit_event("login_failed", action="login", resource_type="session", resource_id=user_id, result="failure", reason="user_not_found")
         raise HTTPException(status_code=404, detail="该用户名尚未注册，请先注册。")
     username = payload.username.strip()[:60]
-    response = _issue_session_response(user_id, username)
+    response = await _issue_session_response(user_id, username)
     audit_event("login_succeeded", action="login", resource_type="session", resource_id=user_id, user_id=user_id, username=username)
     return response
 
 
 @router.post("/auth/logout")
-def auth_logout(request: Request):
+async def auth_logout(request: Request):
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    destroy_session(token)
+    await destroy_session(token)
     user_id = getattr(request.state, "user_id", None)
     username = getattr(request.state, "username", None)
     if user_id:
@@ -150,7 +149,7 @@ def auth_logout(request: Request):
 
 
 @router.get("/auth/sso")
-def auth_sso(request: Request):
+async def auth_sso(request: Request):
     """飞书等外部平台 SSO 跳转入口。
 
     接收 query 参数中的用户信息，自动注册（若首次）并登录，然后 302 重定向到首页。
@@ -168,16 +167,20 @@ def auth_sso(request: Request):
 
     # 自动注册（若不存在），已存在则同步 username
     if not user_exists(user_id):
-        register_user(user_id, username)
+        await asyncio.to_thread(register_user, user_id, username)
     else:
         from app.core.auth import USERS, USERS_LOCK, _persist_users_unlocked
-        with USERS_LOCK:
-            if USERS.get(user_id, {}).get("username") != username:
-                USERS[user_id]["username"] = username
-                _persist_users_unlocked()
+
+        def update_username():
+            with USERS_LOCK:
+                if USERS.get(user_id, {}).get("username") != username:
+                    USERS[user_id]["username"] = username
+                    _persist_users_unlocked()
+
+        await asyncio.to_thread(update_username)
 
     # 创建 session 并设置 cookie，重定向到首页
-    token = create_session(user_id, username)
+    token = await create_session(user_id, username)
     audit_event("sso_login_succeeded", action="login", resource_type="session", resource_id=user_id, user_id=user_id, username=username)
     resp = RedirectResponse(url="/", status_code=302)
     resp.set_cookie(
@@ -192,13 +195,13 @@ def auth_sso(request: Request):
 
 
 @router.get("/auth/me")
-def auth_me(request: Request):
-    token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    sess = get_session(token) if token else None
-    if not sess:
+async def auth_me(request: Request):
+    user_id = getattr(request.state, "user_id", None)
+    username = getattr(request.state, "username", None)
+    if not user_id:
         return JSONResponse({"authenticated": False}, status_code=401)
     return {
         "authenticated": True,
-        "user_id": sess.get("user_id"),
-        "username": sess.get("username") or sess.get("user_id"),
+        "user_id": user_id,
+        "username": username or user_id,
     }

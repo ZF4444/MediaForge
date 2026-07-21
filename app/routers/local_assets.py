@@ -19,6 +19,7 @@ from typing import List, Tuple
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
+from app.core.blocking_io import run_storage_io
 from app.core.media import (
     content_type_for_path,
     ensure_same_origin_request,
@@ -61,8 +62,8 @@ def _save_uploaded_media(
 
 
 @router.get("/api/download-output")
-def download_output(url: str, name: str = "", inline: bool = False):
-    path = output_file_from_url(url)
+async def download_output(url: str, name: str = "", inline: bool = False):
+    path = await run_storage_io(output_file_from_url, url)
     if not path:
         raise HTTPException(status_code=404, detail="MinIO 文件不存在")
     filename = sanitize_export_filename(os.path.basename(name) if name else os.path.basename(path), os.path.basename(path))
@@ -97,7 +98,7 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
         else:
             continue
         filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
-        url, file_id = await asyncio.to_thread(
+        url, file_id = await run_storage_io(
             _save_uploaded_media,
             "input",
             filename,
@@ -168,7 +169,7 @@ async def upload_local_assets(files: List[UploadFile] = File(...)):
         base = re.sub(r"[^0-9A-Za-z一-鿿._-]+", "_", base).strip("_") or "file"
         base = base[:60]
         filename = f"up_{uuid.uuid4().hex[:12]}_{base}{ext}"
-        stored = await asyncio.to_thread(
+        stored = await run_storage_io(
             save_media_bytes,
             "uploads",
             filename,

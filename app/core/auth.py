@@ -7,13 +7,27 @@
 依赖：app.config（路径常量），app.core.utils.now_ms。
 本模块不引用 FastAPI app 对象，避免循环导入（中间件仍注册在 main.py）。
 """
+import asyncio
 import contextvars
 import hashlib
+import json
+import math
 import re
 import secrets as _secrets
 from threading import Lock
 from typing import Any, Dict
 
+from redis.exceptions import RedisError
+
+from app.config import (
+    REDIS_LAST_SEEN_FLUSH_INTERVAL_SECONDS,
+    REDIS_LAST_SEEN_WRITE_INTERVAL_SECONDS,
+    REDIS_SESSION_PREFIX,
+)
+from app.core.database import database_connection
+from app.core.logging import get_logger
+from app.core.metrics import AUTH_SESSION_CACHE_REQUESTS, REDIS_OPERATION_SECONDS
+from app.core.redis_client import RedisUnavailableError, get_redis_client
 from app.core.utils import now_ms
 from app.services.business_metadata import metadata_connection
 
@@ -24,6 +38,8 @@ current_user_var: "contextvars.ContextVar[str]" = contextvars.ContextVar("curren
 # 用户注册表（无密码，仅记录已注册的用户名）。user_id -> {username, created_at}
 USERS_LOCK = Lock()
 USERS: Dict[str, Dict[str, Any]] = {}
+logger = get_logger("auth")
+_LAST_SEEN_DIRTY_KEY = f"{REDIS_SESSION_PREFIX}last_seen_dirty"
 
 
 def clean_user_id(raw: str) -> str:
@@ -77,28 +93,170 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
 
 
-def create_session(user_id: str, username: str) -> str:
+def _session_key(token_hash: str) -> str:
+    return f"{REDIS_SESSION_PREFIX}{token_hash}"
+
+
+def _session_payload(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "user_id": str(row.get("user_id") or ""),
+        "username": str(row.get("username") or ""),
+        "created_at": int(row.get("created_at") or 0),
+        "last_seen": int(row.get("last_seen") or 0),
+        "expires_at": int(row.get("expires_at") or 0),
+    }
+
+
+def _redis_unavailable(operation: str, exc: BaseException) -> RedisUnavailableError:
+    logger.warning(
+        "Redis authentication operation failed",
+        extra={"event": "redis_auth_operation_failed", "operation": operation, "error_type": type(exc).__name__},
+    )
+    return RedisUnavailableError("Redis 认证缓存暂时不可用")
+
+
+async def _cache_session(token_hash: str, session: Dict[str, Any], *, mark_dirty: bool) -> None:
+    ttl_seconds = max(1, math.ceil((int(session["expires_at"]) - now_ms()) / 1000))
+    client = get_redis_client()
+    try:
+        with REDIS_OPERATION_SECONDS.labels(operation="session_write").time():
+            pipeline = client.pipeline(transaction=False)
+            pipeline.set(_session_key(token_hash), json.dumps(session, separators=(",", ":")), ex=ttl_seconds)
+            if mark_dirty:
+                pipeline.zadd(_LAST_SEEN_DIRTY_KEY, {token_hash: int(session["last_seen"])})
+            await pipeline.execute()
+    except RedisError as exc:
+        raise _redis_unavailable("session_write", exc) from exc
+
+
+async def create_session(user_id: str, username: str) -> str:
     token = _secrets.token_urlsafe(32)
     now = now_ms()
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO user_sessions(token_hash,user_id,username,created_at,last_seen,expires_at) VALUES(%s,%s,%s,%s,%s,%s)", (_token_hash(token), user_id, username, now, now, now + SESSION_MAX_AGE * 1000))
+    token_hash = _token_hash(token)
+    session = {
+        "user_id": user_id,
+        "username": username,
+        "created_at": now,
+        "last_seen": now,
+        "expires_at": now + SESSION_MAX_AGE * 1000,
+    }
+    async with database_connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "INSERT INTO user_sessions(token_hash,user_id,username,created_at,last_seen,expires_at) VALUES(%s,%s,%s,%s,%s,%s)",
+            (token_hash, user_id, username, now, now, session["expires_at"]),
+        )
+    await _cache_session(token_hash, session, mark_dirty=False)
     return token
 
 
-def get_session(token: str):
+async def get_session(token: str):
     if not token:
         return None
     now = now_ms()
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE user_sessions SET last_seen=%s WHERE token_hash=%s AND expires_at>%s RETURNING user_id,username,created_at,last_seen", (now, _token_hash(token), now))
-        return cur.fetchone()
+    token_hash = _token_hash(token)
+    client = get_redis_client()
+    try:
+        with REDIS_OPERATION_SECONDS.labels(operation="session_read").time():
+            raw = await client.get(_session_key(token_hash))
+    except RedisError as exc:
+        raise _redis_unavailable("session_read", exc) from exc
+
+    if raw:
+        try:
+            session = json.loads(raw)
+        except (TypeError, ValueError):
+            session = None
+        if isinstance(session, dict) and session.get("revoked"):
+            AUTH_SESSION_CACHE_REQUESTS.labels(result="revoked").inc()
+            return None
+        if isinstance(session, dict):
+            session = _session_payload(session)
+            if session["user_id"] and session["expires_at"] > now:
+                AUTH_SESSION_CACHE_REQUESTS.labels(result="hit").inc()
+                write_interval_ms = REDIS_LAST_SEEN_WRITE_INTERVAL_SECONDS * 1000
+                if now - session["last_seen"] >= write_interval_ms:
+                    session["last_seen"] = now
+                    await _cache_session(token_hash, session, mark_dirty=True)
+                return session
+        try:
+            await client.delete(_session_key(token_hash))
+        except RedisError as exc:
+            raise _redis_unavailable("invalid_session_delete", exc) from exc
+
+    AUTH_SESSION_CACHE_REQUESTS.labels(result="miss").inc()
+    async with database_connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT user_id,username,created_at,last_seen,expires_at FROM user_sessions WHERE token_hash=%s AND expires_at>%s",
+            (token_hash, now),
+        )
+        row = await cur.fetchone()
+    if not row:
+        return None
+    session = _session_payload(row)
+    session["last_seen"] = now
+    await _cache_session(token_hash, session, mark_dirty=True)
+    return session
 
 
-def destroy_session(token: str):
+async def destroy_session(token: str):
     if not token:
         return
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM user_sessions WHERE token_hash=%s", (_token_hash(token),))
+    token_hash = _token_hash(token)
+    client = get_redis_client()
+    revoked = json.dumps({"revoked": True}, separators=(",", ":"))
+    try:
+        await client.set(_session_key(token_hash), revoked, ex=SESSION_MAX_AGE)
+    except RedisError as exc:
+        raise _redis_unavailable("session_revoke", exc) from exc
+    async with database_connection() as conn, conn.cursor() as cur:
+        await cur.execute("DELETE FROM user_sessions WHERE token_hash=%s", (token_hash,))
+    try:
+        pipeline = client.pipeline(transaction=False)
+        pipeline.delete(_session_key(token_hash))
+        pipeline.zrem(_LAST_SEEN_DIRTY_KEY, token_hash)
+        await pipeline.execute()
+    except RedisError as exc:
+        raise _redis_unavailable("session_delete", exc) from exc
+
+
+async def flush_session_last_seen() -> int:
+    """Persist Redis last_seen values that were stable before this flush began."""
+    client = get_redis_client()
+    cutoff = now_ms() - 1000
+    try:
+        entries = await client.zrangebyscore(_LAST_SEEN_DIRTY_KEY, "-inf", cutoff, withscores=True)
+    except RedisError as exc:
+        raise _redis_unavailable("last_seen_read", exc) from exc
+    if not entries:
+        return 0
+
+    params = [(int(score), str(token_hash)) for token_hash, score in entries]
+    async with database_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        await cur.executemany(
+            "UPDATE user_sessions SET last_seen=GREATEST(last_seen,%s) WHERE token_hash=%s",
+            params,
+        )
+    try:
+        await client.zremrangebyscore(_LAST_SEEN_DIRTY_KEY, "-inf", cutoff)
+    except RedisError as exc:
+        raise _redis_unavailable("last_seen_ack", exc) from exc
+    return len(params)
+
+
+async def session_last_seen_flush_loop() -> None:
+    while True:
+        await asyncio.sleep(REDIS_LAST_SEEN_FLUSH_INTERVAL_SECONDS)
+        try:
+            flushed = await flush_session_last_seen()
+            if flushed:
+                logger.info(
+                    "session last_seen values flushed",
+                    extra={"event": "session_last_seen_flushed", "count": flushed},
+                )
+        except RedisUnavailableError:
+            logger.exception("Redis unavailable during last_seen flush", extra={"event": "session_last_seen_flush_failed"})
+        except Exception:
+            logger.exception("session last_seen flush failed", extra={"event": "session_last_seen_flush_failed"})
 
 
 def current_user_id() -> str:

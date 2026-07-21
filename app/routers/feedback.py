@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.core.access_control import is_admin
-from app.core.auth import current_user_id, get_session, SESSION_COOKIE_NAME
+from app.core.auth import current_user_id
 from app.models import FeedbackCreatePayload, FeedbackUpdatePayload
 from app.services.feedback import (
     create_feedback,
@@ -23,9 +23,7 @@ def _require_admin() -> str:
 
 
 def _current_username(request: Request, user_id: str) -> str:
-    token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    sess = get_session(token) if token else None
-    return (sess or {}).get("username") or user_id
+    return getattr(request.state, "username", None) or user_id
 
 
 @router.post("/api/feedback")

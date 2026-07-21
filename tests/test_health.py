@@ -39,6 +39,10 @@ def test_health_routes_return_live_and_not_ready(monkeypatch):
         "ready": False,
         "components": {"postgres": "ok", "minio": "unavailable"},
     })
+    async def redis_ready():
+        return {"ready": True, "component": "ok"}
+
+    monkeypatch.setattr(main, "redis_readiness_status", redis_ready)
     monkeypatch.setattr(main.asyncio, "to_thread", immediate_to_thread)
 
     live = asyncio.run(main.health_live())
@@ -52,3 +56,4 @@ def test_health_routes_return_live_and_not_ready(monkeypatch):
     assert ready.headers["retry-after"] == "5"
     assert b'"status":"not_ready"' in ready.body
     assert b'"minio":"unavailable"' in ready.body
+    assert b'"redis":"ok"' in ready.body
