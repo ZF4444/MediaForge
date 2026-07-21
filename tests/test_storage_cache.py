@@ -1,3 +1,4 @@
+import fcntl
 import hashlib
 import os
 import threading
@@ -9,7 +10,7 @@ from app.services import storage
 def _configure_cache(monkeypatch, tmp_path, **overrides):
     values = {
         "STORAGE_CACHE_DIR": str(tmp_path / "cache"),
-        "STORAGE_CACHE_ENABLED": True,
+        "STORAGE_CACHE_CLEANUP_ENABLED": True,
         "STORAGE_CACHE_DRY_RUN": False,
         "STORAGE_CACHE_MAX_BYTES": 1024 * 1024,
         "STORAGE_CACHE_TARGET_BYTES": 512 * 1024,
@@ -137,6 +138,33 @@ def test_materialize_replaces_invalid_sized_cache(monkeypatch, tmp_path):
     assert downloads == [1]
 
 
+def test_cleanup_switch_does_not_disable_required_materialization(monkeypatch, tmp_path):
+    _configure_cache(
+        monkeypatch,
+        tmp_path,
+        STORAGE_CACHE_CLEANUP_ENABLED=False,
+    )
+    payload = b"still-materialized"
+    entry = _entry(payload)
+    monkeypatch.setattr(storage, "get_file_by_id", lambda _file_id: entry)
+    monkeypatch.setattr(storage, "_touch_access", lambda _file_id: None)
+
+    def download(_bucket, _key, fileobj, **_kwargs):
+        fileobj.write(payload)
+        return {"size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+
+    monkeypatch.setattr(storage, "download_object_to_file", download)
+
+    cleanup = storage.run_storage_cache_cleanup_once()
+    path = storage.materialize_media_url("/api/files/file-1/preview")
+
+    assert cleanup["skipped"] == "disabled"
+    assert cleanup["cleanup_enabled"] is False
+    assert path is not None
+    with open(path, "rb") as cached_file:
+        assert cached_file.read() == payload
+
+
 def test_cache_cleanup_removes_idle_files_but_not_recent_files(monkeypatch, tmp_path):
     cache_root = _configure_cache(
         monkeypatch,
@@ -223,6 +251,57 @@ def test_cache_cleanup_removes_stale_tmp_and_known_orphan(monkeypatch, tmp_path)
     assert active.exists()
     assert not orphan.exists()
     assert not temporary.exists()
+
+
+def test_cache_cleanup_skips_stale_tmp_while_writer_holds_lock(monkeypatch, tmp_path):
+    cache_root = _configure_cache(
+        monkeypatch,
+        tmp_path,
+        STORAGE_CACHE_TMP_TTL_SECONDS=60,
+    )
+    temporary = _write_cache_file(
+        cache_root,
+        "private/users/alice/.active.tmp",
+        b"partial",
+        time.time() - 100,
+    )
+
+    with temporary.open("r+b") as tmp_file:
+        fcntl.flock(tmp_file.fileno(), fcntl.LOCK_EX)
+        result = storage.run_storage_cache_cleanup_once()
+
+    assert result["removed_tmp"] == 0
+    assert temporary.exists()
+
+
+def test_offline_lock_cleanup_removes_inactive_and_skips_active_locks(monkeypatch, tmp_path):
+    cache_root = _configure_cache(monkeypatch, tmp_path)
+    lock_dir = cache_root / ".locks"
+    lock_dir.mkdir(parents=True)
+    inactive = lock_dir / "inactive.lock"
+    active = lock_dir / "active.lock"
+    inactive.touch()
+    active.touch()
+
+    with active.open("r+b") as active_file:
+        fcntl.flock(active_file.fileno(), fcntl.LOCK_EX)
+        assert storage.storage_cache_status()["lock_files"] == 2
+        result = storage.clear_storage_cache_locks()
+
+    assert result == {
+        "dry_run": False,
+        "lock_files_before": 2,
+        "lock_files_after": 1,
+        "removed": 1,
+        "skipped_active": 1,
+        "failed": 0,
+    }
+    assert not inactive.exists()
+    assert active.exists()
+
+    final = storage.clear_storage_cache_locks()
+    assert final["removed"] == 1
+    assert final["lock_files_after"] == 0
 
 
 def test_cache_cleanup_dry_run_does_not_remove_files(monkeypatch, tmp_path):

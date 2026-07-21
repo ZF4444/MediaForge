@@ -13,7 +13,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.config import DATABASE_URL
 from app.core.database import close_database_pool, open_database_pool
-from app.services.storage import clear_storage_cache, run_storage_cache_cleanup_once, storage_cache_status
+from app.services.storage import (
+    clear_storage_cache,
+    clear_storage_cache_locks,
+    run_storage_cache_cleanup_once,
+    storage_cache_status,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -32,6 +37,13 @@ def _parser() -> argparse.ArgumentParser:
     clear = commands.add_parser("clear", help="Remove all materialized cache files.")
     clear.add_argument("--dry-run", action="store_true", help="Report the effect without deleting files.")
     clear.add_argument("--yes", action="store_true", help="Confirm removal of all materialized cache files.")
+
+    clear_locks = commands.add_parser(
+        "clear-locks",
+        help="Remove object lock files after all MediaForge workers have stopped.",
+    )
+    clear_locks.add_argument("--dry-run", action="store_true", help="Report the effect without deleting files.")
+    clear_locks.add_argument("--yes", action="store_true", help="Confirm offline removal of object lock files.")
     return parser
 
 
@@ -49,11 +61,16 @@ def main() -> int:
                 dry_run=args.dry_run,
                 force_orphan_scan=args.force_orphan_scan,
             )
-        else:
+        elif args.command == "clear":
             if not args.dry_run and not args.yes:
                 print("Refusing to clear the cache without --yes.", file=sys.stderr)
                 return 2
             result = clear_storage_cache(dry_run=args.dry_run)
+        else:
+            if not args.dry_run and not args.yes:
+                print("Refusing to clear lock files without --yes.", file=sys.stderr)
+                return 2
+            result = clear_storage_cache_locks(dry_run=args.dry_run)
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     finally:

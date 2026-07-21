@@ -38,7 +38,7 @@ from app.config import (
     STORAGE_CACHE_CLEANUP_BATCH_SIZE,
     STORAGE_CACHE_CLEANUP_INTERVAL_SECONDS,
     STORAGE_CACHE_DRY_RUN,
-    STORAGE_CACHE_ENABLED,
+    STORAGE_CACHE_CLEANUP_ENABLED,
     STORAGE_CACHE_IDLE_TTL_SECONDS,
     STORAGE_CACHE_MAX_BYTES,
     STORAGE_CACHE_MIN_FREE_BYTES,
@@ -1663,20 +1663,21 @@ def materialize_media_url(url: str) -> Optional[str]:
             )
             try:
                 with os.fdopen(fd, "w+b") as tmp_file:
+                    fcntl.flock(tmp_file.fileno(), fcntl.LOCK_EX)
                     result = download_object_to_file(entry["bucket"], entry["object_key"], tmp_file)
                     tmp_file.flush()
                     os.fsync(tmp_file.fileno())
-                actual_size = int(result.get("size") or 0)
-                expected_size = _expected_cache_size(entry)
-                if expected_size and actual_size != expected_size:
-                    raise IOError(f"cached object size mismatch: expected {expected_size}, got {actual_size}")
-                expected_sha256 = _expected_cache_sha256(entry)
-                if expected_sha256 and str(result.get("sha256") or "").lower() != expected_sha256:
-                    raise IOError("cached object checksum mismatch")
-                os.chmod(tmp_target, 0o640)
-                os.replace(tmp_target, target)
-                _touch_cache_file(target, force=True)
-                STORAGE_CACHE_DOWNLOAD_BYTES.inc(actual_size)
+                    actual_size = int(result.get("size") or 0)
+                    expected_size = _expected_cache_size(entry)
+                    if expected_size and actual_size != expected_size:
+                        raise IOError(f"cached object size mismatch: expected {expected_size}, got {actual_size}")
+                    expected_sha256 = _expected_cache_sha256(entry)
+                    if expected_sha256 and str(result.get("sha256") or "").lower() != expected_sha256:
+                        raise IOError("cached object checksum mismatch")
+                    os.chmod(tmp_target, 0o640)
+                    os.replace(tmp_target, target)
+                    _touch_cache_file(target, force=True)
+                    STORAGE_CACHE_DOWNLOAD_BYTES.inc(actual_size)
             finally:
                 try:
                     os.remove(tmp_target)
@@ -1740,8 +1741,24 @@ def _scan_cache_entries() -> List[Dict[str, Any]]:
     return entries
 
 
+def _cache_lock_paths() -> List[str]:
+    lock_dir = os.path.join(os.path.abspath(STORAGE_CACHE_DIR), _CACHE_LOCK_DIR_NAME)
+    if not os.path.isdir(lock_dir):
+        return []
+    paths: List[str] = []
+    try:
+        with os.scandir(lock_dir) as entries:
+            for entry in entries:
+                if entry.name.endswith(".lock") and entry.is_file(follow_symlinks=False):
+                    paths.append(entry.path)
+    except OSError:
+        return []
+    return paths
+
+
 def storage_cache_status() -> Dict[str, Any]:
     entries = _scan_cache_entries()
+    lock_paths = _cache_lock_paths()
     root = os.path.abspath(STORAGE_CACHE_DIR)
     try:
         free_bytes = int(shutil.disk_usage(root if os.path.exists(root) else os.path.dirname(root) or "/").free)
@@ -1753,9 +1770,11 @@ def storage_cache_status() -> Dict[str, Any]:
     if max_bytes and (target_bytes <= 0 or target_bytes >= max_bytes):
         target_bytes = int(max_bytes * 0.8)
     result = {
-        "enabled": bool(STORAGE_CACHE_ENABLED),
+        "enabled": bool(STORAGE_CACHE_CLEANUP_ENABLED),
+        "cleanup_enabled": bool(STORAGE_CACHE_CLEANUP_ENABLED),
         "cache_dir": root,
         "files": len(entries),
+        "lock_files": len(lock_paths),
         "bytes": sum(int(entry["size"]) for entry in entries),
         "free_bytes": free_bytes,
         "max_bytes": max_bytes,
@@ -1811,16 +1830,26 @@ def _remove_stale_cache_sidecars(now_value: float, *, dry_run: bool) -> Dict[str
                 continue
             path = os.path.join(directory, name)
             try:
-                if os.path.getmtime(path) > cutoff:
-                    continue
+                with open(path, "r+b") as tmp_file:
+                    try:
+                        fcntl.flock(tmp_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        continue
+                    if os.fstat(tmp_file.fileno()).st_mtime > cutoff:
+                        continue
+                    removed = dry_run
+                    if not dry_run:
+                        try:
+                            os.remove(path)
+                            removed = True
+                        except FileNotFoundError:
+                            removed = False
             except OSError:
                 continue
-            counter = "removed_tmp"
-            reason = "tmp"
-            if dry_run or _remove_cache_file(path):
-                result[counter] += 1
+            if removed:
+                result["removed_tmp"] += 1
                 if not dry_run:
-                    STORAGE_CACHE_EVICTIONS.labels(reason=reason).inc()
+                    STORAGE_CACHE_EVICTIONS.labels(reason="tmp").inc()
     return result
 
 
@@ -1900,8 +1929,13 @@ def run_storage_cache_cleanup_once(
     """Evict local materialized files without mutating MinIO or file metadata."""
     started = time.perf_counter()
     effective_dry_run = STORAGE_CACHE_DRY_RUN if dry_run is None else bool(dry_run)
-    if not STORAGE_CACHE_ENABLED:
-        return {"enabled": False, "dry_run": effective_dry_run, "skipped": "disabled"}
+    if not STORAGE_CACHE_CLEANUP_ENABLED:
+        return {
+            "enabled": False,
+            "cleanup_enabled": False,
+            "dry_run": effective_dry_run,
+            "skipped": "disabled",
+        }
     root = os.path.abspath(STORAGE_CACHE_DIR)
     os.makedirs(root, exist_ok=True)
     cleanup_lock_path = _cache_control_path(_CACHE_CLEANUP_LOCK_NAME)
@@ -1909,13 +1943,23 @@ def run_storage_cache_cleanup_once(
         try:
             fcntl.flock(cleanup_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return {"enabled": True, "dry_run": effective_dry_run, "skipped": "already_running"}
+            return {
+                "enabled": True,
+                "cleanup_enabled": True,
+                "dry_run": effective_dry_run,
+                "skipped": "already_running",
+            }
 
         now_value = time.time()
         state = _load_cache_cleanup_state()
         cleanup_interval = max(60, int(STORAGE_CACHE_CLEANUP_INTERVAL_SECONDS or 600))
         if respect_interval and now_value - float(state.get("last_cleanup_at") or 0) < cleanup_interval:
-            return {"enabled": True, "dry_run": effective_dry_run, "skipped": "not_due"}
+            return {
+                "enabled": True,
+                "cleanup_enabled": True,
+                "dry_run": effective_dry_run,
+                "skipped": "not_due",
+            }
         before = storage_cache_status()
         entries = _scan_cache_entries()
         selected: set[str] = set()
@@ -2002,6 +2046,7 @@ def run_storage_cache_cleanup_once(
         }
         result = {
             "enabled": True,
+            "cleanup_enabled": True,
             "dry_run": effective_dry_run,
             "files_before": int(before["files"]),
             "files_after": int(after["files"]),
@@ -2060,6 +2105,56 @@ def clear_storage_cache(*, dry_run: bool = False) -> Dict[str, Any]:
             "files_after": after["files"],
             "bytes_before": before["bytes"],
             "bytes_after": after["bytes"],
+        }
+
+
+def clear_storage_cache_locks(*, dry_run: bool = False) -> Dict[str, Any]:
+    """Remove inactive object lock files. Stop all app workers before calling."""
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    os.makedirs(root, exist_ok=True)
+    with open(_cache_control_path(_CACHE_CLEANUP_LOCK_NAME), "a+b") as cleanup_lock:
+        try:
+            fcntl.flock(cleanup_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"dry_run": bool(dry_run), "skipped": "cleanup_running"}
+        paths = _cache_lock_paths()
+        removed = 0
+        active = 0
+        failed = 0
+        for path in paths:
+            try:
+                with open(path, "r+b") as lock_file:
+                    try:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        active += 1
+                        continue
+                    if dry_run:
+                        removed += 1
+                        continue
+                    try:
+                        os.remove(path)
+                        removed += 1
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        failed += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                failed += 1
+        if not dry_run:
+            try:
+                os.rmdir(os.path.join(root, _CACHE_LOCK_DIR_NAME))
+            except OSError:
+                pass
+        return {
+            "dry_run": bool(dry_run),
+            "lock_files_before": len(paths),
+            "lock_files_after": len(_cache_lock_paths()) if not dry_run else len(paths),
+            "removed": removed,
+            "skipped_active": active,
+            "failed": failed,
         }
 
 

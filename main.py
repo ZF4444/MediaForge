@@ -170,7 +170,7 @@ async def startup_event():
         shared_state.set_global_loop(GLOBAL_LOOP)
         if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
             STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
-        if STORAGE_CACHE_ENABLED and STORAGE_CACHE_CLEANUP_TASK is None:
+        if STORAGE_CACHE_CLEANUP_ENABLED and STORAGE_CACHE_CLEANUP_TASK is None:
             STORAGE_CACHE_CLEANUP_TASK = asyncio.create_task(storage_cache_cleanup_loop())
         logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
     except Exception:
@@ -255,7 +255,7 @@ from app.config import (
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
     RUNNINGHUB_THUMBNAIL_EXTS,
-    STORAGE_CACHE_ENABLED,
+    STORAGE_CACHE_CLEANUP_ENABLED,
     STORAGE_CLEANUP_ENABLED,
     TASK_ID_LOCK,
     HISTORY_LOCK,

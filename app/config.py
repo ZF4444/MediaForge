@@ -56,7 +56,12 @@ MINIO_BUCKET_TEMP = str(os.getenv("MINIO_BUCKET_TEMP", "mediaforge-temp")).strip
 STORAGE_CACHE_DIR = str(
     os.getenv("STORAGE_CACHE_DIR", os.path.join(tempfile.gettempdir(), "mediaforge-storage-cache"))
 ).strip() or os.path.join(tempfile.gettempdir(), "mediaforge-storage-cache")
-STORAGE_CACHE_ENABLED = str(os.getenv("STORAGE_CACHE_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_CACHE_CLEANUP_ENABLED = str(
+    os.getenv("STORAGE_CACHE_CLEANUP_ENABLED", os.getenv("STORAGE_CACHE_ENABLED", "true"))
+).strip().lower() in {"1", "true", "yes", "on"}
+# Deprecated compatibility alias. Materialization itself is always available
+# because several downstream integrations require a local filesystem path.
+STORAGE_CACHE_ENABLED = STORAGE_CACHE_CLEANUP_ENABLED
 STORAGE_CACHE_MAX_BYTES = int(os.getenv("STORAGE_CACHE_MAX_BYTES", str(10 * 1024 * 1024 * 1024)))
 STORAGE_CACHE_TARGET_BYTES = int(os.getenv("STORAGE_CACHE_TARGET_BYTES", str(8 * 1024 * 1024 * 1024)))
 STORAGE_CACHE_IDLE_TTL_SECONDS = int(os.getenv("STORAGE_CACHE_IDLE_TTL_SECONDS", str(7 * 24 * 60 * 60)))
