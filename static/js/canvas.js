@@ -71,10 +71,7 @@ const selectionHub = document.getElementById('selectionHub');
 const gateStatus = document.getElementById('gateStatus');
 const gateCreateSmartBtn = document.getElementById('gateCreateSmartBtn');
 const gateRefreshBtn = document.getElementById('gateRefreshBtn');
-const gateBackBtn = document.getElementById('gateBackBtn');
-const gateTrashBtn = document.getElementById('gateTrashBtn');
 const gateAssetManagerBtn = document.getElementById('gateAssetManagerBtn');
-const gateTrashCount = document.getElementById('gateTrashCount');
 const gateTitleText = document.getElementById('gateTitleText');
 const gateSubtitle = document.getElementById('gateSubtitle');
 const gateCanvasList = document.getElementById('gateCanvasList');
@@ -133,7 +130,6 @@ const errorTitle = document.getElementById('errorTitle');
 const errorMessage = document.getElementById('errorMessage');
 const classicCanvasDeprecationModal = document.getElementById('classicCanvasDeprecationModal');
 let canvases = [];
-let deletedCanvases = [];
 let canvas = null;
 let nodes = [];
 let connections = [];
@@ -160,9 +156,7 @@ let selected = new Set();
 let saveTimer = null;
 let creatingCanvas = false;
 let createCanvasKind = 'classic';
-let trashMode = false;
 let pendingDeleteCanvasId = null;
-let pendingPurgeCanvasId = null;
 let emojiPickerCanvasId = null;
 let canvasSortMode = (() => { try { return localStorage.getItem('canvasSortMode') || 'recent'; } catch(e){ return 'recent'; } })();
 const CANVAS_COLOR_OPTIONS = ['red','orange','amber','green','teal','blue','violet','pink','slate'];
@@ -800,23 +794,15 @@ function setStatus(text){
     if(gateStatus) gateStatus.textContent = text;
 }
 function refreshGateViewControls(){
-    canvasGate.classList.toggle('trash-mode', trashMode);
-    if(gateTitleText) gateTitleText.textContent = trashMode ? tr('canvas.trash') : tr('canvas.selectCanvas');
-    if(gateSubtitle) gateSubtitle.textContent = trashMode ? tr('canvas.trashSubtitle') : tr('canvas.subtitle');
-    const trashCount = deletedCanvases.length;
-    if(gateTrashCount){
-        gateTrashCount.textContent = String(trashCount);
-        gateTrashCount.classList.toggle('visible', trashCount > 0);
-    }
+    if(gateTitleText) gateTitleText.textContent = tr('canvas.selectCanvas');
+    if(gateSubtitle) gateSubtitle.textContent = tr('canvas.subtitle');
     const countPill = document.getElementById('gateCountPill');
     if(countPill){
-        const items = trashMode ? deletedCanvases : canvases;
         const suffix = tr('canvas.countSuffix');
-        countPill.textContent = suffix ? `${items.length} ${suffix}` : String(items.length);
+        countPill.textContent = suffix ? `${canvases.length} ${suffix}` : String(canvases.length);
     }
     const sortSwitch = document.getElementById('gateSortSwitch');
     if(sortSwitch){
-        sortSwitch.classList.toggle('hidden', trashMode);
         sortSwitch.querySelectorAll('[data-sort]').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.sort === canvasSortMode);
         });
@@ -843,7 +829,6 @@ function ensureCanvas(){
 function setCreateMode(active, kind='classic'){
     creatingCanvas = active;
     createCanvasKind = active ? ((kind === 'smart') ? 'smart' : 'classic') : 'classic';
-    if(active) trashMode = false;
     canvasGate.classList.toggle('creating', active);
     refreshGateViewControls();
     setStatus(active ? tr('canvas.enterCanvasName') : (canvases.length ? tr('canvas.chooseFirst') : tr('canvas.noCanvasCreateFirst')));
@@ -1124,52 +1109,15 @@ async function loadCanvasList(openFirst=true){
         sortCanvasListByUpdated();
         refreshGateViewControls();
         renderCanvasList();
-        refreshTrashCount();
         if(openFirst && canvases[0]) await openCanvas(canvases[0].id);
         else if(!canvas) {
             setCanvasMode(false);
-            setStatus(trashMode ? (deletedCanvases.length ? tr('canvas.trash') : tr('canvas.trashEmpty')) : (canvases.length ? tr('canvas.chooseFirst') : tr('canvas.noCanvasCreateFirst')));
+            setStatus(canvases.length ? tr('canvas.chooseFirst') : tr('canvas.noCanvasCreateFirst'));
         }
     } catch(e) {
         setStatus(tr('canvas.canvasListFailed'));
         console.error(e);
     }
-}
-async function loadTrashList(){
-    try {
-        const res = await fetch('/api/canvases/trash');
-        if(!res.ok) throw new Error(tr('canvas.trashLoadFailed'));
-        const data = await res.json();
-        deletedCanvases = data.canvases || [];
-        refreshGateViewControls();
-        renderCanvasList();
-        setStatus(deletedCanvases.length ? tr('canvas.trash') : tr('canvas.trashEmpty'));
-    } catch(e) {
-        setStatus(tr('canvas.trashLoadFailed'));
-        console.error(e);
-    }
-}
-async function refreshTrashCount(){
-    if(trashMode) return;
-    try {
-        const res = await fetch('/api/canvases/trash');
-        if(!res.ok) return;
-        const data = await res.json();
-        deletedCanvases = data.canvases || [];
-        refreshGateViewControls();
-    } catch(e) {}
-}
-async function setTrashMode(active){
-    trashMode = active;
-    creatingCanvas = false;
-    pendingDeleteCanvasId = null;
-    pendingPurgeCanvasId = null;
-    emojiPickerCanvasId = null;
-    canvasGate.classList.toggle('creating', false);
-    refreshGateViewControls();
-    if(trashMode) await loadTrashList();
-    else await loadCanvasList(false);
-    refreshIcons();
 }
 function renderCanvasList(){
     renderCanvasListInto(gateCanvasList);
@@ -1259,7 +1207,7 @@ async function touchCanvasOpened(id){
 function renderCanvasListInto(list){
     if(!list) return;
     refreshGateViewControls();
-    let items = trashMode ? deletedCanvases : canvases;
+    let items = canvases;
     const kinds = window.__canvasAllowedKinds;
     if(kinds && (!kinds.smart || !kinds.classic)){
         items = items.filter(item => {
@@ -1271,9 +1219,7 @@ function renderCanvasListInto(list){
     if(!items.length){
         const empty = document.createElement('div');
         empty.className = 'gate-list-empty';
-        empty.innerHTML = trashMode
-            ? `<div class="gate-list-empty-icon"><i data-lucide="trash-2" class="w-6 h-6"></i></div>${tr('canvas.trashEmpty')}`
-            : `<div class="gate-list-empty-icon"><i data-lucide="layout-grid" class="w-6 h-6"></i></div>${tr('canvas.noCanvas')}<br>${tr('canvas.startWithNewCanvas')}`;
+        empty.innerHTML = `<div class="gate-list-empty-icon"><i data-lucide="layout-grid" class="w-6 h-6"></i></div>${tr('canvas.noCanvas')}<br>${tr('canvas.startWithNewCanvas')}`;
         list.appendChild(empty);
         refreshIcons();
         return;
@@ -1283,46 +1229,29 @@ function renderCanvasListInto(list){
         const isSmartCanvas = (item.kind || 'classic') === 'smart';
         const color = String(item.color || '').trim();
         const owner = String(item.owner || '').trim();
-        const pinned = !!item.pinned && !trashMode;
+        const pinned = !!item.pinned;
         row.className = `canvas-item ${isSmartCanvas ? 'smart-canvas' : ''} ${canvas?.id === item.id ? 'active' : ''} ${pinned ? 'pinned' : ''} ${color ? 'has-color' : ''}`;
         const ownerChip = owner
             ? `<span class="canvas-owner-chip" role="button" tabindex="0" title="${escapeAttr(owner)}"><i data-lucide="user-round" class="w-3 h-3"></i><span class="canvas-owner-text">${escapeHtml(owner)}</span></span>`
             : '';
         row.innerHTML = `
             ${color ? `<span class="canvas-color-bar cc-${escapeAttr(color)}"></span>` : ''}
-            <div class="canvas-open" role="button" tabindex="${trashMode ? '-1' : '0'}">
+            <div class="canvas-open" role="button" tabindex="0">
                 <div class="canvas-card-icon-row">
-                    <span class="canvas-preview-mark" role="button" tabindex="0" title="${trashMode ? tr('canvas.deletedCanvas') : (tr('canvas.editMeta') || '编辑图标 / 颜色 / 负责人')}">${renderCanvasIcon(isSmartCanvas && /[^\x00-\x7F]/.test(item.icon || '') ? 'sparkles' : item.icon, 16)}</span>
+                    <span class="canvas-preview-mark" role="button" tabindex="0" title="${tr('canvas.editMeta') || '编辑图标 / 颜色 / 负责人'}">${renderCanvasIcon(isSmartCanvas && /[^\x00-\x7F]/.test(item.icon || '') ? 'sparkles' : item.icon, 16)}</span>
                     ${isSmartCanvas ? `<span class="canvas-kind-chip">${tr('canvas.smartCanvasShort')}</span>` : ''}
                 </div>
                 <div class="canvas-card-title">${escapeHtml(item.title)}</div>
                 ${ownerChip}
                 <div class="canvas-card-meta">
                     <span class="canvas-card-meta-dot"></span>
-                    <div class="canvas-card-time">${trashMode ? `${tr('canvas.deletedAt')} ${formatCanvasTime(item.deleted_at)}` : formatCanvasTime(item.updated_at || item.created_at)}</div>
+                    <div class="canvas-card-time">${formatCanvasTime(item.updated_at || item.created_at)}</div>
                 </div>
             </div>
-            ${trashMode ? (pendingPurgeCanvasId === item.id ? `
+            ${pendingDeleteCanvasId === item.id ? `
                 <div class="canvas-delete-confirm">
                     <div class="canvas-delete-box">
-                        <div class="canvas-delete-title">${tr('canvas.purgeConfirm')}</div>
-                        <div class="canvas-delete-actions">
-                            <button class="canvas-confirm-btn" type="button">${tr('common.confirm')}</button>
-                            <button class="canvas-cancel-btn" type="button">${tr('common.cancel')}</button>
-                        </div>
-                    </div>
-                </div>
-            ` : `
-                <button class="canvas-delete canvas-restore" type="button" title="${tr('canvas.restoreCanvas')}" aria-label="${tr('canvas.restoreCanvas')} ${escapeHtml(item.title)}" style="right:42px">
-                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
-                </button>
-                <button class="canvas-delete canvas-purge" type="button" title="${tr('canvas.purgeCanvas')}" aria-label="${tr('canvas.purgeCanvas')} ${escapeHtml(item.title)}">
-                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                </button>
-            `) : (pendingDeleteCanvasId === item.id ? `
-                <div class="canvas-delete-confirm">
-                    <div class="canvas-delete-box">
-                        <div class="canvas-delete-title">${tr('canvas.moveToTrashConfirm')}</div>
+                        <div class="canvas-delete-title">${tr('canvas.deleteConfirm')}</div>
                         <div class="canvas-delete-actions">
                             <button class="canvas-confirm-btn" type="button">${tr('common.confirm')}</button>
                             <button class="canvas-cancel-btn" type="button">${tr('common.cancel')}</button>
@@ -1336,11 +1265,11 @@ function renderCanvasListInto(list){
                 <button class="canvas-card-edit" type="button" title="${tr('canvas.rename')}" aria-label="${tr('canvas.rename')} ${escapeHtml(item.title)}">
                     <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
                 </button>
-                <button class="canvas-delete" type="button" title="${tr('canvas.moveToTrash')}" aria-label="${tr('canvas.moveToTrash')} ${escapeHtml(item.title)}">
+                <button class="canvas-delete" type="button" title="${tr('canvas.deleteCanvas')}" aria-label="${tr('canvas.deleteCanvas')} ${escapeHtml(item.title)}">
                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                 </button>
-            `)}
-            ${!trashMode && emojiPickerCanvasId === item.id ? `
+            `}
+            ${emojiPickerCanvasId === item.id ? `
                 <div class="canvas-meta-pop">
                     <div class="canvas-meta-section">
                         <div class="canvas-meta-label">${tr('canvas.ownerLabel') || '负责人 / 项目'}</div>
@@ -1362,15 +1291,15 @@ function renderCanvasListInto(list){
                 </div>
             ` : ''}
         `;
-        if(!trashMode) row.querySelector('.canvas-open').onclick = () => openCanvas(item.id);
+        row.querySelector('.canvas-open').onclick = () => openCanvas(item.id);
         const titleEl = row.querySelector('.canvas-card-title');
         const editBtn = row.querySelector('.canvas-card-edit');
-        if(editBtn && titleEl && !trashMode) {
+        if(editBtn && titleEl) {
             editBtn.onmousedown = e => e.stopPropagation();
             editBtn.onclick = e => { e.stopPropagation(); startTitleEdit(item.id, titleEl); };
         }
         const iconBtn = row.querySelector('.canvas-preview-mark');
-        if(iconBtn && !trashMode) {
+        if(iconBtn) {
             iconBtn.onclick = e => toggleEmojiPicker(item.id, e);
             iconBtn.onkeydown = e => {
                 if(e.key === 'Enter' || e.key === ' ') toggleEmojiPicker(item.id, e);
@@ -1385,7 +1314,7 @@ function renderCanvasListInto(list){
             pinBtn.onclick = e => togglePinCanvas(item.id, e);
         }
         const ownerChipEl = row.querySelector('.canvas-owner-chip');
-        if(ownerChipEl && !trashMode){
+        if(ownerChipEl){
             ownerChipEl.onmousedown = e => e.stopPropagation();
             ownerChipEl.onclick = e => { e.stopPropagation(); toggleEmojiPicker(item.id, e); };
         }
@@ -1407,13 +1336,9 @@ function renderCanvasListInto(list){
         const deleteBtn = row.querySelector('.canvas-delete');
         if(deleteBtn) deleteBtn.onclick = e => requestDeleteCanvas(item.id, e);
         const confirmBtn = row.querySelector('.canvas-confirm-btn');
-        if(confirmBtn) confirmBtn.onclick = e => trashMode ? purgeCanvas(item.id, e) : deleteCanvas(item.id, e);
+        if(confirmBtn) confirmBtn.onclick = e => deleteCanvas(item.id, e);
         const cancelBtn = row.querySelector('.canvas-cancel-btn');
         if(cancelBtn) cancelBtn.onclick = e => cancelDeleteCanvas(e);
-        const restoreBtn = row.querySelector('.canvas-restore');
-        if(restoreBtn) restoreBtn.onclick = e => restoreCanvas(item.id, e);
-        const purgeBtn = row.querySelector('.canvas-purge');
-        if(purgeBtn) purgeBtn.onclick = e => requestPurgeCanvas(item.id, e);
         list.appendChild(row);
     });
     refreshIcons();
@@ -1423,7 +1348,6 @@ async function createCanvas(){
     const isSmart = createCanvasKind === 'smart';
     const titleBase = isSmart ? tr('canvas.newSmartCanvas') : tr('canvas.newCanvas');
     const title = customTitle || `${titleBase} ${new Date().toLocaleTimeString(window.StudioI18n?.lang() === 'en' ? 'en-US' : 'zh-CN', {hour:'2-digit', minute:'2-digit'})}`;
-    trashMode = false;
     refreshGateViewControls();
     setStatus('Creating...');
     try {
@@ -1767,8 +1691,6 @@ async function returnToCanvasManager(){
     selected.clear();
     viewport = {x: -1800, y: -1000, scale: 1};
     setCanvasMode(false);
-    trashMode = false;
-    pendingPurgeCanvasId = null;
     refreshGateViewControls();
     await loadCanvasList(false);
     setCreateMode(false);
@@ -1777,32 +1699,22 @@ function requestDeleteCanvas(id, event){
     event?.preventDefault();
     event?.stopPropagation();
     emojiPickerCanvasId = null;
-    pendingPurgeCanvasId = null;
     pendingDeleteCanvasId = id;
-    renderCanvasList();
-}
-function requestPurgeCanvas(id, event){
-    event?.preventDefault();
-    event?.stopPropagation();
-    emojiPickerCanvasId = null;
-    pendingDeleteCanvasId = null;
-    pendingPurgeCanvasId = id;
     renderCanvasList();
 }
 function cancelDeleteCanvas(event){
     event?.preventDefault();
     event?.stopPropagation();
     pendingDeleteCanvasId = null;
-    pendingPurgeCanvasId = null;
     renderCanvasList();
 }
 async function deleteCanvas(id, event){
     event?.preventDefault();
     event?.stopPropagation();
-    setStatus('Moving to trash...');
+    setStatus('Deleting...');
     try {
         const res = await fetch(`/api/canvases/${id}`, {method:'DELETE'});
-        if(!res.ok) throw new Error(tr('canvas.moveToTrashFailed'));
+        if(!res.ok) throw new Error(tr('canvas.deleteFailed'));
         const deletingCurrent = canvas?.id === id;
         pendingDeleteCanvasId = null;
         canvases = canvases.filter(item => item.id !== id);
@@ -1815,44 +1727,10 @@ async function deleteCanvas(id, event){
             setCanvasMode(false);
         }
         renderCanvasList();
-        setStatus(canvases.length ? tr('canvas.movedToTrash') : tr('canvas.noCanvasCreateFirst'));
+        setStatus(canvases.length ? tr('canvas.deleted') : tr('canvas.noCanvasCreateFirst'));
         await loadCanvasList(false);
     } catch(e) {
-        setStatus(tr('canvas.moveToTrashFailed'));
-        console.error(e);
-    }
-}
-async function restoreCanvas(id, event){
-    event?.preventDefault();
-    event?.stopPropagation();
-    setStatus('Restoring...');
-    try {
-        const res = await fetch(`/api/canvases/${id}/restore`, {method:'POST'});
-        if(!res.ok) throw new Error(tr('canvas.restoreFailed'));
-        pendingPurgeCanvasId = null;
-        deletedCanvases = deletedCanvases.filter(item => item.id !== id);
-        await loadCanvasList(false);
-        await loadTrashList();
-        setStatus(tr('canvas.restored'));
-    } catch(e) {
-        setStatus(tr('canvas.restoreFailed'));
-        console.error(e);
-    }
-}
-async function purgeCanvas(id, event){
-    event?.preventDefault();
-    event?.stopPropagation();
-    setStatus('Deleting...');
-    try {
-        const res = await fetch(`/api/canvases/${id}/purge`, {method:'DELETE'});
-        if(!res.ok) throw new Error(tr('canvas.purgeFailed'));
-        pendingPurgeCanvasId = null;
-        deletedCanvases = deletedCanvases.filter(item => item.id !== id);
-        renderCanvasList();
-        setStatus(deletedCanvases.length ? tr('canvas.purged') : tr('canvas.trashEmpty'));
-        await loadTrashList();
-    } catch(e) {
-        setStatus(tr('canvas.purgeFailed'));
+        setStatus(tr('canvas.deleteFailed'));
         console.error(e);
     }
 }
@@ -1863,9 +1741,7 @@ window.openCanvas = openCanvas;
 window.deleteCanvas = deleteCanvas;
 window.returnToCanvasManager = returnToCanvasManager;
 gateCreateSmartBtn?.addEventListener('click', createSmartCanvas);
-gateBackBtn.addEventListener('click', () => setTrashMode(false));
-gateTrashBtn.addEventListener('click', () => setTrashMode(true));
-gateRefreshBtn.addEventListener('click', () => trashMode ? loadTrashList() : loadCanvasList(false));
+gateRefreshBtn.addEventListener('click', () => loadCanvasList(false));
 document.getElementById('gateSortSwitch')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-sort]');
     if(btn) setCanvasSortMode(btn.dataset.sort);

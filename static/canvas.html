@@ -61,7 +61,6 @@
             <div class="gate-panel">
                 <div class="gate-head">
                     <div class="gate-head-text">
-                        <button id="gateBackBtn" class="gate-back-link" type="button"><i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span data-i18n="canvas.backToList">返回画布列表</span></button>
                         <div class="gate-title-row">
                             <div id="gateTitleText" class="gate-title">选择画布</div>
                             <span id="gateCountPill" class="gate-count-pill">0</span>
@@ -76,10 +75,6 @@
                         <button id="gateRefreshBtn" class="gate-icon-btn" type="button" title="刷新列表" aria-label="刷新列表" data-i18n-title="canvas.refresh">
                             <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                         </button>
-                        <button id="gateTrashBtn" class="gate-icon-btn gate-trash-entry" type="button" title="打开回收站" aria-label="打开回收站" data-i18n-title="canvas.openTrash">
-                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                            <span id="gateTrashCount" class="gate-trash-badge">0</span>
-                        </button>
                         <button id="gateAssetManagerBtn" class="gate-icon-btn gate-manager-btn" type="button" title="资产库管理" aria-label="资产库管理" hidden>
                             <i data-lucide="library" class="w-4 h-4"></i>
                             <span>素材库管理</span>
@@ -93,7 +88,6 @@
                     <button id="gateConfirmBtn" class="create-confirm" type="button" title="确定" aria-label="确定" data-i18n-title="common.confirm"><i data-lucide="check" class="w-4 h-4"></i></button>
                     <button id="gateCancelBtn" class="create-cancel" type="button" title="取消" aria-label="取消" data-i18n-title="common.cancel"><i data-lucide="x" class="w-4 h-4"></i></button>
                 </div>
-                <div class="trash-note"><i data-lucide="info" class="w-3.5 h-3.5 inline-block align-text-bottom mr-1"></i><span data-i18n="canvas.trashNote">回收站中的画布会在 30 天后自动清理。</span></div>
                 <div id="gateCanvasList" class="gate-list"></div>
             </div>
         </div>

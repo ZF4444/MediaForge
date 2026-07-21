@@ -246,7 +246,6 @@ from app.config import (
     OUTPUT_DIR,
     API_ENV_FILE,
     DATA_DIR,
-    CANVAS_TRASH_RETENTION_MS,
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
     RUNNINGHUB_THUMBNAIL_EXTS,
@@ -1690,14 +1689,11 @@ from app.routers.canvases import (
     normalize_canvas_kind,
     new_canvas,
     load_canvas,
-    load_canvas_any,
     CANVAS_COLORS,
     normalize_canvas_color,
     canvas_record,
-    cleanup_expired_canvas_trash,
     iter_canvas_records,
     list_canvases,
-    list_deleted_canvases,
 )
 
 def display_title(text):
@@ -7802,7 +7798,7 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
 
 # items DELETE / delete / move / crop 路由已迁移至 app/routers/assets.py。
 
-# 画布 PUT/DELETE/restore/purge 路由已迁移至 app/routers/canvases.py。
+# 画布 PUT/DELETE 路由已迁移至 app/routers/canvases.py。
 
 # --- GPT 对话 ---
 

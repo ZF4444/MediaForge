@@ -441,11 +441,9 @@ html.studio-theme-dark body .canvas-preview-mark,
 html.studio-theme-dark body .canvas-delete,
 html.studio-theme-dark body .secondary-btn,
 html.studio-theme-dark body .gate-back,
-html.studio-theme-dark body .gate-trash-entry,
 html.studio-theme-dark body .create-cancel,
 html.studio-theme-dark body .gate-create-row,
 html.studio-theme-dark body .gate-actions,
-html.studio-theme-dark body .trash-note,
 html.studio-theme-dark body .emoji-picker,
 html.studio-theme-dark body .create-menu,
 html.studio-theme-dark body .selection-hub,
@@ -454,11 +452,9 @@ body.studio-theme-dark .canvas-preview-mark,
 body.studio-theme-dark .canvas-delete,
 body.studio-theme-dark .secondary-btn,
 body.studio-theme-dark .gate-back,
-body.studio-theme-dark .gate-trash-entry,
 body.studio-theme-dark .create-cancel,
 body.studio-theme-dark .gate-create-row,
 body.studio-theme-dark .gate-actions,
-body.studio-theme-dark .trash-note,
 body.studio-theme-dark .emoji-picker,
 body.studio-theme-dark .create-menu,
 body.studio-theme-dark .selection-hub,
@@ -466,13 +462,6 @@ body.studio-theme-dark .output-preview {
     background: #111722 !important;
     border-color: #2a3444 !important;
     color: #d8dee9 !important;
-}
-
-html.studio-theme-dark body .gate-trash-badge,
-body.studio-theme-dark .gate-trash-badge {
-    background: #d8dee9 !important;
-    color: #10141d !important;
-    border-color: #111722 !important;
 }
 
 html.studio-theme-dark body .secondary-btn.active,
@@ -489,13 +478,6 @@ body.studio-theme-dark .create-cancel:hover {
     background: rgba(248,113,113,.14) !important;
     border-color: rgba(248,113,113,.32) !important;
     color: #fca5a5 !important;
-}
-
-html.studio-theme-dark body .canvas-restore:hover,
-body.studio-theme-dark .canvas-restore:hover {
-    background: rgba(16,185,129,.14) !important;
-    border-color: rgba(16,185,129,.32) !important;
-    color: #6ee7b7 !important;
 }
 
 html.studio-theme-dark body .canvas-delete-box,

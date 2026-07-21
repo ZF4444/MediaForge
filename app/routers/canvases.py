@@ -3,7 +3,6 @@
 从 main.py 的「画布管理」区块原样迁移。URL/请求响应模型/状态码完全一致。
 
 依赖：
-- app.config：CANVAS_TRASH_RETENTION_MS
 - app.core.auth：current_user_id（按用户隔离）
 - app.core.utils：now_ms
 - app.core.ws：manager（广播画布更新）
@@ -13,7 +12,6 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from app.config import CANVAS_TRASH_RETENTION_MS
 from app.core.auth import current_user_id
 from app.core.utils import now_ms
 from app.core.ws import manager
@@ -105,23 +103,15 @@ def new_canvas(title="未命名画布", icon="layers", kind="classic"):
 def load_canvas(canvas_id):
     canvas = read_canvas_json(canvas_id, hydrate=True)
     if canvas.get("deleted_at"):
-        raise HTTPException(status_code=404, detail="画布已在回收站")
+        raise HTTPException(status_code=404, detail="画布不存在")
     return canvas
-
-
-def load_canvas_any(canvas_id):
-    return read_canvas_json(canvas_id, hydrate=True)
 
 
 def load_canvas_raw(canvas_id):
     canvas = read_canvas_json(canvas_id, hydrate=False)
     if canvas.get("deleted_at"):
-        raise HTTPException(status_code=404, detail="画布已在回收站")
+        raise HTTPException(status_code=404, detail="画布不存在")
     return canvas
-
-
-def load_canvas_any_raw(canvas_id):
-    return read_canvas_json(canvas_id, hydrate=False)
 
 
 CANVAS_COLORS = {"", "red", "orange", "amber", "green", "teal", "blue", "violet", "pink", "slate"}
@@ -143,38 +133,26 @@ def canvas_record(data):
         "pinned": bool(data.get("pinned") or False),
         "created_at": data.get("created_at", 0),
         "updated_at": data.get("updated_at", 0),
-        "deleted_at": data.get("deleted_at") or 0,
         "node_count": len(data.get("nodes", [])),
     }
 
 
-def cleanup_expired_canvas_trash():
-    from app.services.business_metadata import metadata_connection
-    cutoff = now_ms() - CANVAS_TRASH_RETENTION_MS
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM smart_canvases WHERE user_id=%s AND deleted_at > 0 AND deleted_at < %s", (current_user_id(), cutoff))
-
-
-def iter_canvas_records(include_deleted=False):
-    cleanup_expired_canvas_trash()
+def iter_canvas_records():
     from app.services.business_metadata import metadata_connection
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM smart_canvases WHERE user_id=%s", (current_user_id(),))
+        cur.execute("SELECT id FROM smart_canvases WHERE user_id=%s AND deleted_at IS NULL", (current_user_id(),))
         ids = [r["id"] for r in cur.fetchall()]
     records = []
     for cid in ids:
         data = load_canvas_payload(current_user_id(), cid)
         if not data:
             continue
-        is_deleted = bool(data.get("deleted_at"))
-        if include_deleted != is_deleted:
-            continue
         records.append(canvas_record(data))
     return records
 
 
 def list_canvases():
-    records = iter_canvas_records(include_deleted=False)
+    records = iter_canvas_records()
     return sorted(
         records,
         key=lambda item: (
@@ -183,20 +161,9 @@ def list_canvases():
         ),
     )
 
-
-def list_deleted_canvases():
-    records = iter_canvas_records(include_deleted=True)
-    return sorted(records, key=lambda item: item["deleted_at"], reverse=True)
-
-
 @router.get("/api/canvases")
 async def canvases():
     return {"canvases": list_canvases()}
-
-
-@router.get("/api/canvases/trash")
-async def trashed_canvases():
-    return {"canvases": list_deleted_canvases(), "retention_days": 30}
 
 
 @router.post("/api/canvases")
@@ -281,23 +248,6 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
 
 @router.delete("/api/canvases/{canvas_id}")
 async def delete_canvas(canvas_id: str):
-    canvas = load_canvas_any_raw(canvas_id)
-    if not canvas.get("deleted_at"):
-        canvas["deleted_at"] = now_ms()
-        save_canvas_raw(canvas, update_timestamp=True)
-    return {"ok": True}
-
-
-@router.post("/api/canvases/{canvas_id}/restore")
-async def restore_canvas(canvas_id: str):
-    canvas = load_canvas_any_raw(canvas_id)
-    if canvas.get("deleted_at"):
-        canvas.pop("deleted_at", None)
-        save_canvas_raw(canvas, update_timestamp=True)
-    return {"canvas": canvas}
-
-
-@router.delete("/api/canvases/{canvas_id}/purge")
-async def purge_canvas(canvas_id: str):
+    load_canvas_raw(canvas_id)
     delete_canvas_payload(current_user_id(), canvas_id)
     return {"ok": True}

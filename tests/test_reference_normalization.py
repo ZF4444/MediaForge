@@ -1,3 +1,5 @@
+import asyncio
+
 from app.routers import canvases, conversations
 from app.services import business_metadata
 
@@ -94,3 +96,19 @@ def test_canvas_save_normalizes_zero_deleted_at_to_null(monkeypatch):
         "updated_at": 2, "deleted_at": 0, "nodes": [],
     })
     assert captured["deleted_at"] is None
+
+
+def test_canvas_delete_permanently_removes_payload(monkeypatch):
+    deleted = []
+    monkeypatch.setattr(canvases, "load_canvas_raw", lambda canvas_id: {"id": canvas_id})
+    monkeypatch.setattr(canvases, "current_user_id", lambda: "user1")
+    monkeypatch.setattr(
+        canvases,
+        "delete_canvas_payload",
+        lambda user_id, canvas_id: deleted.append((user_id, canvas_id)),
+    )
+
+    result = asyncio.run(canvases.delete_canvas("canvas1"))
+
+    assert result == {"ok": True}
+    assert deleted == [("user1", "canvas1")]

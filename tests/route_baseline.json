@@ -280,13 +280,6 @@
     "APIRoute"
   ],
   [
-    "/api/canvases/trash",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
     "/api/canvases/{canvas_id}",
     [
       "DELETE"
@@ -316,20 +309,6 @@
   ],
   [
     "/api/canvases/{canvas_id}/meta",
-    [
-      "POST"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/canvases/{canvas_id}/purge",
-    [
-      "DELETE"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/canvases/{canvas_id}/restore",
     [
       "POST"
     ],
