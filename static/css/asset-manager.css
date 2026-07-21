@@ -75,12 +75,11 @@ button { border:0; cursor:pointer; }
 .storage-filter-head strong { color:var(--text); font-size:12px; }
 .storage-filter-head span,.storage-filter-field > span { color:var(--muted); font-size:10.5px; font-weight:750; }
 .storage-filter-field { display:flex; flex-direction:column; gap:6px; }
-.storage-date-row { display:grid; grid-template-columns:minmax(0,1fr) 28px; gap:6px; }
-.storage-date-filter { position:relative; height:34px; border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--muted); display:flex; align-items:center; gap:7px; padding:0 10px; overflow:hidden; font-size:11px; font-weight:800; cursor:pointer; }
+.storage-date-filter { position:relative; width:100%; height:34px; border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--muted); display:flex; align-items:center; gap:7px; padding:0 10px; overflow:hidden; font-size:11px; font-weight:800; cursor:pointer; }
 .storage-date-filter:hover,.storage-date-filter.active { border-color:var(--strong); color:var(--text); background:var(--soft); }
 .storage-date-filter svg { width:14px; height:14px; flex:0 0 auto; }
 .storage-date-filter input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
-.storage-reference-filter { min-height:34px; border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--muted); display:flex; align-items:center; gap:8px; padding:7px 10px; font-size:10.5px; line-height:1.35; font-weight:800; cursor:pointer; }
+.storage-reference-filter { width:100%; min-height:34px; border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--muted); display:flex; align-items:center; gap:8px; padding:7px 10px; font-size:10.5px; line-height:1.35; font-weight:800; cursor:pointer; }
 .storage-reference-filter:has(input:checked) { border-color:var(--strong); color:var(--text); background:var(--soft); }
 .storage-reference-filter input { width:14px; height:14px; margin:0; flex:0 0 auto; accent-color:var(--strong); }
 .storage-delete-matching { width:100%; min-height:32px; height:auto; padding:7px 10px; }

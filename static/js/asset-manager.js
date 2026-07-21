@@ -711,14 +711,11 @@ function renderStorageManager(){
                                 <div class="storage-filter-head"><strong>筛选条件</strong><span>${totalMatches} 个文件符合条件</span></div>
                                 <div class="storage-filter-field">
                                     <span>创建时间</span>
-                                    <div class="storage-date-row">
-                                        <label class="storage-date-filter ${storageCreatedBefore ? 'active' : ''}">
-                                            <i data-lucide="calendar-days"></i>
-                                            <span>${storageCreatedBefore ? `${escapeHtml(storageDateInputValue())} 之前` : '指定日期之前'}</span>
-                                            <input id="storageBeforeDate" type="date" value="${escapeAttr(storageDateInputValue())}" aria-label="选择截止日期">
-                                        </label>
-                                        <button class="asset-icon-btn" type="button" data-storage-date-clear ${storageCreatedBefore ? '' : 'disabled'} title="清除日期"><i data-lucide="x"></i></button>
-                                    </div>
+                                    <label class="storage-date-filter ${storageCreatedBefore ? 'active' : ''}" data-storage-date-trigger>
+                                        <i data-lucide="calendar-days"></i>
+                                        <span>${storageCreatedBefore ? `${escapeHtml(storageDateInputValue())} 之前` : '指定日期之前'}</span>
+                                        <input id="storageBeforeDate" type="date" value="${escapeAttr(storageDateInputValue())}" aria-label="选择截止日期">
+                                    </label>
                                 </div>
                                 <label class="storage-reference-filter"><input id="storageUnreferencedOnly" type="checkbox" ${storageUnreferencedOnly ? 'checked' : ''}><span>仅未被画布、历史或素材库引用</span></label>
                                 <button class="asset-btn danger storage-delete-matching" type="button" data-storage-delete-matching ${totalMatches ? '' : 'disabled'}><i data-lucide="trash-2"></i><span>删除全部符合条件的 ${totalMatches} 个文件</span></button>
@@ -1547,9 +1544,10 @@ async function handleClick(event){
         render();
         return;
     }
-    if(target.closest?.('[data-storage-date-clear]')){
-        storageCreatedBefore = null;
-        await applyStorageFilters();
+    const storageDateTrigger = target.closest?.('[data-storage-date-trigger]');
+    if(storageDateTrigger){
+        const input = storageDateTrigger.querySelector('#storageBeforeDate');
+        try { input?.showPicker?.(); } catch(_) { input?.focus(); }
         return;
     }
     if(target.closest?.('[data-storage-delete-matching]')){
