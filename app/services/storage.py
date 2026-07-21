@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
 import os
@@ -32,6 +33,19 @@ from app.config import (
     MINIO_SECRET_KEY,
     MINIO_SECURE,
     STORAGE_CACHE_DIR,
+    STORAGE_CACHE_ACCESS_GRACE_SECONDS,
+    STORAGE_CACHE_ACCESS_TOUCH_INTERVAL_SECONDS,
+    STORAGE_CACHE_CLEANUP_BATCH_SIZE,
+    STORAGE_CACHE_CLEANUP_INTERVAL_SECONDS,
+    STORAGE_CACHE_DRY_RUN,
+    STORAGE_CACHE_ENABLED,
+    STORAGE_CACHE_IDLE_TTL_SECONDS,
+    STORAGE_CACHE_MAX_BYTES,
+    STORAGE_CACHE_MIN_FREE_BYTES,
+    STORAGE_CACHE_ORPHAN_SCAN_ENABLED,
+    STORAGE_CACHE_ORPHAN_SCAN_INTERVAL_SECONDS,
+    STORAGE_CACHE_TARGET_BYTES,
+    STORAGE_CACHE_TMP_TTL_SECONDS,
     STORAGE_CLEANUP_BATCH_SIZE,
     STORAGE_CLEANUP_ENABLED,
     STORAGE_CLEANUP_INTERVAL_SECONDS,
@@ -54,6 +68,14 @@ from app.core.metrics import (
     MINIO_BUCKET_OBJECTS,
     MINIO_FAILURES,
     MINIO_OPERATION_SECONDS,
+    STORAGE_CACHE_BYTES,
+    STORAGE_CACHE_CLEANUP_FAILURES,
+    STORAGE_CACHE_DOWNLOAD_BYTES,
+    STORAGE_CACHE_EVICTIONS,
+    STORAGE_CACHE_FILES,
+    STORAGE_CACHE_HITS,
+    STORAGE_CACHE_MATERIALIZE_SECONDS,
+    STORAGE_CACHE_MISSES,
     TRANSIENT_RETRIES,
 )
 from app.core.retry import retry_delay_seconds, retry_max_attempts, retry_operation_id
@@ -69,6 +91,9 @@ _DB_READY = False
 _DB_LOCK = Lock()
 _QUOTA_CONFIG_CACHE: Optional[Dict[str, Any]] = None
 THUMB_SIZE_DEFAULT = 512
+_CACHE_CLEANUP_LOCK_NAME = ".cache-cleanup.lock"
+_CACHE_CLEANUP_STATE_NAME = ".cache-cleanup-state.json"
+_CACHE_LOCK_DIR_NAME = ".locks"
 
 
 class StorageQuotaExceeded(RuntimeError):
@@ -796,6 +821,37 @@ def get_object_bytes(bucket: str, object_key: str) -> bytes:
     return _minio_call("get_object", _read_object, object_id=object_key)
 
 
+def download_object_to_file(
+    bucket: str,
+    object_key: str,
+    fileobj: BinaryIO,
+    *,
+    chunk_size: int = 1024 * 1024,
+) -> Dict[str, Any]:
+    """Stream an object into a seekable file without buffering it in memory."""
+
+    def _download() -> Dict[str, Any]:
+        fileobj.seek(0)
+        fileobj.truncate(0)
+        response = _get_client().get_object(bucket, object_key)
+        size = 0
+        digest = hashlib.sha256()
+        try:
+            while True:
+                chunk = response.read(max(64 * 1024, int(chunk_size or 1024 * 1024)))
+                if not chunk:
+                    break
+                fileobj.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+        finally:
+            response.close()
+            response.release_conn()
+        return {"size": size, "sha256": digest.hexdigest()}
+
+    return _minio_call("get_object", _download, object_id=object_key)
+
+
 def object_exists(bucket: str, object_key: str) -> bool:
     try:
         stat_object(bucket, object_key)
@@ -1481,8 +1537,72 @@ def media_entry_by_basename(name: str, categories: Optional[set[str]] = None, *,
 
 def cached_media_path(entry: Dict[str, Any]) -> str:
     bucket = os.path.basename(str(entry.get("bucket") or "private"))
-    object_key = str(entry.get("object_key") or "").strip("/").replace("..", "_")
-    return os.path.join(STORAGE_CACHE_DIR, bucket, object_key)
+    raw_key = str(entry.get("object_key") or "").replace("\\", "/")
+    raw_parts = raw_key.split("/")
+    if any(part in {".", ".."} for part in raw_parts):
+        return ""
+    key_parts = [part for part in raw_parts if part]
+    if not bucket or not key_parts:
+        return ""
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    target = os.path.abspath(os.path.join(root, bucket, *key_parts))
+    real_root = os.path.realpath(root)
+    if os.path.commonpath((real_root, os.path.realpath(target))) != real_root:
+        return ""
+    return target
+
+
+def _expected_cache_size(entry: Dict[str, Any]) -> int:
+    try:
+        return max(0, int(entry.get("size") or entry.get("size_bytes") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _expected_cache_sha256(entry: Dict[str, Any]) -> str:
+    value = str(entry.get("sha256") or "").strip().lower()
+    return value if len(value) == 64 and all(char in "0123456789abcdef" for char in value) else ""
+
+
+def _cache_file_is_valid(path: str, entry: Dict[str, Any]) -> bool:
+    if not path or not os.path.isfile(path):
+        return False
+    expected_size = _expected_cache_size(entry)
+    if expected_size:
+        try:
+            return os.path.getsize(path) == expected_size
+        except OSError:
+            return False
+    return True
+
+
+def _touch_cache_file(path: str, *, force: bool = False) -> None:
+    try:
+        stat = os.stat(path)
+        interval = max(0, int(STORAGE_CACHE_ACCESS_TOUCH_INTERVAL_SECONDS or 0))
+        if force or interval == 0 or time.time() - stat.st_mtime >= interval:
+            os.utime(path, None)
+    except OSError:
+        pass
+
+
+def _cache_lock_path(target: str) -> str:
+    digest = hashlib.sha256(os.path.abspath(target).encode("utf-8")).hexdigest()
+    return os.path.join(os.path.abspath(STORAGE_CACHE_DIR), _CACHE_LOCK_DIR_NAME, f"{digest}.lock")
+
+
+def _is_cache_temporary_name(name: str) -> bool:
+    return name.startswith(".") and name.endswith(".tmp")
+
+
+def _remove_cache_file(path: str) -> bool:
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        os.remove(path)
+        return True
+    except OSError:
+        return False
 
 
 def _touch_access(file_id: str) -> None:
@@ -1498,6 +1618,7 @@ def _touch_access(file_id: str) -> None:
 
 
 def materialize_media_url(url: str) -> Optional[str]:
+    started = time.perf_counter()
     if isinstance(url, str):
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path or url
@@ -1512,17 +1633,459 @@ def materialize_media_url(url: str) -> Optional[str]:
     if not entry:
         return None
     target = cached_media_path(entry)
-    if os.path.isfile(target):
+    if not target:
+        return None
+    if _cache_file_is_valid(target, entry):
+        STORAGE_CACHE_HITS.inc()
+        _touch_cache_file(target)
         _touch_access(entry.get("file_id") or "")
+        STORAGE_CACHE_MATERIALIZE_SECONDS.labels(result="hit").observe(time.perf_counter() - started)
         return target
+    invalid_cache_exists = os.path.isfile(target)
+    STORAGE_CACHE_MISSES.inc()
     os.makedirs(os.path.dirname(target), exist_ok=True)
-    data = get_object_bytes(entry["bucket"], entry["object_key"])
-    tmp_target = f"{target}.tmp"
-    with open(tmp_target, "wb") as f:
-        f.write(data)
-    os.replace(tmp_target, target)
-    _touch_access(entry.get("file_id") or "")
-    return target
+    lock_path = _cache_lock_path(target)
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    try:
+        with open(lock_path, "a+b") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            if _cache_file_is_valid(target, entry):
+                _touch_cache_file(target)
+                _touch_access(entry.get("file_id") or "")
+                STORAGE_CACHE_MATERIALIZE_SECONDS.labels(result="hit").observe(time.perf_counter() - started)
+                return target
+            if _remove_cache_file(target) and invalid_cache_exists:
+                STORAGE_CACHE_EVICTIONS.labels(reason="corrupt").inc()
+            fd, tmp_target = tempfile.mkstemp(
+                dir=os.path.dirname(target),
+                prefix=f".{os.path.basename(target)}.",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w+b") as tmp_file:
+                    result = download_object_to_file(entry["bucket"], entry["object_key"], tmp_file)
+                    tmp_file.flush()
+                    os.fsync(tmp_file.fileno())
+                actual_size = int(result.get("size") or 0)
+                expected_size = _expected_cache_size(entry)
+                if expected_size and actual_size != expected_size:
+                    raise IOError(f"cached object size mismatch: expected {expected_size}, got {actual_size}")
+                expected_sha256 = _expected_cache_sha256(entry)
+                if expected_sha256 and str(result.get("sha256") or "").lower() != expected_sha256:
+                    raise IOError("cached object checksum mismatch")
+                os.chmod(tmp_target, 0o640)
+                os.replace(tmp_target, target)
+                _touch_cache_file(target, force=True)
+                STORAGE_CACHE_DOWNLOAD_BYTES.inc(actual_size)
+            finally:
+                try:
+                    os.remove(tmp_target)
+                except FileNotFoundError:
+                    pass
+            _touch_access(entry.get("file_id") or "")
+            STORAGE_CACHE_MATERIALIZE_SECONDS.labels(result="miss").observe(time.perf_counter() - started)
+            return target
+    except Exception:
+        STORAGE_CACHE_MATERIALIZE_SECONDS.labels(result="error").observe(time.perf_counter() - started)
+        raise
+
+
+def _cache_control_path(name: str) -> str:
+    return os.path.join(os.path.abspath(STORAGE_CACHE_DIR), name)
+
+
+def _cache_entry_from_path(path: str) -> Optional[Dict[str, Any]]:
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    absolute = os.path.abspath(path)
+    try:
+        relative = os.path.relpath(absolute, root)
+    except ValueError:
+        return None
+    parts = relative.split(os.sep)
+    if relative.startswith("..") or len(parts) < 2:
+        return None
+    try:
+        stat = os.stat(absolute, follow_symlinks=False)
+    except OSError:
+        return None
+    return {
+        "path": absolute,
+        "bucket": parts[0],
+        "object_key": "/".join(parts[1:]),
+        "size": int(stat.st_size),
+        "mtime": float(stat.st_mtime),
+    }
+
+
+def _scan_cache_entries() -> List[Dict[str, Any]]:
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    if not os.path.isdir(root):
+        return []
+    entries: List[Dict[str, Any]] = []
+    for directory, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name != _CACHE_LOCK_DIR_NAME and not os.path.islink(os.path.join(directory, name))
+        ]
+        for name in filenames:
+            path = os.path.join(directory, name)
+            if name in {_CACHE_CLEANUP_LOCK_NAME, _CACHE_CLEANUP_STATE_NAME}:
+                continue
+            if _is_cache_temporary_name(name) or os.path.islink(path):
+                continue
+            entry = _cache_entry_from_path(path)
+            if entry:
+                entries.append(entry)
+    return entries
+
+
+def storage_cache_status() -> Dict[str, Any]:
+    entries = _scan_cache_entries()
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    try:
+        free_bytes = int(shutil.disk_usage(root if os.path.exists(root) else os.path.dirname(root) or "/").free)
+    except OSError:
+        free_bytes = 0
+    max_bytes = max(0, int(STORAGE_CACHE_MAX_BYTES or 0))
+    configured_target = max(0, int(STORAGE_CACHE_TARGET_BYTES or 0))
+    target_bytes = configured_target
+    if max_bytes and (target_bytes <= 0 or target_bytes >= max_bytes):
+        target_bytes = int(max_bytes * 0.8)
+    result = {
+        "enabled": bool(STORAGE_CACHE_ENABLED),
+        "cache_dir": root,
+        "files": len(entries),
+        "bytes": sum(int(entry["size"]) for entry in entries),
+        "free_bytes": free_bytes,
+        "max_bytes": max_bytes,
+        "target_bytes": target_bytes,
+        "idle_ttl_seconds": max(0, int(STORAGE_CACHE_IDLE_TTL_SECONDS or 0)),
+        "dry_run": bool(STORAGE_CACHE_DRY_RUN),
+    }
+    STORAGE_CACHE_BYTES.set(result["bytes"])
+    STORAGE_CACHE_FILES.set(result["files"])
+    return result
+
+
+def _cache_file_locked(path: str) -> bool:
+    lock_path = _cache_lock_path(path)
+    if not os.path.isfile(lock_path):
+        return False
+    try:
+        with open(lock_path, "r+b") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            finally:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+    except OSError:
+        return True
+    return False
+
+
+def _evict_cache_entry(entry: Dict[str, Any], reason: str, *, dry_run: bool) -> bool:
+    path = str(entry.get("path") or "")
+    if not path or _cache_file_locked(path):
+        return False
+    if not dry_run and not _remove_cache_file(path):
+        return False
+    if not dry_run:
+        STORAGE_CACHE_EVICTIONS.labels(reason=reason).inc()
+    return True
+
+
+def _remove_stale_cache_sidecars(now_value: float, *, dry_run: bool) -> Dict[str, int]:
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    cutoff = now_value - max(60, int(STORAGE_CACHE_TMP_TTL_SECONDS or 3600))
+    result = {"removed_tmp": 0, "removed_locks": 0}
+    if not os.path.isdir(root):
+        return result
+    for directory, _, filenames in os.walk(root, followlinks=False):
+        for name in filenames:
+            if not _is_cache_temporary_name(name):
+                continue
+            path = os.path.join(directory, name)
+            try:
+                if os.path.getmtime(path) > cutoff:
+                    continue
+            except OSError:
+                continue
+            counter = "removed_tmp"
+            reason = "tmp"
+            if dry_run or _remove_cache_file(path):
+                result[counter] += 1
+                if not dry_run:
+                    STORAGE_CACHE_EVICTIONS.labels(reason=reason).inc()
+    return result
+
+
+def _load_cache_cleanup_state() -> Dict[str, Any]:
+    try:
+        with open(_cache_control_path(_CACHE_CLEANUP_STATE_NAME), "r", encoding="utf-8") as file:
+            value = json.load(file)
+            return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_cache_cleanup_state(state: Dict[str, Any]) -> None:
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    os.makedirs(root, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=root, prefix=".cache-cleanup-state.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(state, file, ensure_ascii=True, separators=(",", ":"))
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, _cache_control_path(_CACHE_CLEANUP_STATE_NAME))
+    finally:
+        try:
+            os.remove(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _active_cache_object_keys(entries: List[Dict[str, Any]]) -> set[tuple[str, str]]:
+    if not entries or not metadata_db_enabled():
+        return set()
+    _ensure_files_table()
+    active: set[tuple[str, str]] = set()
+    batch_size = max(1, min(1000, int(STORAGE_CACHE_CLEANUP_BATCH_SIZE or 1000)))
+    for offset in range(0, len(entries), batch_size):
+        batch = entries[offset:offset + batch_size]
+        keys = list(dict.fromkeys(str(entry["object_key"]) for entry in batch))
+        with _db_connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT bucket, object_key
+                FROM files
+                WHERE object_key = ANY(%s)
+                  AND deleted_at IS NULL
+                  AND status <> 'deleted'
+                """,
+                (keys,),
+            )
+            for row in cur.fetchall() or []:
+                active.add((str(row.get("bucket") or ""), str(row.get("object_key") or "")))
+    return active
+
+
+def _remove_empty_cache_directories() -> int:
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    removed = 0
+    if not os.path.isdir(root):
+        return removed
+    for directory, _, _ in os.walk(root, topdown=False, followlinks=False):
+        if directory == root:
+            continue
+        try:
+            os.rmdir(directory)
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def run_storage_cache_cleanup_once(
+    *,
+    dry_run: Optional[bool] = None,
+    force_orphan_scan: bool = False,
+    respect_interval: bool = False,
+) -> Dict[str, Any]:
+    """Evict local materialized files without mutating MinIO or file metadata."""
+    started = time.perf_counter()
+    effective_dry_run = STORAGE_CACHE_DRY_RUN if dry_run is None else bool(dry_run)
+    if not STORAGE_CACHE_ENABLED:
+        return {"enabled": False, "dry_run": effective_dry_run, "skipped": "disabled"}
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    os.makedirs(root, exist_ok=True)
+    cleanup_lock_path = _cache_control_path(_CACHE_CLEANUP_LOCK_NAME)
+    with open(cleanup_lock_path, "a+b") as cleanup_lock:
+        try:
+            fcntl.flock(cleanup_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"enabled": True, "dry_run": effective_dry_run, "skipped": "already_running"}
+
+        now_value = time.time()
+        state = _load_cache_cleanup_state()
+        cleanup_interval = max(60, int(STORAGE_CACHE_CLEANUP_INTERVAL_SECONDS or 600))
+        if respect_interval and now_value - float(state.get("last_cleanup_at") or 0) < cleanup_interval:
+            return {"enabled": True, "dry_run": effective_dry_run, "skipped": "not_due"}
+        before = storage_cache_status()
+        entries = _scan_cache_entries()
+        selected: set[str] = set()
+        sidecars = _remove_stale_cache_sidecars(now_value, dry_run=effective_dry_run)
+        evicted = {"orphan": 0, "ttl": 0, "lru": 0}
+        bytes_removed = 0
+        limit = max(1, int(STORAGE_CACHE_CLEANUP_BATCH_SIZE or 1000))
+
+        orphan_interval = max(60, int(STORAGE_CACHE_ORPHAN_SCAN_INTERVAL_SECONDS or 86400))
+        orphan_due = force_orphan_scan or (
+            STORAGE_CACHE_ORPHAN_SCAN_ENABLED
+            and now_value - float(state.get("last_orphan_scan_at") or 0) >= orphan_interval
+        )
+        if orphan_due and metadata_db_enabled():
+            orphan_candidates = entries
+            try:
+                active_keys = _active_cache_object_keys(orphan_candidates)
+                for entry in orphan_candidates:
+                    if len(selected) >= limit:
+                        break
+                    identity = (str(entry["bucket"]), str(entry["object_key"]))
+                    if identity in active_keys:
+                        continue
+                    if _evict_cache_entry(entry, "orphan", dry_run=effective_dry_run):
+                        selected.add(entry["path"])
+                        bytes_removed += int(entry["size"])
+                        evicted["orphan"] += 1
+                if not effective_dry_run and len(selected) < limit:
+                    state["last_orphan_scan_at"] = now_value
+                    _save_cache_cleanup_state(state)
+            except Exception:
+                logger.warning(
+                    "storage cache orphan scan skipped",
+                    exc_info=True,
+                    extra={"event": "storage_cache_orphan_scan_skipped"},
+                )
+
+        grace_cutoff = now_value - max(0, int(STORAGE_CACHE_ACCESS_GRACE_SECONDS or 0))
+        idle_ttl = max(0, int(STORAGE_CACHE_IDLE_TTL_SECONDS or 0))
+        idle_cutoff = now_value - idle_ttl if idle_ttl else 0
+        if idle_ttl:
+            for entry in sorted(entries, key=lambda item: item["mtime"]):
+                if len(selected) >= limit or entry["path"] in selected:
+                    continue
+                if entry["mtime"] > idle_cutoff or entry["mtime"] > grace_cutoff:
+                    continue
+                if _evict_cache_entry(entry, "ttl", dry_run=effective_dry_run):
+                    selected.add(entry["path"])
+                    bytes_removed += int(entry["size"])
+                    evicted["ttl"] += 1
+
+        current_bytes = max(0, int(before["bytes"]) - bytes_removed)
+        current_free = max(0, int(before["free_bytes"]) + bytes_removed)
+        max_bytes = int(before["max_bytes"])
+        target_bytes = int(before["target_bytes"])
+        min_free_bytes = max(0, int(STORAGE_CACHE_MIN_FREE_BYTES or 0))
+        needs_size_cleanup = bool(max_bytes and current_bytes > max_bytes)
+        needs_free_space_cleanup = bool(min_free_bytes and current_free < min_free_bytes)
+        needs_capacity_cleanup = needs_size_cleanup or needs_free_space_cleanup
+        if needs_capacity_cleanup:
+            for entry in sorted(entries, key=lambda item: item["mtime"]):
+                if len(selected) >= limit or entry["path"] in selected:
+                    continue
+                if entry["mtime"] > grace_cutoff:
+                    continue
+                size_target_met = not max_bytes or current_bytes <= target_bytes
+                free_target_met = not min_free_bytes or current_free >= min_free_bytes
+                if size_target_met and free_target_met:
+                    break
+                if _evict_cache_entry(entry, "lru", dry_run=effective_dry_run):
+                    selected.add(entry["path"])
+                    size = int(entry["size"])
+                    bytes_removed += size
+                    current_bytes = max(0, current_bytes - size)
+                    current_free += size
+                    evicted["lru"] += 1
+
+        removed_dirs = 0 if effective_dry_run else _remove_empty_cache_directories()
+        after = storage_cache_status() if not effective_dry_run else {
+            **before,
+            "files": max(0, int(before["files"]) - len(selected)),
+            "bytes": max(0, int(before["bytes"]) - bytes_removed),
+            "free_bytes": max(0, int(before["free_bytes"]) + bytes_removed),
+        }
+        result = {
+            "enabled": True,
+            "dry_run": effective_dry_run,
+            "files_before": int(before["files"]),
+            "files_after": int(after["files"]),
+            "bytes_before": int(before["bytes"]),
+            "bytes_after": int(after["bytes"]),
+            "free_bytes_after": int(after["free_bytes"]),
+            "evicted_orphan": evicted["orphan"],
+            "evicted_ttl": evicted["ttl"],
+            "evicted_lru": evicted["lru"],
+            "removed_tmp": sidecars["removed_tmp"],
+            "removed_locks": sidecars["removed_locks"],
+            "removed_dirs": removed_dirs,
+            "limit_reached": len(selected) >= limit,
+            "capacity_unresolved": bool(
+                (
+                    needs_size_cleanup
+                    and int(after["bytes"]) > int(after["target_bytes"])
+                )
+                or (min_free_bytes and int(after["free_bytes"]) < min_free_bytes)
+            ),
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        }
+        if not effective_dry_run:
+            state["last_cleanup_at"] = now_value
+            _save_cache_cleanup_state(state)
+        return result
+
+
+def clear_storage_cache(*, dry_run: bool = False) -> Dict[str, Any]:
+    root = os.path.abspath(STORAGE_CACHE_DIR)
+    os.makedirs(root, exist_ok=True)
+    with open(_cache_control_path(_CACHE_CLEANUP_LOCK_NAME), "a+b") as cleanup_lock:
+        try:
+            fcntl.flock(cleanup_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"dry_run": bool(dry_run), "skipped": "cleanup_running"}
+        before = storage_cache_status()
+        removed = 0
+        removed_bytes = 0
+        for entry in _scan_cache_entries():
+            if _evict_cache_entry(entry, "manual", dry_run=dry_run):
+                removed += 1
+                removed_bytes += int(entry["size"])
+        if not dry_run:
+            _remove_empty_cache_directories()
+        after = storage_cache_status() if not dry_run else {
+            **before,
+            "files": max(0, before["files"] - removed),
+            "bytes": max(0, before["bytes"] - removed_bytes),
+        }
+        return {
+            "dry_run": bool(dry_run),
+            "removed": removed,
+            "removed_bytes": removed_bytes,
+            "files_before": before["files"],
+            "files_after": after["files"],
+            "bytes_before": before["bytes"],
+            "bytes_after": after["bytes"],
+        }
+
+
+async def storage_cache_cleanup_loop(*, initial_delay_seconds: int = 30) -> None:
+    if initial_delay_seconds > 0:
+        await asyncio.sleep(initial_delay_seconds)
+    while True:
+        try:
+            result = await asyncio.to_thread(run_storage_cache_cleanup_once, respect_interval=True)
+            status = "success" if not result.get("skipped") else "skipped"
+            BACKGROUND_RUNS.labels(job="storage_cache_cleanup", status=status).inc()
+            log_method = logger.warning if result.get("capacity_unresolved") else logger.info
+            log_method("storage cache cleanup completed", extra={
+                "event": "storage_cache_cleanup_completed",
+                "alert": bool(result.get("capacity_unresolved")),
+                **result,
+            })
+        except Exception:
+            STORAGE_CACHE_CLEANUP_FAILURES.inc()
+            BACKGROUND_FAILURES.labels(job="storage_cache_cleanup").inc()
+            BACKGROUND_RUNS.labels(job="storage_cache_cleanup", status="failed").inc()
+            logger.exception(
+                "storage cache cleanup failed",
+                extra={"event": "storage_cache_cleanup_failed", "alert": True},
+            )
+        await asyncio.sleep(max(60, int(STORAGE_CACHE_CLEANUP_INTERVAL_SECONDS or 600)))
 
 
 def build_object_key(category: str, file_id: str, ext: str = "", *, user_id: str = "") -> str:

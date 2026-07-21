@@ -10,7 +10,10 @@ from PIL import Image
 def test_output_file_from_url_materializes_registered_storage_object(monkeypatch, tmp_path):
     cache_dir = tmp_path / "cache"
     monkeypatch.setattr(storage, "STORAGE_CACHE_DIR", str(cache_dir))
-    monkeypatch.setattr(storage, "get_object_bytes", lambda bucket, object_key: b"hello-minio")
+    def download_object(_bucket, _object_key, fileobj, **_kwargs):
+        fileobj.write(b"hello-minio")
+        return {"size": 11, "sha256": ""}
+    monkeypatch.setattr(storage, "download_object_to_file", download_object)
     monkeypatch.setattr(storage, "get_file_by_id", lambda _: {
         "file_id": "file-test",
         "bucket": "mediaforge-private",

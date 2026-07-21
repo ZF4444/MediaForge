@@ -58,6 +58,50 @@ MINIO_BUCKET_OBJECTS = Gauge(
     registry=REGISTRY,
 )
 
+STORAGE_CACHE_BYTES = Gauge(
+    "mediaforge_storage_cache_bytes",
+    "Bytes currently used by materialized local media cache files.",
+    registry=REGISTRY,
+)
+STORAGE_CACHE_FILES = Gauge(
+    "mediaforge_storage_cache_files",
+    "Files currently stored in the materialized local media cache.",
+    registry=REGISTRY,
+)
+STORAGE_CACHE_HITS = Counter(
+    "mediaforge_storage_cache_hits_total",
+    "Materialized media cache hits.",
+    registry=REGISTRY,
+)
+STORAGE_CACHE_MISSES = Counter(
+    "mediaforge_storage_cache_misses_total",
+    "Materialized media cache misses.",
+    registry=REGISTRY,
+)
+STORAGE_CACHE_EVICTIONS = Counter(
+    "mediaforge_storage_cache_evictions_total",
+    "Local media cache files evicted by reason.",
+    ("reason",),
+    registry=REGISTRY,
+)
+STORAGE_CACHE_DOWNLOAD_BYTES = Counter(
+    "mediaforge_storage_cache_download_bytes_total",
+    "Bytes downloaded from MinIO while materializing local cache files.",
+    registry=REGISTRY,
+)
+STORAGE_CACHE_MATERIALIZE_SECONDS = Histogram(
+    "mediaforge_storage_cache_materialize_seconds",
+    "Time spent resolving a materialized local media path.",
+    ("result",),
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+    registry=REGISTRY,
+)
+STORAGE_CACHE_CLEANUP_FAILURES = Counter(
+    "mediaforge_storage_cache_cleanup_failures_total",
+    "Failed local media cache cleanup runs.",
+    registry=REGISTRY,
+)
+
 BACKGROUND_FAILURES = Counter(
     "mediaforge_background_failures_total",
     "Background job failures that require alerting.",

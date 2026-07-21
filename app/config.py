@@ -53,7 +53,22 @@ TRANSIENT_RETRY_JITTER_SECONDS = float(os.getenv("TRANSIENT_RETRY_JITTER_SECONDS
 MINIO_BUCKET_PRIVATE = str(os.getenv("MINIO_BUCKET_PRIVATE", "mediaforge-private")).strip() or "mediaforge-private"
 MINIO_BUCKET_PUBLIC = str(os.getenv("MINIO_BUCKET_PUBLIC", "mediaforge-public")).strip() or "mediaforge-public"
 MINIO_BUCKET_TEMP = str(os.getenv("MINIO_BUCKET_TEMP", "mediaforge-temp")).strip() or "mediaforge-temp"
-STORAGE_CACHE_DIR = os.path.join(tempfile.gettempdir(), "mediaforge-storage-cache")
+STORAGE_CACHE_DIR = str(
+    os.getenv("STORAGE_CACHE_DIR", os.path.join(tempfile.gettempdir(), "mediaforge-storage-cache"))
+).strip() or os.path.join(tempfile.gettempdir(), "mediaforge-storage-cache")
+STORAGE_CACHE_ENABLED = str(os.getenv("STORAGE_CACHE_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_CACHE_MAX_BYTES = int(os.getenv("STORAGE_CACHE_MAX_BYTES", str(10 * 1024 * 1024 * 1024)))
+STORAGE_CACHE_TARGET_BYTES = int(os.getenv("STORAGE_CACHE_TARGET_BYTES", str(8 * 1024 * 1024 * 1024)))
+STORAGE_CACHE_IDLE_TTL_SECONDS = int(os.getenv("STORAGE_CACHE_IDLE_TTL_SECONDS", str(7 * 24 * 60 * 60)))
+STORAGE_CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("STORAGE_CACHE_CLEANUP_INTERVAL_SECONDS", "600"))
+STORAGE_CACHE_TMP_TTL_SECONDS = int(os.getenv("STORAGE_CACHE_TMP_TTL_SECONDS", "3600"))
+STORAGE_CACHE_ACCESS_GRACE_SECONDS = int(os.getenv("STORAGE_CACHE_ACCESS_GRACE_SECONDS", "900"))
+STORAGE_CACHE_MIN_FREE_BYTES = int(os.getenv("STORAGE_CACHE_MIN_FREE_BYTES", str(10 * 1024 * 1024 * 1024)))
+STORAGE_CACHE_ACCESS_TOUCH_INTERVAL_SECONDS = int(os.getenv("STORAGE_CACHE_ACCESS_TOUCH_INTERVAL_SECONDS", "300"))
+STORAGE_CACHE_ORPHAN_SCAN_ENABLED = str(os.getenv("STORAGE_CACHE_ORPHAN_SCAN_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_CACHE_ORPHAN_SCAN_INTERVAL_SECONDS = int(os.getenv("STORAGE_CACHE_ORPHAN_SCAN_INTERVAL_SECONDS", "86400"))
+STORAGE_CACHE_CLEANUP_BATCH_SIZE = int(os.getenv("STORAGE_CACHE_CLEANUP_BATCH_SIZE", "1000"))
+STORAGE_CACHE_DRY_RUN = str(os.getenv("STORAGE_CACHE_DRY_RUN", "false")).strip().lower() in {"1", "true", "yes", "on"}
 STORAGE_QUOTA_ENABLED = str(os.getenv("STORAGE_QUOTA_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
 STORAGE_USER_QUOTA_BYTES = int(os.getenv("STORAGE_USER_QUOTA_BYTES", str(10 * 1024 * 1024 * 1024)))
 STORAGE_CLEANUP_ENABLED = str(os.getenv("STORAGE_CLEANUP_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}

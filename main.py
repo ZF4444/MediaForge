@@ -144,18 +144,19 @@ from app.core.ws import ConnectionManager, manager
 
 GLOBAL_LOOP = None
 STORAGE_CLEANUP_TASK = None
+STORAGE_CACHE_CLEANUP_TASK = None
 APP_VERSION = "2026.05.19"
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
-from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, refresh_storage_metrics, storage_cleanup_loop, storage_readiness_status, verify_storage_startup
+from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup
 from app.services.business_metadata import initialize_business_metadata
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
 from app.core.metrics import render_metrics
 
 @app.on_event("startup")
 async def startup_event():
-    global GLOBAL_LOOP, STORAGE_CLEANUP_TASK
+    global GLOBAL_LOOP, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
     try:
         await asyncio.to_thread(open_database_pool)
         await asyncio.to_thread(verify_storage_startup)
@@ -169,6 +170,8 @@ async def startup_event():
         shared_state.set_global_loop(GLOBAL_LOOP)
         if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
             STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
+        if STORAGE_CACHE_ENABLED and STORAGE_CACHE_CLEANUP_TASK is None:
+            STORAGE_CACHE_CLEANUP_TASK = asyncio.create_task(storage_cache_cleanup_loop())
         logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
     except Exception:
         await asyncio.to_thread(close_database_pool)
@@ -177,10 +180,13 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global STORAGE_CLEANUP_TASK
+    global STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
     if STORAGE_CLEANUP_TASK is not None:
         STORAGE_CLEANUP_TASK.cancel()
         STORAGE_CLEANUP_TASK = None
+    if STORAGE_CACHE_CLEANUP_TASK is not None:
+        STORAGE_CACHE_CLEANUP_TASK.cancel()
+        STORAGE_CACHE_CLEANUP_TASK = None
     await asyncio.to_thread(close_database_pool)
 
 
@@ -249,6 +255,7 @@ from app.config import (
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
     RUNNINGHUB_THUMBNAIL_EXTS,
+    STORAGE_CACHE_ENABLED,
     STORAGE_CLEANUP_ENABLED,
     TASK_ID_LOCK,
     HISTORY_LOCK,
