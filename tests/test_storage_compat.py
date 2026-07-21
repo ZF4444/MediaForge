@@ -32,11 +32,6 @@ def test_output_file_from_url_materializes_registered_storage_object(monkeypatch
 def test_upload_ai_reference_uses_storage_service(monkeypatch):
     saved = []
 
-    async def immediate_to_thread(func, *args, **kwargs):
-        return func(*args, **kwargs)
-
-    monkeypatch.setattr(local_assets.asyncio, "to_thread", immediate_to_thread)
-
     class DummyUploadFile:
         def __init__(self, filename: str, content: bytes, content_type: str):
             self.filename = filename
@@ -84,12 +79,16 @@ def test_thumbnail_route_returns_fixed_derivative_with_private_cache(monkeypatch
         "bucket": "private",
         "user_id": "alice",
     }
+
+    async def fail_materialize(_):
+        raise AssertionError("original was materialized")
+
     monkeypatch.setattr(files, "get_file_by_id", lambda _: entry)
-    monkeypatch.setattr(files, "_materialized_path", lambda _: (_ for _ in ()).throw(AssertionError("original was materialized")))
+    monkeypatch.setattr(files, "_materialized_path", fail_materialize)
     monkeypatch.setattr(files, "object_exists", lambda *_: True)
     monkeypatch.setattr(files, "get_object_bytes", lambda *_: b"fixed-thumb")
 
-    response = files.thumbnail_file("file-thumb")
+    response = asyncio.run(files.thumbnail_file("file-thumb"))
 
     assert response.body == b"fixed-thumb"
     assert response.headers["cache-control"] == "private, max-age=31536000, immutable"
@@ -104,13 +103,17 @@ def test_thumbnail_route_generates_missing_derivative_without_materializing_orig
     }
     exists = iter([False, True])
     generated = []
+
+    async def fail_materialize(_):
+        raise AssertionError("original was materialized")
+
     monkeypatch.setattr(files, "get_file_by_id", lambda _: entry)
-    monkeypatch.setattr(files, "_materialized_path", lambda _: (_ for _ in ()).throw(AssertionError("original was materialized")))
+    monkeypatch.setattr(files, "_materialized_path", fail_materialize)
     monkeypatch.setattr(files, "object_exists", lambda *_: next(exists))
     monkeypatch.setattr(files, "ensure_media_derivatives", lambda item: generated.append(item["file_id"]))
     monkeypatch.setattr(files, "get_object_bytes", lambda *_: b"generated-thumb")
 
-    response = files.thumbnail_file("file-thumb")
+    response = asyncio.run(files.thumbnail_file("file-thumb"))
 
     assert response.body == b"generated-thumb"
     assert generated == ["file-thumb"]
@@ -128,7 +131,7 @@ def test_thumbnail_fallback_is_not_cached_as_immutable(monkeypatch):
     monkeypatch.setattr(files, "object_exists", lambda *_: False)
     monkeypatch.setattr(files, "ensure_media_derivatives", lambda _: None)
 
-    response = files.thumbnail_file("file-video")
+    response = asyncio.run(files.thumbnail_file("file-video"))
 
     assert response.media_type == "image/svg+xml"
     assert response.headers["cache-control"] == "private, max-age=300"
@@ -138,9 +141,13 @@ def test_thumbnail_fallback_is_not_cached_as_immutable(monkeypatch):
 def test_preview_route_uses_short_private_cache(monkeypatch, tmp_path):
     source = tmp_path / "source.png"
     source.write_bytes(b"source")
-    monkeypatch.setattr(files, "_materialized_path", lambda _: ({"file_id": "file-preview"}, str(source)))
 
-    response = files.preview_file("file-preview")
+    async def fake_materialized_path(_):
+        return {"file_id": "file-preview"}, str(source)
+
+    monkeypatch.setattr(files, "_materialized_path", fake_materialized_path)
+
+    response = asyncio.run(files.preview_file("file-preview"))
 
     assert response.headers["cache-control"] == "private, max-age=3600"
 
@@ -257,10 +264,6 @@ def test_storage_matching_ids_use_the_same_filters(monkeypatch):
 
 
 def test_save_ai_image_to_output_registers_generated_file(monkeypatch):
-    async def immediate_to_thread(func, *args, **kwargs):
-        return func(*args, **kwargs)
-
-    monkeypatch.setattr("app.core.media.asyncio.to_thread", immediate_to_thread)
     monkeypatch.setattr(
         "app.core.media.save_media_bytes",
         lambda category, filename, content, **kwargs: {"url": f"/api/files/generated-1/preview"},

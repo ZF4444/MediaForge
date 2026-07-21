@@ -10,7 +10,6 @@
   sanitize_export_filename/ensure_same_origin_request/normalize_local_image_path/import_local_image_file
 - app.models：LocalImageImportRequest
 """
-import asyncio
 import os
 import re
 import uuid
@@ -19,7 +18,6 @@ from typing import List, Tuple
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from app.core.blocking_io import run_storage_io
 from app.core.media import (
     content_type_for_path,
     ensure_same_origin_request,
@@ -29,6 +27,7 @@ from app.core.media import (
     sanitize_export_filename,
 )
 from app.core.logging import audit_event
+from app.core.storage_io import run_storage_io
 from app.models import LocalImageImportRequest
 from app.services.storage import (
     file_preview_url,

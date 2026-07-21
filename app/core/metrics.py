@@ -64,6 +64,21 @@ MINIO_FAILURES = Counter(
     ("operation", "error_type"),
     registry=REGISTRY,
 )
+BLOCKING_IO_ACTIVE = Gauge(
+    "mediaforge_blocking_io_active",
+    "Synchronous storage operations currently running in worker threads.",
+    registry=REGISTRY,
+)
+BLOCKING_IO_QUEUED = Gauge(
+    "mediaforge_blocking_io_queued",
+    "Synchronous storage operations waiting for a worker thread.",
+    registry=REGISTRY,
+)
+BLOCKING_IO_REJECTED = Counter(
+    "mediaforge_blocking_io_rejected_total",
+    "Synchronous storage operations rejected because the bounded adapter is full.",
+    registry=REGISTRY,
+)
 MINIO_BUCKET_BYTES = Gauge(
     "mediaforge_minio_bucket_catalog_bytes",
     "Active object bytes registered in PostgreSQL by MinIO bucket.",
@@ -138,29 +153,6 @@ TRANSIENT_RETRIES = Counter(
     "mediaforge_transient_retries_total",
     "Retries of transient dependency failures.",
     ("backend", "operation"),
-    registry=REGISTRY,
-)
-
-BLOCKING_IO_ACTIVE = Gauge(
-    "mediaforge_blocking_io_active",
-    "In-flight calls currently running in the bounded blocking-IO thread pool.",
-    registry=REGISTRY,
-)
-BLOCKING_IO_QUEUED = Gauge(
-    "mediaforge_blocking_io_queued",
-    "Callers currently waiting for a free bounded blocking-IO worker thread.",
-    registry=REGISTRY,
-)
-BLOCKING_IO_QUEUE_REJECTIONS = Counter(
-    "mediaforge_blocking_io_queue_rejections_total",
-    "Requests rejected because the bounded blocking-IO queue was full.",
-    registry=REGISTRY,
-)
-BLOCKING_IO_SECONDS = Histogram(
-    "mediaforge_blocking_io_seconds",
-    "Duration of calls executed through the bounded blocking-IO adapter.",
-    ("status",),
-    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
     registry=REGISTRY,
 )
 

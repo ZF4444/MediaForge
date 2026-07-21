@@ -52,6 +52,8 @@ MINIO_SECRET_KEY = str(os.getenv("MINIO_SECRET_KEY", "")).strip()
 MINIO_SECURE = str(os.getenv("MINIO_SECURE", "false")).strip().lower() in {"1", "true", "yes", "on"}
 MINIO_CONNECT_TIMEOUT_SECONDS = float(os.getenv("MINIO_CONNECT_TIMEOUT_SECONDS", "5"))
 MINIO_READ_TIMEOUT_SECONDS = float(os.getenv("MINIO_READ_TIMEOUT_SECONDS", "30"))
+BLOCKING_IO_WORKERS = max(1, int(os.getenv("BLOCKING_IO_WORKERS", "12")))
+BLOCKING_IO_QUEUE_LIMIT = max(0, int(os.getenv("BLOCKING_IO_QUEUE_LIMIT", "50")))
 HEALTH_CHECK_TIMEOUT_SECONDS = float(os.getenv("HEALTH_CHECK_TIMEOUT_SECONDS", "5"))
 TRANSIENT_RETRY_MAX_ATTEMPTS = int(os.getenv("TRANSIENT_RETRY_MAX_ATTEMPTS", "3"))
 TRANSIENT_RETRY_BASE_DELAY_SECONDS = float(os.getenv("TRANSIENT_RETRY_BASE_DELAY_SECONDS", "0.2"))
@@ -91,11 +93,9 @@ STORAGE_OUTPUT_RETENTION_DAYS = int(os.getenv("STORAGE_OUTPUT_RETENTION_DAYS", "
 STORAGE_TEMP_RETENTION_DAYS = int(os.getenv("STORAGE_TEMP_RETENTION_DAYS", "3"))
 
 # --- 有界阻塞 IO 适配层（同步 MinIO SDK 统一入口） ---
-# 所有异步路由调用同步 MinIO SDK 时必须经过 app.core.blocking_io.run_storage_io，
+# 所有异步路由调用同步 MinIO SDK 时必须经过 app.core.storage_io.run_storage_io，
 # 不允许在业务代码中直接使用 asyncio.to_thread()/anyio.to_thread.run_sync()，
 # 否则无法统一控制并发、队列长度和指标。
-BLOCKING_IO_WORKERS = int(os.getenv("BLOCKING_IO_WORKERS", "12"))
-BLOCKING_IO_QUEUE_LIMIT = int(os.getenv("BLOCKING_IO_QUEUE_LIMIT", "50"))
 
 # --- 模型字段默认值/校验所需常量 ---
 VOLCENGINE_DEFAULT_PROJECT_NAME = "default"
