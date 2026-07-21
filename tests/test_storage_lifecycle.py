@@ -86,8 +86,12 @@ def test_run_storage_cleanup_once_marks_deleted_and_removes_cache(monkeypatch, t
         _row("expired-1", category="input", created_at=1, expires_at=now_value - 1),
         _row("library-1", category="library", created_at=1, expires_at=now_value - 1),
     ])
-    monkeypatch.setattr(storage, "_mark_file_deleted", lambda file_id, deleted_at_ms: deleted_ids.append((file_id, deleted_at_ms)))
     monkeypatch.setattr(storage, "delete_object", lambda bucket, object_key: deleted_objects.append((bucket, object_key)))
+    def delete_unreferenced(entry, deleted_at_ms):
+        storage.delete_media_objects(entry)
+        deleted_ids.append((entry["file_id"], deleted_at_ms))
+        return True
+    monkeypatch.setattr(storage, "_delete_unreferenced_file_for_cleanup", delete_unreferenced)
     monkeypatch.setattr(storage, "cached_media_path", lambda entry: str(cache_file) if entry.get("file_id") == "expired-1" else str(tmp_path / "other.png"))
 
     result = storage.run_storage_cleanup_once(limit=10)
@@ -111,12 +115,105 @@ def test_cleanup_does_not_mark_deleted_when_remote_delete_fails(monkeypatch):
         _row("expired-1", category="input", created_at=1, expires_at=now_value - 1),
     ])
     monkeypatch.setattr(storage, "delete_media_objects", lambda _entry: (_ for _ in ()).throw(storage.StorageUnavailableError("down")))
-    monkeypatch.setattr(storage, "_mark_file_deleted", lambda *args: marked.append(args))
+    def delete_unreferenced(entry, deleted_at_ms):
+        storage.delete_media_objects(entry)
+        marked.append((entry["file_id"], deleted_at_ms))
+        return True
+    monkeypatch.setattr(storage, "_delete_unreferenced_file_for_cleanup", delete_unreferenced)
 
     with pytest.raises(storage.StorageUnavailableError):
         storage.run_storage_cleanup_once(limit=10)
 
     assert marked == []
+
+
+def test_cleanup_candidates_exclude_every_business_reference(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql, params): executed.append((sql, params))
+        def fetchall(self): return []
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def cursor(self): return Cursor()
+
+    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
+    monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
+    monkeypatch.setattr(storage, "_db_connect", Connection)
+
+    storage._cleanup_candidates(25, 1_700_000_000_000)
+
+    sql, _ = executed[0]
+    assert "history_record_files" in sql
+    assert "conversation_message_files" in sql
+    assert "smart_canvas_node_files" in sql
+    assert "asset_items" in sql
+
+
+def test_cleanup_rechecks_references_before_deleting_objects(monkeypatch):
+    executed = []
+    deleted_objects = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql, params): executed.append((sql, params))
+        def fetchone(self): return None
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def transaction(self): return self
+        def cursor(self): return Cursor()
+
+    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
+    monkeypatch.setattr(storage, "_db_connect", Connection)
+    monkeypatch.setattr(storage, "delete_media_objects", lambda entry: deleted_objects.append(entry["file_id"]))
+
+    removed = storage._delete_unreferenced_file_for_cleanup(
+        {"file_id": "referenced-1"},
+        1_700_000_000_000,
+    )
+
+    assert removed is False
+    assert deleted_objects == []
+    assert "FOR UPDATE" in executed[0][0]
+    assert "conversation_message_files" in executed[0][0]
+
+
+def test_cleanup_deletes_objects_and_marks_metadata_after_recheck(monkeypatch):
+    executed = []
+    deleted_objects = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql, params): executed.append((sql, params))
+        def fetchone(self): return {"id": "orphan-1"}
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def transaction(self): return self
+        def cursor(self): return Cursor()
+
+    monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
+    monkeypatch.setattr(storage, "_db_connect", Connection)
+    monkeypatch.setattr(storage, "delete_media_objects", lambda entry: deleted_objects.append(entry["file_id"]))
+
+    removed = storage._delete_unreferenced_file_for_cleanup(
+        {"file_id": "orphan-1"},
+        1_700_000_000_000,
+    )
+
+    assert removed is True
+    assert deleted_objects == ["orphan-1"]
+    assert "UPDATE files" in executed[1][0]
+    assert executed[1][1] == (1_700_000_000_000, 1_700_000_000_000, "orphan-1")
 
 
 def test_remove_media_url_deletes_remote_derivatives(monkeypatch, tmp_path):

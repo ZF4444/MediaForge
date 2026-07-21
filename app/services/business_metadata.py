@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS history_record_files (
     file_id TEXT NOT NULL REFERENCES files(id) ON DELETE RESTRICT, sort_order INTEGER NOT NULL DEFAULT 0,
     role TEXT NOT NULL DEFAULT '', created_at BIGINT NOT NULL, UNIQUE(history_record_id, file_id, role)
 );
+CREATE INDEX IF NOT EXISTS idx_history_record_files_file ON history_record_files(file_id);
 CREATE TABLE IF NOT EXISTS asset_libraries (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'default',
     is_default BOOLEAN NOT NULL DEFAULT FALSE, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS asset_items (
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, extra_json JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS idx_asset_items_category ON asset_items(category_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_asset_items_file ON asset_items(file_id);
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL, extra_json JSONB NOT NULL DEFAULT '{}'::jsonb
@@ -58,6 +60,7 @@ CREATE TABLE IF NOT EXISTS conversation_message_files (
     file_id TEXT NOT NULL REFERENCES files(id) ON DELETE RESTRICT, sort_order INTEGER NOT NULL DEFAULT 0,
     kind TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_conversation_message_files_file ON conversation_message_files(file_id);
 CREATE TABLE IF NOT EXISTS smart_canvases (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '',
     owner TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '', pinned BOOLEAN NOT NULL DEFAULT FALSE,
@@ -76,6 +79,7 @@ CREATE TABLE IF NOT EXISTS smart_canvas_node_files (
     file_id TEXT NOT NULL REFERENCES files(id) ON DELETE RESTRICT, field_name TEXT NOT NULL DEFAULT '',
     sort_order INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_smart_canvas_node_files_file ON smart_canvas_node_files(file_id);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
@@ -161,7 +165,7 @@ def insert_history_record(user_id: str, record: Dict[str, Any], file_refs: Itera
                 for order, ref in enumerate(file_refs):
                     fid = str(ref.get('file_id') or '').strip()
                     if fid:
-                        cur.execute("INSERT INTO history_record_files(id,history_record_id,file_id,sort_order,role,created_at) VALUES(%s,%s,%s,%s,%s,%s)", (new_id(), rid, fid, order, ref.get('role',''), now))
+                        cur.execute("INSERT INTO history_record_files(id,history_record_id,file_id,sort_order,role,created_at) SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE)", (new_id(), rid, fid, order, ref.get('role',''), now, fid))
     return rid
 
 
@@ -218,7 +222,7 @@ def save_canvas_payload(user_id: str, canvas: Dict[str, Any]) -> None:
             node_id = node.get("id") or new_id()
             cur.execute("INSERT INTO smart_canvas_nodes(id,canvas_id,node_type,position_x,position_y,sort_order,data_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)", (node_id, payload["id"], node.get("type", node.get("node_type", "")), float(node.get("x", 0) or 0), float(node.get("y", 0) or 0), order, json_value(node), node.get("created_at", now), now))
             for ref_order, (file_id, field_name, role) in enumerate(_file_refs(node)):
-                cur.execute("INSERT INTO smart_canvas_node_files(id,node_id,file_id,field_name,sort_order,role) SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted')", (new_id(), node_id, file_id, field_name, ref_order, role, file_id))
+                cur.execute("INSERT INTO smart_canvas_node_files(id,node_id,file_id,field_name,sort_order,role) SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE)", (new_id(), node_id, file_id, field_name, ref_order, role, file_id))
 
 
 def load_canvas_payload(user_id: str, canvas_id: str) -> Optional[Dict[str, Any]]:

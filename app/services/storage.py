@@ -381,6 +381,15 @@ def cleanup_reason_for_entry(entry: Dict[str, Any], *, now_ms_value: Optional[in
     return None
 
 
+# Background lifecycle cleanup is orphan-only. Explicit user deletion uses a separate path.
+_UNREFERENCED_FILE_SQL = """
+          AND NOT EXISTS (SELECT 1 FROM history_record_files WHERE file_id = files.id)
+          AND NOT EXISTS (SELECT 1 FROM conversation_message_files WHERE file_id = files.id)
+          AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id = files.id)
+          AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id = files.id)
+"""
+
+
 def _cleanup_candidates(limit: int, now_ms_value: int) -> List[Dict[str, Any]]:
     if not metadata_db_enabled():
         return []
@@ -404,6 +413,7 @@ def _cleanup_candidates(limit: int, now_ms_value: int) -> List[Dict[str, Any]]:
         WHERE deleted_at IS NULL
           AND status <> 'deleted'
           AND category <> 'library'
+          {_UNREFERENCED_FILE_SQL}
           AND ({' OR '.join(conditions)})
         ORDER BY COALESCE(expires_at, created_at) ASC
         LIMIT %s
@@ -414,19 +424,29 @@ def _cleanup_candidates(limit: int, now_ms_value: int) -> List[Dict[str, Any]]:
             return cur.fetchall() or []
 
 
-def _mark_file_deleted(file_id: str, deleted_at_ms: int) -> None:
+def _delete_unreferenced_file_for_cleanup(entry: Dict[str, Any], deleted_at_ms: int) -> bool:
+    file_id = str(entry.get("file_id") or "").strip()
     if not file_id or not metadata_db_enabled():
-        return
-    with _db_connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
+        return False
+    with _db_connect() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM files WHERE id = %s AND deleted_at IS NULL AND status <> 'deleted' "
+            + _UNREFERENCED_FILE_SQL
+            + " FOR UPDATE",
+            (file_id,),
+        )
+        if not cur.fetchone():
+            return False
+        delete_media_objects(entry)
+        cur.execute(
+            """
                 UPDATE files
                 SET status = 'deleted', deleted_at = %s, updated_at = %s
                 WHERE id = %s
-                """,
-                (deleted_at_ms, deleted_at_ms, file_id),
-            )
+            """,
+            (deleted_at_ms, deleted_at_ms, file_id),
+        )
+    return True
 
 
 def _deleted_metadata_candidates(limit: int, deleted_before_ms: int) -> List[Dict[str, Any]]:
@@ -472,8 +492,8 @@ def run_storage_cleanup_once(limit: int = 0) -> Dict[str, int]:
         }, now_ms_value=now_value):
             continue
         deleted_at_ms = now_ms()
-        delete_media_objects(entry)
-        _mark_file_deleted(entry.get("file_id") or "", deleted_at_ms)
+        if not _delete_unreferenced_file_for_cleanup(entry, deleted_at_ms):
+            continue
         cache_path = cached_media_path(entry)
         if cache_path and os.path.isfile(cache_path):
             try:
@@ -1319,11 +1339,7 @@ def _media_entries_where_for_user(
         where += " AND created_at < %s"
         params.append(int(created_before))
     if unreferenced_only:
-        where += """
-          AND NOT EXISTS (SELECT 1 FROM history_record_files WHERE file_id = files.id)
-          AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id = files.id)
-          AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id = files.id)
-        """
+        where += _UNREFERENCED_FILE_SQL
     return where, params
 
 

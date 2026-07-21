@@ -249,7 +249,7 @@ def sync_asset_library_rows(cur, envelope_id: str, lib: Dict[str, Any], timestam
                     continue
                 item_id = f"{category_id}:{item.get('id', item_order)}"
                 extra = {k: v for k, v in item.items() if k not in {"file_id", "name", "kind", "created_at"}}
-                cur.execute("INSERT INTO asset_items(id,category_id,file_id,name,kind,created_at,updated_at,extra_json) SELECT %s,%s,%s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted')", (item_id, category_id, file_id, item.get("name", ""), item.get("kind", "file"), int(item.get("created_at") or timestamp), timestamp, json.dumps(extra, ensure_ascii=False), file_id))
+                cur.execute("INSERT INTO asset_items(id,category_id,file_id,name,kind,created_at,updated_at,extra_json) SELECT %s,%s,%s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE)", (item_id, category_id, file_id, item.get("name", ""), item.get("kind", "file"), int(item.get("created_at") or timestamp), timestamp, json.dumps(extra, ensure_ascii=False), file_id))
 
 
 def find_asset_category(lib, category_id):

@@ -717,7 +717,7 @@ function renderStorageManager(){
                                         <input id="storageBeforeDate" type="date" value="${escapeAttr(storageDateInputValue())}" aria-label="选择截止日期">
                                     </label>
                                 </div>
-                                <label class="storage-reference-filter"><input id="storageUnreferencedOnly" type="checkbox" ${storageUnreferencedOnly ? 'checked' : ''}><span>仅未被画布、历史或素材库引用</span></label>
+                                <label class="storage-reference-filter"><input id="storageUnreferencedOnly" type="checkbox" ${storageUnreferencedOnly ? 'checked' : ''}><span>仅未被画布、历史、对话或素材库引用</span></label>
                                 <button class="asset-btn danger storage-delete-matching" type="button" data-storage-delete-matching ${totalMatches ? '' : 'disabled'}><i data-lucide="trash-2"></i><span>删除全部符合条件的 ${totalMatches} 个文件</span></button>
                             </div>
                         ` : ''}

@@ -205,6 +205,7 @@ def test_storage_files_page_filters_by_age_and_unreferenced_state(monkeypatch):
     for sql, params in executed:
         assert "created_at < %s" in sql
         assert "history_record_files" in sql
+        assert "conversation_message_files" in sql
         assert "smart_canvas_node_files" in sql
         assert "asset_items" in sql
         assert 1_700_000_000_000 in params
@@ -243,6 +244,7 @@ def test_storage_matching_ids_use_the_same_filters(monkeypatch):
     assert "original_name ILIKE %s" in sql
     assert "created_at < %s" in sql
     assert "history_record_files" in sql
+    assert "conversation_message_files" in sql
     assert params == ["anonymous", "output", "%demo%", "%demo%", "%demo%", 1_700_000_000_000]
 
 

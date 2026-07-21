@@ -75,7 +75,7 @@ def save_conversation(user_id, conversation):
                     cur.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,sort_order,created_at,updated_at,extra_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)", (mid, conversation["id"], msg.get("role", "user"), msg.get("content", ""), order, msg.get("created_at", now_ms()), msg.get("updated_at", now_ms()), json_value({k:v for k,v in msg.items() if k not in {"id","role","content","created_at","updated_at","attachments"}})))
                     for aorder, attachment in enumerate(msg.get("attachments") or []):
                         if isinstance(attachment, dict) and attachment.get("file_id"):
-                            cur.execute("INSERT INTO conversation_message_files(id,message_id,file_id,sort_order,kind,role) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (new_id(), mid, attachment["file_id"], aorder, attachment.get("kind", ""), attachment.get("role", "")))
+                            cur.execute("INSERT INTO conversation_message_files(id,message_id,file_id,sort_order,kind,role) SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE) ON CONFLICT DO NOTHING", (new_id(), mid, attachment["file_id"], aorder, attachment.get("kind", ""), attachment.get("role", ""), attachment["file_id"]))
 
 
 def new_conversation(user_id, title="新对话"):
