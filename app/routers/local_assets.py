@@ -10,7 +10,6 @@
   sanitize_export_filename/ensure_same_origin_request/normalize_local_image_path/import_local_image_file
 - app.models：LocalImageImportRequest
 """
-import asyncio
 import os
 import re
 import uuid
@@ -28,6 +27,7 @@ from app.core.media import (
     sanitize_export_filename,
 )
 from app.core.logging import audit_event
+from app.core.storage_io import run_storage_io
 from app.models import LocalImageImportRequest
 from app.services.storage import (
     file_preview_url,
@@ -97,7 +97,7 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
         else:
             continue
         filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
-        url, file_id = await asyncio.to_thread(
+        url, file_id = await run_storage_io(
             _save_uploaded_media,
             "input",
             filename,
@@ -168,7 +168,7 @@ async def upload_local_assets(files: List[UploadFile] = File(...)):
         base = re.sub(r"[^0-9A-Za-z一-鿿._-]+", "_", base).strip("_") or "file"
         base = base[:60]
         filename = f"up_{uuid.uuid4().hex[:12]}_{base}{ext}"
-        stored = await asyncio.to_thread(
+        stored = await run_storage_io(
             save_media_bytes,
             "uploads",
             filename,

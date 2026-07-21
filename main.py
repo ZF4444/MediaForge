@@ -153,13 +153,14 @@ from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, 
 from app.services.business_metadata import initialize_business_metadata
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
 from app.core.metrics import render_metrics
+from app.core.storage_io import StorageIOOverloaded, refresh_storage_io_metrics, run_storage_io
 
 @app.on_event("startup")
 async def startup_event():
     global GLOBAL_LOOP, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
     try:
         await open_database_pool()
-        await asyncio.to_thread(verify_storage_startup)
+        await run_storage_io(verify_storage_startup)
         # Business metadata is a separate schema layer above ``files``.  Keep
         # initialization in startup so new deployments and existing databases are
         # upgraded automatically before serving requests.
@@ -202,7 +203,7 @@ async def health_live():
 @app.get("/health/ready", include_in_schema=False)
 async def health_ready():
     """Readiness probe: PostgreSQL and all required MinIO buckets are reachable."""
-    report = await asyncio.to_thread(storage_readiness_status)
+    report = await run_storage_io(storage_readiness_status)
     status_code = 200 if report["ready"] else 503
     headers = {"Cache-Control": "no-store"}
     if not report["ready"]:
@@ -217,9 +218,10 @@ async def health_ready():
 @app.get("/metrics", include_in_schema=False)
 async def prometheus_metrics():
     """Prometheus scrape endpoint for database, object storage, and background jobs."""
+    refresh_storage_io_metrics()
     await asyncio.gather(
         refresh_database_metrics(),
-        asyncio.to_thread(refresh_storage_metrics),
+        run_storage_io(refresh_storage_metrics),
     )
     return Response(
         content=render_metrics(),
@@ -587,6 +589,15 @@ async def storage_unavailable_exception_handler(request: Request, exc: StorageUn
         status_code=503,
         headers={"Retry-After": "3"},
         content={"detail": str(exc), "error": "storage_unavailable", "retry_after_seconds": 3},
+    )
+
+
+@app.exception_handler(StorageIOOverloaded)
+async def storage_io_overloaded_exception_handler(request: Request, exc: StorageIOOverloaded):
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": "1"},
+        content={"detail": str(exc), "error": "storage_overloaded", "retry_after_seconds": 1},
     )
 
 def model_list(env_name, primary, defaults):
@@ -2555,7 +2566,7 @@ async def jimeng_prepare_local_media(ref_url, kind="image"):
     if not text:
         return "", []
     if text.startswith("/api/files/"):
-        path = await asyncio.to_thread(output_file_from_url, text)
+        path = await run_storage_io(output_file_from_url, text)
         if path:
             return path, []
         raise HTTPException(status_code=404, detail=f"即梦参考素材不存在：{text}")
@@ -2739,7 +2750,7 @@ async def generate_jimeng_video(payload: CanvasVideoRequest, provider):
                 args.append(f"--model_version={model_version}")
         raw = await run_jimeng_cli(args, timeout=jimeng_poll_seconds() + 180)
         urls = await jimeng_store_outputs(raw, "video")
-        video_items = await asyncio.to_thread(media_response_items, urls, "video")
+        video_items = await run_storage_io(media_response_items, urls, "video")
         return {"videos": urls, "video_items": video_items, "task_id": jimeng_submit_id(raw) or None, "raw": raw}
     finally:
         for path in temp_paths:
@@ -3059,7 +3070,7 @@ async def volcengine_video_reference_content_items(value, max_frames=4, max_size
 async def video_reference_to_frame_data_urls(value, max_frames=6, max_size=768):
     if not isinstance(value, str) or not value:
         return []
-    path = await asyncio.to_thread(output_file_from_url, value)
+    path = await run_storage_io(output_file_from_url, value)
     cleanup_path = ""
     if not path and value.startswith(("http://", "https://")):
         suffix = os.path.splitext(urllib.parse.urlparse(value).path)[1] or ".mp4"
@@ -3412,7 +3423,7 @@ async def upload_image_for_apimart(client, provider, ref_url: str) -> str:
             return f"ERR:上传异常 {e}"
     # MinIO file reference: materialize a temporary cache file before upload.
     if ref_url.startswith("/api/files/"):
-        path = await asyncio.to_thread(output_file_from_url, ref_url)
+        path = await run_storage_io(output_file_from_url, ref_url)
         if not path:
             logger.warning("APIMart upload skipped because local file is missing", extra={"event": "upload_source_missing", "provider": "apimart", "operation": "upload", "media_url": ref_url})
             return "ERR:本地文件不存在或已被删除"
@@ -3443,19 +3454,19 @@ async def upload_video_for_apimart(client, provider, ref_url: str) -> str:
         return "ERR:空地址"
     if valid_apimart_video_image_input(ref_url):
         return ref_url
-    public_url = await asyncio.to_thread(local_asset_public_url, ref_url)
+    public_url = await run_storage_io(local_asset_public_url, ref_url)
     if public_url:
         return public_url
     if not ref_url.startswith("/api/files/"):
-        return f"ERR:{await asyncio.to_thread(apimart_video_reference_error, ref_url)}"
-    path = await asyncio.to_thread(output_file_from_url, ref_url)
+        return f"ERR:{await run_storage_io(apimart_video_reference_error, ref_url)}"
+    path = await run_storage_io(output_file_from_url, ref_url)
     if not path:
         return "ERR:本地视频不存在或已被删除"
     ct = content_type_for_path(path)
     if not ct.startswith("video/"):
         return "ERR:参考视频不是可识别的视频文件"
     if str(os.getenv("APIMART_TRY_VIDEO_UPLOAD") or "").strip().lower() not in {"1", "true", "yes", "on"}:
-        return f"ERR:{await asyncio.to_thread(apimart_video_reference_error, ref_url)}"
+        return f"ERR:{await run_storage_io(apimart_video_reference_error, ref_url)}"
     base_url = video_api_root(provider)
     filename, content, content_type = apimart_upload_raw_file_payload(path)
     upload_paths = ("/v1/uploads/videos", "/v1/uploads/files", "/v1/uploads/images")
@@ -3489,7 +3500,7 @@ async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
         return "ERR:空地址"
     if valid_apimart_video_image_input(ref_url):
         return ref_url
-    public_url = await asyncio.to_thread(local_asset_public_url, ref_url)
+    public_url = await run_storage_io(local_asset_public_url, ref_url)
     if public_url:
         return public_url
     base_url = video_api_root(provider)
@@ -3507,7 +3518,7 @@ async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
         ext = mimetypes.guess_extension(mime) or ".mp3"
         filename, content, content_type = (f"canvas_audio{ext}", raw, mime or "audio/mpeg")
     elif ref_url.startswith("/api/files/"):
-        path = await asyncio.to_thread(output_file_from_url, ref_url)
+        path = await run_storage_io(output_file_from_url, ref_url)
         if not path:
             return "ERR:本地音频不存在或已被删除"
         ct = content_type_for_path(path)
@@ -3515,7 +3526,7 @@ async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
             return "ERR:参考音频不是可识别的音频文件"
         filename, content, content_type = apimart_upload_raw_file_payload(path)
     else:
-        return f"ERR:{await asyncio.to_thread(apimart_video_reference_error, ref_url)}"
+        return f"ERR:{await run_storage_io(apimart_video_reference_error, ref_url)}"
     for upload_path in upload_paths:
         upload_url = f"{base_url}{upload_path}"
         try:
@@ -3827,7 +3838,7 @@ async def upload_local_video_to_cloud(ref_url: str, service: str = "auto") -> Di
     ref_url = str(ref_url or "").strip()
     if ref_url.startswith("http://") or ref_url.startswith("https://"):
         return {"url": ref_url, "source": ref_url, "service": "existing"}
-    path = await asyncio.to_thread(local_media_path_for_cloud_upload, ref_url)
+    path = await run_storage_io(local_media_path_for_cloud_upload, ref_url)
     service = str(service or os.getenv("CLOUD_VIDEO_UPLOAD_SERVICE", "auto") or "auto").strip().lower()
     if service in {"litterbox", "catbox"}:
         return await upload_video_to_litterbox(path, ref_url)
@@ -4093,7 +4104,7 @@ async def generate_modelscope_provider_image(prompt, size, model, reference_imag
         if not ref.get("url"):
             continue
         # 本地参考图转为 data URL；前端已生成的 data URL 保持原样，贴近旧版稳定链路。
-        refs.append(await asyncio.to_thread(modelscope_image_url, ref.get("url", ""), 1536))
+        refs.append(await run_storage_io(modelscope_image_url, ref.get("url", ""), 1536))
     headers = {
         "Authorization": f"Bearer {clean_token}",
         "Content-Type": "application/json",
@@ -4181,7 +4192,7 @@ async def generate_gemini_provider_image(prompt, size, model, reference_images=N
     endpoint = gemini_endpoint_url(provider, model_name)
     parts = [{"text": prompt.strip()}]
     for ref in (reference_images or [])[:16]:
-        part = await asyncio.to_thread(gemini_reference_part, ref)
+        part = await run_storage_io(gemini_reference_part, ref)
         if part:
             parts.append(part)
     body = {
@@ -4216,7 +4227,7 @@ async def generate_volcengine_provider_image(prompt, size, model, reference_imag
         "response_format": "url",
     }
     images = [
-        await asyncio.to_thread(volcengine_image_payload, ref)
+        await run_storage_io(volcengine_image_payload, ref)
         for ref in (reference_images or [])[:10]
     ]
     images = [value for value in images if value]
@@ -4385,7 +4396,7 @@ async def runninghub_store_remote_output(client, remote):
     ext = runninghub_output_ext(remote, content_type)
     filename = f"rh_{uuid.uuid4().hex[:12]}.{ext}"
     kind = runninghub_output_kind(ext)
-    stored = await asyncio.to_thread(
+    stored = await run_storage_io(
         save_media_bytes,
         "output",
         filename,
@@ -4575,7 +4586,7 @@ async def runninghub_upload_reference(client, provider, ref):
             if uploaded:
                 return str(uploaded)
         raise HTTPException(status_code=502, detail=f"RunningHub 上传图片未返回 download_url：{raw}")
-    path = await asyncio.to_thread(output_file_from_url, value)
+    path = await run_storage_io(output_file_from_url, value)
     if not path:
         return value if value.startswith(("http://", "https://")) else ""
     upload_url = runninghub_endpoint_url(provider, "/openapi/v2/media/upload/binary")
@@ -4764,7 +4775,7 @@ async def runninghub_upload_local_to_filename(client, provider, url):
     text = str(url or "").strip()
     if not text:
         return ""
-    path = await asyncio.to_thread(runninghub_local_asset_path, text)
+    path = await run_storage_io(runninghub_local_asset_path, text)
     if path:
         filename = os.path.basename(path)
         content_type = content_type_for_path(path)
@@ -5043,7 +5054,7 @@ async def generate_omnilojo_provider_image(prompt, size, model, reference_images
     chat_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/chat/completions")
     content = [{"type": "text", "text": str(prompt or "").strip()}]
     for ref in (reference_images or [])[:16]:
-        ref_url = await asyncio.to_thread(reference_to_data_url, ref, 1536) if ref.get("url") else ""
+        ref_url = await run_storage_io(reference_to_data_url, ref, 1536) if ref.get("url") else ""
         if ref_url:
             content.append({"type": "image_url", "image_url": {"url": ref_url}})
     body = {"model": model, "messages": [{"role": "user", "content": content}]}
@@ -5110,7 +5121,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             }
             if image_refs:
                 body["image_urls"] = [
-                    await asyncio.to_thread(reference_to_data_url, ref, 1536)
+                    await run_storage_io(reference_to_data_url, ref, 1536)
                     for ref in image_refs[:16]
                 ]
             response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
@@ -5130,14 +5141,14 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             edit_failed_text = ""
             try:
                 for ref in image_refs[:4]:
-                    path = await asyncio.to_thread(output_file_from_url, ref.get("url", ""))
+                    path = await run_storage_io(output_file_from_url, ref.get("url", ""))
                     if not path:
                         continue
                     fh = open(path, "rb")
                     opened.append(fh)
                     files.append(("image", (os.path.basename(path), fh, content_type_for_path(path))))
                 if mask_refs:
-                    mask_path = await asyncio.to_thread(output_file_from_url, mask_refs[0].get("url", ""))
+                    mask_path = await run_storage_io(output_file_from_url, mask_refs[0].get("url", ""))
                     if mask_path:
                         fh = open(mask_path, "rb")
                         opened.append(fh)
@@ -5164,7 +5175,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                     )
                 logger.warning("image edit endpoint failed; using generation fallback", extra={"event": "image_edit_fallback", "provider": provider.get("id"), "operation": "image_edit", "status_code": edit_failed_status, "response_excerpt": edit_failed_text[:200]})
                 image_payload = [
-                    await asyncio.to_thread(reference_to_data_url, ref, 1536)
+                    await run_storage_io(reference_to_data_url, ref, 1536)
                     for ref in image_refs[:4]
                 ]
                 body = {
@@ -5489,7 +5500,7 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
             kind = runninghub_output_kind(ext)
             if not persistOutputs:
                 urls.append(remote)
-                media_items.append(await asyncio.to_thread(media_response_item, remote, "", kind))
+                media_items.append(await run_storage_io(media_response_item, remote, "", kind))
                 continue
             try:
                 local_url = await runninghub_store_remote_output(client, remote)
@@ -5497,7 +5508,7 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
                 logger.exception("failed to persist RunningHub output")
                 raise HTTPException(status_code=502, detail=f"RunningHub 输出写入 MinIO 失败：{exc}") from exc
             urls.append(local_url)
-            media_items.append(await asyncio.to_thread(media_response_item, local_url, "", kind))
+            media_items.append(await run_storage_io(media_response_item, local_url, "", kind))
         status = runninghub_normalized_status(raw, code, urls)
         return {"success": True, "data": {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
 
@@ -5512,8 +5523,8 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     content_type = "application/octet-stream"
     content = b""
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0), follow_redirects=True) as client:
-        entry = await asyncio.to_thread(resolve_file_reference, url=source_url) if source_url else None
-        path = None if entry else await asyncio.to_thread(runninghub_local_asset_path, source_url)
+        entry = await run_storage_io(resolve_file_reference, url=source_url) if source_url else None
+        path = None if entry else await run_storage_io(runninghub_local_asset_path, source_url)
         if entry:
             filename = (
                 entry.get("original_name")
@@ -5522,7 +5533,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
                 or filename
             )
             content_type = entry.get("mime_type") or entry.get("content_type") or content_type
-            content = await asyncio.to_thread(get_object_bytes, str(entry.get("bucket") or ""), str(entry.get("object_key") or ""))
+            content = await run_storage_io(get_object_bytes, str(entry.get("bucket") or ""), str(entry.get("object_key") or ""))
         elif path:
             filename = os.path.basename(path)
             content_type = content_type_for_path(path)
@@ -5717,7 +5728,7 @@ async def jimeng_query_media(payload: JimengQueryMediaRequest):
     try:
         urls = await jimeng_store_outputs(queried, kind, allow_query=False)
         payload = {"status": "succeeded", "submit_id": submit_id, "kind": kind, "urls": urls}
-        items = await asyncio.to_thread(media_response_items, urls, kind)
+        items = await run_storage_io(media_response_items, urls, kind)
         if kind == "video":
             payload["video_items"] = items
         elif kind == "audio":
@@ -6347,7 +6358,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
         raise HTTPException(status_code=502, detail=f"请求上游生图接口失败：{exc}") from exc
 
     media_items = [
-        await asyncio.to_thread(media_response_item, url, "", "image")
+        await run_storage_io(media_response_item, url, "", "image")
         for url, _raw in generated if url
     ]
     local_urls = [item["url"] for item in media_items if item.get("url")]
@@ -6407,7 +6418,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         if local_url:
             local_urls.append(local_url)
         media_items = [
-            await asyncio.to_thread(media_response_item, url, "", "image")
+            await run_storage_io(media_response_item, url, "", "image")
             for url in local_urls if url
         ]
         result = {
@@ -6841,7 +6852,7 @@ async def yuli_fetch_reference_bytes(client, ref_url):
             return None
         ext = (mime.split("/")[-1] or "png").split("+")[0]
         return (f"input_reference.{ext}", raw, mime)
-    path = await asyncio.to_thread(output_file_from_url, ref_url)
+    path = await run_storage_io(output_file_from_url, ref_url)
     if path:
         try:
             with open(path, "rb") as f:
@@ -6899,7 +6910,7 @@ async def generate_yuli_openai_video(client, payload, provider, base_url, reques
     if not urls:
         raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
     local_urls = [await save_remote_video_to_output(url) for url in urls]
-    video_items = await asyncio.to_thread(media_response_items, local_urls, "video")
+    video_items = await run_storage_io(media_response_items, local_urls, "video")
     return {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}
 
 def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
@@ -7087,7 +7098,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                         body["generate_audio"] = True
                     image_like_urls = set()
                     for ref in payload.images[:9]:
-                        url = await asyncio.to_thread(volcengine_media_reference_url, ref.url, 1536)
+                        url = await run_storage_io(volcengine_media_reference_url, ref.url, 1536)
                         if not url:
                             continue
                         item = {
@@ -7103,11 +7114,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                         text_url = str(url or "").strip()
                         if not text_url:
                             continue
-                        media_url = await asyncio.to_thread(
-                            volcengine_media_reference_url,
-                            text_url,
-                            1536 if looks_like_image_media_url(text_url) else None,
-                        )
+                        media_url = await run_storage_io(volcengine_media_reference_url, text_url, 1536 if looks_like_image_media_url(text_url) else None)
                         if not media_url:
                             continue
                         if media_url in image_like_urls or looks_like_image_media_url(media_url):
@@ -7121,7 +7128,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                         video_items = await volcengine_video_reference_content_items(media_url)
                         body["content"].extend(video_items)
                     for url in (payload.audios or [])[:3]:
-                        audio_url = await asyncio.to_thread(volcengine_media_reference_url, url, None)
+                        audio_url = await run_storage_io(volcengine_media_reference_url, url, None)
                         if not audio_url:
                             continue
                         body["content"].append({
@@ -7145,7 +7152,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                             yuli_images.append(ref_url)
                         else:
                             # 本地/dataURL 图片转成 data URL 兜底传递
-                            data_url = await asyncio.to_thread(reference_to_data_url, ref.dict(), 1536)
+                            data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
                             if data_url:
                                 yuli_images.append(data_url)
                     body = {
@@ -7161,7 +7168,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                     image_payload = []
                     for ref in payload.images[:4]:
                         if ref.url:
-                            image_payload.append(await asyncio.to_thread(reference_to_data_url, ref.dict(), 1536))
+                            image_payload.append(await run_storage_io(reference_to_data_url, ref.dict(), 1536))
                     body = {
                         "prompt": payload.prompt,
                         "model": selected_model(payload.model, "veo3-fast"),
@@ -7225,7 +7232,7 @@ async def canvas_video(payload: CanvasVideoRequest):
             if not urls:
                 raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
             local_urls = [await save_remote_video_to_output(url) for url in urls]
-            video_items = await asyncio.to_thread(media_response_items, local_urls, "video")
+            video_items = await run_storage_io(media_response_items, local_urls, "video")
             return {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}
     except httpx.HTTPStatusError as exc:
         text = exc.response.text
@@ -7348,10 +7355,10 @@ async def canvas_llm(payload: CanvasLLMRequest):
             upstream_messages.append({"role": role, "content": content})
     # 构造用户消息：有图片/视频时用 OpenAI/Gemini 多模态格式
     image_flags = await asyncio.gather(*(
-        asyncio.to_thread(is_image_reference_value, img) for img in (payload.images or [])
+        run_storage_io(is_image_reference_value, img) for img in (payload.images or [])
     ))
     video_flags = await asyncio.gather(*(
-        asyncio.to_thread(is_video_reference_value, video) for video in (payload.videos or [])
+        run_storage_io(is_video_reference_value, video) for video in (payload.videos or [])
     ))
     image_inputs = [img for img, valid in zip(payload.images or [], image_flags) if valid]
     video_inputs = [video for video, valid in zip(payload.videos or [], video_flags) if valid]
@@ -7361,7 +7368,7 @@ async def canvas_llm(payload: CanvasLLMRequest):
         for img in image_inputs[:8]:
             if not img or not isinstance(img, str):
                 continue
-            ref_url = await asyncio.to_thread(media_reference_to_url, img, 1024)
+            ref_url = await run_storage_io(media_reference_to_url, img, 1024)
             if not ref_url:
                 continue
             content_parts.append({"type": "image_url", "image_url": {"url": ref_url}})
@@ -7454,7 +7461,7 @@ async def check_canvas_assets(payload: CanvasAssetCheckRequest):
         if not text:
             continue
         if text.startswith("/api/files/"):
-            result[text] = bool(await asyncio.to_thread(output_file_from_url, text))
+            result[text] = bool(await run_storage_io(output_file_from_url, text))
         else:
             result[text] = True
     return {"exists": result}
@@ -7475,7 +7482,7 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
                 requested_name = ""
             if not text:
                 continue
-            path = await asyncio.to_thread(output_file_from_url, text)
+            path = await run_storage_io(output_file_from_url, text)
             content = None
             content_type = ""
             if path and os.path.isfile(path):
@@ -7644,7 +7651,7 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
                     base = sanitize_export_filename(res.get("name") or fallback_name, fallback_name)
                     payload = zf.read(archive)
                     kind = str(res.get("kind") or "") or runninghub_output_kind(os.path.splitext(base)[1])
-                    stored = await asyncio.to_thread(
+                    stored = await run_storage_io(
                         save_media_bytes,
                         "input",
                         f"workflow_{uuid.uuid4().hex[:8]}_{base}",
@@ -7732,7 +7739,7 @@ async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest):
                 f.write(text)
             count += 1
             continue
-        src = await asyncio.to_thread(output_file_from_url, item.url)
+        src = await run_storage_io(output_file_from_url, item.url)
         if not src or not os.path.isfile(src):
             continue
         base = sanitize_export_filename(item.name or os.path.basename(src), os.path.basename(src) or f"asset-{count + 1}")
@@ -8079,7 +8086,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_angle_{int(time.time())}.png"
-                                local_path = await asyncio.to_thread(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
+                                local_path = await run_storage_io(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
                                 raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
                     except Exception as exc:
@@ -8089,7 +8096,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
                     await asyncio.to_thread(save_to_history, record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
-                    return await asyncio.to_thread(media_response_item, local_path, "", "image")
+                    return await run_storage_io(media_response_item, local_path, "", "image")
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     if req.client_id:
@@ -8128,7 +8135,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
     payload = {
         "model": model,
         "prompt": req.prompt.strip(),
-        "image_url": [await asyncio.to_thread(modelscope_image_url, url, 1536) for url in req.image_urls]
+        "image_url": [await run_storage_io(modelscope_image_url, url, 1536) for url in req.image_urls]
     }
     if req.resolution:
         payload["size"] = modelscope_size(req.resolution)
@@ -8167,7 +8174,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_angle_{int(time.time())}.png"
-                                local_path = await asyncio.to_thread(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
+                                local_path = await run_storage_io(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
                                 raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
                     except Exception as exc:
@@ -8179,7 +8186,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
                     if GLOBAL_LOOP:
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
-                    item = await asyncio.to_thread(media_response_item, local_path, "", "image")
+                    item = await run_storage_io(media_response_item, local_path, "", "image")
                     item["task_id"] = task_id
                     return item
 
@@ -8265,7 +8272,7 @@ async def generate_cloud(req: CloudGenRequest):
                             img_res = await dl_client.get(img_url)
                             if img_res.status_code == 200:
                                 filename = f"cloud_{int(time.time())}.png"
-                                local_path = await asyncio.to_thread(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
+                                local_path = await run_storage_io(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                             else:
                                 raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
                     except Exception as exc:
@@ -8278,7 +8285,7 @@ async def generate_cloud(req: CloudGenRequest):
                         await manager.broadcast_new_image(record)
                     except Exception:
                         pass
-                    return await asyncio.to_thread(media_response_item, local_path, "", "image")
+                    return await run_storage_io(media_response_item, local_path, "", "image")
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
@@ -8317,7 +8324,7 @@ async def ms_generate(req: MsGenerateRequest):
         payload["size"] = modelscope_size(req.size)
     if req.image_urls:
         payload["image_url"] = [
-            await asyncio.to_thread(modelscope_image_url, url, 1536)
+            await run_storage_io(modelscope_image_url, url, 1536)
             for url in req.image_urls
         ]
     if req.loras is not None:
@@ -8362,7 +8369,7 @@ async def ms_generate(req: MsGenerateRequest):
                                 img_res = await dl_client.get(img_url)
                                 if img_res.status_code == 200:
                                     filename = f"ms_{req.model.replace('/', '_').replace(':', '_')}_{int(time.time())}.png"
-                                    local_path = await asyncio.to_thread(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
+                                    local_path = await run_storage_io(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
                                 else:
                                     raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
                         except Exception as exc:
@@ -8378,7 +8385,7 @@ async def ms_generate(req: MsGenerateRequest):
                         await asyncio.to_thread(save_to_history, record)
                         if GLOBAL_LOOP:
                             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
-                        item = await asyncio.to_thread(media_response_item, local_path, "", "image")
+                        item = await run_storage_io(media_response_item, local_path, "", "image")
                         item["task_id"] = task_id
                         return item
 

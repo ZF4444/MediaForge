@@ -79,6 +79,7 @@ from app.core.metrics import (
     TRANSIENT_RETRIES,
 )
 from app.core.retry import retry_delay_seconds, retry_max_attempts, retry_operation_id
+from app.core.storage_io import run_storage_io
 from app.core.utils import now_ms
 
 logger = get_logger("storage")
@@ -550,7 +551,7 @@ def run_storage_metadata_purge_once(limit: int = 0) -> Dict[str, int]:
 async def storage_cleanup_loop() -> None:
     while True:
         try:
-            result = await asyncio.to_thread(run_storage_cleanup_once)
+            result = await run_storage_io(run_storage_cleanup_once)
             BACKGROUND_RUNS.labels(job="storage_cleanup", status="success").inc()
             logger.info("storage cleanup completed", extra={"event": "storage_cleanup_completed", **result})
         except Exception:
@@ -558,7 +559,7 @@ async def storage_cleanup_loop() -> None:
             BACKGROUND_RUNS.labels(job="storage_cleanup", status="failed").inc()
             logger.exception("storage cleanup failed", extra={"event": "storage_cleanup_failed", "alert": True})
         try:
-            result = await asyncio.to_thread(run_storage_metadata_purge_once)
+            result = await run_storage_io(run_storage_metadata_purge_once)
             BACKGROUND_RUNS.labels(job="storage_metadata_purge", status="success").inc()
             logger.info("storage metadata purge completed", extra={"event": "storage_metadata_purge_completed", **result})
         except Exception:
@@ -2163,7 +2164,7 @@ async def storage_cache_cleanup_loop(*, initial_delay_seconds: int = 30) -> None
         await asyncio.sleep(initial_delay_seconds)
     while True:
         try:
-            result = await asyncio.to_thread(run_storage_cache_cleanup_once, respect_interval=True)
+            result = await run_storage_io(run_storage_cache_cleanup_once, respect_interval=True)
             status = "success" if not result.get("skipped") else "skipped"
             BACKGROUND_RUNS.labels(job="storage_cache_cleanup", status=status).inc()
             log_method = logger.warning if result.get("capacity_unresolved") else logger.info

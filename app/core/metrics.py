@@ -45,6 +45,21 @@ MINIO_FAILURES = Counter(
     ("operation", "error_type"),
     registry=REGISTRY,
 )
+BLOCKING_IO_ACTIVE = Gauge(
+    "mediaforge_blocking_io_active",
+    "Synchronous storage operations currently running in worker threads.",
+    registry=REGISTRY,
+)
+BLOCKING_IO_QUEUED = Gauge(
+    "mediaforge_blocking_io_queued",
+    "Synchronous storage operations waiting for a worker thread.",
+    registry=REGISTRY,
+)
+BLOCKING_IO_REJECTED = Counter(
+    "mediaforge_blocking_io_rejected_total",
+    "Synchronous storage operations rejected because the bounded adapter is full.",
+    registry=REGISTRY,
+)
 MINIO_BUCKET_BYTES = Gauge(
     "mediaforge_minio_bucket_catalog_bytes",
     "Active object bytes registered in PostgreSQL by MinIO bucket.",

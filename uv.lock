@@ -11,6 +11,7 @@ name = "aistudio"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "minio" },
@@ -31,6 +32,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.13.0" },
     { name = "fastapi", specifier = ">=0.136.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "minio", specifier = ">=7.2.18" },

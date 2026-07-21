@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
 from app.core.media import content_type_for_path
+from app.core.storage_io import run_storage_io
 from app.services.storage import (
     ensure_media_derivatives,
     get_file_by_id,
@@ -22,14 +23,21 @@ THUMB_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
 THUMB_FALLBACK_CACHE_HEADERS = {"Cache-Control": "private, max-age=300"}
 
 
-def _materialized_path(file_id: str):
+def _materialized_path_sync(file_id: str):
     entry = get_file_by_id(file_id)
     if not entry:
-        raise HTTPException(status_code=404, detail="文件不存在")
+        return None
     path = materialize_media_url(entry.get("url") or "")
     if not path or not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="文件不存在")
+        return None
     return entry, path
+
+
+async def _materialized_path(file_id: str):
+    result = await run_storage_io(_materialized_path_sync, file_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return result
 
 
 def _video_placeholder_svg(label: str = "VIDEO") -> bytes:
@@ -45,8 +53,8 @@ def _video_placeholder_svg(label: str = "VIDEO") -> bytes:
 
 
 @router.get("/api/files/{file_id}")
-def get_file_meta(file_id: str):
-    entry = get_file_by_id(file_id)
+async def get_file_meta(file_id: str):
+    entry = await run_storage_io(get_file_by_id, file_id)
     if not entry:
         raise HTTPException(status_code=404, detail="文件不存在")
     return {
@@ -61,14 +69,24 @@ def get_file_meta(file_id: str):
 
 
 @router.get("/api/files/{file_id}/preview")
-def preview_file(file_id: str):
-    _, path = _materialized_path(file_id)
+async def preview_file(file_id: str):
+    _, path = await _materialized_path(file_id)
     return FileResponse(path, media_type=content_type_for_path(path), headers=PREVIEW_CACHE_HEADERS)
 
 
+def _thumbnail_derivative_sync(entry, kind, bucket, object_key):
+    derived_exists = object_exists(bucket, object_key)
+    if not derived_exists:
+        ensure_media_derivatives(entry)
+        derived_exists = object_exists(bucket, object_key)
+    if not derived_exists:
+        return None
+    return get_object_bytes(bucket, object_key)
+
+
 @router.get("/api/files/{file_id}/thumb")
-def thumbnail_file(file_id: str):
-    entry = get_file_by_id(file_id)
+async def thumbnail_file(file_id: str):
+    entry = await run_storage_io(get_file_by_id, file_id)
     if not entry:
         raise HTTPException(status_code=404, detail="文件不存在")
     kind = str(entry.get("kind") or "").strip().lower()
@@ -76,13 +94,10 @@ def thumbnail_file(file_id: str):
     object_key = media_thumb_object_key(entry) if kind == "image" else media_poster_object_key(entry)
     try:
         if kind in {"image", "video"}:
-            derived_exists = object_exists(bucket, object_key)
-            if not derived_exists:
-                ensure_media_derivatives(entry)
-                derived_exists = object_exists(bucket, object_key)
-            if derived_exists:
+            content = await run_storage_io(_thumbnail_derivative_sync, entry, kind, bucket, object_key)
+            if content is not None:
                 media_type = "image/webp" if kind == "image" else "image/jpeg"
-                return Response(content=get_object_bytes(bucket, object_key), media_type=media_type, headers=THUMB_CACHE_HEADERS)
+                return Response(content=content, media_type=media_type, headers=THUMB_CACHE_HEADERS)
     except Exception:
         pass
     if kind == "video":
@@ -91,12 +106,12 @@ def thumbnail_file(file_id: str):
             media_type="image/svg+xml",
             headers=THUMB_FALLBACK_CACHE_HEADERS,
         )
-    _, path = _materialized_path(file_id)
+    _, path = await _materialized_path(file_id)
     return FileResponse(path, media_type=content_type_for_path(path), headers=THUMB_FALLBACK_CACHE_HEADERS)
 
 
 @router.get("/api/files/{file_id}/download")
-def download_file(file_id: str):
-    entry, path = _materialized_path(file_id)
+async def download_file(file_id: str):
+    entry, path = await _materialized_path(file_id)
     filename = entry.get("original_name") or entry.get("filename") or os.path.basename(path)
     return FileResponse(path, media_type=content_type_for_path(path), filename=filename)

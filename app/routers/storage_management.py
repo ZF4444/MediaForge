@@ -1,8 +1,6 @@
 """Storage usage, cleanup, and quota management routes."""
 from __future__ import annotations
 
-import asyncio
-
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -14,6 +12,7 @@ from app.core.auth import (
     current_user_id,
 )
 from app.core.logging import audit_event
+from app.core.storage_io import run_storage_io
 from app.models import StorageBatchDeletePayload, StorageQuotaConfigPayload
 from app.services.storage import (
     get_user_files_by_ids,
@@ -133,7 +132,7 @@ def get_storage_files(
 @router.post("/api/storage/delete")
 async def batch_delete_storage_entries(request: Request, payload: StorageBatchDeletePayload):
     raw = await request.json()
-    return await asyncio.to_thread(_batch_delete_storage_entries_sync, raw, payload)
+    return await run_storage_io(_batch_delete_storage_entries_sync, raw, payload)
 
 
 def _batch_delete_storage_entries_sync(raw, payload: StorageBatchDeletePayload):
