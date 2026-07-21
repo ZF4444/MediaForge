@@ -65,6 +65,9 @@ let storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matche
 let storageCategoryFilter = '';
 let storageQuery = '';
 let storageSortOrder = 'desc';
+let storageTimeFilter = '';
+let storageCreatedBefore = null;
+let storageUnreferencedOnly = false;
 let storageSelectedIds = new Set();
 let storageManageMode = false;
 let meInfo = {is_admin:false, user_id:''};
@@ -117,6 +120,17 @@ function formatFileSize(bytes=0){
     const units = ['B','KB','MB','GB','TB'];
     const idx = Math.min(units.length - 1, Math.floor(Math.log(size) / Math.log(1024)));
     return `${(size / Math.pow(1024, idx)).toFixed(idx ? 1 : 0)} ${units[idx]}`;
+}
+function storageDateInputValue(){
+    if(storageTimeFilter !== 'custom' || !storageCreatedBefore) return '';
+    const date = new Date(storageCreatedBefore);
+    const offset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+async function applyStorageFilters(){
+    storageSelectedIds.clear();
+    await loadStorageFiles({reset:true, page:1});
+    render();
 }
 function storageUsagePercent(){
     const quota = Number(storageUsage?.quota_bytes || 0);
@@ -542,6 +556,8 @@ async function loadStorageFiles({reset=false, page=null}={}){
     if(storageCategoryFilter) params.set('category', storageCategoryFilter);
     if(storageQuery.trim()) params.set('search', storageQuery.trim());
     params.set('sort_order', storageSortOrder);
+    if(storageCreatedBefore) params.set('created_before', String(storageCreatedBefore));
+    if(storageUnreferencedOnly) params.set('unreferenced_only', 'true');
     params.set('limit', String(limit));
     params.set('offset', String(offset));
     const data = await apiJson(`/api/storage/files?${params.toString()}`);
@@ -662,6 +678,16 @@ function renderStorageManager(){
                     <button class="asset-btn" type="button" data-storage-refresh><i data-lucide="refresh-cw"></i><span>刷新</span></button>
                     <button class="asset-btn ${storageManageMode ? 'primary' : ''}" type="button" data-storage-manage ${entries.length ? '' : 'disabled'}><i data-lucide="list-checks"></i><span>${storageManageMode ? '完成管理' : '批量管理'}</span></button>
                 </div>
+            </div>
+            <div class="storage-filter-bar">
+                <span class="storage-filter-label">创建时间</span>
+                <div class="storage-filter-segments" role="group" aria-label="按创建时间筛选">
+                    <button class="${!storageTimeFilter ? 'active' : ''}" type="button" data-storage-age="">全部</button>
+                    <button class="${storageTimeFilter === '10' ? 'active' : ''}" type="button" data-storage-age="10">10 天前</button>
+                    <button class="${storageTimeFilter === '20' ? 'active' : ''}" type="button" data-storage-age="20">20 天前</button>
+                </div>
+                <label class="storage-date-filter ${storageTimeFilter === 'custom' ? 'active' : ''}"><span>指定日期之前</span><input id="storageBeforeDate" type="date" value="${escapeAttr(storageDateInputValue())}"></label>
+                <label class="storage-reference-filter"><input id="storageUnreferencedOnly" type="checkbox" ${storageUnreferencedOnly ? 'checked' : ''}><span>仅未被引用文件</span></label>
             </div>
             <div class="manage-tools">
                 <span>已选择 ${storageSelectedIds.size} 个文件。</span>
@@ -1476,6 +1502,14 @@ async function handleClick(event){
         storageSelectedIds.clear();
         await loadStorageFiles({reset:true, page:1});
         render();
+        return;
+    }
+    const storageAge = target.closest?.('[data-storage-age]');
+    if(storageAge){
+        const days = Number(storageAge.dataset.storageAge || 0);
+        storageTimeFilter = days ? String(days) : '';
+        storageCreatedBefore = days ? Date.now() - days * 24 * 60 * 60 * 1000 : null;
+        await applyStorageFilters();
         return;
     }
     if(target.closest?.('[data-storage-manage]')){
@@ -2537,6 +2571,18 @@ root.addEventListener('input', event => {
     }
 });
 root.addEventListener('change', event => {
+    if(event.target?.id === 'storageBeforeDate'){
+        const value = event.target.value || '';
+        storageTimeFilter = value ? 'custom' : '';
+        storageCreatedBefore = value ? new Date(`${value}T00:00:00`).getTime() : null;
+        applyStorageFilters().catch(err => setStatus(err.message || '加载失败'));
+        return;
+    }
+    if(event.target?.id === 'storageUnreferencedOnly'){
+        storageUnreferencedOnly = !!event.target.checked;
+        applyStorageFilters().catch(err => setStatus(err.message || '加载失败'));
+        return;
+    }
     const inlineAssetName = event.target.closest?.('[data-asset-inline-name]');
     if(inlineAssetName){
         saveAssetInlineName(inlineAssetName.dataset.assetInlineName || '', inlineAssetName.value || '').catch(err => setStatus(err.message || '保存失败'));

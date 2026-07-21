@@ -1297,6 +1297,8 @@ def list_media_entries_page_for_user(
     category: str = "",
     search: str = "",
     sort_order: str = "desc",
+    created_before: Optional[int] = None,
+    unreferenced_only: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> Dict[str, Any]:
@@ -1320,6 +1322,15 @@ def list_media_entries_page_for_user(
         where += " AND (stored_name ILIKE %s OR original_name ILIKE %s OR category ILIKE %s)"
         pattern = f"%{str(search).strip()}%"
         params.extend([pattern, pattern, pattern])
+    if created_before is not None:
+        where += " AND created_at < %s"
+        params.append(int(created_before))
+    if unreferenced_only:
+        where += """
+          AND NOT EXISTS (SELECT 1 FROM history_record_files WHERE file_id = files.id)
+          AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id = files.id)
+          AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id = files.id)
+        """
     with _db_connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS total " + where, params)
@@ -1345,6 +1356,8 @@ def list_media_entries_page_for_user(
         "category_filter": str(category or ""),
         "search": str(search or ""),
         "sort_order": normalized_sort_order,
+        "created_before": created_before,
+        "unreferenced_only": bool(unreferenced_only),
     }
 
 

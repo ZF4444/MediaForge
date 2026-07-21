@@ -178,6 +178,40 @@ def test_storage_files_page_sorts_by_created_at_in_both_directions(monkeypatch):
     assert oldest_first["sort_order"] == "asc"
 
 
+def test_storage_files_page_filters_by_age_and_unreferenced_state(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql, params): executed.append((sql, params))
+        def fetchone(self): return {"total": 0}
+        def fetchall(self): return []
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def cursor(self): return Cursor()
+
+    monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
+    monkeypatch.setattr(storage, "_db_connect", Connection)
+
+    result = storage.list_media_entries_page_for_user(
+        created_before=1_700_000_000_000,
+        unreferenced_only=True,
+    )
+
+    assert len(executed) == 2
+    for sql, params in executed:
+        assert "created_at < %s" in sql
+        assert "history_record_files" in sql
+        assert "smart_canvas_node_files" in sql
+        assert "asset_items" in sql
+        assert 1_700_000_000_000 in params
+    assert result["created_before"] == 1_700_000_000_000
+    assert result["unreferenced_only"] is True
+
+
 def test_save_ai_image_to_output_registers_generated_file(monkeypatch):
     monkeypatch.setattr(
         "app.core.media.save_media_bytes",

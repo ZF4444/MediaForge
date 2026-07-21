@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -112,6 +112,8 @@ async def get_storage_files(
     category: str = Query(default=""),
     search: str = Query(default=""),
     sort_order: Literal["desc", "asc"] = Query(default="desc"),
+    created_before: Optional[int] = Query(default=None, ge=0),
+    unreferenced_only: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
@@ -119,6 +121,8 @@ async def get_storage_files(
         category=category,
         search=search,
         sort_order=sort_order,
+        created_before=created_before,
+        unreferenced_only=unreferenced_only,
         limit=limit,
         offset=offset,
     )
