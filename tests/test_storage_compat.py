@@ -212,6 +212,40 @@ def test_storage_files_page_filters_by_age_and_unreferenced_state(monkeypatch):
     assert result["unreferenced_only"] is True
 
 
+def test_storage_matching_ids_use_the_same_filters(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql, params): executed.append((sql, params))
+        def fetchall(self): return [{"id": "old-unreferenced"}]
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def cursor(self): return Cursor()
+
+    monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
+    monkeypatch.setattr(storage, "_db_connect", Connection)
+
+    ids = storage.list_user_file_ids_matching(
+        category="output",
+        search="demo",
+        created_before=1_700_000_000_000,
+        unreferenced_only=True,
+    )
+
+    sql, params = executed[0]
+    assert ids == ["old-unreferenced"]
+    assert "SELECT id" in sql
+    assert "category = %s" in sql
+    assert "original_name ILIKE %s" in sql
+    assert "created_at < %s" in sql
+    assert "history_record_files" in sql
+    assert params == ["anonymous", "output", "%demo%", "%demo%", "%demo%", 1_700_000_000_000]
+
+
 def test_save_ai_image_to_output_registers_generated_file(monkeypatch):
     monkeypatch.setattr(
         "app.core.media.save_media_bytes",

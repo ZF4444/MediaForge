@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, Set
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.core.access_control import is_admin
 from app.core.auth import (
@@ -17,6 +17,7 @@ from app.models import StorageBatchDeletePayload, StorageQuotaConfigPayload
 from app.services.storage import (
     get_user_files_by_ids,
     list_media_entries_page_for_user,
+    list_user_file_ids_matching,
     load_storage_quota_config,
     remove_media_url,
     save_storage_quota_config,
@@ -129,20 +130,43 @@ async def get_storage_files(
 
 
 @router.post("/api/storage/delete")
-async def batch_delete_storage_entries(payload: StorageBatchDeletePayload):
-    file_ids = [str(item or "").strip() for item in (payload.file_ids or []) if str(item or "").strip()][:500]
+async def batch_delete_storage_entries(request: Request, payload: StorageBatchDeletePayload):
+    raw = await request.json()
+    all_matching = bool(raw.get("all_matching")) if isinstance(raw, dict) else False
+    category = str(raw.get("category") or "")[:128] if isinstance(raw, dict) else ""
+    search = str(raw.get("search") or "")[:256] if isinstance(raw, dict) else ""
+    created_before = raw.get("created_before") if isinstance(raw, dict) else None
+    unreferenced_only = bool(raw.get("unreferenced_only")) if isinstance(raw, dict) else False
+    if created_before is not None:
+        try:
+            created_before = max(0, int(created_before))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="created_before 无效")
+    if all_matching:
+        file_ids = list_user_file_ids_matching(
+            category=category,
+            search=search,
+            created_before=created_before,
+            unreferenced_only=unreferenced_only,
+        )
+    else:
+        file_ids = [str(item or "").strip() for item in (payload.file_ids or []) if str(item or "").strip()][:500]
     if not file_ids:
+        if all_matching:
+            return {"deleted": [], "removed": 0}
         raise HTTPException(status_code=400, detail="没有选择文件。")
-    entries_by_id = get_user_files_by_ids(file_ids)
-    entries = [entries_by_id[file_id] for file_id in file_ids if file_id in entries_by_id]
-    if not entries:
-        return {"deleted": [], "removed": 0}
-    _prune_user_media_references(entries)
     removed_ids: List[str] = []
-    for entry in entries:
-        removed = remove_media_url(entry.get("url") or "", delete_remote=True)
-        if removed:
-            removed_ids.append(str(removed.get("file_id") or ""))
+    for offset in range(0, len(file_ids), 500):
+        batch_ids = file_ids[offset:offset + 500]
+        entries_by_id = get_user_files_by_ids(batch_ids)
+        entries = [entries_by_id[file_id] for file_id in batch_ids if file_id in entries_by_id]
+        if not entries:
+            continue
+        _prune_user_media_references(entries)
+        for entry in entries:
+            removed = remove_media_url(entry.get("url") or "", delete_remote=True)
+            if removed:
+                removed_ids.append(str(removed.get("file_id") or ""))
     audit_event(
         "storage_files_deleted",
         action="delete",
@@ -151,6 +175,7 @@ async def batch_delete_storage_entries(payload: StorageBatchDeletePayload):
         requested_count=len(file_ids),
         removed_count=len(removed_ids),
         resource_ids=removed_ids,
+        all_matching=all_matching,
     )
     return {"deleted": removed_ids, "removed": len(removed_ids)}
 

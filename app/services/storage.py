@@ -1291,23 +1291,16 @@ def list_media_entries_for_user(
     return [_row_to_entry(row) for row in rows]
 
 
-def list_media_entries_page_for_user(
+def _media_entries_where_for_user(
     *,
     user_id: str = "",
     category: str = "",
     search: str = "",
-    sort_order: str = "desc",
     created_before: Optional[int] = None,
     unreferenced_only: bool = False,
-    limit: int = 50,
-    offset: int = 0,
-) -> Dict[str, Any]:
-    safe_limit = max(1, min(int(limit or 50), 200))
-    safe_offset = max(0, int(offset or 0))
+):
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     q = str(search or "").strip().lower()
-    normalized_sort_order = "asc" if str(sort_order or "").strip().lower() == "asc" else "desc"
-    _ensure_files_table()
     params: List[Any] = [uid]
     where = """
         FROM files
@@ -1331,6 +1324,54 @@ def list_media_entries_page_for_user(
           AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id = files.id)
           AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id = files.id)
         """
+    return where, params
+
+
+def list_user_file_ids_matching(
+    *,
+    user_id: str = "",
+    category: str = "",
+    search: str = "",
+    created_before: Optional[int] = None,
+    unreferenced_only: bool = False,
+) -> List[str]:
+    _ensure_files_table()
+    where, params = _media_entries_where_for_user(
+        user_id=user_id,
+        category=category,
+        search=search,
+        created_before=created_before,
+        unreferenced_only=unreferenced_only,
+    )
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id " + where + " ORDER BY created_at ASC, id ASC", params)
+            rows = cur.fetchall() or []
+    return [str(row.get("id") or "").strip() for row in rows if str(row.get("id") or "").strip()]
+
+
+def list_media_entries_page_for_user(
+    *,
+    user_id: str = "",
+    category: str = "",
+    search: str = "",
+    sort_order: str = "desc",
+    created_before: Optional[int] = None,
+    unreferenced_only: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    safe_limit = max(1, min(int(limit or 50), 200))
+    safe_offset = max(0, int(offset or 0))
+    normalized_sort_order = "asc" if str(sort_order or "").strip().lower() == "asc" else "desc"
+    _ensure_files_table()
+    where, params = _media_entries_where_for_user(
+        user_id=user_id,
+        category=category,
+        search=search,
+        created_before=created_before,
+        unreferenced_only=unreferenced_only,
+    )
     with _db_connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS total " + where, params)

@@ -69,16 +69,21 @@ button { border:0; cursor:pointer; }
 .storage-sort-control button:hover { color:var(--text); }
 .storage-sort-control button.active { background:var(--card); color:var(--text); box-shadow:0 1px 4px var(--shadow); }
 .storage-sort-control svg { width:12px; height:12px; }
-.storage-filter-bar { flex:0 0 auto; min-height:43px; padding:7px 12px; border-bottom:1px solid rgba(148,163,184,.18); display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:rgba(148,163,184,.035); }
-.storage-filter-label { color:var(--muted); font-size:10.5px; font-weight:850; }
-.storage-filter-segments { height:28px; padding:2px; border:1px solid var(--line); border-radius:8px; background:var(--soft); display:inline-flex; align-items:center; gap:2px; }
-.storage-filter-segments button { height:22px; padding:0 8px; border-radius:5px; background:transparent; color:var(--muted); font-size:10.5px; font-weight:800; }
-.storage-filter-segments button.active { background:var(--card); color:var(--text); box-shadow:0 1px 4px var(--shadow); }
-.storage-date-filter,.storage-reference-filter { height:28px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--muted); display:inline-flex; align-items:center; gap:6px; padding:0 8px; font-size:10.5px; font-weight:800; }
-.storage-date-filter.active,.storage-reference-filter:has(input:checked) { border-color:var(--strong); color:var(--text); }
-.storage-date-filter input { width:112px; border:0; outline:0; background:transparent; color:var(--text); font:inherit; }
-.storage-reference-filter { cursor:pointer; }
-.storage-reference-filter input { width:14px; height:14px; margin:0; accent-color:var(--strong); }
+.storage-filter-menu { position:relative; }
+.storage-filter-popover { position:absolute; z-index:30; top:calc(100% + 8px); right:0; width:330px; padding:12px; border:1px solid var(--line-2); border-radius:8px; background:var(--panel); box-shadow:0 16px 38px rgba(15,23,42,.18); display:flex; flex-direction:column; gap:12px; }
+.storage-filter-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.storage-filter-head strong { color:var(--text); font-size:12px; }
+.storage-filter-head span,.storage-filter-field > span { color:var(--muted); font-size:10.5px; font-weight:750; }
+.storage-filter-field { display:flex; flex-direction:column; gap:6px; }
+.storage-date-row { display:grid; grid-template-columns:minmax(0,1fr) 28px; gap:6px; }
+.storage-date-filter { position:relative; height:34px; border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--muted); display:flex; align-items:center; gap:7px; padding:0 10px; overflow:hidden; font-size:11px; font-weight:800; cursor:pointer; }
+.storage-date-filter:hover,.storage-date-filter.active { border-color:var(--strong); color:var(--text); background:var(--soft); }
+.storage-date-filter svg { width:14px; height:14px; flex:0 0 auto; }
+.storage-date-filter input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+.storage-reference-filter { min-height:34px; border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--muted); display:flex; align-items:center; gap:8px; padding:7px 10px; font-size:10.5px; line-height:1.35; font-weight:800; cursor:pointer; }
+.storage-reference-filter:has(input:checked) { border-color:var(--strong); color:var(--text); background:var(--soft); }
+.storage-reference-filter input { width:14px; height:14px; margin:0; flex:0 0 auto; accent-color:var(--strong); }
+.storage-delete-matching { width:100%; min-height:32px; height:auto; padding:7px 10px; }
 .compact-actions { gap:4px; }
 .nav-scroll,.content-scroll,.detail-scroll { min-height:0; overflow:auto; scrollbar-width:thin; scrollbar-color:rgba(148,163,184,.42) transparent; }
 .nav-scroll::-webkit-scrollbar,.content-scroll::-webkit-scrollbar,.detail-scroll::-webkit-scrollbar { width:7px; height:7px; }
@@ -291,4 +296,5 @@ button { border:0; cursor:pointer; }
     .content-toolbar { align-items:flex-start; flex-direction:column; }
     .asset-search-wrap { width:100%; }
     .asset-grid { grid-template-columns:repeat(auto-fill, minmax(132px, 1fr)); }
+    .storage-filter-popover { position:fixed; top:auto; right:14px; bottom:14px; left:14px; width:auto; }
 }

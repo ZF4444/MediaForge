@@ -65,9 +65,9 @@ let storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matche
 let storageCategoryFilter = '';
 let storageQuery = '';
 let storageSortOrder = 'desc';
-let storageTimeFilter = '';
 let storageCreatedBefore = null;
 let storageUnreferencedOnly = false;
+let storageFiltersOpen = false;
 let storageSelectedIds = new Set();
 let storageManageMode = false;
 let meInfo = {is_admin:false, user_id:''};
@@ -122,7 +122,7 @@ function formatFileSize(bytes=0){
     return `${(size / Math.pow(1024, idx)).toFixed(idx ? 1 : 0)} ${units[idx]}`;
 }
 function storageDateInputValue(){
-    if(storageTimeFilter !== 'custom' || !storageCreatedBefore) return '';
+    if(!storageCreatedBefore) return '';
     const date = new Date(storageCreatedBefore);
     const offset = date.getTimezoneOffset() * 60000;
     return new Date(date.getTime() - offset).toISOString().slice(0, 10);
@@ -599,6 +599,33 @@ async function deleteStorageEntries(fileIds){
     render();
     setStatus(removed > 0 ? `已删除 ${removed} 个文件` : '未删除任何文件');
 }
+async function deleteAllMatchingStorageEntries(){
+    const {totalMatches} = storagePageInfo();
+    if(!totalMatches) return;
+    const scope = [
+        storageCategoryFilter ? `类别“${storageCategoryFilter}”` : '',
+        storageQuery.trim() ? `搜索“${storageQuery.trim()}”` : '',
+        storageCreatedBefore ? `${storageDateInputValue()} 之前` : '',
+        storageUnreferencedOnly ? '仅未被引用文件' : '',
+    ].filter(Boolean).join('、') || '当前全部文件';
+    if(!window.confirm(`确定删除符合“${scope}”的全部 ${totalMatches} 个文件？此操作不可恢复。`)) return;
+    setStatus(`正在删除 ${totalMatches} 个符合条件的文件...`);
+    const result = await apiJson('/api/storage/delete', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+            all_matching:true,
+            category:storageCategoryFilter,
+            search:storageQuery.trim(),
+            created_before:storageCreatedBefore,
+            unreferenced_only:storageUnreferencedOnly,
+        })
+    });
+    storageSelectedIds.clear();
+    await Promise.all([loadStorageUsage(), loadStorageFiles({reset:true, page:1})]);
+    render();
+    setStatus(`已删除 ${Number(result?.removed || 0)} 个文件`);
+}
 async function switchTab(tab='assets'){
     activeTab = tab || 'assets';
     selectedAssetIds.clear();
@@ -677,17 +704,28 @@ function renderStorageManager(){
                     <label class="asset-search-wrap"><i data-lucide="search"></i><input id="storageSearch" class="asset-search" type="search" value="${escapeAttr(storageQuery)}" placeholder="搜索文件名或类别"></label>
                     <button class="asset-btn" type="button" data-storage-refresh><i data-lucide="refresh-cw"></i><span>刷新</span></button>
                     <button class="asset-btn ${storageManageMode ? 'primary' : ''}" type="button" data-storage-manage ${entries.length ? '' : 'disabled'}><i data-lucide="list-checks"></i><span>${storageManageMode ? '完成管理' : '批量管理'}</span></button>
+                    <div class="storage-filter-menu">
+                        <button class="asset-btn ${(storageFiltersOpen || storageCreatedBefore || storageUnreferencedOnly) ? 'primary' : ''}" type="button" data-storage-filter-toggle aria-expanded="${storageFiltersOpen}"><i data-lucide="list-filter"></i><span>条件筛选</span></button>
+                        ${storageFiltersOpen ? `
+                            <div class="storage-filter-popover">
+                                <div class="storage-filter-head"><strong>筛选条件</strong><span>${totalMatches} 个文件符合条件</span></div>
+                                <div class="storage-filter-field">
+                                    <span>创建时间</span>
+                                    <div class="storage-date-row">
+                                        <label class="storage-date-filter ${storageCreatedBefore ? 'active' : ''}">
+                                            <i data-lucide="calendar-days"></i>
+                                            <span>${storageCreatedBefore ? `${escapeHtml(storageDateInputValue())} 之前` : '指定日期之前'}</span>
+                                            <input id="storageBeforeDate" type="date" value="${escapeAttr(storageDateInputValue())}" aria-label="选择截止日期">
+                                        </label>
+                                        <button class="asset-icon-btn" type="button" data-storage-date-clear ${storageCreatedBefore ? '' : 'disabled'} title="清除日期"><i data-lucide="x"></i></button>
+                                    </div>
+                                </div>
+                                <label class="storage-reference-filter"><input id="storageUnreferencedOnly" type="checkbox" ${storageUnreferencedOnly ? 'checked' : ''}><span>仅未被画布、历史或素材库引用</span></label>
+                                <button class="asset-btn danger storage-delete-matching" type="button" data-storage-delete-matching ${totalMatches ? '' : 'disabled'}><i data-lucide="trash-2"></i><span>删除全部符合条件的 ${totalMatches} 个文件</span></button>
+                            </div>
+                        ` : ''}
+                    </div>
                 </div>
-            </div>
-            <div class="storage-filter-bar">
-                <span class="storage-filter-label">创建时间</span>
-                <div class="storage-filter-segments" role="group" aria-label="按创建时间筛选">
-                    <button class="${!storageTimeFilter ? 'active' : ''}" type="button" data-storage-age="">全部</button>
-                    <button class="${storageTimeFilter === '10' ? 'active' : ''}" type="button" data-storage-age="10">10 天前</button>
-                    <button class="${storageTimeFilter === '20' ? 'active' : ''}" type="button" data-storage-age="20">20 天前</button>
-                </div>
-                <label class="storage-date-filter ${storageTimeFilter === 'custom' ? 'active' : ''}"><span>指定日期之前</span><input id="storageBeforeDate" type="date" value="${escapeAttr(storageDateInputValue())}"></label>
-                <label class="storage-reference-filter"><input id="storageUnreferencedOnly" type="checkbox" ${storageUnreferencedOnly ? 'checked' : ''}><span>仅未被引用文件</span></label>
             </div>
             <div class="manage-tools">
                 <span>已选择 ${storageSelectedIds.size} 个文件。</span>
@@ -1504,12 +1542,18 @@ async function handleClick(event){
         render();
         return;
     }
-    const storageAge = target.closest?.('[data-storage-age]');
-    if(storageAge){
-        const days = Number(storageAge.dataset.storageAge || 0);
-        storageTimeFilter = days ? String(days) : '';
-        storageCreatedBefore = days ? Date.now() - days * 24 * 60 * 60 * 1000 : null;
+    if(target.closest?.('[data-storage-filter-toggle]')){
+        storageFiltersOpen = !storageFiltersOpen;
+        render();
+        return;
+    }
+    if(target.closest?.('[data-storage-date-clear]')){
+        storageCreatedBefore = null;
         await applyStorageFilters();
+        return;
+    }
+    if(target.closest?.('[data-storage-delete-matching]')){
+        await deleteAllMatchingStorageEntries();
         return;
     }
     if(target.closest?.('[data-storage-manage]')){
@@ -2497,9 +2541,16 @@ root.addEventListener('click', event => {
 });
 document.addEventListener('click', event => {
     if(event.target.closest?.('.asset-lightbox') && !event.target.closest?.('.asset-lightbox-image')) closeDetailPreview();
+    if(storageFiltersOpen && !event.target.closest?.('.storage-filter-menu')){
+        storageFiltersOpen = false;
+        render();
+    }
 });
 document.addEventListener('keydown', event => {
-    if(event.key === 'Escape') closeDetailPreview();
+    if(event.key === 'Escape'){
+        closeDetailPreview();
+        if(storageFiltersOpen){ storageFiltersOpen = false; render(); }
+    }
 });
 document.addEventListener('wheel', zoomDetailPreview, {passive:false});
 document.addEventListener('pointerdown', beginLightboxPan);
@@ -2573,7 +2624,6 @@ root.addEventListener('input', event => {
 root.addEventListener('change', event => {
     if(event.target?.id === 'storageBeforeDate'){
         const value = event.target.value || '';
-        storageTimeFilter = value ? 'custom' : '';
         storageCreatedBefore = value ? new Date(`${value}T00:00:00`).getTime() : null;
         applyStorageFilters().catch(err => setStatus(err.message || '加载失败'));
         return;
