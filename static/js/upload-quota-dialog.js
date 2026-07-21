@@ -3,8 +3,25 @@
     const REQUESTED_TAB_KEY = 'asset_manager_requested_tab';
 
     function formatGb(bytes) {
-        const value = Math.max(0, Number(bytes || 0)) / (1024 * 1024 * 1024);
+        if (bytes === null || bytes === undefined || bytes === '') return '--';
+        const size = Number(bytes);
+        if (!Number.isFinite(size) || size < 0) return '--';
+        const value = size / (1024 * 1024 * 1024);
         return value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    }
+
+    async function quotaSnapshot(data) {
+        const snapshot = {...(data || {})};
+        const hasUsedBytes = snapshot.used_bytes !== null && snapshot.used_bytes !== undefined && snapshot.used_bytes !== '' && Number.isFinite(Number(snapshot.used_bytes));
+        if (Number(snapshot.quota_bytes) > 0 && hasUsedBytes) return snapshot;
+        try {
+            const response = await fetch('/api/storage/usage');
+            if (!response.ok) return snapshot;
+            const usage = await response.json();
+            if (!(Number(snapshot.quota_bytes) > 0)) snapshot.quota_bytes = usage?.quota_bytes;
+            if (!hasUsedBytes) snapshot.used_bytes = usage?.used_bytes;
+        } catch (_) {}
+        return snapshot;
     }
 
     function ensureStyles() {
@@ -84,8 +101,8 @@
         let data = {};
         try { data = text ? JSON.parse(text) : {}; }
         catch (_) { data = {detail: text}; }
-        if (response.status === 413 && data?.error === 'storage_quota_exceeded') {
-            showQuotaDialog(data);
+        if (response.status === 413) {
+            showQuotaDialog(await quotaSnapshot(data));
             return {files: [], quota_exceeded: true};
         }
         if (!response.ok) throw new Error(data?.detail || data?.message || '上传失败');
