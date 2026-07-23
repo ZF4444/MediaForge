@@ -7,6 +7,7 @@ const composer = document.getElementById('composer');
 const nodeShortcutOverlay = document.getElementById('nodeShortcutOverlay');
 const nodeContextMenu = document.getElementById('nodeContextMenu');
 const createMenu = document.getElementById('createMenu');
+const portDropMenu = document.getElementById('portDropMenu');
 const promptInput = document.getElementById('promptInput');
 const mentionPicker = document.getElementById('mentionPicker');
 const mentionPreview = document.getElementById('mentionPreview');
@@ -795,6 +796,56 @@ function clearVolcengineSelectionOutsideVolcengine(target=settings){
 }
 function isSmartImageNode(node){
     return Boolean(node && (node.type === 'smart-image' || node.type === 'smart-asset-image' || !node.type));
+}
+function genKindLabel(node){
+    if(node?.genKind === 'video') return '视频生成';
+    if(node?.genKind === 'workflow') return '工作流生成';
+    return '图片生成';
+}
+function genKindIcon(node){
+    if(node?.genKind === 'video') return 'play-square';
+    if(node?.genKind === 'workflow') return 'workflow';
+    return 'image';
+}
+/* 各类生成节点允许的引擎：
+   图片生成 / 视频生成 → AI生成(api) 与 工作流(runninghub)；工作流生成 → 工作流(runninghub)。
+   已移除火山引擎(volcengine)、MS生成(modelscope)选项。
+   返回 null 表示不限制（非定型节点，保留全部引擎）。 */
+function allowedEnginesForNode(node){
+    if(node?.genKind === 'image') return ['api','runninghub'];
+    if(node?.genKind === 'video') return ['api','runninghub'];
+    if(node?.genKind === 'workflow') return ['runninghub'];
+    return null;
+}
+/* 根据生成节点类型返回默认引擎 */
+function defaultEngineForGenKind(kind){
+    if(kind === 'workflow') return 'runninghub';
+    return 'api';
+}
+/* 统一创建"图片生成/视频生成/工作流生成"三类生成节点，供左键创建菜单与拉线菜单共用 */
+function createGenerationNodeByKind(kind, point, options={}){
+    const node = createImageNodeAt(point, [], options);
+    if(kind === 'video'){
+        node.genKind = 'video';
+        // 视频生成节点创建后默认使用「AI生成」(api)，不继承最近使用的工作流等设置
+        node.runSettings = {engine:'api', apiKind:'video'};
+    } else if(kind === 'workflow'){
+        node.genKind = 'workflow';
+        node.runSettings = {engine:'runninghub'};
+    } else {
+        node.genKind = 'image';
+        // 图片生成节点创建后默认使用「AI生成」(api)，不继承最近使用的工作流等设置
+        node.runSettings = {engine:'api', apiKind:'image'};
+    }
+    // createImageNodeAt 内部会在 genKind/runSettings 赋值之前先渲染一次，
+    // 此时节点卡片（图标/标题/hint）和 composer（toggle/engine下拉）都还读不到最新的 genKind，
+    // 需要在赋值后强制刷新一次，保证创建瞬间显示的状态就是正确的。
+    render();
+    if(options.select !== false && selectedId === node.id){
+        lastComposerNodeId = '';
+        updateComposer();
+    }
+    return node;
 }
 function isSmartAssetImageNode(node){
     return Boolean(node && (node.type === 'smart-asset-image' || node.assetOnly === true));
@@ -2419,10 +2470,26 @@ function clearComposerHeadParams(){
 }
 function renderDynamicParams(){
     if(!dynamicParams) return;
+    const node = activeSettingsSubject();
+    const allowedEngines = allowedEnginesForNode(node);
     settings.engine = ['api','volcengine','modelscope','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
-    settings.apiKind = settings.apiKind === 'video' ? 'video' : 'image';
+    // 定型生成节点：强制引擎落在允许列表内，避免继承到画布默认/最近使用的错误引擎（如图片节点误用工作流配置框）
+    if(allowedEngines && !allowedEngines.includes(settings.engine)){
+        settings.engine = allowedEngines.includes(defaultEngineForGenKind(node?.genKind)) ? defaultEngineForGenKind(node?.genKind) : allowedEngines[0];
+    }
+    // 图片生成节点固定 apiKind=image，视频生成节点固定 apiKind=video
+    if(node?.genKind === 'image') settings.apiKind = 'image';
+    else if(node?.genKind === 'video') settings.apiKind = 'video';
+    else settings.apiKind = settings.apiKind === 'video' ? 'video' : 'image';
     clearVolcengineSelectionOutsideVolcengine(settings);
+    // 按节点类型过滤引擎下拉可选项
+    Array.from(engineSelect.options).forEach(opt => {
+        opt.hidden = allowedEngines ? !allowedEngines.includes(opt.value) : opt.value === 'comfy';
+    });
     engineSelect.value = settings.engine;
+    // 工作流生成节点固定engine=runninghub，隐藏engine下拉；图片/视频生成节点保留engine下拉（仅限允许引擎）
+    const isWorkflowNode = node?.genKind === 'workflow';
+    engineSelect.style.display = isWorkflowNode ? 'none' : '';
     clearComposerHeadParams();
     syncApiKindToggleVisibility();
     if(settings.engine === 'api'){
@@ -4375,7 +4442,9 @@ function openNodeContextMenu(nodeId, event){
 }
 function canvasContextMenuHtml(){
     const items = [
-        {action:'generation', icon:'sparkles', label:'生成节点'},
+        {action:'generation-image', icon:'image', label:'图片生成'},
+        {action:'generation-video', icon:'play-square', label:'视频生成'},
+        {action:'generation-workflow', icon:'workflow', label:'工作流生成'},
         {action:'group', icon:'group', label:'分组'},
         {action:'prompt', icon:'text-cursor-input', label:'提示词'},
         {action:'loop', icon:'repeat-2', label:'循环节点'},
@@ -4392,6 +4461,7 @@ function canvasContextMenuHtml(){
 function openCanvasContextMenu(event){
     if(!nodeContextMenu) return;
     closeCreateMenu();
+    closePortDropMenu();
     closeNodeContextMenu();
     lastMouseWorld = screenToWorld(event);
     nodeContextMenu.dataset.canvasContext = '1';
@@ -4410,7 +4480,9 @@ function openCanvasContextMenu(event){
 function triggerCanvasContextAction(action){
     const point = lastMouseWorld || viewportCenter();
     closeNodeContextMenu();
-    if(action === 'generation') createImageNodeAt(point);
+    if(action === 'generation-image') createGenerationNodeByKind('image', point);
+    else if(action === 'generation-video') createGenerationNodeByKind('video', point);
+    else if(action === 'generation-workflow') createGenerationNodeByKind('workflow', point);
     else if(action === 'group') createSmartGroupNode(point.x - 170, point.y - 110);
     else if(action === 'prompt') createPromptNode(point.x - 158, point.y - 97);
     else if(action === 'loop') createLoopNode(point.x - 135, point.y - 95);
@@ -6615,9 +6687,9 @@ function nodeBodyHtml(node, layout){
     if(imgs.length > 1) return `<div class="thumb-grid" style="--thumb-cols:${layout.cols}; --thumb-size:${layout.thumb}px">${imgs.map((img, i) => `<div class="thumb-item ${selectedImage.nodeId === node.id && selectedImage.index === i ? 'image-selected' : ''}" data-image-index="${i}" data-media-signature="${escapeAttr(`${mediaKindForItem(img)}:${img?.url || ''}`)}">${thumbMediaHtml(img)}${imageResolutionBadgeHtml(img)}</div>`).join('')}</div>`;
     if(imgs[0]) return `<div class="image-wrap ${candidatePanelNodeId === node.id ? 'candidate-open' : ''} ${selectedImage.nodeId === node.id && selectedImage.index === 0 ? 'image-selected' : ''}" data-image-index="0" data-media-signature="${escapeAttr(`${mediaKindForItem(imgs[0])}:${imgs[0]?.url || ''}`)}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">${singleMediaHtml(imgs[0], layout.width, layout.height)}${imageResolutionBadgeHtml(imgs[0])}${candidateOverlayHtml(node, layout)}</div>`;
     return `<div class="node-drop">
-        <button class="generation-node-trigger" type="button" data-upload-action="files" title="${escapeHtml(tr('smart.createGenerationNode'))}">
-            <span class="generation-node-main"><i data-lucide="upload-cloud"></i></span>
-            <span class="generation-node-title">${escapeHtml(tr('smart.createGenerationNode'))}</span>
+        <button class="generation-node-trigger" type="button" data-upload-action="files" title="${escapeHtml(genKindLabel(node))}">
+            <span class="generation-node-main"><i data-lucide="${genKindIcon(node)}"></i></span>
+            <span class="generation-node-title">${escapeHtml(genKindLabel(node))}</span>
             <span class="generation-node-sub">拖拽 / 粘贴 / 点击上传</span>
         </button>
     </div>`;
@@ -6703,7 +6775,7 @@ function render(){
     const nodeHtmlEntries = nodes.map(node => {
         if(migrateGeneratedImagesToCandidatePool(node)) migratedCandidates = true;
         const imgs = node.images || [];
-        const title = node.type === 'smart-group' ? (node.title || '智能分组') : node.type === 'smart-prompt' ? 'Prompt' : node.type === 'smart-loop' ? 'Loop' : (imgs.length > 1 ? 'Group' : imgs.length ? 'Image' : escapeHtml(tr('smart.createGenerationNode')));
+        const title = node.type === 'smart-group' ? (node.title || '智能分组') : node.type === 'smart-prompt' ? 'Prompt' : node.type === 'smart-loop' ? 'Loop' : (imgs.length > 1 ? 'Group' : imgs.length ? 'Image' : escapeHtml(genKindLabel(node)));
         const scale = nodeScale(node);
         const layout = imageLayout(imgs, scale, node);
         const isPrompt = node.type === 'smart-prompt';
@@ -6718,7 +6790,7 @@ function render(){
         const isGroup = isImageNode && imgs.length > 1;
         const isPending = ((node.pending || isQueued || isJimengPending) && imgs.length === 0);
         const body = nodeBodyHtml(node, layout);
-        const hint = isSmartGroup ? '拖入图片、提示词或循环节点' : isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(tr('smart.hintEmpty')));
+        const hint = isSmartGroup ? '拖入图片、提示词或循环节点' : isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(node.genKind === 'video' ? '支持视频 / 音频，也可直接文生视频' : node.genKind === 'workflow' ? '支持图片 / 视频 / 音频，ComfyUI 工作流生成' : '支持图片 / 视频 / 音频，也可直接文生图'));
         const floatingActions = candidateControlHtml(node);
         const html = `<div class="image-node ${isEmpty ? 'empty-node' : ''} ${isGroup ? 'group-node' : ''} ${isHistory ? 'history-group-node' : ''} ${isPrompt ? 'prompt-smart-node' : ''} ${isLoop ? 'loop-smart-node' : ''} ${isSmartGroup ? 'smart-group-node' : ''} ${isCompactMember ? 'smart-group-member-node' : ''} ${candidatePanelNodeId === node.id ? 'candidate-panel-open-node' : ''} ${isNodeSelected(node.id) ? 'selected' : ''} ${(dragState?.groupIds?.includes(node.id) || dragState?.id === node.id) ? 'dragging' : ''} ${node.running ? 'node-running' : ''} ${isPending ? 'node-pending' : ''}" data-id="${escapeHtml(node.id)}" style="left:${node.x || 0}px;top:${node.y || 0}px;width:${layout.width}px;height:${layout.height}px">
             <div class="node-head"><div class="node-title">${title}</div></div>
@@ -7199,34 +7271,94 @@ function handlePortDrop(drag, e){
     })();
     if(targetId){
         const compatible = (drag.fromPort === 'out' && targetPort === 'in') || (drag.fromPort === 'in' && targetPort === 'out');
-        if(!compatible){ discardPendingUndo(); render(); return; }
+        if(!compatible){ clearPortDragVisual(); discardPendingUndo(); render(); return; }
         const fromId = drag.fromPort === 'out' ? drag.fromId : targetId;
         const toId = drag.fromPort === 'out' ? targetId : drag.fromId;
         if(connectInputNode(fromId, toId)){
+            clearPortDragVisual();
             commitPendingUndo();
             render();
             scheduleSave();
         } else {
+            clearPortDragVisual();
             discardPendingUndo();
             render();
         }
         return;
     }
-    if(!drag.moved){ discardPendingUndo(); render(); return; }
+    if(!drag.moved){ clearPortDragVisual(); discardPendingUndo(); render(); return; }
     if(hit?.closest?.('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.smart-minimap')){
-        discardPendingUndo(); render(); return;
+        clearPortDragVisual(); discardPendingUndo(); render(); return;
     }
-    const p = screenToWorld(e);
-    undoSuppressed = true;
-    const newNode = createImageNodeAt(p, [], {select:true, skipUndo:true});
-    undoSuppressed = false;
+    // 弹出节点类型选择菜单，保留连线视觉
+    discardPendingUndo();
+    render();
+    openPortDropMenu(e, drag);
+}
+
+/* ─── 拉线释放 → 节点类型选择菜单 ─── */
+let portDropMenuDrag = null;
+let portDropMenuScreenPoint = null;
+
+function openPortDropMenu(event, drag){
+    if(!portDropMenu) return;
+    portDropMenuDrag = drag;
+    portDropMenuScreenPoint = {clientX: event.clientX, clientY: event.clientY};
+    const w = 280, h = 260;
+    const left = Math.max(14, Math.min(window.innerWidth - w - 14, event.clientX + 12));
+    const top = Math.max(14, Math.min(window.innerHeight - h - 14, event.clientY - 20));
+    portDropMenu.style.left = `${left}px`;
+    portDropMenu.style.top = `${top}px`;
+    portDropMenu.removeAttribute('hidden');
+    refreshIcons();
+    // 重新绘制从源节点到鼠标释放位置的连线
+    drawPortDropMenuLine();
+}
+
+function closePortDropMenu(){
+    portDropMenu?.setAttribute('hidden', '');
+    portDropMenuDrag = null;
+    portDropMenuScreenPoint = null;
+    clearPortDragVisual();
+}
+
+function drawPortDropMenuLine(){
+    if(!portDropMenuDrag || !portDropMenuScreenPoint) return;
+    const fromNode = nodes.find(n => n.id === portDropMenuDrag.fromId);
+    if(!fromNode) return;
+    const fr = nodeRect(fromNode);
+    const isOut = portDropMenuDrag.fromPort === 'out';
+    const fx = isOut ? fr.x + fr.width : fr.x;
+    const fy = fr.y + fr.height / 2;
+    const tp = screenToWorld(portDropMenuScreenPoint);
+    const tx = tp.x;
+    const ty = tp.y;
+    const dx = Math.max(50, Math.abs(tx - fx) * 0.45);
+    const sign = isOut ? 1 : -1;
+    const path = ensurePortDragPathElement();
+    if(path) path.setAttribute('d', `M${fx} ${fy} C ${fx + dx * sign} ${fy}, ${tx - dx * sign} ${ty}, ${tx} ${ty}`);
+}
+
+function handlePortDropMenuSelect(nodeType){
+    if(!portDropMenuDrag || !portDropMenuScreenPoint) return;
+    const drag = portDropMenuDrag;
+    const p = screenToWorld(portDropMenuScreenPoint);
+    closePortDropMenu();
+
+    pushUndo();
+    let newNode;
+    if(nodeType === 'text'){
+        newNode = createPromptNode(p.x - 158, p.y - 97, {skipUndo:true, select:true});
+    } else {
+        newNode = createGenerationNodeByKind(nodeType, p, {select:true, skipUndo:true});
+    }
     const fromId = drag.fromPort === 'out' ? drag.fromId : newNode.id;
     const toId = drag.fromPort === 'out' ? newNode.id : drag.fromId;
     connectInputNode(fromId, toId);
-    commitPendingUndo();
     render();
     scheduleSave();
 }
+
 function pickMediaForSmartNode(nodeId){
     const input = document.createElement('input');
     input.type = 'file';
@@ -7631,7 +7763,7 @@ function clearNodeMediaBeforeDelete(id){
     node.candidateIndex = 0;
     node.pending = 0;
     node.running = false;
-    node.title = tr('smart.createGenerationNode');
+    node.title = genKindLabel(node);
     delete node.w;
     delete node.h;
     const history = historyGroupForNode(node);
@@ -14275,7 +14407,7 @@ function closeCreateMenu(){
 function openCreateMenu(event){
     if(!createMenu) return;
     createMenuPoint = screenToWorld(event);
-    const w = 420;
+    const w = 800;
     const h = 286;
     const left = Math.max(14, Math.min(window.innerWidth - w - 14, event.clientX + 8));
     const top = Math.max(14, Math.min(window.innerHeight - h - 14, event.clientY + 8));
@@ -14290,7 +14422,9 @@ function createNodeFromMenu(type){
     if(type === 'group') return createSmartGroupNode(p.x - 170, p.y - 110);
     if(type === 'prompt') return createPromptNode(p.x - 158, p.y - 97);
     if(type === 'loop') return createLoopNode(p.x - 135, p.y - 95);
-    return createImageNodeAt(p);
+    const node = createGenerationNodeByKind(type, p);
+    scheduleSave();
+    return node;
 }
 document.addEventListener('mousedown', event => {
     if(event.button !== 0 || !candidatePanelNodeId) return;
@@ -14308,13 +14442,14 @@ document.addEventListener('click', event => {
     if(closeExpandedCandidateGrids()) setTimeout(() => render(), 0);
 }, true);
 function spacePanBlockedTarget(target){
-    return Boolean(target?.closest?.('button,input,textarea,select,[contenteditable="true"],.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions,.node-context-menu'));
+    return Boolean(target?.closest?.('button,input,textarea,select,[contenteditable="true"],.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.port-drop-menu,.smart-minimap,.selection-actions,.node-context-menu'));
 }
 shell.addEventListener('mousedown', e => {
     if(e.button !== 0 || !spacePanActive || spacePanBlockedTarget(e.target)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     closeCreateMenu();
+    closePortDropMenu();
     closeNodeContextMenu();
     selectionState = null;
     didPan = true;
@@ -14633,7 +14768,6 @@ window.onmouseup = e => {
         const drag = portDragState;
         portDragState = null;
         shell.classList.remove('port-dragging');
-        clearPortDragVisual();
         handlePortDrop(drag, e);
         return;
     }
@@ -14916,7 +15050,10 @@ engineSelect.onchange = () => {
 };
 function syncApiKindToggleVisibility(){
     if(!apiKindToggle) return;
-    apiKindToggle.style.display = isApiLikeEngine(settings.engine) ? 'inline-flex' : 'none';
+    // 图片/视频/工作流生成节点类型固定，均隐藏图片/视频切换；仅非定型旧节点在 api 类引擎下保留切换
+    const node = activeSettingsSubject();
+    const isTypedGenNode = node?.genKind === 'image' || node?.genKind === 'video' || node?.genKind === 'workflow';
+    apiKindToggle.style.display = (!isTypedGenNode && isApiLikeEngine(settings.engine)) ? 'inline-flex' : 'none';
     apiKindToggle.querySelectorAll('[data-kind]').forEach(btn => btn.classList.toggle('active', btn.dataset.kind === (settings.apiKind || 'image')));
 }
 if(apiKindToggle){
@@ -15347,6 +15484,18 @@ createMenu?.addEventListener('click', event => {
     const card = event.target.closest('[data-create-type]');
     if(card) createNodeFromMenu(card.dataset.createType || 'image');
 });
+/* ─── 拉线菜单事件绑定 ─── */
+portDropMenu?.addEventListener('mousedown', event => event.stopPropagation());
+portDropMenu?.addEventListener('click', event => {
+    event.stopPropagation();
+    const item = event.target.closest('[data-node-type]');
+    if(item) handlePortDropMenuSelect(item.dataset.nodeType);
+});
+document.addEventListener('mousedown', event => {
+    if(!portDropMenu || portDropMenu.hidden) return;
+    if(event.target.closest('.port-drop-menu')) return;
+    closePortDropMenu();
+}, true);
 composer.addEventListener('pointerdown', event => event.stopPropagation());
 composer.addEventListener('mousedown', event => event.stopPropagation());
 composer.addEventListener('click', event => {
@@ -15426,7 +15575,7 @@ document.addEventListener('click', event => {
     if(!event.target.closest('.prompt-template-panel') && !event.target.closest('.prompt-preset-edit') && !event.target.closest('#composerTemplateBtn')) closePromptTemplatePanel();
 });
 document.addEventListener('keydown', event => {
-    if(event.key === 'Escape') { closeAllSmartPopovers(); closeCreateMenu(); closeSmartCanvasLog(); closeSmartCanvasShortcuts(); closePromptPresetPanel(); closePromptTemplatePanel(); closeNodeAssetSaveModal(); }
+    if(event.key === 'Escape') { closeAllSmartPopovers(); closeCreateMenu(); closePortDropMenu(); closeSmartCanvasLog(); closeSmartCanvasShortcuts(); closePromptPresetPanel(); closePromptTemplatePanel(); closeNodeAssetSaveModal(); }
 });
 document.getElementById('cropBox').addEventListener('mousedown', event => beginCropDrag(event, 'move'));
 document.getElementById('cropHandle').addEventListener('mousedown', event => beginCropDrag(event, 'resize'));

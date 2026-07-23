@@ -79,10 +79,24 @@
         <div id="createMenu" class="create-menu">
             <div class="create-menu-grid">
                 <button class="create-card" type="button" data-create-type="image">
-                    <span class="create-card-icon"><i data-lucide="upload-cloud"></i></span>
+                    <span class="create-card-icon"><i data-lucide="image"></i></span>
                     <span>
-                        <div class="create-card-title" data-i18n="smart.createGenerationNode">生成节点</div>
-                        <div class="create-card-sub" data-i18n="smart.createGenerationNodeSub">支持图片/音频/视频/批量上传</div>
+                        <div class="create-card-title">图片生成</div>
+                        <div class="create-card-sub">AI 绘画、图片编辑</div>
+                    </span>
+                </button>
+                <button class="create-card" type="button" data-create-type="video">
+                    <span class="create-card-icon"><i data-lucide="play-square"></i></span>
+                    <span>
+                        <div class="create-card-title">视频生成</div>
+                        <div class="create-card-sub">AI 视频、动画合成</div>
+                    </span>
+                </button>
+                <button class="create-card" type="button" data-create-type="workflow">
+                    <span class="create-card-icon"><i data-lucide="workflow"></i></span>
+                    <span>
+                        <div class="create-card-title">工作流生成</div>
+                        <div class="create-card-sub">ComfyUI 工作流节点</div>
                     </span>
                 </button>
                 <button class="create-card" type="button" data-create-type="group">
@@ -107,6 +121,38 @@
                     </span>
                 </button>
             </div>
+        </div>
+        <!-- 拉线释放后弹出的节点类型选择菜单 -->
+        <div id="portDropMenu" class="port-drop-menu" hidden>
+            <div class="port-drop-menu-title">引用该节点生成</div>
+            <button class="port-drop-menu-item" type="button" data-node-type="text">
+                <span class="port-drop-menu-icon"><i data-lucide="align-left"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">文本生成</span>
+                    <span class="port-drop-menu-item-desc">脚本、广告词、品牌文案</span>
+                </span>
+            </button>
+            <button class="port-drop-menu-item" type="button" data-node-type="image">
+                <span class="port-drop-menu-icon"><i data-lucide="image"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">图片生成</span>
+                    <span class="port-drop-menu-item-desc">AI 绘画、图片编辑</span>
+                </span>
+            </button>
+            <button class="port-drop-menu-item" type="button" data-node-type="video">
+                <span class="port-drop-menu-icon"><i data-lucide="play-square"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">视频生成</span>
+                    <span class="port-drop-menu-item-desc">AI 视频、动画合成</span>
+                </span>
+            </button>
+            <button class="port-drop-menu-item" type="button" data-node-type="workflow">
+                <span class="port-drop-menu-icon"><i data-lucide="workflow"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">工作流生成</span>
+                    <span class="port-drop-menu-item-desc">ComfyUI 工作流节点</span>
+                </span>
+            </button>
         </div>
         <input id="fileInput" type="file" accept="image/*,video/*,audio/*" multiple hidden>
         <div id="promptPresetPanel" class="prompt-preset-panel">
