@@ -43,14 +43,36 @@ def compact_history_record(record):
     return compacted
 
 
-def load_history_records():
+def load_history_records(limit: int = None, offset: int = 0):
+    """加载当前用户的历史记录。
+
+    limit=None 时保持原有全量返回语义（兼容未传分页参数的现有前端调用）。
+    无论是否分页，文件引用都改为一次批量查询，消除按记录逐条查询的 N+1。
+    """
     uid = current_user_id()
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM history_records WHERE user_id=%s ORDER BY created_at DESC", (uid,)); rows = cur.fetchall()
+        if limit is not None:
+            cur.execute(
+                "SELECT * FROM history_records WHERE user_id=%s ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                (uid, int(limit), int(offset or 0)),
+            )
+        else:
+            cur.execute("SELECT * FROM history_records WHERE user_id=%s ORDER BY created_at DESC", (uid,))
+        rows = cur.fetchall()
+
+        record_ids = [row["id"] for row in rows]
+        refs_by_record = {rid: [] for rid in record_ids}
+        if record_ids:
+            cur.execute(
+                "SELECT history_record_id,file_id,role FROM history_record_files WHERE history_record_id = ANY(%s) ORDER BY history_record_id, sort_order",
+                (record_ids,),
+            )
+            for r in cur.fetchall():
+                refs_by_record[r["history_record_id"]].append({"file_id": r["file_id"], "role": r["role"]})
+
         result = []
         for row in rows:
-            cur.execute("SELECT file_id,role FROM history_record_files WHERE history_record_id=%s ORDER BY sort_order", (row["id"],))
-            refs = [{"file_id": r["file_id"], "role": r["role"]} for r in cur.fetchall()]
+            refs = refs_by_record.get(row["id"], [])
             record = dict(row.get("extra_json") or {})
             record.update({"id": row["id"], "timestamp": row["created_at"] / 1000, "prompt": row["prompt"], "type": row["type"], "is_cloud": row["is_cloud"], "image_refs": refs})
             result.append(normalize_history_record(record))

@@ -5442,20 +5442,19 @@ async function readSystemClipboardMediaFiles(){
     return files.filter(isSupportedUploadFile);
 }
 function clipboardEventMediaFiles(clipboardData){
-    const directFiles = [...(clipboardData?.files || [])].filter(isSupportedUploadFile);
+    // clipboardData.files 和 clipboardData.items 指向同一份剪贴板内容，二者是同一次
+    // 粘贴的两种访问方式而非两份独立数据。部分浏览器/截图软件组合下，两者生成的 File
+    // 对象在 name/lastModified 上会有细微差异，如果都取出来再靠这些字段去重，可能去重
+    // 失败，导致一次粘贴生成两张重复图片。因此只选其中一路来源：优先 items（可精确按
+    // MIME 类型过滤），为空时才回退到 files。
     const itemFiles = [...(clipboardData?.items || [])]
         .filter(item => item.kind === 'file' && /^(image|video|audio)\//i.test(String(item.type || '')))
         .map(item => {
             try { return item.getAsFile?.() || null; } catch(e) { return null; }
         })
         .filter(isSupportedUploadFile);
-    const seen = new Set();
-    return [...directFiles, ...itemFiles].filter(file => {
-        const key = `${file.name}|${file.type}|${file.size}|${file.lastModified}`;
-        if(seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
+    if(itemFiles.length) return itemFiles;
+    return [...(clipboardData?.files || [])].filter(isSupportedUploadFile);
 }
 function pasteClipboardContent(files, options={}){
     const supportedFiles = [...(files || [])].filter(isSupportedUploadFile);

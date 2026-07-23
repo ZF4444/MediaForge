@@ -21,9 +21,9 @@ logger = get_logger("history")
 
 
 @router.get("/api/history")
-def get_history_api(type: str = None):
+def get_history_api(type: str = None, limit: int = None, offset: int = 0):
     try:
-        data = load_history_records()
+        data = load_history_records(limit=limit, offset=offset)
         if type:
             data = [item for item in data if item.get("type", "zimage") == type]
         data = [item for item in data if item.get("images") and len(item["images"]) > 0]
