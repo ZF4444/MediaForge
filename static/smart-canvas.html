@@ -72,6 +72,29 @@
                 </div>
             </div>
         </div>
+        <div id="promptComposer" class="composer prompt-composer">
+            <div class="composer-card prompt-composer-card">
+                <div class="composer-head">
+                    <div class="composer-head-left">
+                        <select id="promptTaskSelect" class="engine-select">
+                            <option value="llm" data-i18n="smart.promptLlmMode">对话</option>
+                            <option value="caption" data-i18n="smart.promptCaptionMode">反推</option>
+                            <option value="expand" data-i18n="smart.promptExpandMode">扩写</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="promptComposerThumbs" class="input-thumbs-row"></div>
+                <div id="promptComposerInstructionRow" class="prompt-row">
+                    <textarea id="promptComposerInstruction" class="prompt-composer-instruction"></textarea>
+                </div>
+                <div class="param-row">
+                    <div id="promptComposerParams" class="dynamic-params"></div>
+                </div>
+                <div class="composer-actions">
+                    <button id="promptComposerRunBtn" class="run-btn" type="button"><i data-lucide="play"></i><span data-i18n="common.run">运行</span></button>
+                </div>
+            </div>
+        </div>
         <div id="nodeShortcutOverlay" class="node-shortcut-overlay"></div>
         <div id="nodeContextMenu" class="node-context-menu" role="menu" hidden></div>
         <button class="smart-back" type="button" onclick="backToCanvasList()"><i data-lucide="arrow-left"></i><span data-i18n="canvas.backToList">返回画布列表</span></button>

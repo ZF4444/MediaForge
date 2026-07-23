@@ -116,15 +116,11 @@ body.smart-node-drag .image-wrap:hover .image-resolution-badge { opacity:0 !impo
 .theme-dark .prompt-node-pill { background:rgba(15,23,42,.42); border-color:rgba(148,163,184,.26); }
 .prompt-node-pill i,.prompt-node-pill svg { width:12px; height:12px; }
 .prompt-node-pill.active { background:var(--strong); color:var(--strong-text); border-color:var(--strong); }
-.prompt-llm-toggle { margin-block:3px; }
-.prompt-node-llm { display:grid; grid-template-columns:1fr 1fr; gap:5px; align-items:start; }
-.prompt-node-llm select, .prompt-node-llm textarea { min-width:0; border:1px solid rgba(148,163,184,.32); border-radius:9px; background:rgba(255,255,255,.62); color:var(--text); outline:none; font-size:10px; }
-.theme-dark .prompt-node-llm select, .theme-dark .prompt-node-llm textarea { background:rgba(15,23,42,.42); border-color:rgba(148,163,184,.24); }
-.prompt-node-llm select { height:26px; padding:0 7px; }
-.prompt-node-llm .prompt-llm-task, .prompt-node-llm .prompt-llm-rule { grid-column:1 / -1; }
-.prompt-node-llm textarea { grid-column:1 / -1; height:48px; resize:none; overflow:auto; padding:7px; line-height:1.4; scrollbar-width:thin; scrollbar-color:rgba(148,163,184,.45) transparent; }
-.prompt-node-llm .prompt-llm-instruction { height:58px; }
-.prompt-node-llm-actions { grid-column:1 / -1; display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
+/* 提示词节点 LLM 配置框（浮层，复用 composer 布局），出现在节点下方 */
+.prompt-composer-card { grid-template-areas:"head head" "thumbs thumbs" "prompt prompt" "params run" !important; }
+.prompt-composer-instruction { grid-area:prompt; width:100%; box-sizing:border-box; min-height:120px; resize:none; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--text); padding:9px 11px; font-size:12px; line-height:1.45; outline:none; scrollbar-width:thin; scrollbar-color:rgba(148,163,184,.45) transparent; }
+.prompt-composer-instruction:focus { border-color:var(--strong); }
+.prompt-composer-card .dynamic-params select { border:1px solid var(--line); background:var(--card); }
 .prompt-node-run { height:26px; padding:0 9px; border-radius:9px; background:var(--strong); color:var(--strong-text); display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:750; white-space:nowrap; }
 .prompt-node-run i,.prompt-node-run svg { width:12px; height:12px; }
 .prompt-node-run:disabled { opacity:.55; cursor:wait; }
