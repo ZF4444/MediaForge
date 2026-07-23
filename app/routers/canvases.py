@@ -134,22 +134,14 @@ def canvas_record(data):
         "pinned": bool(data.get("pinned") or False),
         "created_at": data.get("created_at", 0),
         "updated_at": data.get("updated_at", 0),
-        "node_count": len(data.get("nodes", [])),
+        "node_count": data["node_count"] if "node_count" in data else len(data.get("nodes", [])),
     }
 
 
 def iter_canvas_records():
-    from app.services.business_metadata import metadata_connection
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM smart_canvases WHERE user_id=%s AND deleted_at IS NULL", (current_user_id(),))
-        ids = [r["id"] for r in cur.fetchall()]
-    records = []
-    for cid in ids:
-        data = load_canvas_payload(current_user_id(), cid)
-        if not data:
-            continue
-        records.append(canvas_record(data))
-    return records
+    from app.services.business_metadata import list_canvas_records
+    rows = list_canvas_records(current_user_id())
+    return [canvas_record(row) for row in rows]
 
 
 def list_canvases():

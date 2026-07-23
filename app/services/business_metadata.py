@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS smart_canvas_nodes (
     position_y DOUBLE PRECISION NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
     data_json JSONB NOT NULL DEFAULT '{}'::jsonb, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_smart_canvas_nodes_canvas_sort ON smart_canvas_nodes(canvas_id, sort_order);
 CREATE TABLE IF NOT EXISTS smart_canvas_node_files (
     id TEXT PRIMARY KEY, node_id TEXT NOT NULL REFERENCES smart_canvas_nodes(id) ON DELETE CASCADE,
     file_id TEXT NOT NULL REFERENCES files(id) ON DELETE RESTRICT, field_name TEXT NOT NULL DEFAULT '',
@@ -233,6 +234,47 @@ def load_canvas_payload(user_id: str, canvas_id: str) -> Optional[Dict[str, Any]
     meta = row.get("viewport_json") or {}; payload = dict(meta.get("payload") or {})
     payload.update({"id": row["id"], "title": row["title"], "icon": row["icon"], "owner": row["owner"], "color": row["color"], "pinned": row["pinned"], "created_at": row["created_at"], "updated_at": row["updated_at"], "deleted_at": row["deleted_at"], "viewport": meta.get("viewport") or {}, "nodes": nodes})
     return payload
+
+
+def list_canvas_records(user_id: str) -> list:
+    """聚合查询画布列表：SQL 层直接算出 node_count，不拉取节点 data_json。
+
+    避免「先查全部 id 再逐个 load_canvas_payload」的 N+1 + 全量节点加载模式。
+    返回的字典字段与 load_canvas_payload 的元数据字段保持一致（不含 nodes/viewport），
+    交由调用方复用现有的规范化逻辑（如 canvas_record）。
+    """
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.id, c.title, c.icon, c.owner, c.color, c.pinned,
+                   c.created_at, c.updated_at, c.viewport_json,
+                   COUNT(n.id) AS node_count
+            FROM smart_canvases c
+            LEFT JOIN smart_canvas_nodes n ON n.canvas_id = c.id
+            WHERE c.user_id=%s AND c.deleted_at IS NULL
+            GROUP BY c.id, c.title, c.icon, c.owner, c.color, c.pinned,
+                     c.created_at, c.updated_at, c.viewport_json
+            """,
+            (user_id,),
+        )
+        rows = cur.fetchall()
+    records = []
+    for row in rows:
+        meta = row.get("viewport_json") or {}
+        payload = dict(meta.get("payload") or {})
+        records.append({
+            "id": row["id"],
+            "title": row["title"],
+            "icon": row["icon"],
+            "owner": row["owner"],
+            "color": row["color"],
+            "pinned": row["pinned"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "kind": payload.get("kind"),
+            "node_count": int(row["node_count"] or 0),
+        })
+    return records
 
 
 def delete_canvas_payload(user_id: str, canvas_id: str) -> None:
