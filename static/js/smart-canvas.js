@@ -20,6 +20,7 @@ const promptComposer = document.getElementById('promptComposer');
 const promptTaskSelect = document.getElementById('promptTaskSelect');
 const promptComposerParams = document.getElementById('promptComposerParams');
 const promptComposerThumbs = document.getElementById('promptComposerThumbs');
+const promptComposerInputPreview = document.getElementById('promptComposerInputPreview');
 const promptComposerInstructionRow = document.getElementById('promptComposerInstructionRow');
 const promptComposerInstruction = document.getElementById('promptComposerInstruction');
 const promptComposerRunBtn = document.getElementById('promptComposerRunBtn');
@@ -5639,7 +5640,8 @@ function renderConnections(){
         const edgeKey = `${conn.from}->${conn.to}`;
         const cascadeState = smartCascadeEdgeState(edgeKey);
         const isCascade = !isHistory && (cascadeKeys.has(edgeKey) || Boolean(cascadeState) || isInsertPreview);
-        const isPendingLine = Boolean(toNode.pending && !isCascade);
+        // 目标节点正在生成（图像节点用 pending，提示词节点用 running）时，入边显示流动动画。
+        const isPendingLine = Boolean((toNode.pending || toNode.running) && !isCascade);
         const {fx, fy, tx, ty, curve, mx, my} = connectionGeometry(fromNode, toNode, isHistory);
         const cls = [
             isPendingLine ? 'conn-pending' : '',
@@ -7755,7 +7757,7 @@ function canAutoConnectDraggedNode(sourceNode, targetNode){
     if(!sourceNode || !targetNode || sourceNode.id === targetNode.id) return false;
     if(isHistoryGroupNode(sourceNode) || isHistoryGroupNode(targetNode)) return false;
     if(isSmartImageNode(sourceNode)) return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop' || targetNode.type === 'smart-prompt';
-    if(sourceNode.type === 'smart-prompt') return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop';
+    if(sourceNode.type === 'smart-prompt') return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop' || targetNode.type === 'smart-prompt';
     if(sourceNode.type === 'smart-loop') return isSmartImageNode(targetNode);
     if(sourceNode.type === 'smart-group') return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop';
     return false;
@@ -10493,6 +10495,7 @@ function renderPromptComposer(node){
     }
     if(promptComposerParams) promptComposerParams.innerHTML = promptComposerParamsHtml(node);
     renderPromptComposerThumbs(node);
+    renderPromptComposerInputPreview(node);
     if(promptComposerRunBtn){
         const runLabel = task === 'caption' ? tr('smart.promptCaptionRun') : task === 'expand' ? tr('smart.promptExpandRun') : tr('common.run');
         promptComposerRunBtn.disabled = Boolean(node.running);
@@ -10666,6 +10669,15 @@ function renderPromptComposerThumbs(node){
     const thumbsHtml = dedup.map((img, i) => inputThumbItemHtml(img, i, node, typeIndexes)).join('');
     promptComposerThumbs.innerHTML = `<div class="input-thumb-list">${thumbsHtml}</div>`;
     bindInputThumbsDrag(node, dedup, promptComposerThumbs);
+}
+// 提示词节点配置框的「上游输入」预览：显示连入的上游提示词文本，与图片生成节点一致。
+function renderPromptComposerInputPreview(node){
+    if(!promptComposerInputPreview) return;
+    const text = node ? inputPromptTextFor(node).trim() : '';
+    promptComposerInputPreview.classList.toggle('has-text', Boolean(text));
+    promptComposerInputPreview.innerHTML = text
+        ? `<div class="input-prompt-preview-label">${escapeHtml(tr('smart.inputUpstream'))}</div><div class="input-prompt-preview-text">${escapeHtml(text)}</div>`
+        : '';
 }
 function bindInputThumbsDrag(node, items, container=inputThumbsRow){
     if(!container) return;
@@ -13611,11 +13623,13 @@ async function runPromptLLMNode(nodeId){
     const images = imageRefsOnly(mediaRefs).map(img => img.url).filter(Boolean);
     const videos = videoRefsOnly(mediaRefs).map(video => video.url).filter(Boolean);
     if(task === 'caption' && !images.length){ toast(tr('smart.promptCaptionNeedImage')); return; }
+    // 上游提示词节点的文本（支持提示词节点输入提示词节点，逻辑与生成节点一致）。
+    const upstreamPrompt = inputPromptTextFor(node).trim();
+    const ownText = (node.llmInstruction || node.text || '').trim();
+    const captionInstruction = [upstreamPrompt, (node.llmInstruction || '').trim()].filter(Boolean).join('\n\n').trim();
     const message = task === 'caption'
-        ? (node.llmInstruction || '请描述这张图片').trim()
-        : task === 'expand'
-        ? (node.llmInstruction || node.text || '').trim()
-        : (node.llmInstruction || node.text || '').trim();
+        ? (captionInstruction || '请描述这张图片')
+        : [upstreamPrompt, ownText].filter(Boolean).join('\n\n').trim();
     if(!message){ toast(tr('smart.promptLlmNeedText')); return; }
     node.running = true;
     render();

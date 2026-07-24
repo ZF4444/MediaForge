@@ -117,7 +117,7 @@ body.smart-node-drag .image-wrap:hover .image-resolution-badge { opacity:0 !impo
 .prompt-node-pill i,.prompt-node-pill svg { width:12px; height:12px; }
 .prompt-node-pill.active { background:var(--strong); color:var(--strong-text); border-color:var(--strong); }
 /* 提示词节点 LLM 配置框（浮层，复用 composer 布局），出现在节点下方 */
-.prompt-composer-card { grid-template-areas:"head head" "thumbs thumbs" "prompt prompt" "params run" !important; }
+.prompt-composer-card { grid-template-areas:"head head" "thumbs thumbs" "prompt-preview prompt-preview" "prompt prompt" "params run" !important; }
 .prompt-composer-instruction { grid-area:prompt; width:100%; box-sizing:border-box; min-height:120px; resize:none; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--text); padding:9px 11px; font-size:12px; line-height:1.45; outline:none; scrollbar-width:thin; scrollbar-color:rgba(148,163,184,.45) transparent; }
 .prompt-composer-instruction:focus { border-color:var(--strong); }
 .prompt-composer-card .dynamic-params select { border:1px solid var(--line); background:var(--card); }
