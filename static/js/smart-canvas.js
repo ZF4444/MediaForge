@@ -5365,6 +5365,27 @@ function cloneSmartNode(node, dx=0, dy=0){
     delete copy.runFinishedAt;
     delete copy.runElapsedMs;
     delete copy.runTimerHidden;
+    // 有多个候选资源的节点：复制后仅保留主资源（当前 candidateIndex 指向的那张），丢弃其余候选。
+    if(Array.isArray(copy.candidateImages) && copy.candidateImages.length > 1){
+        const pool = copy.candidateImages.filter(img => img?.url);
+        const mainIndex = Math.max(0, Math.min(pool.length - 1, Number(copy.candidateIndex) || 0));
+        const main = pool[mainIndex];
+        if(main){
+            copy.candidateImages = [main];
+            copy.candidateIndex = 0;
+            copy.images = [{...main, generatedResult:true}];
+        }
+    } else if(shouldUseCandidatePoolForImages(node) && Array.isArray(copy.images) && copy.images.length > 1){
+        // 候选池尚未迁移、仅存在于 images 中的旧节点：同样只保留主资源。
+        const pool = copy.images.filter(img => img?.url);
+        const mainIndex = Math.max(0, Math.min(pool.length - 1, Number(copy.candidateIndex) || 0));
+        const main = pool[mainIndex];
+        if(main){
+            copy.images = [{...main, generatedResult:true}];
+            delete copy.candidateImages;
+            copy.candidateIndex = 0;
+        }
+    }
     if(copy.type === 'smart-group') copy.title = copy.title || '智能分组';
     return copy;
 }
@@ -5374,7 +5395,8 @@ function copySelectedNodes(){
     const copiedNodes = ids.map(id => nodes.find(n => n.id === id)).filter(Boolean);
     if(!copiedNodes.length) return;
     const idSet = new Set(copiedNodes.map(n => n.id));
-    const copiedConnections = (canvas.connections || []).filter(c => idSet.has(c.from) && idSet.has(c.to));
+    // 连线保留：不仅保留被复制节点之间的连线，也保留与外部邻居相连的连线（粘贴时外部端点保持指向原节点）。
+    const copiedConnections = (canvas.connections || []).filter(c => idSet.has(c.from) || idSet.has(c.to));
     nodeClipboard = {
         nodes:JSON.parse(JSON.stringify(copiedNodes)),
         connections:JSON.parse(JSON.stringify(copiedConnections))
@@ -5404,16 +5426,29 @@ function pasteNodes(){
     });
     copies.forEach(copy => {
         if(Array.isArray(copy.inputNodeIds)){
-            copy.inputNodeIds = copy.inputNodeIds.map(id => idMap.get(id)).filter(Boolean);
+            // 已复制的输入指向新副本；外部输入保持指向原节点（连线保留）。
+            copy.inputNodeIds = copy.inputNodeIds.map(id => idMap.get(id) || id).filter(Boolean);
         }
-        if(copy.sourceNodeId) copy.sourceNodeId = idMap.get(copy.sourceNodeId) || '';
+        if(copy.sourceNodeId) copy.sourceNodeId = idMap.get(copy.sourceNodeId) || copy.sourceNodeId;
     });
+    // 复制的端点重映射为新节点；未被复制的外部端点保持原样（连线依然连到原邻居）。
+    const validIds = new Set([...nodes.map(n => n.id), ...copies.map(n => n.id)]);
     const newConnections = (nodeClipboard.connections || []).map(conn => ({
         ...conn,
-        from:idMap.get(conn.from),
-        to:idMap.get(conn.to)
-    })).filter(conn => conn.from && conn.to && conn.from !== conn.to);
-    canvas.connections = [...(canvas.connections || []), ...newConnections];
+        from:idMap.get(conn.from) || conn.from,
+        to:idMap.get(conn.to) || conn.to
+    })).filter(conn =>
+        conn.from && conn.to && conn.from !== conn.to
+        && validIds.has(conn.from) && validIds.has(conn.to)
+    );
+    const mergedConnections = [...(canvas.connections || [])];
+    newConnections.forEach(conn => {
+        const kind = conn.kind || 'flow';
+        if(!mergedConnections.some(c => c.from === conn.from && c.to === conn.to && (c.kind || 'flow') === kind)){
+            mergedConnections.push(conn);
+        }
+    });
+    canvas.connections = mergedConnections;
     nodes.push(...copies);
     selectedId = copies.length === 1 ? copies[0].id : '';
     selectedIds = copies.length > 1 ? copies.map(n => n.id) : [];
@@ -5525,13 +5560,29 @@ function duplicateForAltDrag(node){
         return copy;
     });
     copies.forEach(copy => {
-        if(Array.isArray(copy.inputNodeIds)) copy.inputNodeIds = copy.inputNodeIds.map(id => idMap.get(id)).filter(Boolean);
-        if(copy.sourceNodeId) copy.sourceNodeId = idMap.get(copy.sourceNodeId) || '';
+        if(Array.isArray(copy.inputNodeIds)) copy.inputNodeIds = copy.inputNodeIds.map(id => idMap.get(id) || id).filter(Boolean);
+        if(copy.sourceNodeId) copy.sourceNodeId = idMap.get(copy.sourceNodeId) || copy.sourceNodeId;
     });
     const idSet = new Set(sourceNodes.map(n => n.id));
-    const copiedConnections = (canvas.connections || []).filter(c => idSet.has(c.from) && idSet.has(c.to));
-    const newConnections = copiedConnections.map(conn => ({...conn, from:idMap.get(conn.from), to:idMap.get(conn.to)})).filter(conn => conn.from && conn.to && conn.from !== conn.to);
-    canvas.connections = [...(canvas.connections || []), ...newConnections];
+    // 连线保留：包含与外部邻居相连的连线，外部端点保持指向原节点。
+    const copiedConnections = (canvas.connections || []).filter(c => idSet.has(c.from) || idSet.has(c.to));
+    const validIds = new Set([...nodes.map(n => n.id), ...copies.map(n => n.id)]);
+    const newConnections = copiedConnections.map(conn => ({
+        ...conn,
+        from:idMap.get(conn.from) || conn.from,
+        to:idMap.get(conn.to) || conn.to
+    })).filter(conn =>
+        conn.from && conn.to && conn.from !== conn.to
+        && validIds.has(conn.from) && validIds.has(conn.to)
+    );
+    const mergedConnections = [...(canvas.connections || [])];
+    newConnections.forEach(conn => {
+        const kind = conn.kind || 'flow';
+        if(!mergedConnections.some(c => c.from === conn.from && c.to === conn.to && (c.kind || 'flow') === kind)){
+            mergedConnections.push(conn);
+        }
+    });
+    canvas.connections = mergedConnections;
     nodes.push(...copies);
     selectedId = '';
     selectedIds = [];
