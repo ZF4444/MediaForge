@@ -5410,8 +5410,9 @@ function copySelectedNodes(){
     const copiedNodes = ids.map(id => nodes.find(n => n.id === id)).filter(Boolean);
     if(!copiedNodes.length) return;
     const idSet = new Set(copiedNodes.map(n => n.id));
-    // 连线保留：不仅保留被复制节点之间的连线，也保留与外部邻居相连的连线（粘贴时外部端点保持指向原节点）。
-    const copiedConnections = (canvas.connections || []).filter(c => idSet.has(c.from) || idSet.has(c.to));
+    // 连线保留策略：只保留「流入被复制节点」的连线（上游 → 复制节点，即 to 端在复制集内）。
+    // 这样复制下游节点会保留与上游的连线；复制上游节点则不会保留其流向下游的连线。
+    const copiedConnections = (canvas.connections || []).filter(c => idSet.has(c.to));
     nodeClipboard = {
         nodes:JSON.parse(JSON.stringify(copiedNodes)),
         connections:JSON.parse(JSON.stringify(copiedConnections))
@@ -5579,8 +5580,9 @@ function duplicateForAltDrag(node){
         if(copy.sourceNodeId) copy.sourceNodeId = idMap.get(copy.sourceNodeId) || copy.sourceNodeId;
     });
     const idSet = new Set(sourceNodes.map(n => n.id));
-    // 连线保留：包含与外部邻居相连的连线，外部端点保持指向原节点。
-    const copiedConnections = (canvas.connections || []).filter(c => idSet.has(c.from) || idSet.has(c.to));
+    // 连线保留策略：只保留「流入被复制节点」的连线（to 端在复制集内），
+    // 即保留与上游的连线，不保留复制节点流向下游的连线。外部上游端点保持指向原节点。
+    const copiedConnections = (canvas.connections || []).filter(c => idSet.has(c.to));
     const validIds = new Set([...nodes.map(n => n.id), ...copies.map(n => n.id)]);
     const newConnections = copiedConnections.map(conn => ({
         ...conn,
@@ -11498,13 +11500,11 @@ function inputPromptTextFor(node, ctx=smartLoopContext){
     const relayText = Array.isArray(ctx?.relayPromptNodeIds)
         ? ctx.relayPromptNodeIds.map(id => nodes.find(n => n.id === id)).map(input => textForNode(input, ctx)).filter(Boolean)
         : [];
-    const seen = new Set();
-    return [...directText, ...relayText].filter(text => {
-        const key = String(text || '').trim();
-        if(!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    }).join('\n\n');
+    // 不去重：两个内容相同的提示词节点都应各自贡献一份文本（仅过滤空文本）。
+    return [...directText, ...relayText]
+        .map(text => String(text || '').trim())
+        .filter(Boolean)
+        .join('\n\n');
 }
 function upstreamLoopPromptNodesFor(node){
     return promptInputNodesFor(node).filter(input => input?.type === 'smart-loop' && input.showPrompt);

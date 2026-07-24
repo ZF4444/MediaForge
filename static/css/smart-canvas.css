@@ -544,7 +544,14 @@ video.node-img { object-fit:contain; background:#0f172a; }
 .input-prompt-preview { grid-area:prompt-preview; display:none; min-width:0; padding:8px 10px; border:1px dashed rgba(148,163,184,.34); border-radius:12px; background:var(--soft); }
 .input-prompt-preview.has-text { display:flex; flex-direction:column; gap:4px; }
 .input-prompt-preview-label { color:var(--faint); font-size:9.5px; font-weight:850; line-height:1.2; }
-.input-prompt-preview-text { color:var(--muted); font-size:11px; line-height:1.42; max-height:148px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; scrollbar-width:thin; }
+.input-prompt-preview-text { color:var(--muted); font-size:11px; line-height:1.42; max-height:148px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; scrollbar-width:thin; scrollbar-color:rgba(148,163,184,.45) transparent; }
+.input-prompt-preview-text::-webkit-scrollbar { width:7px; height:7px; }
+.input-prompt-preview-text::-webkit-scrollbar-track { background:transparent; }
+.input-prompt-preview-text::-webkit-scrollbar-thumb { background:rgba(148,163,184,.42); border-radius:999px; border:2px solid transparent; background-clip:content-box; }
+.input-prompt-preview-text::-webkit-scrollbar-thumb:hover { background:rgba(100,116,139,.6); background-clip:content-box; }
+.theme-dark .input-prompt-preview-text { scrollbar-color:rgba(148,163,184,.35) transparent; }
+.theme-dark .input-prompt-preview-text::-webkit-scrollbar-thumb { background:rgba(148,163,184,.3); background-clip:content-box; }
+.theme-dark .input-prompt-preview-text::-webkit-scrollbar-thumb:hover { background:rgba(148,163,184,.5); background-clip:content-box; }
 .input-thumb-list { display:flex; align-items:center; gap:6px; min-width:0; overflow:visible; padding:5px 0 0 5px; }
 .input-thumb-actions { flex:0 0 auto; margin-left:auto; display:flex; align-items:center; gap:6px; }
 .input-thumb-actions .smart-pill { height:28px; white-space:nowrap; }
@@ -815,6 +822,8 @@ video.node-img { object-fit:contain; background:#0f172a; }
 .run-btn span { white-space:nowrap; }
 .run-btn i,.run-btn svg { width:var(--ctrl-icon) !important; height:var(--ctrl-icon) !important; stroke-width:2; flex:0 0 auto; }
 .run-btn:disabled { opacity:.55; cursor:wait; }
+/* 提示词配置框运行按钮：运行中显示的 loader-2 图标持续旋转 */
+#promptComposerRunBtn:disabled i,#promptComposerRunBtn:disabled svg { animation:spin .8s linear infinite; }
 .cascade-run-btn { width:76px; background:var(--card); color:var(--text); border:1px solid var(--line); }
 .cascade-run-btn:hover:not(:disabled) { border-color:var(--text); }
 .param-row { grid-area:params; min-width:0; margin-top:0; display:flex; align-items:center; gap:var(--ctrl-gap); overflow:visible; flex-wrap:wrap; row-gap:4px; }
