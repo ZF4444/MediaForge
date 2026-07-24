@@ -11327,8 +11327,11 @@ function connectInputNode(fromId, toId){
     const to = nodes.find(n => n.id === toId);
     if(!from || !to || from.id === to.id) return false;
     if(to.type === 'smart-loop'){
-        const looksImage = isSmartImageNode(from) || (from.type === 'smart-loop' && from.imageInput);
-        const looksPrompt = from.type === 'smart-prompt' || (from.type === 'smart-loop' && from.showPrompt);
+        // 智能分组按其成员内容识别：含图片则可作图片输入，含提示词/循环则可作提示词输入。
+        const groupHasImage = isSmartGroupNode(from) && smartGroupImageRefs(from).length > 0;
+        const groupHasPrompt = isSmartGroupNode(from) && smartGroupCompactMembers(from).some(m => m.type === 'smart-prompt' || (m.type === 'smart-loop' && m.showPrompt));
+        const looksImage = isSmartImageNode(from) || (from.type === 'smart-loop' && from.imageInput) || groupHasImage;
+        const looksPrompt = from.type === 'smart-prompt' || (from.type === 'smart-loop' && from.showPrompt) || groupHasPrompt;
         if(looksImage && !to.imageInput) to.imageInput = true;
         if(looksPrompt && !to.showPrompt) to.showPrompt = true;
         if(looksImage || looksPrompt) fitSmartLoopNode(to);
@@ -11436,6 +11439,14 @@ function smartLoopInputPromptItems(node){
             if(input.type === 'smart-loop') {
                 const text = smartLoopPrompt(input);
                 return text ? [text] : [];
+            }
+            if(input.type === 'smart-group') {
+                // 智能分组作为输入：收集其成员里的提示词/循环文本。
+                return smartGroupCompactMembers(input).flatMap(member => {
+                    if(member.type === 'smart-prompt') return String(member.text || '').trim() ? [String(member.text || '').trim()] : [];
+                    if(member.type === 'smart-loop') { const t = smartLoopPrompt(member); return t ? [t] : []; }
+                    return [];
+                });
             }
             return [];
         }).filter(Boolean);
