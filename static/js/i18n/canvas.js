@@ -10,6 +10,7 @@
         "canvas.classicDeprecationMessage": { zh: "普通画布未来将会弃用，现在仅支持打开用于数据保存迁移，如需使用AI请创建智能画布", en: "Classic Canvas will be retired. It is now available only for opening, saving, and migrating existing data. Create a Smart Canvas to use AI features." },
         "canvas.classicDeprecationConfirm": { zh: "我知道了", en: "Got it" },
         "canvas.backToManager": { zh: "返回画布管理", en: "Back to canvas manager" },
+        "canvas.backToList": { zh: "返回列表", en: "Back to list" },
         "canvas.untitled": { zh: "未命名画布", en: "Untitled Canvas" },
         "canvas.chooseFirst": { zh: "请选择或新建画布", en: "Choose or create a canvas" },
         "canvas.image": { zh: "上传", en: "Upload" },
