@@ -10,6 +10,8 @@
         "smart.kindImage": { zh: "图片", en: "Image" },
         "smart.kindVideo": { zh: "视频", en: "Video" },
         "smart.promptPlaceholder": { zh: "描述你想生成或编辑的图片...", en: "Describe what you want to generate or edit..." },
+        "smart.promptPlaceholderBasic": { zh: "描述任何你想要生成的内容", en: "Describe anything you want to generate" },
+        "smart.promptPlaceholderWithMention": { zh: "描述任何你想要生成的内容，按 @ 引用素材", en: "Describe anything you want to generate. Press @ to reference assets" },
         "smart.promptTemplateLibrary": { zh: "模板库", en: "Templates" },
         "smart.tplAll": { zh: "全部", en: "All" },
         "smart.tplCatView": { zh: "视角", en: "View" },

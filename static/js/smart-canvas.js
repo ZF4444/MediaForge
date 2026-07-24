@@ -3203,7 +3203,22 @@ function smartPromptInputEnabledForSettings(sourceSettings=settings){
 function updatePromptPlaceholder(){
     if(!promptInput) return;
     const suggestion = rhDefaultPromptSuggestion();
-    promptInput.dataset.placeholder = suggestion || tr('smart.promptPlaceholder');
+    if(suggestion){
+        promptInput.dataset.placeholder = suggestion;
+        return;
+    }
+    const node = activeSettingsSubject();
+    const isVideo = node?.genKind === 'video' || settings.apiKind === 'video';
+    // 视频生成节点：无论有无输入，均使用基础文案。
+    if(isVideo){
+        promptInput.dataset.placeholder = tr('smart.promptPlaceholderBasic');
+        return;
+    }
+    // 图片生成节点：有输入素材时提示可用 @ 引用，否则用基础文案。
+    const hasInput = node ? visibleReferenceImagesFor(node).length > 0 : false;
+    promptInput.dataset.placeholder = hasInput
+        ? tr('smart.promptPlaceholderWithMention')
+        : tr('smart.promptPlaceholderBasic');
 }
 function syncComposerPromptVisibility(){
     const row = promptInput?.closest?.('.prompt-row');
@@ -11917,7 +11932,7 @@ function collectPromptParts(){
         if(node.classList?.contains('mention-image-token')){
             let assetUris = {};
             try { assetUris = JSON.parse(node.dataset.assetUris || '{}') || {}; } catch(e) { assetUris = {}; }
-            parts.push({type:'image', url:node.dataset.url || '', name:node.dataset.name || '图片', nodeId:node.dataset.nodeId || '', imageIndex:Number(node.dataset.imageIndex || 0), asset_uris:assetUris});
+            parts.push({type:'image', url:node.dataset.url || '', name:node.dataset.name || '图片', kind:node.dataset.kind || '', nodeId:node.dataset.nodeId || '', imageIndex:Number(node.dataset.imageIndex || 0), asset_uris:assetUris});
             return;
         }
         if(node.tagName === 'BR') parts.push({type:'text', text:'\n'});
@@ -11950,26 +11965,38 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
     const refs = defaultRefs.map((img, index) => ({...img, role:`image_${index + 1}`}));
     let hasMentionToken = false;
     const refMap = new Map();
-    refs.forEach((img, index) => refMap.set(img.url, index + 1));
-    let body = '';
+    refs.forEach((img, index) => refMap.set(img.url, index));
+    // 先按 text / ref 分段收集正文，待 refs 全部确定后再按类型生成「图N / 视频N / 音频N」标签。
+    const segments = [];
     parts.forEach(part => {
         if(part.type === 'text'){
-            body += part.text;
+            segments.push({type:'text', text:part.text});
             return;
         }
         if(!part.url) return;
         hasMentionToken = true;
         const mentionedKey = inputRefKey(part);
         if(blockedRefs.has(mentionedKey)){
-            body += `@${part.name || '图片'}`;
+            segments.push({type:'text', text:`@${part.name || '图片'}`});
             return;
         }
         if(!refMap.has(part.url)){
-            refMap.set(part.url, refs.length + 1);
+            refMap.set(part.url, refs.length);
             refs.push({file_id:part.file_id || '', url:part.url, name:part.name || `图${refs.length + 1}`, nodeId:part.nodeId, imageIndex:part.imageIndex, role:`image_${refs.length + 1}`, kind:part.kind || ''});
         }
-        body += `图${refMap.get(part.url)}`;
+        segments.push({type:'ref', url:part.url, name:part.name || ''});
     });
+    // 编号必须与下游实际传给模型的顺序一致：图片走 imageRefsOnly、视频走 videoRefsOnly、音频走 audioRefsOnly，
+    // 这里用相同的过滤函数按同样的顺序生成「图N / 视频N / 音频N」标签，保证正文里的编号与模型收到的第 N 个素材对应。
+    const refLabels = new Map();
+    imageRefsOnly(refs).forEach((ref, i) => refLabels.set(ref.url, `图${i + 1}`));
+    videoRefsOnly(refs).forEach((ref, i) => refLabels.set(ref.url, `视频${i + 1}`));
+    audioRefsOnly(refs).forEach((ref, i) => refLabels.set(ref.url, `音频${i + 1}`));
+    let body = segments.map(seg => {
+        if(seg.type === 'text') return seg.text;
+        // 未被任何类型过滤命中的引用（不会真正传给模型），退化为其名称，避免用错误的编号误导模型。
+        return refLabels.get(seg.url) || (seg.name ? `@${seg.name}` : '');
+    }).join('');
     body = body.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     const inputPrompt = promptEnabled ? inputPromptTextFor(node, ctx).trim() : '';
     if(inputPrompt) body = [inputPrompt, body].filter(Boolean).join('\n\n');
@@ -11977,20 +12004,12 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
         body = rhDefaultPromptSuggestion();
     }
     const displayPrompt = originalPrompt || body;
-    if(hasMentionToken && refs.length){
-        const mapText = refs.map((img, i) => `图${i + 1}：${img.name || `图片${i + 1}`}`).join('\n');
-        return {
-            prompt:`${tr('smart.refMapHeader')}\n${mapText}\n\n${tr('smart.refUserNeed')}\n${body}`,
-            displayPrompt,
-            refs:refs.map((img, index) => ({file_id:img.file_id || '', url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`, kind:img.kind || ''})),
-            mentioned:true
-        };
-    }
+    // 提示词正文里已用「图N」指代参考图，参考图按顺序传给模型，无需再额外注入编号对照表与「用户需求：」前缀。
     return {
         prompt:body,
         displayPrompt,
         refs:refs.map((img, index) => ({file_id:img.file_id || '', url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`, kind:img.kind || ''})),
-        mentioned:false
+        mentioned:hasMentionToken && refs.length > 0
     };
 }
 function outgoingConnectionsFor(node, kinds=['input']){
