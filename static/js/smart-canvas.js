@@ -1720,7 +1720,10 @@ function groupImageGridLayout(count, explicitW, explicitH, maxThumb, pad=32, gap
     return best || {cols:fallbackCols, rows:fallbackRows, visibleRows:Math.min(Math.max(1, maxVisibleRows), fallbackRows), thumb:28};
 }
 function smartNodeInputThumbRows(count){
-    return count ? Math.ceil(Math.min(10, count) / 5) : 0;
+    if(!count) return 0;
+    // 最多展示 10 个缩略图；超过时会多出一个「+N」框，需额外占一格参与换行计算。
+    const displayCount = count > 10 ? 11 : count;
+    return Math.ceil(displayCount / 5);
 }
 function smartNodeInputThumbsHeight(images){
     const rows = smartNodeInputThumbRows((images || []).length);
@@ -7400,6 +7403,8 @@ function handlePortDropMenuSelect(nodeType){
     let newNode;
     if(nodeType === 'text'){
         newNode = createPromptNode(p.x - 158, p.y - 97, {skipUndo:true, select:true});
+    } else if(nodeType === 'loop'){
+        newNode = createLoopNode(p.x - 135, p.y - 95, {skipUndo:true, select:true});
     } else {
         newNode = createGenerationNodeByKind(nodeType, p, {select:true, skipUndo:true});
     }
