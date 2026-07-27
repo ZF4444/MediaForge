@@ -13131,6 +13131,149 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         settings = previousSettings;
     }
 }
+// ── 循环级联「拷贝完整链路」实现 ──
+// 从循环的直接下游根节点(rootNode)出发，收集整条下游链路（不含循环节点）的节点与内部连线。
+function collectLoopChainSubgraph(rootNode, graph){
+    if(!rootNode?.id) return {nodes:[], edges:[]};
+    const nodeIds = new Set();
+    const edges = [];
+    const seenEdge = new Set();
+    const walk = id => {
+        if(nodeIds.has(id)) return;
+        nodeIds.add(id);
+        (graph.children.get(id) || []).forEach(target => {
+            if(!target?.id || target.type === 'smart-loop') return; // 不含循环节点
+            const key = `${id}->${target.id}`;
+            if(!seenEdge.has(key)){ seenEdge.add(key); edges.push({from:id, to:target.id}); }
+            walk(target.id);
+        });
+    };
+    walk(rootNode.id);
+    const chainNodes = [...nodeIds].map(id => nodes.find(n => n.id === id)).filter(Boolean);
+    return {nodes:chainNodes, edges};
+}
+// 为某一轮克隆一条完整链路：深拷贝链路节点(新id)，重映射内部连线，按轮次偏移位置，
+// 再创建一个装当前轮素材的图片节点，连到克隆链路的根节点。
+function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endIndex, roundOffset){
+    const rootRect = nodeRect(rootNode);
+    const rowGap = (Number(rootRect.height) || 180) + 60;
+    const dy = (roundOffset + 1) * rowGap; // 原链路在上，克隆链路依次向下排列
+    const idMap = new Map();
+    const clones = subgraph.nodes.map(node => {
+        const clone = cloneSmartNode(node, 0, dy);
+        idMap.set(node.id, clone.id);
+        // 克隆的生成节点需要重新生成：清空既有结果与运行痕迹。
+        clone.images = [];
+        clone.candidateImages = [];
+        clone.candidateIndex = 0;
+        clone.pending = 0;
+        clone.queued = false;
+        clone.running = false;
+        delete clone.pendingTasks;
+        delete clone.pendingCandidatePool;
+        delete clone.runPrompt;
+        delete clone.runModelPrompt;
+        delete clone.runPromptRefs;
+        delete clone.runInputRefs;
+        delete clone.runAt;
+        delete clone.sourceNodeId;
+        clone.loopCloneRound = loopIndex;
+        clone.loopCloneSourceId = loopNode?.id || '';
+        return clone;
+    });
+    clones.forEach(clone => {
+        // 仅保留链路内部的上游引用；指向链路外（如循环节点）的引用去掉。
+        if(Array.isArray(clone.inputNodeIds)){
+            clone.inputNodeIds = clone.inputNodeIds.map(id => idMap.get(id)).filter(Boolean);
+        }
+        if(clone.sourceNodeId) clone.sourceNodeId = idMap.get(clone.sourceNodeId) || '';
+    });
+    nodes.push(...clones);
+    // 重映射内部连线。
+    subgraph.edges.forEach(edge => {
+        const from = idMap.get(edge.from);
+        const to = idMap.get(edge.to);
+        if(from && to) addConnection(from, to, 'flow');
+    });
+    const clonedRoot = nodes.find(n => n.id === idMap.get(rootNode.id));
+    // 素材节点：装当前轮的输入图，直接连到克隆根节点。
+    let materialNode = null;
+    const roundRefs = refsForDirectLoopRound(loopNode, loopIndex, endIndex).filter(ref => ref?.url);
+    if(roundRefs.length && clonedRoot){
+        const images = roundRefs.map((ref, i) => stripImageGenerationMeta({
+            file_id:ref.file_id || '',
+            url:ref.url,
+            name:ref.name || trf('canvas.loopImageLabel', {n:loopIndex + i}),
+            kind:ref.kind || (isVideoMediaItem(ref) ? 'video' : 'image')
+        })).filter(img => img.url);
+        const matRect = nodeRect(rootNode);
+        materialNode = {
+            id:uid('smart'),
+            type:'smart-image',
+            x:(Number(rootNode.x) || 0) - Math.max(300, (Number(matRect.width) || 260) + 80),
+            y:(Number(clonedRoot.y) || 0),
+            title:images.length > 1 ? 'Group' : 'Image',
+            images,
+            scale:images.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE,
+            outputKind:mediaKindForUrls(images, images.some(isVideoMediaItem) ? 'video' : 'image'),
+            created_at:Date.now()
+        };
+        nodes.push(materialNode);
+        connectInputNode(materialNode.id, clonedRoot.id);
+    }
+    return {idMap, clones, clonedRoot, materialNode};
+}
+// 执行一条克隆链路：从 clonedRoot 沿内部连线依次生成，直到链路末端。
+async function runClonedLoopChain(clonedRoot, subgraphEdges, idMap, ctx, runState){
+    if(!clonedRoot) return;
+    const childrenMap = new Map();
+    subgraphEdges.forEach(edge => {
+        const from = idMap.get(edge.from);
+        const to = idMap.get(edge.to);
+        if(!from || !to) return;
+        if(!childrenMap.has(from)) childrenMap.set(from, []);
+        childrenMap.get(from).push(to);
+    });
+    const producedRefs = new Map();
+    const runBranch = async (sourceId, incomingRefs=[]) => {
+        throwIfSmartCascadeStopRequested(runState);
+        const source = nodes.find(n => n.id === sourceId);
+        if(!source) return;
+        const targets = (childrenMap.get(sourceId) || []).map(id => nodes.find(n => n.id === id)).filter(Boolean);
+        let sharedRefs = incomingRefs;
+        for(let index = 0; index < targets.length; index++){
+            throwIfSmartCascadeStopRequested(runState);
+            const target = targets[index];
+            const edgeKey = `${sourceId}->${target.id}`;
+            if(runState.runPath){ runState.runPath.states[edgeKey] = 'active'; refreshConnectionLayer(); }
+            let outputs;
+            if(index === 0){
+                outputs = await runCascadeStepIntoNode(source, target, incomingRefs, ctx);
+                sharedRefs = cascadeRefsFromOutputs(outputs, target);
+            } else {
+                outputs = appendCascadeRefsToReceiver(target, sharedRefs, ctx);
+            }
+            if(runState.runPath){ runState.runPath.states[edgeKey] = 'done'; refreshConnectionLayer(); }
+            const refs = index === 0 ? sharedRefs : cascadeRefsFromOutputs(outputs, target);
+            producedRefs.set(target.id, refs);
+            await runBranch(target.id, refs);
+        }
+    };
+    // 克隆根节点的输入素材来自其上游素材节点。
+    const rootRefs = defaultReferenceImagesFor(clonedRoot, true, ctx).filter(img => img?.url);
+    // clonedRoot 本身需要先生成：它没有链路内上游，因此用其素材节点作为输入直接生成到自己。
+    const rootUpstream = primaryImageInputFor(clonedRoot, {includeFlow:true});
+    if(rootUpstream){
+        const edgeKey = `${rootUpstream.id}->${clonedRoot.id}`;
+        if(runState.runPath){ runState.runPath.states[edgeKey] = 'active'; refreshConnectionLayer(); }
+        const outputs = await runCascadeStepIntoNode(rootUpstream, clonedRoot, rootRefs, ctx);
+        if(runState.runPath){ runState.runPath.states[edgeKey] = 'done'; refreshConnectionLayer(); }
+        producedRefs.set(clonedRoot.id, cascadeRefsFromOutputs(outputs, clonedRoot));
+    } else {
+        producedRefs.set(clonedRoot.id, rootRefs);
+    }
+    await runBranch(clonedRoot.id, producedRefs.get(clonedRoot.id) || rootRefs);
+}
 function appendCascadeRefsToReceiver(node, refs, ctx=smartLoopContext){
     if(!node || !refs?.length) return [];
     const additions = refs
@@ -13233,6 +13376,67 @@ async function runSmartCascade(targetNode=null){
     const endIndex = startIndex + (totalRounds - 1) * batchSize;
     const loopMode = loop?.mode === 'parallel' ? 'parallel' : 'serial';
     const parallelLimit = loopMode === 'parallel' && totalRounds > 1 ? smartCascadeParallelLimit(chain) : 1;
+    // ── 循环级联新逻辑：保留并跳过原链路，为每一轮克隆一条完整链路（不含循环节点），
+    //    每条链路由「装当前轮素材的图片节点」驱动。串行=跑完一条建一条；并行=先建跑 parallelLimit 条，之后每完成一条再建一条。──
+    if(loop && graph.root){
+        const subgraph = collectLoopChainSubgraph(graph.root, graph);
+        if(!subgraph.nodes.length){ toast(tr('smart.loopNoChain')); smartCascadeRuns.delete(runKey); syncSmartCascadeLegacyState(); smartCascadeSilentSelection = false; runBtn.disabled = smartCascadeAnyRunning(); cascadeRunBtn.disabled = false; return; }
+        runState.runPath = {states:{}};
+        smartCascadeRunPath = runState.runPath;
+        selectedId = '';
+        selectedIds = [];
+        selectedImage = {nodeId:'', index:-1};
+        try {
+            const runOneRound = async (loopIndex, roundOffset) => {
+                throwIfSmartCascadeStopRequested(runState);
+                const ctx = {index:loopIndex, total:endIndex, nodeId:loop.node.id, forceWorkflow:subgraph.nodes.length > 1, runState};
+                const {idMap, clonedRoot} = cloneLoopChainForRound(subgraph, graph.root, loop.node, loopIndex, endIndex, roundOffset);
+                render();
+                refreshConnectionLayer();
+                await runClonedLoopChain(clonedRoot, subgraph.edges, idMap, ctx, runState);
+            };
+            const roundIndexes = Array.from({length:totalRounds}, (_, round) => startIndex + round * batchSize);
+            if(loopMode === 'parallel' && totalRounds > 1){
+                // 并行：worker 池，最多 parallelLimit 条同时进行，每条建完即跑，完成后 worker 领下一轮再建再跑。
+                await runSmartCascadeRoundsWithLimit(roundIndexes, parallelLimit, (loopIndex, roundOffset) => runOneRound(loopIndex, roundOffset), runState);
+            } else {
+                // 串行：跑完一条链路再建下一条。
+                for(let round = 0; round < roundIndexes.length; round++){
+                    throwIfSmartCascadeStopRequested(runState);
+                    await runOneRound(roundIndexes[round], round);
+                }
+            }
+            throwIfSmartCascadeStopRequested(runState);
+            smartLoopContext = null;
+            selectedId = '';
+            selectedIds = [];
+            selectedImage = {nodeId:'', index:-1};
+            activeComposerSubject = null;
+            lastComposerNodeId = '';
+            composer.classList.remove('open');
+            settings = originalSettings;
+            promptInput.innerHTML = originalPromptHtml;
+            scheduleSave();
+            toast(totalRounds > 1
+                ? trf(loopMode === 'parallel' ? 'smart.loopParallelRoundsDone' : 'smart.loopRunRoundsDone', {n:totalRounds})
+                : tr('smart.loopRunDone'));
+        } catch(e) {
+            smartLoopContext = null;
+            selectedId = originalSelected;
+            settings = originalSettings;
+            promptInput.innerHTML = originalPromptHtml;
+            toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
+        } finally {
+            smartCascadeRuns.delete(runKey);
+            syncSmartCascadeLegacyState();
+            smartCascadeSilentSelection = false;
+            runBtn.disabled = smartCascadeAnyRunning();
+            cascadeRunBtn.disabled = false;
+            scheduleSave();
+            render();
+        }
+        return;
+    }
     const precreateSingleSlots = singleNodeLoopRun && loopMode === 'parallel' && totalRounds > 1 && parallelLimit > 1;
     let singleLoopSlots = [];
     if(singleNodeLoopRun){
