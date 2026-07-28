@@ -984,14 +984,18 @@ function nodeCandidateImages(node){
 }
 function shouldUseCandidatePoolForImages(node, images=node?.images || []){
     if(!isSmartImageNode(node) || isHistoryGroupNode(node)) return false;
-    const valid = (images || []).filter(img => img?.url);
+    const valid = (images || []).filter(img => img?.url && !isMaskImageItem(img));
     if(valid.length <= 1) return false;
     return valid.every(img => mediaKindForItem(img) === 'image')
         && valid.some(img => img.generatedResult || img.runPrompt || img.runModelPrompt || img.runSettings || img.sourceNodeId || img.runAt || node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt);
 }
+function isMaskImageItem(img){
+    return Boolean(img && (String(img.role || '').toLowerCase() === 'mask' || /_mask\.png$/i.test(String(img.name || ''))));
+}
 function migrateGeneratedImagesToCandidatePool(node, options={}){
     if(!shouldUseCandidatePoolForImages(node)) return false;
-    const generatedImages = (node.images || []).filter(img => img?.url).map(img => generatedImageWithNodeFallback(img, node));
+    // 遮罩图不进候选池：它是配套的输入素材，需随主图保留在 node.images 里传给下游生成。
+    const generatedImages = (node.images || []).filter(img => img?.url && !isMaskImageItem(img)).map(img => generatedImageWithNodeFallback(img, node));
     node.candidateImages = mergeCandidateImages(node.candidateImages || [], generatedImages);
     const index = options.mainIndex ?? node.candidateIndex ?? 0;
     return setNodeMainCandidate(node, index);
@@ -1026,9 +1030,11 @@ function setNodeMainCandidate(node, index=0){
     const pool = nodeCandidateImages(node);
     if(!node || !pool.length) return false;
     const safeIndex = Math.max(0, Math.min(pool.length - 1, Number(index) || 0));
+    // 保留已有的遮罩图，重建 node.images 时把它们跟在主图后面，避免被候选池覆盖丢失。
+    const masks = (node.images || []).filter(img => img?.url && isMaskImageItem(img));
     node.candidateImages = pool;
     node.candidateIndex = safeIndex;
-    node.images = [{...pool[safeIndex], generatedResult:true}];
+    node.images = [{...pool[safeIndex], generatedResult:true}, ...masks];
     applyRunMetaFromImageToNode(node, node.images[0]);
     node.outputKind = mediaKindForItem(node.images[0]);
     node.scale = mediaNodeDefaultScale(node);
