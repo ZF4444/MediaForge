@@ -4335,12 +4335,31 @@ function shouldShowNodeShortcutBar(node){
     if(selectedIds.length) return false;
     if(selectedId !== node.id) return false;
     if(node.type === 'smart-prompt' || node.type === 'smart-loop') return false;
-    if(dragState || thumbDragState) return false;
+    // 拖拽缩略图（拆图）时隐藏；拖动节点本身时保留，让快捷栏跟随移动。
+    if(thumbDragState) return false;
+    if(dragState){
+        const draggingIds = (dragState.group || [{id:dragState.id}]).map(item => item.id);
+        // 仅当拖动的正是当前单选节点、且不是多节点批量拖动时才保留。
+        if(dragState.thumbDetached || draggingIds.length > 1 || dragState.id !== node.id) return false;
+    }
     return Boolean(nodeShortcutTargetFor(node));
 }
 function nodeShortcutBarHtml(node){
     const target = nodeShortcutTargetFor(node);
     if(!shouldShowNodeShortcutBar(node) || !target) return '';
+    // 分组节点：未选中具体图片时，只显示「下载全部 / 解组」；选中具体图片后走下方按图片的快捷栏。
+    const hasSpecificImage = Boolean(selectedImage.nodeId && Number(selectedImage.index) >= 0);
+    if(isGroupShortcutNode(node) && !hasSpecificImage){
+        const groupItems = [
+            {action:'download-all', icon:'download', label:'下载全部', disabled:false},
+            {action:'ungroup', icon:'ungroup', label:'解组', disabled:false}
+        ];
+        return `<div class="node-shortcut-bar" data-node-shortcut-bar="${escapeAttr(node.id)}">
+            ${groupItems.map(item => `<button class="node-shortcut-btn" type="button" data-node-shortcut="${item.action}" data-node-id="${escapeAttr(node.id)}" title="${escapeAttr(item.label)}" ${item.disabled ? 'disabled' : ''}>
+                <i data-lucide="${item.icon}"></i><span>${escapeHtml(item.label)}</span>
+            </button>`).join('')}
+        </div>`;
+    }
     const isImage = target.kind === 'image';
     const canCompare = isImage && compareSourcesForNode(target.node).length > 0;
     const items = [
@@ -4366,7 +4385,13 @@ function positionNodeShortcutForNode(node){
     if(!bar) return;
     const rect = nodeRect(node);
     const gap = 14;
-    const cardW = Math.min(680, Math.max(320, shell.clientWidth - 48));
+    // 宽度按按钮数量自适应：每个按钮约 74px，加内边距与间距；再受视口宽度约束。
+    const btnCount = bar.querySelectorAll('.node-shortcut-btn').length || 1;
+    const perBtn = 74;
+    const intrinsicW = btnCount * perBtn + (btnCount - 1) * 4 + 12;
+    const maxW = Math.max(200, shell.clientWidth - 48);
+    const cardW = Math.min(680, maxW, Math.max(150, intrinsicW));
+    bar.style.setProperty('--shortcut-cols', String(btnCount));
     const centerX = viewport.x + (rect.x + rect.width / 2) * viewport.scale;
     const desiredLeft = centerX - cardW / 2;
     const minLeft = 24;
@@ -4684,6 +4709,14 @@ function triggerNodeShortcutAction(action, nodeId=''){
     const node = nodes.find(entry => entry.id === (nodeId || selectedId)) || selectedNode();
     const target = nodeShortcutTargetFor(node);
     if(!node || !target) return;
+    if(action === 'download-all'){
+        void downloadGroupNodeImages(node);
+        return;
+    }
+    if(action === 'ungroup'){
+        ungroupNode(node.id);
+        return;
+    }
     if(action === 'save'){
         openNodeAssetSaveModal(node).catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
         return;
@@ -5726,6 +5759,9 @@ function moveNodeElementsDuringDrag(){
     if(active && (dragState.group || [{id:dragState.id}]).some(item => item.id === active.id)){
         positionComposerForNode(active);
         if(promptComposer?.classList?.contains('open')) positionPromptComposerForNode(active);
+        // 让节点顶部快捷栏跟随拖动。首次拖动若尚未渲染出快捷栏则补渲染，之后仅重定位。
+        if(nodeShortcutOverlay?.querySelector('.node-shortcut-bar')) positionNodeShortcutForNode(active);
+        else updateNodeShortcutBar();
     }
     requestRefreshConnectionLayer();
     requestRenderMinimap();
@@ -6398,6 +6434,44 @@ async function downloadPreviewGroup(){
     if(!items.length) return;
     try {
         const filename = safeExportFileName(`${node?.title || 'image-group'}.zip`, 'image-group.zip');
+        const response = await fetch('/api/canvas-assets/download', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                filename,
+                urls:items.map(item => fileDownloadUrl(item) || item.url).filter(Boolean),
+                items:items.map((item, index) => ({url:fileDownloadUrl(item) || item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))
+            })
+        });
+        if(!response.ok) throw new Error((await response.text()) || '批量下载失败');
+        const blob = await response.blob();
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 1200);
+    } catch(e) {
+        toast((e.message || '批量下载失败').slice(0, 160));
+    }
+}
+// 分组节点（智能分组 或 含多张图的图片节点）——快捷栏显示「下载全部/解组」。
+function isGroupShortcutNode(node){
+    if(!node) return false;
+    if(isSmartGroupNode(node)) return true;
+    return isSmartImageNode(node) && !isHistoryGroupNode(node) && (node.images || []).filter(img => img?.url).length > 1;
+}
+// 下载分组节点里的全部图片（打包 zip），复用后端批量下载接口。
+async function downloadGroupNodeImages(node){
+    if(!node) return;
+    const items = (node.type === 'smart-group' ? imagesForNode(node) : (node.images || []))
+        .filter(item => item?.url && !isMaskImageItem(item));
+    if(!items.length){ toast('没有可下载的图片'); return; }
+    if(items.length === 1){ downloadPreviewFile(items[0]); return; }
+    try {
+        const filename = safeExportFileName(`${node.title || 'image-group'}.zip`, 'image-group.zip');
         const response = await fetch('/api/canvas-assets/download', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
@@ -7649,14 +7723,17 @@ function bindNodeEvents(){
                     imageClickTimer = null;
                 const owner = nodes.find(n => n.id === id);
                 hideRunTimerForNode(owner);
-                const isGroupOwner = (owner?.images || []).length > 1;
+                const isGroupOwner = (owner?.images || []).length > 1 || isSmartGroupNode(owner);
                 const isUploadOnlyOwner = isUploadedImageOnlyNode(owner);
                 selectedId = id;
                 selectedIds = [];
-                // 分组内的图片单击不再"穿透"到具体图片：保持节点级 composer
-                selectedImage = isGroupOwner || isUploadOnlyOwner
-                    ? {nodeId:'', index:-1}
-                    : {nodeId:id, index:imageIndex};
+                // 分组节点：单击具体图片时选中该图片（出现按图片的快捷栏）；
+                // 非分组的上传单图节点仍保持节点级（不穿透）。
+                selectedImage = isGroupOwner
+                    ? {nodeId:refNodeId, index:refIndex}
+                    : (isUploadOnlyOwner
+                        ? {nodeId:'', index:-1}
+                        : {nodeId:id, index:imageIndex});
                     suppressComposerForCandidateNodeId = '';
                     if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
                     syncSelectionUi();
@@ -14572,6 +14649,16 @@ function positionSelectionActions(left, top, right, selectedCount){
     if(saveButton) saveButton.disabled = !selectedAssetSaveItems().length;
     const groupButton = selectionActions.querySelector('[data-selection-action="group"]');
     if(groupButton) groupButton.disabled = !selectedIds.some(id => !isSmartGroupNode(nodes.find(node => node.id === id)));
+    const downloadAllButton = selectionActions.querySelector('[data-selection-action="download-all"]');
+    if(downloadAllButton){
+        const hasDownloadable = selectedIds.some(id => {
+            const node = nodes.find(n => n.id === id);
+            if(!node) return false;
+            const imgs = node.type === 'smart-group' ? imagesForNode(node) : (node.images || []);
+            return imgs.some(img => img?.url && !isMaskImageItem(img));
+        });
+        downloadAllButton.disabled = !hasDownloadable;
+    }
 }
 function updateSelectionActions(){
     if(!selectionBox || !selectionActions || selectionState) return;
@@ -14617,10 +14704,52 @@ selectionActions?.addEventListener('click', event => {
     event.stopPropagation();
     if(button.dataset.selectionAction === 'group') groupSelectedNodes();
     if(button.dataset.selectionAction === 'export') openSmartWorkflowTransferModal();
+    if(button.dataset.selectionAction === 'download-all') void downloadSelectedNodesImages();
     if(button.dataset.selectionAction === 'save'){
         openSelectionAssetSaveModal().catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
     }
 });
+// 框选状态下下载全部选中节点里的图片（打包 zip）。
+async function downloadSelectedNodesImages(){
+    const ids = selectedIds.length ? selectedIds.slice() : (selectedId ? [selectedId] : []);
+    const items = [];
+    const seen = new Set();
+    ids.map(id => nodes.find(n => n.id === id)).filter(Boolean).forEach(node => {
+        const imgs = (node.type === 'smart-group' ? imagesForNode(node) : (node.images || []));
+        imgs.filter(img => img?.url && !isMaskImageItem(img)).forEach(img => {
+            const key = img.file_id || img.url;
+            if(seen.has(key)) return;
+            seen.add(key);
+            items.push(img);
+        });
+    });
+    if(!items.length){ toast('选中的节点里没有可下载的图片'); return; }
+    if(items.length === 1){ downloadPreviewFile(items[0]); return; }
+    try {
+        const filename = safeExportFileName('canvas-selection.zip', 'canvas-selection.zip');
+        const response = await fetch('/api/canvas-assets/download', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                filename,
+                urls:items.map(item => fileDownloadUrl(item) || item.url).filter(Boolean),
+                items:items.map((item, index) => ({url:fileDownloadUrl(item) || item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))
+            })
+        });
+        if(!response.ok) throw new Error((await response.text()) || '批量下载失败');
+        const blob = await response.blob();
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 1200);
+    } catch(e) {
+        toast((e.message || '批量下载失败').slice(0, 160));
+    }
+}
 function groupSelectedNodes(){
     const ids = selectedIds.length ? selectedIds.slice() : (selectedId ? [selectedId] : []);
     const selected = ids.map(id => nodes.find(n => n.id === id)).filter(n => n && !isSmartGroupNode(n));
