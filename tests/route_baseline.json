@@ -840,13 +840,6 @@
     "APIRoute"
   ],
   [
-    "/api/smart-canvas/group-export",
-    [
-      "POST"
-    ],
-    "APIRoute"
-  ],
-  [
     "/api/smart-canvas/prompt-templates",
     [
       "GET"

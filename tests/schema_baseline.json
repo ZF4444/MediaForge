@@ -1371,47 +1371,6 @@
     },
     "required": []
   },
-  "SmartCanvasGroupExportItem": {
-    "properties": {
-      "kind": {
-        "type": "string",
-        "default": ""
-      },
-      "url": {
-        "type": "string",
-        "default": ""
-      },
-      "text": {
-        "type": "string",
-        "default": ""
-      },
-      "name": {
-        "type": "string",
-        "default": ""
-      }
-    },
-    "required": []
-  },
-  "SmartCanvasGroupExportRequest": {
-    "properties": {
-      "folder": {
-        "type": "string",
-        "default": ""
-      },
-      "group_name": {
-        "type": "string",
-        "default": "group"
-      },
-      "items": {
-        "type": "array",
-        "items": {
-          "$ref": "#/components/schemas/SmartCanvasGroupExportItem"
-        },
-        "default": []
-      }
-    },
-    "required": []
-  },
   "StorageBatchDeletePayload": {
     "properties": {
       "file_ids": {
