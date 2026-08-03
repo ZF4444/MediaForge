@@ -159,7 +159,7 @@ APP_VERSION = "2026.05.19"
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
-from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup
+from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup, check_storage_quota
 from app.services.business_metadata import initialize_business_metadata
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
 from app.core.redis_client import RedisUnavailableError, close_redis_client, open_redis_client, redis_readiness_status
@@ -1551,6 +1551,17 @@ def reserve_best_backend(required_images: List[str] = None):
 
 # --- 辅助工具 ---
 
+async def _attach_quota_warning_async(response: dict) -> dict:
+    """Async version — runs the DB-backed quota check in a thread with context."""
+    try:
+        warning = await run_storage_io(check_storage_quota, 1, category="output")
+        if warning:
+            response["quota_warning"] = warning
+    except Exception:
+        pass
+    return response
+
+
 def store_generated_media_bytes(payload: bytes, filename: str, kind: str, content_type: str = "") -> str:
     stored = save_media_bytes(
         "output",
@@ -2792,7 +2803,7 @@ async def generate_jimeng_video(payload: CanvasVideoRequest, provider):
         raw = await run_jimeng_cli(args, timeout=jimeng_poll_seconds() + 180)
         urls = await jimeng_store_outputs(raw, "video")
         video_items = await run_storage_io(media_response_items, urls, "video")
-        return {"videos": urls, "video_items": video_items, "task_id": jimeng_submit_id(raw) or None, "raw": raw}
+        return await _attach_quota_warning_async({"videos": urls, "video_items": video_items, "task_id": jimeng_submit_id(raw) or None, "raw": raw})
     finally:
         for path in temp_paths:
             try:
@@ -5551,7 +5562,14 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
             urls.append(local_url)
             media_items.append(await run_storage_io(media_response_item, local_url, "", kind))
         status = runninghub_normalized_status(raw, code, urls)
-        return {"success": True, "data": {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
+        result_data = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}
+        try:
+            quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
+            if quota_warning:
+                result_data["quota_warning"] = quota_warning
+        except Exception:
+            pass
+        return {"success": True, "data": result_data}
 
 @app.post("/api/runninghub/upload-asset")
 async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
@@ -6512,13 +6530,20 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             CANVAS_TASKS[task_id]["updated_at"] = time.time()
     try:
         result = await build_online_image_result(payload)
+        try:
+            quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
+        except Exception:
+            quota_warning = None
         with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
+            task_data = {
                 "status": "succeeded",
                 "result": result,
                 "error": "",
                 "updated_at": time.time(),
-            })
+            }
+            if quota_warning:
+                task_data["quota_warning"] = quota_warning
+            CANVAS_TASKS[task_id].update(task_data)
         task_logger.info(
             "canvas image task completed",
             extra={"event": "task_completed", "provider": payload.provider_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
@@ -6543,16 +6568,24 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
-        status_code = getattr(exc, "status_code", 500)
+        status_code = getattr(exc, "status_code", 413 if isinstance(exc, StorageQuotaExceeded) else 500)
         upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
-                "status": "failed",
-                "error": str(detail),
-                "status_code": status_code,
-                "upstream_task_id": upstream_task_id,
-                "updated_at": time.time(),
+        failure = {
+            "status": "failed",
+            "error": str(detail),
+            "status_code": status_code,
+            "upstream_task_id": upstream_task_id,
+            "updated_at": time.time(),
+        }
+        if isinstance(exc, StorageQuotaExceeded):
+            failure.update({
+                "error_code": "storage_quota_exceeded",
+                "quota_bytes": exc.quota_bytes,
+                "used_bytes": exc.used_bytes,
+                "incoming_bytes": exc.incoming_bytes,
             })
+        with CANVAS_TASK_LOCK:
+            CANVAS_TASKS[task_id].update(failure)
         task_logger.exception(
             "canvas image task failed",
             extra={"event": "task_failed", "provider": payload.provider_id, "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
@@ -6603,27 +6636,42 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
         result = await asyncio.to_thread(generate, payload)
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(str(result.get("error") or "ComfyUI 生成失败"))
+        try:
+            quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
+        except Exception:
+            quota_warning = None
         with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
+            task_data = {
                 "status": "succeeded",
                 "result": result,
                 "error": "",
                 "updated_at": time.time(),
-            })
+            }
+            if quota_warning:
+                task_data["quota_warning"] = quota_warning
+            CANVAS_TASKS[task_id].update(task_data)
         task_logger.info(
             "canvas ComfyUI task completed",
             extra={"event": "task_completed", "provider": "comfyui", "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
-        status_code = getattr(exc, "status_code", 500)
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
-                "status": "failed",
-                "error": str(detail),
-                "status_code": status_code,
-                "updated_at": time.time(),
+        status_code = getattr(exc, "status_code", 413 if isinstance(exc, StorageQuotaExceeded) else 500)
+        failure = {
+            "status": "failed",
+            "error": str(detail),
+            "status_code": status_code,
+            "updated_at": time.time(),
+        }
+        if isinstance(exc, StorageQuotaExceeded):
+            failure.update({
+                "error_code": "storage_quota_exceeded",
+                "quota_bytes": exc.quota_bytes,
+                "used_bytes": exc.used_bytes,
+                "incoming_bytes": exc.incoming_bytes,
             })
+        with CANVAS_TASK_LOCK:
+            CANVAS_TASKS[task_id].update(failure)
         task_logger.exception(
             "canvas ComfyUI task failed",
             extra={"event": "task_failed", "provider": "comfyui", "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
@@ -6952,7 +7000,7 @@ async def generate_yuli_openai_video(client, payload, provider, base_url, reques
         raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
     local_urls = [await save_remote_video_to_output(url) for url in urls]
     video_items = await run_storage_io(media_response_items, local_urls, "video")
-    return {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}
+    return await _attach_quota_warning_async({"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result})
 
 def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
     text = str(prompt or "").strip()
@@ -7274,7 +7322,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                 raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
             local_urls = [await save_remote_video_to_output(url) for url in urls]
             video_items = await run_storage_io(media_response_items, local_urls, "video")
-            return {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}
+            return await _attach_quota_warning_async({"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result})
     except httpx.HTTPStatusError as exc:
         text = exc.response.text
         try:
@@ -8078,7 +8126,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
                     await asyncio.to_thread(save_to_history, record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
-                    return await run_storage_io(media_response_item, local_path, "", "image")
+                    return await _attach_quota_warning_async(await run_storage_io(media_response_item, local_path, "", "image"))
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     if req.client_id:
@@ -8170,7 +8218,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
                     item = await run_storage_io(media_response_item, local_path, "", "image")
                     item["task_id"] = task_id
-                    return item
+                    return await _attach_quota_warning_async(item)
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     if req.client_id:
@@ -8267,7 +8315,7 @@ async def generate_cloud(req: CloudGenRequest):
                         await manager.broadcast_new_image(record)
                     except Exception:
                         pass
-                    return await run_storage_io(media_response_item, local_path, "", "image")
+                    return await _attach_quota_warning_async(await run_storage_io(media_response_item, local_path, "", "image"))
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
@@ -8369,7 +8417,7 @@ async def ms_generate(req: MsGenerateRequest):
                             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
                         item = await run_storage_io(media_response_item, local_path, "", "image")
                         item["task_id"] = task_id
-                        return item
+                        return await _attach_quota_warning_async(item)
 
                     elif status in TERMINAL_FAILED_STATUSES:
                         error_info = data.get("error_info") or data.get("message") or data.get("detail") or str(data)

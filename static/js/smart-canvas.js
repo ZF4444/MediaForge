@@ -11011,13 +11011,62 @@ const SMART_IMAGE_DROP_TYPE_HINT_RE = /^(?:files?|image\/.+|text\/(?:uri-list|ht
 function smartImageFilesFromDataTransfer(dataTransfer){
     return [...(dataTransfer?.files || [])].filter(isSupportedUploadFile);
 }
-async function smartResponseErrorMessage(response, fallback='请求失败'){
-    try {
-        const data = await response.clone().json();
+class StorageQuotaSignal extends Error {
+    constructor(info){
+        const data = info || {};
+        super(data.detail || data.message || data.error || '存储空间不足');
+        this.storageQuotaExceeded = true;
+        this.quota_bytes = data.quota_bytes;
+        this.used_bytes = data.used_bytes;
+        this.incoming_bytes = data.incoming_bytes;
+    }
+}
+function quotaDataFromPayload(payload){
+    if(!payload || typeof payload !== 'object') return null;
+    if(payload.error === 'storage_quota_exceeded') return payload;
+    return null;
+}
+function checkQuotaWarningFromResult(data){
+    if(!data || typeof data !== 'object') return;
+    const warning = data.quota_warning;
+    if(warning && warning.quota_exceeded){
+        try {
+            window.MediaForgeUpload?.showQuotaDialog?.({
+                quota_bytes: warning.quota_bytes,
+                used_bytes: warning.used_bytes,
+                incoming_bytes: warning.incoming_bytes,
+            });
+        } catch(_) {}
+        return;
+    }
+    // No inline warning — check server quota asynchronously.
+    fetch('/api/storage/usage').then(r => r.ok ? r.json() : null).then(usage => {
+        if(!usage) return;
+        const quota = Number(usage.quota_bytes || 0);
+        const used = Number(usage.used_bytes || 0);
+        if(quota > 0 && used >= quota){
+            try {
+                window.MediaForgeUpload?.showQuotaDialog?.({quota_bytes:quota, used_bytes:used});
+            } catch(_) {}
+        }
+    }).catch(() => {});
+}
+async function smartResponseError(response, fallback='请求失败'){
+    let payload = null;
+    try { payload = await response.clone().json(); } catch(_) {}
+    if(response.status === 413 && quotaDataFromPayload(payload)) return new StorageQuotaSignal(payload);
+    return new Error(await smartResponseErrorMessage(response, fallback, payload));
+}
+async function smartResponseErrorMessage(response, fallback='请求失败', prefetched){
+    let data = prefetched;
+    if(data === undefined){
+        try { data = await response.clone().json(); } catch(_) { data = null; }
+    }
+    if(data && typeof data === 'object'){
         const detail = data.detail ?? data.error ?? data.message;
         if(typeof detail === 'string') return detail || fallback;
         if(Array.isArray(detail)) return detail.map(item => item?.msg || item?.message || String(item)).join('\n') || fallback;
-    } catch(_) {}
+    }
     try {
         const text = await response.text();
         if(text) return text;
@@ -12885,19 +12934,22 @@ async function createSmartComfyTask(payload){
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(payload)
     });
-    if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.errRunFailed')));
+    if(!res.ok) throw await smartResponseError(res, tr('smart.errRunFailed'));
     return res.json();
 }
 async function waitSmartComfyTaskResult(taskId){
     if(!taskId) throw new Error(tr('smart.errRunFailed'));
     while(true){
         const res = await fetch(`/api/canvas-comfy-tasks/${encodeURIComponent(taskId)}`);
-        if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.errRunFailed')));
+        if(!res.ok) throw await smartResponseError(res, tr('smart.errRunFailed'));
         const data = await res.json();
         const readyResult = data?.result || data?.outputs || data?.images || data?.videos || data?.audios || data?.texts;
-        if(readyResult && resultMediaUrls(readyResult).length) return data.result || data;
-        if(data.status === 'succeeded') return data.result || {};
-        if(data.status === 'failed') throw new Error(data.error || tr('smart.errRunFailed'));
+        if(readyResult && resultMediaUrls(readyResult).length){ checkQuotaWarningFromResult(data); return data.result || data; }
+        if(data.status === 'succeeded'){ checkQuotaWarningFromResult(data); return data.result || {}; }
+        if(data.status === 'failed'){
+            if(data.error_code === 'storage_quota_exceeded' || data.status_code === 413) throw new StorageQuotaSignal(data);
+            throw new Error(data.error || tr('smart.errRunFailed'));
+        }
         await sleep(1600);
     }
 }
@@ -12985,7 +13037,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     const workflowName = runSettings.comfyWorkflow || comfyWorkflows[0]?.name || '';
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
     const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
-        if(!r.ok) throw new Error(await r.text());
+        if(!r.ok) throw await smartResponseError(r);
         return r.json();
     });
     const fields = wf.config?.fields || [];
@@ -13508,7 +13560,7 @@ async function runSmartCascade(targetNode=null){
             selectedId = originalSelected;
             settings = originalSettings;
             promptInput.innerHTML = originalPromptHtml;
-            toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
+            if(!handleStorageQuotaSignal(e)) toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
         } finally {
             smartCascadeRuns.delete(runKey);
             syncSmartCascadeLegacyState();
@@ -13685,7 +13737,7 @@ async function runSmartCascade(targetNode=null){
         selectedId = originalSelected;
         settings = originalSettings;
         promptInput.innerHTML = originalPromptHtml;
-        toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
+        if(!handleStorageQuotaSignal(e)) toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
     } finally {
         smartCascadeRuns.delete(runKey);
         syncSmartCascadeLegacyState();
@@ -13909,7 +13961,7 @@ async function runGeneration(){
         delete pendingNode._runMetaTargetId;
         delete pendingNode._rerunPreviousImages;
         addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e)});
-        toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
+        if(!handleStorageQuotaSignal(e)) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
     } finally {
         if(!apiConcurrentRun){
             clearNodeRunningState(pendingNode);
@@ -13960,7 +14012,7 @@ async function runPromptLLMNode(nodeId){
                 system_prompt:systemPrompt
             })
         }).then(async r => {
-            if(!r.ok) throw new Error(await r.text());
+            if(!r.ok) throw await smartResponseError(r);
             return r.json();
         });
         node.text = (result.text || '').trim();
@@ -13985,7 +14037,7 @@ async function runApiGeneration(prompt, refs, runSettings=settings){
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
     const payload = {prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs)};
     const tasks = await Promise.all(Array.from({length:count}, () => fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
-        if(!r.ok) throw new Error(await r.text());
+        if(!r.ok) throw await smartResponseError(r);
         return r.json();
     })));
     return {taskIds:tasks.map(task => task.task_id).filter(Boolean), count, providerId:runSettings.provider_id, model:runSettings.model};
@@ -14027,12 +14079,14 @@ async function pollRunningHubTask(taskId){
             await sleep(5000);
             const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
                 const json = await r.json();
-                if(!r.ok || json.success === false) throw new Error(json.detail || json.error || tr('smart.rhFailed'));
+                if(!r.ok || json.success === false){
+                    throw new Error(json.detail || json.error || tr('smart.rhFailed'));
+                }
                 return json.data || json;
             });
             if(data.status === 'SUCCESS'){
                 const outputs = data.media_items || data.image_items || data.urls || [];
-                if(outputs.length) return outputs;
+                if(outputs.length){ checkQuotaWarningFromResult(data); return outputs; }
                 sawSuccessWithoutOutputs = true;
                 continue;
             }
@@ -14080,8 +14134,9 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(payload)
-    }).then(async r => { if(!r.ok) throw new Error(await smartResponseErrorMessage(r, tr('smart.errRunFailed'))); return r.json(); });
+    }).then(async r => { if(!r.ok) throw await smartResponseError(r, tr('smart.errRunFailed')); return r.json(); });
     if(result && result.jimeng_pending) throw new JimengPendingSignal({submitId:result.submit_id, kind:result.kind || 'video', queueInfo:result.queue_info, message:result.message});
+    checkQuotaWarningFromResult(result);
     return resultMediaUrls(result);
 }
 async function runModelscopeGeneration(prompt, refs, runSettings=settings){
@@ -14106,9 +14161,10 @@ async function runModelscopeGeneration(prompt, refs, runSettings=settings){
         else if(modelKey === 'qwen_edit') body = {prompt, image_urls:imageUrls, resolution:`${width}x${height}`};
         else body = {prompt, model:modelKey === 'custom' ? (runSettings.msCustomModel || modelscopeImageModels()[0]) : msModel.modelId, image_urls:imageUrls, width, height, size:`${width}x${height}`};
         const data = await fetch(msModel.endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then(async r => {
-            if(!r.ok) throw new Error(await r.text());
+            if(!r.ok) throw await smartResponseError(r);
             return r.json();
         });
+        checkQuotaWarningFromResult(data);
         return data.url || data.images?.[0] || '';
     };
     const results = await Promise.all(Array.from({length:count}, submit));
@@ -14139,7 +14195,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     const workflowName = settings.comfyWorkflow || comfyWorkflows[0]?.name || '';
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
     const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
-        if(!r.ok) throw new Error(await r.text());
+        if(!r.ok) throw await smartResponseError(r);
         return r.json();
     });
     const fields = wf.config?.fields || [];
@@ -14234,7 +14290,7 @@ async function comfyNameForRef(ref){
     const form = new FormData();
     form.append('files', blob, ref.name || 'smart-ref.png');
     const data = await fetch('/api/upload', {method:'POST', body:form}).then(async r => {
-        if(!r.ok) throw new Error(await r.text());
+        if(!r.ok) throw await smartResponseError(r);
         return r.json();
     });
     const name = data.files?.[0]?.comfy_name || ref.name || ref.url;
@@ -14320,6 +14376,20 @@ function handleJimengPendingSignal(node, e){
     toast((e.message || jimengQueueText(e.queueInfo)).slice(0, 160));
     return true;
 }
+function handleStorageQuotaSignal(e){
+    if(!(e && e.storageQuotaExceeded)) return false;
+    try {
+        window.MediaForgeUpload?.showQuotaDialog?.({
+            quota_bytes:e.quota_bytes,
+            used_bytes:e.used_bytes,
+            incoming_bytes:e.incoming_bytes,
+            detail:e.message
+        });
+    } catch(_) {
+        toast((e.message || '存储空间不足').slice(0, 160));
+    }
+    return true;
+}
 function finalizeJimengPending(node, urls, kind='image'){
     if(!node) return false;
     const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : kind === 'text' ? 'txt' : 'png';
@@ -14372,7 +14442,7 @@ async function fetchJimengQuery(submitId, kind){
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({submit_id:submitId, kind:kind || 'image'})
-    }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+    }).then(async r => { if(!r.ok) throw await smartResponseError(r); return r.json(); });
 }
 async function queryJimengNow(nodeId){
     const node = nodes.find(n => n.id === nodeId);
@@ -14485,12 +14555,16 @@ async function pollSmartCanvasTask(taskId){
         for(let i = 0; i < 900; i++){
             await new Promise(resolve => setTimeout(resolve, 2000));
             const task = await fetch(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`).then(async r => {
-                if(!r.ok) throw new Error(await r.text());
+                if(!r.ok) throw await smartResponseError(r);
                 return r.json();
             });
-            if(task.status === 'succeeded') return task.result || {};
+            if(task.status === 'succeeded'){
+                checkQuotaWarningFromResult(task);
+                return task.result || {};
+            }
             if(task.status === 'jimeng_pending') throw new JimengPendingSignal({submitId:task.submit_id, kind:task.kind, queueInfo:task.queue_info, message:task.message});
             if(task.status === 'failed'){
+                if(task.error_code === 'storage_quota_exceeded' || task.status_code === 413) throw new StorageQuotaSignal(task);
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '');
                 if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, providerId:task.provider_id, kind:'image', message:task.error || tr('smart.errRunFailed')});
                 throw new Error(task.error || tr('smart.errRunFailed'));
@@ -14591,13 +14665,15 @@ async function resumeSmartPendingNode(node){
                 }
             }
             failures.push(e);
-            toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
+            if(!handleStorageQuotaSignal(e)) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
             render();
             scheduleSave();
         }
     }));
     if(failures.length && !(node.images || []).length && candidateCountForNode(node)) setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
     if(failures.length && !(node.images || []).length){
+        const quotaFailure = failures.find(e => e && e.storageQuotaExceeded);
+        if(quotaFailure) throw quotaFailure;
         const messages = [...new Set(failures.map(e => (e?.message || String(e || '')).trim()).filter(Boolean))];
         throw new Error(messages.join('；') || tr('smart.errRunFailed'));
     }

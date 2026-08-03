@@ -379,6 +379,32 @@ def enforce_storage_quota(incoming_bytes: int, *, category: str = "", user_id: s
         )
 
 
+def check_storage_quota(incoming_bytes: int, *, category: str = "", user_id: str = "") -> Optional[Dict[str, Any]]:
+    """Like enforce_storage_quota but returns quota info dict instead of raising.
+
+    Returns None when quota is not exceeded, otherwise a dict with
+    quota_bytes/used_bytes/incoming_bytes suitable for a client warning.
+    """
+    size = int(incoming_bytes or 0)
+    if not storage_quota_enabled() or not metadata_db_enabled():
+        return None
+    if not _quota_applies_to_category(category or "output"):
+        return None
+    quota_bytes = storage_quota_limit_bytes_for_user(user_id)
+    if quota_bytes <= 0:
+        return None
+    uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
+    used_bytes = storage_quota_bytes_for_user(uid)
+    if used_bytes + size > quota_bytes:
+        return {
+            "quota_exceeded": True,
+            "quota_bytes": quota_bytes,
+            "used_bytes": used_bytes,
+            "incoming_bytes": size,
+        }
+    return None
+
+
 def cleanup_reason_for_entry(entry: Dict[str, Any], *, now_ms_value: Optional[int] = None) -> Optional[str]:
     if not isinstance(entry, dict):
         return None
@@ -2386,7 +2412,12 @@ def save_media_fileobj(
     the purpose of streaming.
     """
     size = int(length or 0)
-    enforce_storage_quota(size, category=category)
+    # For AI-generated content, save first then warn; for uploads, block before saving.
+    if source == "generated":
+        quota_warning = check_storage_quota(size, category=category)
+    else:
+        enforce_storage_quota(size, category=category)
+        quota_warning = None
     file_id = uuid.uuid4().hex
     ext = os.path.splitext(filename)[1].lower()
     object_key = build_object_key(category, file_id, ext)
@@ -2451,7 +2482,10 @@ def save_media_fileobj(
             "size_bytes": stored["size"],
         },
     )
-    return {**stored, "url": url, "entry": entry, "file_id": file_id}
+    result = {**stored, "url": url, "entry": entry, "file_id": file_id}
+    if quota_warning:
+            result["quota_warning"] = quota_warning
+    return result
 
 
 def save_media_bytes(
@@ -2466,7 +2500,12 @@ def save_media_bytes(
     source: str = "upload",
 ) -> Dict[str, Any]:
     payload = data if isinstance(data, bytes) else bytes(data or b"")
-    enforce_storage_quota(len(payload), category=category)
+    # For AI-generated content, save first then warn; for uploads, block before saving.
+    if source == "generated":
+        quota_warning = check_storage_quota(len(payload), category=category)
+    else:
+        enforce_storage_quota(len(payload), category=category)
+        quota_warning = None
     file_id = uuid.uuid4().hex
     ext = os.path.splitext(filename)[1].lower()
     object_key = build_object_key(category, file_id, ext)
@@ -2520,4 +2559,7 @@ def save_media_bytes(
             "size_bytes": stored["size"],
         },
     )
-    return {**stored, "url": url, "entry": entry, "file_id": file_id}
+    result = {**stored, "url": url, "entry": entry, "file_id": file_id}
+    if quota_warning:
+            result["quota_warning"] = quota_warning
+    return result
