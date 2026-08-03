@@ -7526,12 +7526,16 @@ function bindNodeEvents(){
             if(!e.target.closest('video')) return;
             const node = nodes.find(n => n.id === id);
             if(!node) return;
-            selectedId = id;
-            selectedIds = [];
-            selectedImage = {nodeId:'', index:-1};
-            suppressComposerForCandidateNodeId = '';
-            if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
-            syncSelectionUi();
+            // Preserve an existing multi-selection (e.g. after a box-select) so dragging
+            // still moves the whole group; only collapse to single-select otherwise.
+            if(!selectedIds.includes(id)){
+                selectedId = id;
+                selectedIds = [];
+                selectedImage = {nodeId:'', index:-1};
+                suppressComposerForCandidateNodeId = '';
+                if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
+                syncSelectionUi();
+            }
             updateComposer();
         }, true);
         el.onclick = e => {
@@ -7785,7 +7789,13 @@ function bindNodeEvents(){
             });
         });
         const beginNodeDrag = e => {
-            if(e.button !== 0 || e.target.closest('.mini-x, .thumb-item, .node-port, select, input, button')) return;
+            const isMultiSelected = selectedIds.length > 1 && selectedIds.includes(id);
+            // Allow starting a group drag even when the press lands on a thumb-item/video
+            // (native <video controls> can swallow the click), as long as this node is
+            // part of an existing multi-selection — otherwise thumb-item clicks are
+            // reserved for image reordering / preview interactions.
+            if(e.button !== 0 || (!isMultiSelected && e.target.closest('.mini-x, .thumb-item, .node-port, select, input, button'))) return;
+            if(isMultiSelected && e.target.closest('.mini-x, .node-port, select, input, button')) return;
             if(e.target.closest('.prompt-node-pill, textarea:not(.prompt-node-text)')) return;
             e.preventDefault(); e.stopPropagation();
             window.getSelection?.()?.removeAllRanges?.();
