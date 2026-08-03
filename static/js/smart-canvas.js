@@ -7517,6 +7517,23 @@ function bindNodeEvents(){
         const nodeForControls = nodes.find(n => n.id === id);
         if(nodeForControls?.type === 'smart-prompt') bindPromptNodeControls(el, nodeForControls);
         if(nodeForControls?.type === 'smart-loop') bindLoopNodeControls(el, nodeForControls);
+        // Native <video controls> can swallow click events without bubbling, so use a
+        // capture-phase mousedown on the whole node to reliably select it and (re)open
+        // the composer even when the press lands on the video's own control surface.
+        el.addEventListener('mousedown', e => {
+            if(Date.now() < suppressNodeClickUntil) return;
+            if(e.button !== 0) return;
+            if(!e.target.closest('video')) return;
+            const node = nodes.find(n => n.id === id);
+            if(!node) return;
+            selectedId = id;
+            selectedIds = [];
+            selectedImage = {nodeId:'', index:-1};
+            suppressComposerForCandidateNodeId = '';
+            if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
+            syncSelectionUi();
+            updateComposer();
+        }, true);
         el.onclick = e => {
             e.stopPropagation();
             if(Date.now() < suppressNodeClickUntil) return;
