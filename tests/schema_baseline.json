@@ -1212,6 +1212,26 @@
       "prompt"
     ]
   },
+  "OrganizationCreatePayload": {
+    "properties": {
+      "name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
+  "OrganizationRenamePayload": {
+    "properties": {
+      "name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
   "PromptLibraryBatchDeleteRequest": {
     "properties": {
       "ids": {
@@ -1447,6 +1467,21 @@
       "protocol": {
         "type": "string",
         "default": "openai"
+      }
+    },
+    "required": []
+  },
+  "UserOrgAssignPayload": {
+    "properties": {
+      "org_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": []

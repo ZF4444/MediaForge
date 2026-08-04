@@ -35,6 +35,13 @@
     "APIRoute"
   ],
   [
+    "/api/access-control/users/{user_id}/org",
+    [
+      "PUT"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/ai/import-local-image",
     [
       "POST"
@@ -626,6 +633,34 @@
     "/api/online-image",
     [
       "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/organizations",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/organizations",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/organizations/{org_id}",
+    [
+      "DELETE"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/organizations/{org_id}",
+    [
+      "PUT"
     ],
     "APIRoute"
   ],
