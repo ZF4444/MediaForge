@@ -40,10 +40,10 @@ def _require_admin() -> str:
 
 
 def _registered_users():
-    """已注册用户列表（排除 admin），形如 [{user_id, username}]。"""
+    """已注册用户列表（排除 admin），形如 [{user_id, username, org_id}]。"""
     with USERS_LOCK:
         items = [
-            {"user_id": uid, "username": (info or {}).get("username") or uid}
+            {"user_id": uid, "username": (info or {}).get("username") or uid, "org_id": (info or {}).get("org_id")}
             for uid, info in USERS.items()
             if uid != ADMIN_USER_ID
         ]

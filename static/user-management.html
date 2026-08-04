@@ -17,10 +17,15 @@
         .tabs{display:flex;gap:4px;margin-top:20px;overflow:auto}.tab{height:42px;padding:0 14px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--faint,#667085);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:7px}.tab svg{width:16px;height:16px}.tab:hover{color:var(--text,#16191f)}.tab.active{color:var(--text,#16191f);border-bottom-color:var(--text,#16191f)}
         .content{flex:1;min-height:0;position:relative}.view{display:none;height:100%}.view.active{display:block}.embed{width:100%;height:100%;border:0;background:var(--bg,#f5f6f8)}
         .users{height:100%;overflow:auto;padding:24px 28px 48px;max-width:1180px;margin:0 auto}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.section-title{font-size:14px;font-weight:700}.search{width:min(320px,55vw);height:38px;padding:0 12px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:13px;outline:none}.search:focus{border-color:var(--text,#16191f)}
-        .table{border-top:1px solid var(--border,#e4e7ec)}.row{display:grid;grid-template-columns:minmax(180px,1.2fr) minmax(200px,1.5fr) 150px;align-items:center;gap:16px;min-height:62px;padding:10px 12px;border-bottom:1px solid var(--border,#e4e7ec)}.row.header{min-height:40px;color:var(--faint,#667085);font-size:11px;font-weight:700;text-transform:uppercase}.user{font-size:13px;font-weight:650}.id{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--faint,#667085)}.badge{justify-self:start;padding:3px 8px;border:1px solid var(--border,#d0d5dd);font-size:11px;color:var(--faint,#667085)}.badge.admin{border-color:#d97706;color:#b45309;background:#fffbeb}.empty{text-align:center;padding:70px 20px;color:var(--faint,#667085);font-size:13px}
+        .table{border-top:1px solid var(--border,#e4e7ec)}.row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(180px,1.3fr) 130px minmax(160px,1fr);align-items:center;gap:16px;min-height:62px;padding:10px 12px;border-bottom:1px solid var(--border,#e4e7ec)}.row.header{min-height:40px;color:var(--faint,#667085);font-size:11px;font-weight:700;text-transform:uppercase}.user{font-size:13px;font-weight:650}.id{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--faint,#667085)}.badge{justify-self:start;padding:3px 8px;border:1px solid var(--border,#d0d5dd);font-size:11px;color:var(--faint,#667085)}.badge.admin{border-color:#d97706;color:#b45309;background:#fffbeb}.empty{text-align:center;padding:70px 20px;color:var(--faint,#667085);font-size:13px}
+        .org-select{width:100%;max-width:220px;height:34px;padding:0 8px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:12.5px;outline:none}.org-select:focus{border-color:var(--text,#16191f)}
+        .org-panel{border:1px solid var(--border,#e4e7ec);background:var(--panel,#fff);padding:14px 16px;margin-bottom:18px}.org-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.org-panel-title{font-size:13px;font-weight:700}.org-form{display:flex;gap:8px}.org-input{flex:1;max-width:260px;height:34px;padding:0 10px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:13px;outline:none}.org-input:focus{border-color:var(--text,#16191f)}
+        .org-btn{height:34px;padding:0 14px;border:1px solid var(--text,#16191f);background:var(--text,#16191f);color:var(--panel,#fff);font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}.org-btn:hover{opacity:.88}.org-btn:disabled{opacity:.5;cursor:not-allowed}
+        .org-list{display:flex;flex-wrap:wrap;gap:8px}.org-chip{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border:1px solid var(--border,#e4e7ec);font-size:12.5px}.org-chip-name{font-weight:600}.org-chip-count{color:var(--faint,#667085);font-size:11px}.org-chip-actions{display:flex;gap:2px}.org-chip-btn{width:24px;height:24px;display:grid;place-items:center;border:0;background:transparent;color:var(--faint,#667085);cursor:pointer}.org-chip-btn:hover{color:var(--text,#16191f)}.org-chip-btn svg{width:14px;height:14px}
+        .org-empty{font-size:12.5px;color:var(--faint,#667085)}
         .placeholder{height:100%;display:grid;place-items:center;padding:28px}.placeholder-inner{text-align:center;max-width:420px}.placeholder-icon{width:44px;height:44px;margin:0 auto 16px;color:var(--faint,#667085)}.placeholder-title{font-size:16px;font-weight:700}.placeholder-copy{margin-top:8px;font-size:13px;line-height:1.7;color:var(--faint,#667085)}
         .status{font-size:12px;color:var(--faint,#667085)}
-        @media(max-width:680px){.head{padding:18px 16px 0}.users{padding:18px 16px 36px}.row{grid-template-columns:1fr 100px}.row>*:nth-child(2){display:none}.toolbar{align-items:flex-start;flex-direction:column}.search{width:100%}}
+        @media(max-width:680px){.head{padding:18px 16px 0}.users{padding:18px 16px 36px}.row{grid-template-columns:1fr 100px}.row>*:nth-child(2),.row>*:nth-child(4){display:none}.toolbar{align-items:flex-start;flex-direction:column}.search{width:100%}.org-form{flex-wrap:wrap}}
     </style>
 </head>
 <body>
@@ -38,6 +43,17 @@
     <main class="content">
         <section class="view active" data-view="users">
             <div class="users">
+                <div class="org-panel">
+                    <div class="org-panel-head">
+                        <div class="org-panel-title">组织</div>
+                        <div id="orgStatus" class="status"></div>
+                    </div>
+                    <form id="orgForm" class="org-form">
+                        <input id="orgNameInput" class="org-input" type="text" placeholder="新建组织名称" maxlength="60">
+                        <button type="submit" class="org-btn"><i data-lucide="plus"></i>创建组织</button>
+                    </form>
+                    <div id="orgList" class="org-list" style="margin-top:12px"></div>
+                </div>
                 <div class="toolbar"><div><div class="section-title">注册用户</div><div id="status" class="status">加载中...</div></div><input id="search" class="search" type="search" placeholder="搜索用户名或用户 ID"></div>
                 <div id="userTable" class="table"></div>
             </div>
@@ -50,17 +66,98 @@
 </div>
 <script>
 (() => {
-    const state = { users: [], query: '' };
+    const state = { users: [], orgs: [], query: '' };
     const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    function orgName(orgId){
+        const org = state.orgs.find(o => o.id === orgId);
+        return org ? org.name : '';
+    }
     function renderUsers(){
         const q = state.query.trim().toLowerCase();
         const users = q ? state.users.filter(u => `${u.username || ''} ${u.user_id || ''}`.toLowerCase().includes(q)) : state.users;
         document.getElementById('userCount').textContent = `${state.users.length} 位用户`;
-        document.getElementById('userTable').innerHTML = `<div class="row header"><div>用户</div><div>用户 ID</div><div>角色</div></div>${users.map(u => `<div class="row"><div class="user">${esc(u.username || u.user_id)}</div><div class="id">${esc(u.user_id)}</div><div class="badge ${u.user_id === 'admin' ? 'admin' : ''}">${u.user_id === 'admin' ? '管理员' : '用户'}</div></div>`).join('') || '<div class="empty">没有匹配的用户</div>'}`;
+        const orgOptions = state.orgs.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
+        document.getElementById('userTable').innerHTML = `<div class="row header"><div>用户</div><div>用户 ID</div><div>角色</div><div>组织</div></div>${users.map(u => {
+            const isAdmin = u.user_id === 'admin';
+            const orgSelect = isAdmin ? '<span class="status">—</span>' : `<select class="org-select" data-user="${esc(u.user_id)}"><option value="">未分配</option>${orgOptions}</select>`;
+            return `<div class="row"><div class="user">${esc(u.username || u.user_id)}</div><div class="id">${esc(u.user_id)}</div><div class="badge ${isAdmin ? 'admin' : ''}">${isAdmin ? '管理员' : '用户'}</div><div>${orgSelect}</div></div>`;
+        }).join('') || '<div class="empty">没有匹配的用户</div>'}`;
+        document.querySelectorAll('.org-select').forEach(sel => {
+            const uid = sel.dataset.user;
+            const user = state.users.find(u => u.user_id === uid);
+            sel.value = (user && user.org_id) || '';
+            sel.addEventListener('change', () => assignUserOrg(uid, sel.value || null));
+        });
+    }
+    function renderOrgs(){
+        document.getElementById('orgList').innerHTML = state.orgs.length ? state.orgs.map(o => `
+            <div class="org-chip" data-org="${esc(o.id)}">
+                <span class="org-chip-name">${esc(o.name)}</span>
+                <span class="org-chip-count">${o.member_count} 人</span>
+                <span class="org-chip-actions">
+                    <button type="button" class="org-chip-btn" data-action="rename" title="重命名"><i data-lucide="pencil"></i></button>
+                    <button type="button" class="org-chip-btn" data-action="delete" title="删除"><i data-lucide="trash-2"></i></button>
+                </span>
+            </div>`).join('') : '<div class="org-empty">还没有组织，创建一个用于分组管理用户。</div>';
+        document.querySelectorAll('.org-chip').forEach(chip => {
+            const orgId = chip.dataset.org;
+            chip.querySelector('[data-action="rename"]').addEventListener('click', () => renameOrg(orgId));
+            chip.querySelector('[data-action="delete"]').addEventListener('click', () => deleteOrg(orgId));
+        });
+        if(window.lucide) lucide.createIcons();
     }
     async function loadUsers(){
         try { const r = await fetch('/api/access-control/users'); const d = await r.json(); if(!r.ok) throw new Error(d.detail || '加载失败'); state.users = d.users || []; document.getElementById('status').textContent = ''; renderUsers(); }
         catch(e){ document.getElementById('status').textContent = e.message || '加载失败'; }
+    }
+    async function loadOrgs(){
+        try { const r = await fetch('/api/organizations'); const d = await r.json(); if(!r.ok) throw new Error(d.detail || '加载失败'); state.orgs = d.organizations || []; renderOrgs(); renderUsers(); }
+        catch(e){ document.getElementById('orgStatus').textContent = e.message || '加载失败'; }
+    }
+    async function createOrg(name){
+        const status = document.getElementById('orgStatus');
+        status.textContent = '创建中...';
+        try {
+            const r = await fetch('/api/organizations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+            const d = await r.json();
+            if(!r.ok) throw new Error(d.detail || '创建失败');
+            status.textContent = '已创建';
+            await loadOrgs();
+        } catch(e){ status.textContent = e.message || '创建失败'; }
+    }
+    async function renameOrg(orgId){
+        const current = orgName(orgId);
+        const next = window.prompt('重命名组织', current);
+        if(next == null) return;
+        const trimmed = next.trim();
+        if(!trimmed || trimmed === current) return;
+        const status = document.getElementById('orgStatus');
+        try {
+            const r = await fetch(`/api/organizations/${encodeURIComponent(orgId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: trimmed }) });
+            const d = await r.json();
+            if(!r.ok) throw new Error(d.detail || '重命名失败');
+            await loadOrgs();
+        } catch(e){ status.textContent = e.message || '重命名失败'; }
+    }
+    async function deleteOrg(orgId){
+        const name = orgName(orgId);
+        if(!window.confirm(`删除组织「${name}」？成员将解除归属，不会被删除。`)) return;
+        const status = document.getElementById('orgStatus');
+        try {
+            const r = await fetch(`/api/organizations/${encodeURIComponent(orgId)}`, { method: 'DELETE' });
+            const d = await r.json();
+            if(!r.ok) throw new Error(d.detail || '删除失败');
+            await Promise.all([loadOrgs(), loadUsers()]);
+        } catch(e){ status.textContent = e.message || '删除失败'; }
+    }
+    async function assignUserOrg(userId, orgId){
+        const status = document.getElementById('status');
+        try {
+            const r = await fetch(`/api/access-control/users/${encodeURIComponent(userId)}/org`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ org_id: orgId }) });
+            const d = await r.json();
+            if(!r.ok) throw new Error(d.detail || '分配失败');
+            await Promise.all([loadUsers(), loadOrgs()]);
+        } catch(e){ status.textContent = e.message || '分配失败'; }
     }
     function activate(name){
         document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
@@ -71,8 +168,16 @@
     }
     document.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => activate(el.dataset.tab)));
     document.getElementById('search').addEventListener('input', e => { state.query = e.target.value || ''; renderUsers(); });
+    document.getElementById('orgForm').addEventListener('submit', e => {
+        e.preventDefault();
+        const input = document.getElementById('orgNameInput');
+        const name = (input.value || '').trim();
+        if(!name) return;
+        input.value = '';
+        createOrg(name);
+    });
     const initial = ['users','access','quota','sessions','usage'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'users';
-    activate(initial); loadUsers(); if(window.lucide) lucide.createIcons();
+    activate(initial); loadOrgs(); loadUsers(); if(window.lucide) lucide.createIcons();
 })();
 </script>
 </body>

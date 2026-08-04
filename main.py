@@ -8804,6 +8804,7 @@ from app.routers import files as files_router
 from app.routers import workflows as workflows_router
 from app.routers import pages as pages_router
 from app.routers import access_control as access_control_router
+from app.routers import organizations as organizations_router
 from app.routers import feedback as feedback_router
 from app.routers import help as help_router
 from app.routers import announcement as announcement_router
@@ -8820,6 +8821,7 @@ app.include_router(files_router.router)
 app.include_router(workflows_router.router)
 app.include_router(pages_router.router)
 app.include_router(access_control_router.router)
+app.include_router(organizations_router.router)
 app.include_router(feedback_router.router)
 app.include_router(help_router.router)
 app.include_router(announcement_router.router)

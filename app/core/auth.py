@@ -52,8 +52,8 @@ def clean_user_id(raw: str) -> str:
 def load_users_registry():
     with USERS_LOCK:
         with metadata_connection() as conn, conn.cursor() as cur:
-            cur.execute("SELECT id,username,created_at FROM users")
-            loaded = {row["id"]: {"username": row["username"], "created_at": row["created_at"]} for row in cur.fetchall()}
+            cur.execute("SELECT id,username,created_at,org_id FROM users")
+            loaded = {row["id"]: {"username": row["username"], "created_at": row["created_at"], "org_id": row["org_id"]} for row in cur.fetchall()}
         # Several routers import USERS directly, so preserve the shared object.
         USERS.clear()
         USERS.update(loaded)
@@ -70,6 +70,17 @@ def user_exists(user_id: str) -> bool:
         return user_id in USERS
 
 
+def set_user_org(user_id: str, org_id: str | None) -> bool:
+    """设置指定用户所属组织（org_id 为 None 表示解除归属）。用户不存在返回 False。"""
+    with USERS_LOCK:
+        if user_id not in USERS:
+            return False
+        with metadata_connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE users SET org_id=%s WHERE id=%s", (org_id, user_id))
+        USERS[user_id]["org_id"] = org_id
+    return True
+
+
 def register_user(user_id: str, username: str) -> bool:
     """注册新用户名；若已被占用返回 False。"""
     with USERS_LOCK:
@@ -80,7 +91,7 @@ def register_user(user_id: str, username: str) -> bool:
             cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING id", (user_id, username, created_at))
             if not cur.fetchone():
                 return False
-        USERS[user_id] = {"username": username, "created_at": created_at}
+        USERS[user_id] = {"username": username, "created_at": created_at, "org_id": None}
     return True
 
 

@@ -392,6 +392,18 @@ class AccessControlConfigPayload(BaseModel):
     default: Optional[AccessControlUserEntry] = None
 
 
+class OrganizationCreatePayload(BaseModel):
+    name: str
+
+
+class OrganizationRenamePayload(BaseModel):
+    name: str
+
+
+class UserOrgAssignPayload(BaseModel):
+    org_id: Optional[str] = None
+
+
 class FeedbackCreatePayload(BaseModel):
     type: str = Field(default="issue", max_length=40)
     content: str = Field(min_length=1, max_length=2000)
