@@ -13379,8 +13379,10 @@ function collectLoopChainSubgraph(rootNode, graph){
 // 为某一轮克隆一条完整链路：深拷贝链路节点(新id)，重映射内部连线，按轮次偏移位置，
 // 再创建一个装当前轮素材的图片节点，连到克隆链路的根节点。
 function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endIndex, roundOffset){
-    const rootRect = nodeRect(rootNode);
-    const rowGap = (Number(rootRect.height) || 180) + 60;
+    // 行高取整条链路中最高的节点（而不是只看根节点），避免链路内存在比根节点更高的
+    // 节点（如多图组、循环节点等）时，下一轮的克隆与本轮在 Y 轴上重叠。
+    const chainMaxHeight = subgraph.nodes.reduce((max, node) => Math.max(max, Number(nodeRect(node).height) || 0), Number(nodeRect(rootNode).height) || 180);
+    const rowGap = chainMaxHeight + 60;
     const dy = (roundOffset + 1) * rowGap; // 原链路在上，克隆链路依次向下排列
     const idMap = new Map();
     const clones = subgraph.nodes.map(node => {
