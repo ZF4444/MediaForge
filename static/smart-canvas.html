@@ -533,6 +533,14 @@
             </div>
         </div>
         <div id="toast" class="toast"></div>
+        <div id="uploadProgress" class="upload-progress" role="status" aria-live="polite">
+            <div class="upload-progress-row">
+                <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+                <span id="uploadProgressLabel" class="upload-progress-label"></span>
+                <span id="uploadProgressPercent" class="upload-progress-percent">0%</span>
+            </div>
+            <div class="upload-progress-track"><div id="uploadProgressBar" class="upload-progress-bar"></div></div>
+        </div>
         <div id="mentionPreview" class="mention-preview"><img alt="preview"></div>
     </div>
     <script src="/static/js/upload-quota-dialog.js"></script>
