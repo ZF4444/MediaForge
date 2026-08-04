@@ -1339,6 +1339,52 @@ function applyTheme(theme){
     document.body?.classList.toggle('theme-dark', dark);
     document.body?.classList.toggle('studio-theme-dark', dark);
 }
+const uploadProgressEl = document.getElementById('uploadProgress');
+const uploadProgressBar = document.getElementById('uploadProgressBar');
+const uploadProgressLabel = document.getElementById('uploadProgressLabel');
+const uploadProgressPercent = document.getElementById('uploadProgressPercent');
+let uploadProgressHideTimer = null;
+let uploadProgressActiveCount = 0;
+function showUploadProgress(fileCount=1){
+    if(!uploadProgressEl) return;
+    uploadProgressActiveCount += 1;
+    clearTimeout(uploadProgressHideTimer);
+    uploadProgressBar?.classList.remove('indeterminate');
+    if(uploadProgressBar) uploadProgressBar.style.width = '0%';
+    if(uploadProgressPercent) uploadProgressPercent.textContent = '0%';
+    if(uploadProgressLabel) uploadProgressLabel.textContent = uploadProgressLabelText(fileCount);
+    uploadProgressEl.classList.add('show');
+}
+function uploadProgressLabelText(fileCount){
+    if(fileCount > 1){
+        const template = tr('smart.uploadProgressMulti') || `正在上传 ${fileCount} 个素材…`;
+        return template.replace('{total}', fileCount);
+    }
+    return tr('smart.uploadProgressSingle') || '正在上传素材…';
+}
+function updateUploadProgress(loaded, total, fileCount=1){
+    if(!uploadProgressEl) return;
+    if(!Number.isFinite(total) || total <= 0){
+        uploadProgressBar?.classList.add('indeterminate');
+        return;
+    }
+    uploadProgressBar?.classList.remove('indeterminate');
+    const pct = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+    if(uploadProgressBar) uploadProgressBar.style.width = `${pct}%`;
+    if(uploadProgressPercent) uploadProgressPercent.textContent = `${pct}%`;
+}
+function hideUploadProgress(){
+    if(!uploadProgressEl) return;
+    uploadProgressActiveCount = Math.max(0, uploadProgressActiveCount - 1);
+    if(uploadProgressActiveCount > 0) return;
+    if(uploadProgressBar) uploadProgressBar.style.width = '100%';
+    if(uploadProgressPercent) uploadProgressPercent.textContent = '100%';
+    clearTimeout(uploadProgressHideTimer);
+    uploadProgressHideTimer = setTimeout(() => {
+        uploadProgressEl.classList.remove('show');
+        uploadProgressBar?.classList.remove('indeterminate');
+    }, 260);
+}
 function toast(text, options={}){
     const el = document.getElementById('toast');
     const value = String(text || '');
@@ -11231,11 +11277,16 @@ async function uploadFiles(files){
     if(!supported.length) return [];
     const form = new FormData();
     supported.forEach(file => form.append('files', file, file.name || 'media'));
-    const data = await window.MediaForgeUpload.upload(form);
-    return (data.files || []).map((file, index) => ({
-        ...file,
-        kind:file.kind || mediaKindForFile(supported[index])
-    }));
+    showUploadProgress(supported.length);
+    try {
+        const data = await window.MediaForgeUpload.upload(form, (loaded, total) => updateUploadProgress(loaded, total, supported.length));
+        return (data.files || []).map((file, index) => ({
+            ...file,
+            kind:file.kind || mediaKindForFile(supported[index])
+        }));
+    } finally {
+        hideUploadProgress();
+    }
 }
 function appendImagesToSmartNode(uploaded, targetId='', opts={}){
     const images = [...(uploaded || [])].filter(file => file?.url);

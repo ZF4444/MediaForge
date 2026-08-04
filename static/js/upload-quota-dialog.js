@@ -95,18 +95,45 @@
         overlay.querySelector('[data-quota-manage]')?.focus();
     }
 
-    async function upload(form) {
-        const response = await fetch('/api/ai/upload', {method: 'POST', body: form});
-        const text = await response.text();
-        let data = {};
-        try { data = text ? JSON.parse(text) : {}; }
-        catch (_) { data = {detail: text}; }
-        if (response.status === 413) {
-            showQuotaDialog(await quotaSnapshot(data));
-            return {files: [], quota_exceeded: true};
+    async function upload(form, onProgress) {
+        if (typeof onProgress !== 'function') {
+            const response = await fetch('/api/ai/upload', {method: 'POST', body: form});
+            const text = await response.text();
+            let data = {};
+            try { data = text ? JSON.parse(text) : {}; }
+            catch (_) { data = {detail: text}; }
+            if (response.status === 413) {
+                showQuotaDialog(await quotaSnapshot(data));
+                return {files: [], quota_exceeded: true};
+            }
+            if (!response.ok) throw new Error(data?.detail || data?.message || '上传失败');
+            return data;
         }
-        if (!response.ok) throw new Error(data?.detail || data?.message || '上传失败');
-        return data;
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/ai/upload');
+            xhr.upload.onprogress = event => {
+                if (event.lengthComputable) onProgress(event.loaded, event.total);
+            };
+            xhr.onload = async () => {
+                const text = xhr.responseText || '';
+                let data = {};
+                try { data = text ? JSON.parse(text) : {}; }
+                catch (_) { data = {detail: text}; }
+                if (xhr.status === 413) {
+                    showQuotaDialog(await quotaSnapshot(data));
+                    resolve({files: [], quota_exceeded: true});
+                    return;
+                }
+                if (xhr.status < 200 || xhr.status >= 300) {
+                    reject(new Error(data?.detail || data?.message || '上传失败'));
+                    return;
+                }
+                resolve(data);
+            };
+            xhr.onerror = () => reject(new Error('上传失败'));
+            xhr.send(form);
+        });
     }
 
     window.MediaForgeUpload = {upload, showQuotaDialog, openStorageManagement};

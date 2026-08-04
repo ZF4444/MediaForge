@@ -220,6 +220,8 @@
         "smart.toastNeedPrompt": { zh: "请输入提示词", en: "Please enter a prompt" },
         "smart.toastNeedGroup": { zh: "请先用左键框选至少两个图片节点", en: "Left-drag to box-select at least two image nodes first" },
         "smart.toastUploadFail": { zh: "素材上传失败", en: "Media upload failed" },
+        "smart.uploadProgressSingle": { zh: "正在上传素材…", en: "Uploading media…" },
+        "smart.uploadProgressMulti": { zh: "正在上传 {total} 个素材…", en: "Uploading {total} files…" },
         "smart.toastApiSettingsFail": { zh: "API 设置加载失败", en: "Failed to load API settings" },
         "smart.toastCanvasFail": { zh: "智能画布加载失败", en: "Failed to load smart canvas" },
         "smart.errNoApiModel": { zh: "请先选择可用的 API 生图模型", en: "Please select an available API image model" },
