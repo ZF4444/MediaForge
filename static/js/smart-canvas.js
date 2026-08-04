@@ -13379,10 +13379,18 @@ function collectLoopChainSubgraph(rootNode, graph){
 // 为某一轮克隆一条完整链路：深拷贝链路节点(新id)，重映射内部连线，按轮次偏移位置，
 // 再创建一个装当前轮素材的图片节点，连到克隆链路的根节点。
 function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endIndex, roundOffset){
-    // 行高取整条链路中最高的节点（而不是只看根节点），避免链路内存在比根节点更高的
-    // 节点（如多图组、循环节点等）时，下一轮的克隆与本轮在 Y 轴上重叠。
+    // 素材节点（装当前轮输入图，可能是多图分组）在克隆链路之前算好，因为它的高度
+    // 会随批次大小(imageBatchSize)变化，且可能比链路里任何节点都高。
+    const roundRefs = refsForDirectLoopRound(loopNode, loopIndex, endIndex).filter(ref => ref?.url);
+    const materialImageCount = roundRefs.length;
+    const materialHeight = materialImageCount
+        ? Math.round(imageLayout(new Array(materialImageCount).fill({}), materialImageCount > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE).height || 0)
+        : 0;
+    // 行高取整条链路中最高的节点、以及本轮素材节点两者的最大值（而不是只看根节点），
+    // 避免链路内存在比根节点更高的节点（如多图组、循环节点等），或素材节点因批次
+    // 图片数量变化而变高时，各轮克隆在 Y 轴上互相重叠。
     const chainMaxHeight = subgraph.nodes.reduce((max, node) => Math.max(max, Number(nodeRect(node).height) || 0), Number(nodeRect(rootNode).height) || 180);
-    const rowGap = chainMaxHeight + 60;
+    const rowGap = Math.max(chainMaxHeight, materialHeight) + 60;
     const dy = (roundOffset + 1) * rowGap; // 原链路在上，克隆链路依次向下排列
     const idMap = new Map();
     const clones = subgraph.nodes.map(node => {
@@ -13424,7 +13432,6 @@ function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endInde
     const clonedRoot = nodes.find(n => n.id === idMap.get(rootNode.id));
     // 素材节点：装当前轮的输入图，直接连到克隆根节点。
     let materialNode = null;
-    const roundRefs = refsForDirectLoopRound(loopNode, loopIndex, endIndex).filter(ref => ref?.url);
     if(roundRefs.length && clonedRoot){
         const images = roundRefs.map((ref, i) => stripImageGenerationMeta({
             file_id:ref.file_id || '',
