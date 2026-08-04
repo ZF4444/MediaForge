@@ -207,7 +207,8 @@ body.smart-node-drag .image-wrap:hover .image-resolution-badge { opacity:0 !impo
 .theme-dark .loop-smart-token-chip { background:#e5e7eb; color:#0f172a; }
 .theme-dark .loop-smart-token-chip button { background:rgba(15,23,42,.12); }
 .theme-dark .loop-smart-token-chip button:hover { background:rgba(15,23,42,.22); }
-.loop-smart-footer { width:100%; display:grid; grid-template-columns:minmax(72px, .8fr) minmax(72px, .8fr) minmax(118px, 1.35fr); align-items:center; gap:7px; margin-top:8px; }
+.loop-smart-footer { width:100%; display:grid; grid-template-columns:1fr minmax(118px, 1.35fr); align-items:center; gap:7px; margin-top:8px; }
+.loop-smart-count-hint { font-size:11.5px; font-weight:700; color:var(--muted); }
 .loop-smart-footer .loop-number-control { width:100%; }
 .loop-smart-footer .loop-number-trigger { width:100%; height:36px; padding:0 7px; }
 .loop-smart-run { width:100%; flex:0 0 40px; height:40px; border-radius:13px; border:1px solid var(--strong); background:var(--strong); color:var(--strong-text); display:flex; align-items:center; justify-content:center; gap:7px; font-size:12px; font-weight:900; box-shadow:0 10px 22px rgba(15,23,42,.16); }

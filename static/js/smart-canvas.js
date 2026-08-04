@@ -1874,6 +1874,18 @@ function imageLayout(images, scale=1, node=null){
     return {cols, rows, width, height, thumb};
 }
 function smartLoopCount(node){
+    // 次数不再手动设置：有图片输入时按"输入素材总数 / 批次大小"（向上取整）自动计算；
+    // 纯提示词循环（没有图片输入）则按变量提示词字段数量自动计算。
+    if(node?.imageInput){
+        const total = smartLoopTotalInputImages(node).length;
+        const batchSize = Math.max(1, Math.min(100, Number(node.imageBatchSize) || 1));
+        if(total > 0) return Math.max(1, Math.min(100, Math.ceil(total / batchSize)));
+        return 1;
+    }
+    if(node?.showPrompt){
+        const fieldCount = smartLoopActivePromptFieldValues(node).length;
+        if(fieldCount > 0) return Math.max(1, Math.min(100, fieldCount));
+    }
     return Math.max(1, Math.min(100, Number(node?.count || 1) || 1));
 }
 function smartLoopWidth(node){
@@ -6766,12 +6778,12 @@ function insertSmartLoopToken(editor, token){
     }
 }
 function smartLoopBodyHtml(node){
-    node.count = smartLoopCount(node);
     node.mode = node.mode === 'parallel' ? 'parallel' : 'serial';
-    node.loopStart = Math.max(1, Number(node.loopStart) || 1);
+    node.loopStart = 1;
     node.imageBatchSize = Math.max(1, Math.min(100, Number(node.imageBatchSize) || 1));
     node.showPrompt = Boolean(node.showPrompt);
     node.imageInput = Boolean(node.imageInput);
+    node.count = smartLoopCount(node);
     const imageCount = smartLoopInputImages(node, {index:node.loopStart}).length;
     const loopThumbs = smartNodeInputThumbsHtml(smartLoopPreviewImages(node));
     const promptItems = smartLoopInputPromptItems(node);
@@ -6822,8 +6834,7 @@ function smartLoopBodyHtml(node){
             </div>
         </div>` : ''}
         <div class="loop-smart-footer">
-            ${loopNumberControlHtml({label:tr('canvas.loopImageStart'), value:node.loopStart, key:'loopStart', max:9999, quick:[1,2,3,4,5,6,8,10]})}
-            ${loopNumberControlHtml({label:tr('canvas.loopCount'), value:node.count, key:'count', max:100, quick:[1,2,3,4,5,6,8,10]})}
+            <div class="loop-smart-count-hint">${escapeHtml(trf('canvas.loopCountAuto', {n:node.count}))}</div>
             <button class="loop-smart-control loop-smart-run ${loopRunning ? 'is-stop' : ''}" type="button" data-loop-run="${escapeHtml(node.id)}" ${loopStopping ? 'disabled' : ''}><i data-lucide="${loopRunning ? 'square' : 'workflow'}"></i><span>${escapeHtml(loopRunning ? smartCascadeStopText(loopStopping) : tr('smart.loopRunAll'))}</span></button>
         </div>
     </div>`;
@@ -7202,11 +7213,7 @@ function bindLoopNodeControls(el, node){
         control.addEventListener('click', e => e.stopPropagation());
         control.addEventListener('dblclick', e => e.stopPropagation());
     });
-    const loopNumberBounds = key => {
-        if(key === 'loopStart') return {min:1, max:9999};
-        if(key === 'imageBatchSize') return {min:1, max:100};
-        return {min:1, max:100};
-    };
+    const loopNumberBounds = () => ({min:1, max:100});
     const normalizeLoopNumber = (key, rawValue) => {
         const bounds = loopNumberBounds(key);
         return Math.max(bounds.min, Math.min(bounds.max, Number(rawValue) || bounds.min));
@@ -7222,8 +7229,6 @@ function bindLoopNodeControls(el, node){
     };
     const setLoopNumber = (key, rawValue, rerender=true, source=null) => {
         const value = normalizeLoopNumber(key, rawValue);
-        if(key === 'count') node.count = smartLoopCount({count:value});
-        if(key === 'loopStart') node.loopStart = value;
         if(key === 'imageBatchSize') node.imageBatchSize = value;
         scheduleSave();
         if(rerender) render();
@@ -11705,6 +11710,13 @@ function smartLoopPrompt(node, ctx=smartLoopContext){
         .replaceAll('《进度》', `${index}/${total}`)
         .replaceAll('[进度]', `${index}/${total}`)
         .trim();
+}
+function smartLoopTotalInputImages(node){
+    if(!node?.imageInput) return [];
+    return inputNodesFor(node).flatMap(input => {
+        if(input?.type === 'smart-loop') return smartLoopTotalInputImages(input);
+        return imagesForNode(input);
+    }).filter(img => img?.url);
 }
 function smartLoopInputImages(node, ctx=smartLoopContext){
     if(!node?.imageInput) return [];
