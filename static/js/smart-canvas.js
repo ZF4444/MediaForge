@@ -7480,13 +7480,24 @@ function handlePortDropMenuSelect(nodeType){
     closePortDropMenu();
 
     pushUndo();
+    // 新节点用于承接拉线的端口（与拖拽起点端口相反）应该正好落在鼠标释放的位置，
+    // 而不是把整个节点的中心/左上角对齐到释放点。
+    const isOut = drag.fromPort === 'out'; // 新节点通过 in 端口（左侧中点）连接
     let newNode;
     if(nodeType === 'text'){
-        newNode = createPromptNode(p.x - 158, p.y - 97, {skipUndo:true, select:true});
+        const w = 316, h = 194;
+        const x = isOut ? p.x : p.x - w;
+        const y = p.y - h / 2;
+        newNode = createPromptNode(x, y, {skipUndo:true, select:true});
     } else if(nodeType === 'loop'){
-        newNode = createLoopNode(p.x - 135, p.y - 95, {skipUndo:true, select:true});
+        const w = 340, h = 168;
+        const x = isOut ? p.x : p.x - w;
+        const y = p.y - h / 2;
+        newNode = createLoopNode(x, y, {skipUndo:true, select:true});
     } else {
-        newNode = createGenerationNodeByKind(nodeType, p, {select:true, skipUndo:true});
+        const layout = imageLayout([], mediaNodeDefaultScale({type:'smart-image', images:[]}), {type:'smart-image', images:[]});
+        const centerX = isOut ? p.x + layout.width / 2 : p.x - layout.width / 2;
+        newNode = createGenerationNodeByKind(nodeType, {x:centerX, y:p.y}, {select:true, skipUndo:true});
     }
     const fromId = drag.fromPort === 'out' ? drag.fromId : newNode.id;
     const toId = drag.fromPort === 'out' ? newNode.id : drag.fromId;
