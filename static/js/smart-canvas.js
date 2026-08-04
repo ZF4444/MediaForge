@@ -13395,7 +13395,7 @@ function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endInde
     // 避免链路内存在比根节点更高的节点（如多图组、循环节点等），或素材节点因批次
     // 图片数量变化而变高时，各轮克隆在 Y 轴上互相重叠。
     const chainMaxHeight = subgraph.nodes.reduce((max, node) => Math.max(max, Number(nodeRect(node).height) || 0), Number(nodeRect(rootNode).height) || 180);
-    const rowGap = Math.max(chainMaxHeight, materialHeight) + 60;
+    const rowGap = Math.max(chainMaxHeight, materialHeight) + 140;
     // 列宽：素材节点宽度 + 素材到根节点的固定间距 + 链路本身从根节点到最右侧节点的跨度。
     const materialGap = Math.max(300, materialWidth + 80);
     const chainRightEdge = subgraph.nodes.reduce((max, node) => {
