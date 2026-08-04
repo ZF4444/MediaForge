@@ -13378,11 +13378,16 @@ function collectLoopChainSubgraph(rootNode, graph){
 }
 // 为某一轮克隆一条完整链路：深拷贝链路节点(新id)，重映射内部连线，按轮次偏移位置，
 // 再创建一个装当前轮素材的图片节点，连到克隆链路的根节点。
-function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endIndex, roundOffset){
+// columnsPerRow：并行模式下每行最多放几条链路（即 parallelLimit），达到上限后换行向下；
+// 串行模式固定传 1，效果与之前一致（每一轮都单独另起一行）。
+function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endIndex, roundOffset, columnsPerRow=1){
     // 素材节点（装当前轮输入图，可能是多图分组）在克隆链路之前算好，因为它的高度
     // 会随批次大小(imageBatchSize)变化，且可能比链路里任何节点都高。
     const roundRefs = refsForDirectLoopRound(loopNode, loopIndex, endIndex).filter(ref => ref?.url);
     const materialImageCount = roundRefs.length;
+    const materialWidth = materialImageCount
+        ? Math.round(imageLayout(new Array(materialImageCount).fill({}), materialImageCount > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE).width || 0)
+        : 0;
     const materialHeight = materialImageCount
         ? Math.round(imageLayout(new Array(materialImageCount).fill({}), materialImageCount > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE).height || 0)
         : 0;
@@ -13391,10 +13396,22 @@ function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endInde
     // 图片数量变化而变高时，各轮克隆在 Y 轴上互相重叠。
     const chainMaxHeight = subgraph.nodes.reduce((max, node) => Math.max(max, Number(nodeRect(node).height) || 0), Number(nodeRect(rootNode).height) || 180);
     const rowGap = Math.max(chainMaxHeight, materialHeight) + 60;
-    const dy = (roundOffset + 1) * rowGap; // 原链路在上，克隆链路依次向下排列
+    // 列宽：素材节点宽度 + 素材到根节点的固定间距 + 链路本身从根节点到最右侧节点的跨度。
+    const materialGap = Math.max(300, materialWidth + 80);
+    const chainRightEdge = subgraph.nodes.reduce((max, node) => {
+        const rect = nodeRect(node);
+        return Math.max(max, (Number(rect.x) || 0) + (Number(rect.width) || 0));
+    }, (Number(rootNode.x) || 0) + (Number(nodeRect(rootNode).width) || 0));
+    const chainSpan = chainRightEdge - ((Number(rootNode.x) || 0) - materialGap);
+    const colGap = chainSpan + 80;
+    const cols = Math.max(1, Number(columnsPerRow) || 1);
+    const col = roundOffset % cols;
+    const row = Math.floor(roundOffset / cols);
+    const dx = col * colGap;
+    const dy = (row + 1) * rowGap; // 原链路在上，克隆链路依次向下排列；同一行内向右并排
     const idMap = new Map();
     const clones = subgraph.nodes.map(node => {
-        const clone = cloneSmartNode(node, 0, dy);
+        const clone = cloneSmartNode(node, dx, dy);
         idMap.set(node.id, clone.id);
         // 克隆的生成节点需要重新生成：清空既有结果与运行痕迹。
         clone.images = [];
@@ -13443,7 +13460,7 @@ function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endInde
         materialNode = {
             id:uid('smart'),
             type:'smart-image',
-            x:(Number(rootNode.x) || 0) - Math.max(300, (Number(matRect.width) || 260) + 80),
+            x:(Number(clonedRoot.x) || 0) - Math.max(300, (Number(matRect.width) || 260) + 80),
             y:(Number(clonedRoot.y) || 0),
             title:images.length > 1 ? 'Group' : 'Image',
             images,
@@ -13620,10 +13637,11 @@ async function runSmartCascade(targetNode=null){
         selectedIds = [];
         selectedImage = {nodeId:'', index:-1};
         try {
+            const columnsPerRow = loopMode === 'parallel' ? Math.max(1, parallelLimit) : 1;
             const runOneRound = async (loopIndex, roundOffset) => {
                 throwIfSmartCascadeStopRequested(runState);
                 const ctx = {index:loopIndex, total:endIndex, nodeId:loop.node.id, forceWorkflow:subgraph.nodes.length > 1, runState};
-                const {idMap, clonedRoot} = cloneLoopChainForRound(subgraph, graph.root, loop.node, loopIndex, endIndex, roundOffset);
+                const {idMap, clonedRoot} = cloneLoopChainForRound(subgraph, graph.root, loop.node, loopIndex, endIndex, roundOffset, columnsPerRow);
                 render();
                 refreshConnectionLayer();
                 await runClonedLoopChain(clonedRoot, subgraph.edges, idMap, ctx, runState);
