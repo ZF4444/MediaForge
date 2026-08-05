@@ -175,11 +175,9 @@ async function waitForVisibleBootMedia(timeoutMs=2500){
     ]);
 }
 let minimapViewport = document.getElementById('minimapViewport');
-let canvas = null;
-let nodes = [];
-let selectedId = '';
-let selectedIds = [];
-let selectedImage = {nodeId:'', index:-1};
+// M22 拆分：canvas / nodes / selectedId / selectedIds / selectedImage / viewport
+// 核心状态变量已迁移到 frontend/src/smart-canvas/state.js（经典 <script>，
+// 排在最前面加载，非 ES module，原因同 M1-M21）。
 let dragState = null;
 let loopInsertPreview = null;
 let selectionState = null;
@@ -409,7 +407,6 @@ let panoramaState = {
     loadToken:0
 };
 window.__smartCanvasPanoramaState = panoramaState;
-let viewport = {x:0, y:0, scale:1};
 let settings = {
     engine:'api',
     apiKind:'image',
@@ -2189,413 +2186,18 @@ function updateComposer(){
     syncCascadeRunButton(node);
     updateProviderModels();
 }
-function positionPromptComposerForNode(node){
-    if(!promptComposer || !node) return;
-    const rect = nodeRect(node);
-    const gap = 14;
-    const cardW = 540;
-    const screenLeft = viewport.x + (rect.x + rect.width / 2) * viewport.scale - cardW / 2;
-    const screenTop = viewport.y + (rect.y + rect.height) * viewport.scale + gap;
-    promptComposer.style.width = `${cardW}px`;
-    promptComposer.style.left = `${Math.round(screenLeft)}px`;
-    promptComposer.style.top = `${Math.round(screenTop)}px`;
-}
-function promptComposerParamsHtml(node){
-    node.llmProvider = resolveChatProviderId(node.llmProvider || '');
-    node.llmModel = resolveChatModel(node.llmModel || '', node.llmProvider);
-    const task = node.llmTask;
-    const ruleHtml = task === 'caption' || task === 'expand'
-        ? `<select class="prompt-composer-control prompt-composer-rule">${smartRuleTemplateOptions(task, task === 'caption' ? node.captionTemplateId : node.expandTemplateId)}</select>`
-        : '';
-    return `<select class="prompt-composer-control prompt-composer-provider">${chatProviderOptions(node.llmProvider)}</select>
-        <select class="prompt-composer-control prompt-composer-model">${chatModelOptions(node.llmModel, node.llmProvider)}</select>
-        ${ruleHtml}`;
-}
-function renderPromptComposer(node){
-    if(!promptComposer) return;
-    node.llmTask = ['llm', 'caption', 'expand'].includes(node.llmTask) ? node.llmTask : 'llm';
-    const task = node.llmTask;
-    if(promptTaskSelect) promptTaskSelect.value = task;
-    // 三种模式均展示指令输入框：对话/反推用作指令，扩写用作待扩写的内容。
-    if(promptComposerInstructionRow) promptComposerInstructionRow.style.display = '';
-    if(promptComposerInstruction){
-        promptComposerInstruction.value = node.llmInstruction || '';
-        promptComposerInstruction.placeholder = task === 'caption'
-            ? tr('smart.promptCaptionInstruction')
-            : task === 'expand'
-            ? tr('smart.promptExpandInstruction')
-            : tr('smart.promptLlmInstructionPlaceholder');
-    }
-    if(promptComposerParams) promptComposerParams.innerHTML = promptComposerParamsHtml(node);
-    renderPromptComposerThumbs(node);
-    renderPromptComposerInputPreview(node);
-    if(promptComposerRunBtn){
-        const runLabel = task === 'caption' ? tr('smart.promptCaptionRun') : task === 'expand' ? tr('smart.promptExpandRun') : tr('common.run');
-        promptComposerRunBtn.disabled = Boolean(node.running);
-        promptComposerRunBtn.innerHTML = `<i data-lucide="${node.running ? 'loader-2' : 'play'}"></i><span>${node.running ? escapeHtml(tr('common.running')) : escapeHtml(runLabel)}</span>`;
-    }
-    bindPromptComposerControls(node);
-    positionPromptComposerForNode(node);
-    if(window.lucide) lucide.createIcons();
-}
-function bindPromptComposerControls(node){
-    if(promptTaskSelect) promptTaskSelect.onchange = e => {
-        node.llmTask = e.target.value;
-        renderPromptComposer(node);
-        scheduleSave();
-    };
-    if(promptComposerInstruction){
-        promptComposerInstruction.oninput = e => { node.llmInstruction = e.target.value; scheduleSave(); };
-    }
-    const providerEl = promptComposerParams?.querySelector('.prompt-composer-provider');
-    if(providerEl) providerEl.onchange = e => {
-        node.llmProvider = resolveChatProviderId(e.target.value);
-        node.llmModel = resolveChatModel('', node.llmProvider);
-        renderPromptComposer(node);
-        scheduleSave();
-    };
-    const modelEl = promptComposerParams?.querySelector('.prompt-composer-model');
-    if(modelEl) modelEl.onchange = e => { node.llmModel = e.target.value; scheduleSave(); };
-    const ruleEl = promptComposerParams?.querySelector('.prompt-composer-rule');
-    if(ruleEl) ruleEl.onchange = e => {
-        if(node.llmTask === 'caption') node.captionTemplateId = e.target.value;
-        else if(node.llmTask === 'expand') node.expandTemplateId = e.target.value;
-        scheduleSave();
-    };
-    if(promptComposerRunBtn) promptComposerRunBtn.onclick = e => {
-        e.preventDefault(); e.stopPropagation();
-        runPromptLLMNode(node.id);
-    };
-}
-function updatePromptComposer(){
-    if(!promptComposer) return;
-    const node = selectedNode();
-    const show = node?.type === 'smart-prompt' && !isSmartGroupCompactMember(node);
-    promptComposer.classList.toggle('open', Boolean(show));
-    if(show) renderPromptComposer(node);
-}
-function renderInputPromptPreview(node){
-    if(!inputPromptPreview) return;
-    if(settings.engine === 'runninghub' && !rhRequiresPrompt(settings)){
-        inputPromptPreview.classList.remove('has-text');
-        inputPromptPreview.innerHTML = '';
-        return;
-    }
-    const text = node ? inputPromptTextFor(node).trim() : '';
-    inputPromptPreview.classList.toggle('has-text', Boolean(text));
-    inputPromptPreview.innerHTML = text
-        ? `<div class="input-prompt-preview-label">${escapeHtml(tr('smart.inputUpstream'))}</div><div class="input-prompt-preview-text">${escapeHtml(text)}</div>`
-        : '';
-}
-function rhInputKindLabel(kind){
-    if(kind === 'video') return 'VIDEO';
-    if(kind === 'audio') return 'AUDIO';
-    return 'IMAGE';
-}
-function rhInputKindIcon(kind){
-    if(kind === 'video') return 'film';
-    if(kind === 'audio') return 'file-audio';
-    return 'image';
-}
-function renderRhInputThumb(ref, field, index, kind, node, sourceUrl){
-    const isVid = kind === 'video' || isVideoMediaItem(ref);
-    const title = `${field.label || field.fieldName || rhInputKindLabel(kind)} · ${ref?.name || tr('smart.inputNum').replace('{n}', String(index + 1))}`;
-    const visibleUrl = renderedThumbSrcForRef(ref);
-    const inner = isVid
-        ? `<div class="input-thumb-video">${videoPosterHtml(ref)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
-        : `<img src="${escapeAttr(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
-    const label = rhInputKindLabel(kind).slice(0, 3);
-    const isSelf = node ? isSelfReferenceForNode(node, ref) : false;
-    return `<div class="input-thumb ${isVid ? 'has-video-preview' : ''} ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${index}" data-file-id="${escapeAttr(ref.file_id || '')}" data-node-id="${escapeAttr(ref.nodeId || '')}" data-image-index="${ref.imageIndex ?? ''}" data-url="${escapeAttr(ref.url || '')}" data-source-url="${escapeAttr(sourceUrl || ref.originalLocalUrl || ref.url || '')}" title="${escapeAttr(title)}" style="--preview-url:url('${escapeAttr(thumbMediaUrl(ref) || '')}')">${inner}${isVid ? inputVideoHoverPreviewHtml(ref) : ''}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeAttr(ref.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
-}
-function inputVideoHoverPreviewHtml(item){
-    const src = filePreviewUrl(item) || item?.url || '';
-    return src ? `<video class="input-thumb-video-preview" src="${escapeAttr(src)}" muted loop playsinline preload="metadata" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>` : '';
-}
-function inputThumbType(item){
-    if(isVideoMediaItem(item)) return 'video';
-    if(isAudioMediaItem(item)) return 'audio';
-    return 'image';
-}
-function inputThumbLabel(item, index){
-    const n = index + 1;
-    if(isVideoMediaItem(item)) return window.StudioI18n?.lang?.() === 'en' ? `Video ${n}` : `视频${n}`;
-    if(isAudioMediaItem(item)) return window.StudioI18n?.lang?.() === 'en' ? `Audio ${n}` : `音频${n}`;
-    return window.StudioI18n?.lang?.() === 'en' ? `Image ${n}` : `图${n}`;
-}
-function renderRunningHubInputThumbsRow(node){
-    const fields = rhActiveFields().filter(field => ['image','video','audio'].includes(rhFieldKind(field)));
-    const refs = node
-        ? uniqueReferenceImages([
-            ...defaultReferenceImagesFor(node),
-            ...(smartPromptInputEnabledForSettings(settings) ? collectMentionedImagesFromPrompt() : [])
-        ])
-        : [];
-    const media = {
-        image:imageRefsOnly(refs),
-        video:videoRefsOnly(refs),
-        audio:audioRefsOnly(refs)
-    };
-    const indexes = rhFieldIndexes(rhActiveFields());
-    inputThumbsRow.classList.add('runninghub-inputs');
-    inputThumbsRow.classList.toggle('has-items', fields.length > 0);
-    if(!fields.length){
-        inputThumbsRow.innerHTML = '';
-        return;
-    }
-    inputThumbsRow.innerHTML = `<div class="rh-input-field-list">${fields.map(field => {
-        const kind = rhFieldKind(field);
-        const key = rhParamKey(field.nodeId, field.fieldName);
-        const index = indexes[key] || 0;
-        const ref = (media[kind] || [])[index] || null;
-        const label = field.label || field.fieldName || rhInputKindLabel(kind);
-        const sourceUrl = ref?.originalLocalUrl || ref?.sourceUrl || ref?.url || '';
-        const thumb = ref?.url
-            ? renderRhInputThumb(ref, field, index, kind, node, sourceUrl)
-            : `<div class="rh-input-empty-icon"><i data-lucide="${rhInputKindIcon(kind)}"></i></div>`;
-        return `<div class="rh-input-field ${ref?.url ? '' : 'empty'}" title="${escapeAttr(label)}">
-            ${thumb}
-            <div class="rh-input-field-meta">
-                <div class="rh-input-field-name">${escapeHtml(label)}</div>
-                <div class="rh-input-field-kind">${escapeHtml(rhInputKindLabel(kind))}${field.required === true ? ' · REQUIRED' : ''}</div>
-            </div>
-        </div>`;
-    }).join('')}</div>`;
-    bindInputThumbsDrag(node, refs);
-}
-function inputThumbItemHtml(img, i, node, typeIndexes){
-    const isVid = isVideoMediaItem(img);
-    const isSelf = node ? isSelfReferenceForNode(node, img) : false;
-    const title = isSelf
-        ? tr('smart.inputSelf')
-        : (smartImageMode(node) === 'workflow' ? tr('smart.inputUpstreamWorkflow') : tr('smart.inputUpstream'));
-    const visibleUrl = renderedThumbSrcForRef(img);
-    const inner = isVid
-        ? `<div class="input-thumb-video">${videoPosterHtml(img)}<span class="smart-video-badge"><i data-lucide="play"></i></span></div>`
-        : `<img src="${escapeHtml(visibleUrl)}" draggable="false" loading="eager" decoding="async">`;
-    const label = inputThumbLabel(img, typeIndexes[inputThumbType(img)]++);
-    const sourceUrl = img.originalLocalUrl || img.url || '';
-    return `<div class="input-thumb ${isVid ? 'has-video-preview' : ''} ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-file-id="${escapeHtml(img.file_id || '')}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || label} · ${title}`)}" style="--preview-url:url('${escapeHtml(thumbMediaUrl(img) || '')}')">${inner}${isVid ? inputVideoHoverPreviewHtml(img) : ''}<span class="input-thumb-label">${escapeHtml(label)}</span><button class="input-thumb-x" type="button" data-disconnect-from="${escapeHtml(img.nodeId || '')}"><i data-lucide="x"></i></button></div>`;
-}
-function renderInputThumbsRow(node){
-    if(!inputThumbsRow) return;
-    syncJimengModelPillForRefs();
-    syncJimengVideoModelPillForRefs();
-    syncRhConfigForRefs();
-    inputThumbsRow.classList.remove('runninghub-inputs');
-    if(settings.engine === 'runninghub') return renderRunningHubInputThumbsRow(node);
-    const dedup = node ? visibleReferenceImagesFor(node) : [];
-    inputThumbsRow.classList.toggle('has-items', dedup.length > 0);
-    if(!dedup.length){ inputThumbsRow.innerHTML = ''; return; }
-    const typeIndexes = {image:0, video:0, audio:0};
-    const thumbsHtml = dedup.map((img, i) => inputThumbItemHtml(img, i, node, typeIndexes)).join('');
-    inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}</div>`;
-    bindInputThumbsDrag(node, dedup);
-}
-// 提示词节点配置框的输入图：与图片生成节点使用相同的缩略图渲染与交互（含断开按钮、视频预览、拖拽排序）。
-function renderPromptComposerThumbs(node){
-    if(!promptComposerThumbs) return;
-    const dedup = node ? promptNodeInputImages(node) : [];
-    promptComposerThumbs.classList.toggle('has-items', dedup.length > 0);
-    if(!dedup.length){ promptComposerThumbs.innerHTML = ''; return; }
-    const typeIndexes = {image:0, video:0, audio:0};
-    const thumbsHtml = dedup.map((img, i) => inputThumbItemHtml(img, i, node, typeIndexes)).join('');
-    promptComposerThumbs.innerHTML = `<div class="input-thumb-list">${thumbsHtml}</div>`;
-    bindInputThumbsDrag(node, dedup, promptComposerThumbs);
-}
-// 提示词节点配置框的「上游输入」预览：显示连入的上游提示词文本，与图片生成节点一致。
-function renderPromptComposerInputPreview(node){
-    if(!promptComposerInputPreview) return;
-    const text = node ? inputPromptTextFor(node).trim() : '';
-    promptComposerInputPreview.classList.toggle('has-text', Boolean(text));
-    promptComposerInputPreview.innerHTML = text
-        ? `<div class="input-prompt-preview-label">${escapeHtml(tr('smart.inputUpstream'))}</div><div class="input-prompt-preview-text">${escapeHtml(text)}</div>`
-        : '';
-}
-function bindInputThumbsDrag(node, items, container=inputThumbsRow){
-    if(!container) return;
-    let thumbDragIndex = -1;
-    container.querySelectorAll('.input-thumb').forEach(el => {
-        const index = Number(el.dataset.thumbIndex || -1);
-        const canReorder = items.length > 1 && Boolean(items[index]?.nodeId);
-        el.draggable = canReorder;
-        el.addEventListener('click', e => {
-            e.preventDefault();
-            e.stopPropagation();
-        });
-        const videoPreview = el.querySelector('.input-thumb-video-preview');
-        if(videoPreview){
-            el.addEventListener('mouseenter', () => {
-                const play = () => {
-                    const promise = videoPreview.play?.();
-                    if(promise?.catch) promise.catch(() => {});
-                };
-                if(videoPreview.readyState >= 1) play();
-                else videoPreview.addEventListener('loadedmetadata', play, {once:true});
-            });
-            el.addEventListener('mouseleave', () => {
-                videoPreview.pause();
-                try { videoPreview.currentTime = 0; } catch(e) {}
-            });
-        }
-        const disconnectBtn = el.querySelector('.input-thumb-x');
-        if(disconnectBtn){
-            disconnectBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
-            disconnectBtn.addEventListener('click', e => {
-                e.preventDefault(); e.stopPropagation();
-                const fromId = disconnectBtn.dataset.disconnectFrom;
-                if(!fromId || !node || !canvas?.connections) return;
-                const connIdx = canvas.connections.findIndex(c => c.from === fromId && c.to === node.id);
-                if(connIdx >= 0) disconnectConnection(connIdx);
-            });
-        }
-        if(!canReorder) return;
-        el.addEventListener('dragstart', e => {
-            e.stopPropagation();
-            thumbDragIndex = index;
-            el.classList.add('dragging');
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('application/x-smart-input-thumb', String(index));
-        });
-        el.addEventListener('dragend', e => {
-            e.stopPropagation();
-            thumbDragIndex = -1;
-            clearInputThumbDropMarkers();
-            el.classList.remove('dragging');
-        });
-        el.addEventListener('dragover', e => {
-            const rawFrom = e.dataTransfer.getData('application/x-smart-input-thumb');
-            const from = rawFrom === '' ? thumbDragIndex : Number(rawFrom);
-            if(!Number.isFinite(from) || from < 0 || from === index || !items[index]?.nodeId) return;
-            e.preventDefault();
-            e.stopPropagation();
-            e.dataTransfer.dropEffect = 'move';
-            clearInputThumbDropMarkers();
-            const placement = inputThumbDropPlacement(el, e);
-            el.dataset.dropPlacement = placement;
-            el.classList.add(placement === 'before' ? 'drop-before' : 'drop-after');
-        });
-        el.addEventListener('dragleave', e => {
-            if(el.contains(e.relatedTarget)) return;
-            delete el.dataset.dropPlacement;
-            el.classList.remove('drop-before', 'drop-after');
-        });
-        el.addEventListener('drop', e => {
-            const rawFrom = e.dataTransfer.getData('application/x-smart-input-thumb');
-            const from = rawFrom === '' ? thumbDragIndex : Number(rawFrom);
-            if(!Number.isFinite(from) || from < 0 || from === index || !items[index]?.nodeId) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const placement = inputThumbDropPlacement(el, e);
-            clearInputThumbDropMarkers();
-            reorderInputThumb(node, items, from, index, placement);
-        });
-    });
-}
-function inputThumbDropPlacement(el, event){
-    const rect = el.getBoundingClientRect();
-    return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
-}
-function clearInputThumbDropMarkers(){
-    [inputThumbsRow, promptComposerThumbs].filter(Boolean).forEach(container => {
-        container.querySelectorAll('.input-thumb.drop-before,.input-thumb.drop-after,.input-thumb.dragging')
-            .forEach(el => {
-                delete el.dataset.dropPlacement;
-                el.classList.remove('drop-before', 'drop-after', 'dragging');
-            });
-    });
-}
-function movedBeforeAfterIds(ids, movedId, targetId, placement='before'){
-    const list = (ids || []).filter(Boolean);
-    const from = list.indexOf(movedId);
-    const target = list.indexOf(targetId);
-    if(from < 0 || target < 0 || movedId === targetId) return list;
-    const [moved] = list.splice(from, 1);
-    let insertAt = list.indexOf(targetId);
-    if(insertAt < 0) return ids || [];
-    if(placement === 'after') insertAt += 1;
-    list.splice(insertAt, 0, moved);
-    return list;
-}
-function sameOrderedIds(a, b){
-    if((a || []).length !== (b || []).length) return false;
-    return (a || []).every((id, index) => id === b[index]);
-}
-function reorderInputSourceNodes(currentNode, movedId, targetId, placement='before'){
-    if(!currentNode || !movedId || !targetId || movedId === targetId) return false;
-    const sourceNodes = smartImageUsesWorkflowInput(currentNode, smartLoopContext)
-        ? workflowInputNodesFor(currentNode)
-        : inputNodesFor(currentNode);
-    const sourceIds = sourceNodes.map(n => n.id).filter(Boolean);
-    if(!sourceIds.includes(movedId) || !sourceIds.includes(targetId)) return false;
-    const nextIds = movedBeforeAfterIds(sourceIds, movedId, targetId, placement);
-    if(sameOrderedIds(sourceIds, nextIds)) return false;
-    const oldExplicitIds = Array.isArray(currentNode.inputNodeIds) ? currentNode.inputNodeIds.filter(Boolean) : [];
-    currentNode.inputNodeIds = [
-        ...nextIds.filter(id => oldExplicitIds.includes(id)),
-        ...oldExplicitIds.filter(id => !nextIds.includes(id))
-    ];
-    if(canvas && Array.isArray(canvas.connections)){
-        const order = new Map(nextIds.map((id, index) => [id, index]));
-        const relevantSlots = new Set();
-        const relevant = [];
-        canvas.connections.forEach((conn, index) => {
-            const kind = conn?.kind || 'flow';
-            if(conn?.to === currentNode.id && ['input', 'flow'].includes(kind) && order.has(conn.from)){
-                relevantSlots.add(index);
-                relevant.push({conn, index});
-            }
-        });
-        if(relevant.length){
-            relevant.sort((a, b) => (order.get(a.conn.from) - order.get(b.conn.from)) || (a.index - b.index));
-            let cursor = 0;
-            canvas.connections = canvas.connections.map((conn, index) => relevantSlots.has(index) ? relevant[cursor++].conn : conn);
-        }
-    }
-    return true;
-}
-function reorderInputThumb(currentNode, items, from, to, placement='before'){
-    // items are already sourced from inputImagesFor → multiple source nodes possible.
-    // Reorder within a source group's images first; separate input nodes use the
-    // current node's input order, with a visual-position swap as a final fallback.
-    if(from < 0 || to < 0 || from >= items.length || to >= items.length) return;
-    const fromImg = items[from];
-    const toImg = items[to];
-    if(!fromImg || !toImg) return;
-    if(fromImg.nodeId === toImg.nodeId){
-        const src = nodes.find(n => n.id === fromImg.nodeId);
-        if(!src) return;
-        pushUndo();
-        const fi = Number(fromImg.imageIndex);
-        const ti = Number(toImg.imageIndex);
-        if(Number.isFinite(fi) && Number.isFinite(ti) && (src.images || [])[fi]){
-            const arr = src.images;
-            let insertAt = Math.max(0, Math.min(arr.length, ti + (placement === 'after' ? 1 : 0)));
-            const item = arr.splice(fi, 1)[0];
-            if(fi < insertAt) insertAt -= 1;
-            arr.splice(Math.max(0, Math.min(arr.length, insertAt)), 0, item);
-        }
-        render();
-        scheduleSave();
-        return;
-    }
-    const canReorderSources = currentNode && fromImg.nodeId && toImg.nodeId;
-    const a = nodes.find(n => n.id === fromImg.nodeId);
-    const b = nodes.find(n => n.id === toImg.nodeId);
-    if(!canReorderSources || !a || !b) return;
-    pushUndo();
-    if(reorderInputSourceNodes(currentNode, fromImg.nodeId, toImg.nodeId, placement)){
-        render();
-        scheduleSave();
-        return;
-    }
-    // Cross-node fallback: swap X positions of source nodes
-    const ax = a.x, ay = a.y;
-    a.x = b.x; a.y = b.y;
-    b.x = ax; b.y = ay;
-    render();
-    scheduleSave();
-}
+// M21 拆分（第一段）：positionPromptComposerForNode / promptComposerParamsHtml /
+// renderPromptComposer / bindPromptComposerControls / updatePromptComposer /
+// renderInputPromptPreview / rhInputKindLabel / rhInputKindIcon / renderRhInputThumb /
+// inputVideoHoverPreviewHtml / inputThumbType / inputThumbLabel /
+// renderRunningHubInputThumbsRow / inputThumbItemHtml / renderInputThumbsRow /
+// renderPromptComposerThumbs / renderPromptComposerInputPreview / bindInputThumbsDrag /
+// inputThumbDropPlacement / clearInputThumbDropMarkers / movedBeforeAfterIds /
+// sameOrderedIds / reorderInputSourceNodes / reorderInputThumb 已迁移到
+// frontend/src/smart-canvas/mention-composer.js（经典 <script>，非 ES module，
+// 原因同 M1-M20；注意跟 main.js 里仍保留的 updateComposer/
+// positionComposerForNode——操作另一个 DOM 元素 composer，不是这里的
+// promptComposer——是两个不同的面板，不要混淆）。
 // M6 拆分：isSupportedUploadFile / dataTransferItemEntry / filesFromEntry /
 // uploadFilesFromDataTransfer / uploadTitleForItems /
 // SMART_IMAGE_DROP_EXT_RE / SMART_IMAGE_DROP_TEXT_TYPES /
@@ -2777,688 +2379,25 @@ function pendingBoxSize(count, options={}){
     const h = rows * (cellH + 8) + 16;
     return {w, h};
 }
-function mentionTokenHtml(img){
-    if(!img?.url) return '';
-    const name = img.alias || img.name || '图片';
-    const kind = mediaKindForItem(img);
-    const media = kind === 'video'
-        ? videoPosterHtml(img)
-        : `<img src="${escapeHtml(img.url)}" alt="">`;
-    return `<span class="mention-image-token" contenteditable="false" data-url="${escapeHtml(img.url)}" data-kind="${escapeHtml(kind)}" data-name="${escapeHtml(name)}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${escapeHtml(img.imageIndex ?? '')}">${media}<span>${escapeHtml(name)}</span></span>`;
-}
-function promptHtmlWithMentionTokens(text, refs=[]){
-    const value = String(text || '');
-    const items = (refs || []).filter(ref => ref?.url && ref?.name).sort((a, b) => String(b.name || '').length - String(a.name || '').length);
-    if(!value || !items.length || !value.includes('@')) return '';
-    let html = '';
-    let index = 0;
-    while(index < value.length){
-        if(value[index] === '@'){
-            const hit = items.find(ref => value.slice(index + 1, index + 1 + String(ref.name || '').length) === String(ref.name || ''));
-            if(hit){
-                html += mentionTokenHtml(hit);
-                index += 1 + String(hit.name || '').length;
-                continue;
-            }
-        }
-        html += escapeHtml(value[index]);
-        index += 1;
-    }
-    return html;
-}
-function snapshotRunMeta(prompt, sourceId, displayPrompt='', refs=[]){
-    return {
-        prompt,
-        displayPrompt:displayPrompt || promptPlainText() || prompt,
-        promptHtml: promptInput ? promptInput.innerHTML : '',
-        promptText: promptPlainText(),
-        promptRefs:(refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? ''})).filter(ref => ref.url),
-        inputRefs:(refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || '', nodeId:ref.nodeId || '', imageIndex:ref.imageIndex ?? '', kind:ref.kind || ''})).filter(ref => ref.url),
-        sourceNodeId:sourceId,
-        settings:JSON.parse(JSON.stringify(settings)),
-        createdAt:Date.now()
-    };
-}
-function attachRunMeta(targetNode, meta){
-    if(!targetNode || !meta) return;
-    targetNode.runPrompt = meta.promptText || meta.displayPrompt || meta.prompt;
-    targetNode.runModelPrompt = meta.prompt;
-    targetNode.runPromptRefs = meta.promptRefs || [];
-    delete targetNode.runInputRefs;
-    targetNode.runSettings = meta.settings;
-    if(meta.sourceNodeId) targetNode.sourceNodeId = meta.sourceNodeId;
-    else delete targetNode.sourceNodeId;
-    targetNode.runAt = meta.createdAt;
-    // 保存可编辑的 @-提及表单到草稿字段，方便点输出节点时还原原始可编辑形式
-    if(meta.promptHtml != null){
-        const htmlHasToken = String(meta.promptHtml || '').includes('mention-image-token');
-        const rebuiltHtml = htmlHasToken ? '' : promptHtmlWithMentionTokens(meta.displayPrompt || meta.promptText || '', meta.promptRefs || []);
-        targetNode.promptDraftHtml = htmlHasToken ? meta.promptHtml : (rebuiltHtml || meta.promptHtml);
-        targetNode.promptDraftText = meta.promptText || '';
-    }
-    targetNode.images = (targetNode.images || []).map(img => stripImageGenerationMeta(img));
-}
-function stripRunInputMeta(meta){
-    if(!meta) return meta;
-    const cleanPrompt = meta.promptText || meta.displayPrompt || meta.prompt || '';
-    return {
-        ...meta,
-        promptHtml:escapeHtml(cleanPrompt),
-        promptText:cleanPrompt,
-        promptRefs:[],
-        inputRefs:meta.inputRefs || meta.promptRefs || [],
-        sourceNodeId:''
-    };
-}
-function stripImageGenerationMeta(img){
-    if(!img) return img;
-    delete img.runPrompt;
-    delete img.runModelPrompt;
-    delete img.runSettings;
-    delete img.sourceNodeId;
-    delete img.runAt;
-    delete img.promptDraftHtml;
-    delete img.promptDraftText;
-    return img;
-}
-// M4 拆分：addConnection / connectInputNode 已迁移到
-// frontend/src/smart-canvas/connections.js（经典 <script>，同上）。
-function upstreamNodesForKinds(node, kinds=['input']){
-    if(!node) return [];
-    const allowed = new Set(kinds);
-    const ids = new Set(allowed.has('input') ? (node.inputNodeIds || []) : []);
-    (canvas?.connections || []).forEach(conn => {
-        if(conn.to === node.id && allowed.has(conn.kind || 'flow')) ids.add(conn.from);
-    });
-    return [...ids].map(id => nodes.find(n => n.id === id)).filter(Boolean);
-}
-function inputNodesFor(node){
-    return upstreamNodesForKinds(node, ['input']);
-}
-function workflowInputNodesFor(node){
-    return upstreamNodesForKinds(node, ['input', 'flow']);
-}
-function imagesForNode(node){
-    if(node?.type === 'smart-group') return smartGroupImageRefs(node).map(ref => ({
-        ...ref.item,
-        nodeId:ref.nodeId,
-        imageIndex:ref.index
-    }));
-    return (node?.images || []).map((img, index) => ({...imageForDisplay(img), nodeId:node.id, imageIndex:index}));
-}
-function nodeHasReferenceContent(node){
-    return imagesForNode(node).some(img => img?.url);
-}
-function isSelfReferenceForNode(node, img){
-    return Boolean(node?.id && img?.nodeId === node.id);
-}
-function candidateInputImagesFor(node, consume=false, ctx=smartLoopContext){
-    const inputs = (smartImageUsesWorkflowInput(node, ctx) ? workflowInputImagesFor(node, consume, ctx) : inputImagesFor(node, consume, ctx))
-        .filter(img => img?.url);
-    if(!inputs.length) return [];
-    if(smartImageUsesWorkflowInput(node, ctx)) return inputs;
-    if(nodeHasReferenceContent(node)) return [];
-    return inputs;
-}
-function defaultInputImagesFor(node, consume=false, ctx=smartLoopContext){
-    return candidateInputImagesFor(node, consume, ctx);
-}
-function generatedUpstreamImagesFor(node, consume=false, ctx=smartLoopContext){
-    if(!node) return [];
-    const workflowRefs = workflowInputImagesFor(node, consume, ctx)
-        .filter(img => img?.url && !isSelfReferenceForNode(node, img));
-    if(workflowRefs.length) return workflowRefs;
-    const source = node.sourceNodeId ? nodes.find(n => n.id === node.sourceNodeId && n.id !== node.id) : null;
-    return source ? outputImagesForNode(source, consume, ctx).filter(img => img?.url) : [];
-}
-function splitSmartPromptItems(text){
-    const trimmed = String(text || '').trim();
-    if(!trimmed) return [];
-    const numbered = trimmed.split(/\s*(?:^|\s)\d+\s*[.、)）．]\s+/).map(s => s.trim()).filter(Boolean);
-    if(numbered.length >= 2) return numbered;
-    const lines = trimmed.split(/\r?\n+/).map(s => s.trim()).filter(Boolean);
-    return lines.length >= 2 ? lines : [trimmed];
-}
-// M2 拆分：smartLoopPromptFieldValues / smartLoopActivePromptFieldValues /
-// setSmartLoopPromptFieldValues / smartLoopPromptFieldText /
-// smartLoopSelectedLocalPrompt / smartLoopUpstreamPromptPreviewHeight /
-// smartLoopPromptVisiting / smartLoopInputPromptItems /
-// smartLoopSelectedInputPrompt / smartLoopPrompt / smartLoopTotalInputImages /
-// smartLoopInputImages / smartLoopPreviewImages 已迁移到
-// frontend/src/smart-canvas/loop-node.js（经典 <script>，同上）。
-function outputImagesForNode(node, consume=false, ctx=smartLoopContext){
-    if(node?.type === 'smart-group') return imagesForNode(node).filter(img => img?.url);
-    if(node?.type === 'smart-loop') return smartLoopInputImages(node, ctx);
-    return imagesForNode(node).filter(img => img?.url);
-}
-function selfReferenceImagesForNode(node, consume=false, ctx=smartLoopContext){
-    return outputImagesForNode(node, consume, ctx).filter(img => img?.url);
-}
-function textForNode(node, ctx=smartLoopContext){
-    if(!node) return '';
-    if(node.type === 'smart-prompt') return node.text || '';
-    if(node.type === 'smart-loop') return smartLoopPrompt(node, ctx);
-    if(node.type === 'smart-group') return smartGroupMembers(node).map(member => textForNode(member, ctx)).filter(Boolean).join('\n\n');
-    return '';
-}
-function promptInputNodesFor(node){
-    return inputNodesFor(node).filter(input => input?.type === 'smart-prompt' || input?.type === 'smart-loop' || input?.type === 'smart-group');
-}
-function inputPromptTextFor(node, ctx=smartLoopContext){
-    const directText = promptInputNodesFor(node).map(input => textForNode(input, ctx)).filter(Boolean);
-    const relayText = Array.isArray(ctx?.relayPromptNodeIds)
-        ? ctx.relayPromptNodeIds.map(id => nodes.find(n => n.id === id)).map(input => textForNode(input, ctx)).filter(Boolean)
-        : [];
-    // 不去重：两个内容相同的提示词节点都应各自贡献一份文本（仅过滤空文本）。
-    return [...directText, ...relayText]
-        .map(text => String(text || '').trim())
-        .filter(Boolean)
-        .join('\n\n');
-}
-// M2 拆分：upstreamLoopPromptNodesFor 已迁移到 frontend/src/smart-canvas/loop-node.js。
-function inputImagesFor(node, consume=false, ctx=smartLoopContext){
-    return inputNodesFor(node).flatMap(input => outputImagesForNode(input, consume, ctx));
-}
-function workflowInputImagesFor(node, consume=false, ctx=smartLoopContext){
-    return workflowInputNodesFor(node).flatMap(input => outputImagesForNode(input, consume, ctx));
-}
-function isGeneratedResultNode(node){
-    if(!isSmartImageNode(node)) return false;
-    if(node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt || node.runFinishedAt || node.runElapsedMs) return true;
-    if((node.runPromptRefs || []).length || (node.runInputRefs || []).length) return true;
-    return (node.images || []).some(img => img?.generatedResult || img?.runPrompt || img?.runModelPrompt || img?.runAt);
-}
-function runInputRefsForNode(node){
-    const refs = Array.isArray(node?.runInputRefs) ? node.runInputRefs.filter(ref => ref?.url) : [];
-    if(!refs.length) return [];
-    return refs.map((ref, index) => {
-        const source = ref.nodeId ? nodes.find(n => n.id === ref.nodeId) : null;
-        const sourceImage = source && Number.isFinite(Number(ref.imageIndex))
-            ? imagesForNode(source)[Number(ref.imageIndex)]
-            : null;
-        const resolved = sourceImage?.url === ref.url ? sourceImage : null;
-        return {
-            ...(resolved || {}),
-            ...ref,
-            name:ref.name || resolved?.name || `图${index + 1}`,
-            kind:ref.kind || resolved?.kind || mediaKindForItem(resolved || ref),
-            nodeId:ref.nodeId || resolved?.nodeId || '',
-            imageIndex:Number.isFinite(Number(ref.imageIndex)) ? Number(ref.imageIndex) : (Number.isFinite(Number(resolved?.imageIndex)) ? Number(resolved.imageIndex) : index)
-        };
-    }).filter(ref => ref.url);
-}
-function inputRefKey(img){
-    if(!img?.url) return '';
-    const nodeId = img.nodeId || '';
-    const imageIndex = Number.isFinite(Number(img.imageIndex)) ? String(Number(img.imageIndex)) : '';
-    if(nodeId && imageIndex !== '') return `${nodeId}|${imageIndex}`;
-    return `url|${img.url}`;
-}
-function blockedInputRefKeys(node){
-    return new Set(Array.isArray(node?.blockedInputRefs) ? node.blockedInputRefs.filter(Boolean) : []);
-}
-function isInputRefBlocked(node, img){
-    if(!node || !img?.url) return false;
-    return blockedInputRefKeys(node).has(inputRefKey(img));
-}
-function activeInputImagesFor(node, consume=false, ctx=smartLoopContext){
-    return inputImagesFor(node, consume, ctx).filter(img => img?.url && !isInputRefBlocked(node, img));
-}
-function toggleInputRefBlocked(node, img){
-    if(!node || !img?.url) return;
-    const key = inputRefKey(img);
-    if(!key) return;
-    pushUndo();
-    const blocked = blockedInputRefKeys(node);
-    if(blocked.has(key)) blocked.delete(key);
-    else blocked.add(key);
-    node.blockedInputRefs = [...blocked];
-    if(!node.blockedInputRefs.length) delete node.blockedInputRefs;
-    renderInputThumbsRow(node);
-    scheduleSave();
-}
-function defaultReferenceImagesFor(node, consume=false, ctx=smartLoopContext){
-    if(!node) return [];
-    if(isGeneratedResultNode(node)){
-        const upstream = generatedUpstreamImagesFor(node, consume, ctx);
-        if(upstream.length) return uniqueReferenceImages(upstream);
-        const ownUrls = new Set((node.images || []).map(img => img?.url).filter(Boolean));
-        const savedRunInputs = runInputRefsForNode(node)
-            .filter(ref => ref?.url && ref.nodeId !== node.id && !ownUrls.has(ref.url));
-        return savedRunInputs.length ? uniqueReferenceImages(savedRunInputs) : [];
-    }
-    const savedRunInputs = runInputRefsForNode(node);
-    if(savedRunInputs.length) return uniqueReferenceImages(savedRunInputs);
-    const upstream = defaultInputImagesFor(node, consume, ctx);
-    const self = selfReferenceImagesForNode(node, consume, ctx).filter(img => img?.url);
-    if(smartImageUsesWorkflowInput(node, ctx)) return uniqueReferenceImages(upstream);
-    if(self.length) return uniqueReferenceImages(self);
-    return uniqueReferenceImages(upstream);
-}
-function lineConnectionsFor(node){
-    if(!node) return [];
-    return (canvas?.connections || []).filter(conn => {
-        if(!conn?.from || !conn?.to || conn.from === conn.to) return false;
-        return ['input', 'flow'].includes(conn.kind || 'flow');
-    });
-}
-function connectedLineNodeIds(node){
-    if(!node) return [];
-    const conns = lineConnectionsFor(node);
-    const upstream = [];
-    const downstream = [];
-    const seenUp = new Set([node.id]);
-    const seenDown = new Set([node.id]);
-    const walkUp = id => {
-        conns.filter(conn => conn.to === id).forEach(conn => {
-            if(seenUp.has(conn.from)) return;
-            seenUp.add(conn.from);
-            walkUp(conn.from);
-            upstream.push(conn.from);
-        });
-    };
-    const walkDown = id => {
-        conns.filter(conn => conn.from === id).forEach(conn => {
-            if(seenDown.has(conn.to)) return;
-            seenDown.add(conn.to);
-            downstream.push(conn.to);
-            walkDown(conn.to);
-        });
-    };
-    walkUp(node.id);
-    walkDown(node.id);
-    return [...upstream, node.id, ...downstream];
-}
-function upstreamLineNodeIds(node){
-    if(!node) return [];
-    const conns = lineConnectionsFor(node);
-    const upstream = [];
-    const seen = new Set([node.id]);
-    const walk = id => {
-        conns.filter(conn => conn.to === id).forEach(conn => {
-            if(seen.has(conn.from)) return;
-            seen.add(conn.from);
-            walk(conn.from);
-            upstream.push(conn.from);
-        });
-    };
-    walk(node.id);
-    return [...upstream, node.id];
-}
-function lineImagesFor(node){
-    const ids = upstreamLineNodeIds(node);
-    return ids.flatMap(id => {
-        const source = nodes.find(n => n.id === id);
-        return imagesForNode(source);
-    }).filter(img => img?.url);
-}
-function collectMentionedImagesFromPrompt(){
-    const images = [];
-    collectPromptParts().forEach(part => {
-        if(part.type === 'image' && part.url) images.push(part);
-    });
-    return images;
-}
-function uniqueReferenceImages(images){
-    const refs = [];
-    const seen = new Set();
-    (images || []).forEach((img, index) => {
-        if(!img?.url || seen.has(img.url)) return;
-        seen.add(img.url);
-        refs.push({
-            ...img,
-            name:img.name || `图${refs.length + 1}`,
-            role:img.role || `image_${refs.length + 1}`,
-            imageIndex:Number.isFinite(Number(img.imageIndex)) ? Number(img.imageIndex) : index
-        });
-    });
-    return refs;
-}
-function visibleReferenceImagesFor(node){
-    const base = defaultReferenceImagesFor(node);
-    return uniqueReferenceImages([...base, ...collectMentionedImagesFromPrompt()]);
-}
-function inputMentionCandidateImages(node){
-    // @ 提及仅列出当前生成节点的直接输入，不能把整条上游链路的素材混入候选。
-    const current = node ? inputImagesFor(node) : [];
-    const seen = new Set();
-    return current.filter(img => {
-        if(!img?.url || seen.has(img.url)) return false;
-        seen.add(img.url);
-        return true;
-    }).map((img, index) => ({
-        ...img,
-        thumbnail:mentionCandidateThumbnailUrl(img),
-        mentionId:`mention_${index}_${Math.random().toString(36).slice(2, 7)}`,
-        alias:img.name || `图片${index + 1}`
-    }));
-}
-function mentionCandidateThumbnailUrl(item){
-    const fileId = String(item?.file_id || fileIdFromUrl(item?.url || '') || '').trim();
-    return fileId ? `/api/files/${encodeURIComponent(fileId)}/thumb` : thumbMediaUrl(item);
-}
-// 一个素材可注册到多个平台：收集所有「已通过」的 asset:// 地址，按平台映射。
-function assetRegisteredUris(item){
-    const regs = (item && item.registrations && typeof item.registrations === 'object') ? item.registrations : {};
-    const out = {};
-    Object.keys(regs).forEach(platform => {
-        const reg = regs[platform];
-        if(reg && reg.status === 'Active' && reg.asset_uri) out[platform] = reg.asset_uri;
-    });
-    return out;
-}
-function assetMentionCandidateImages(categoryId=''){
-    const cats = assetCategories('image');
-    const cat = cats.find(c => c.id === categoryId) || assetCategoryForMention();
-    if(!cat) return [];
-    mentionAssetCategoryId = cat.id;
-    const items = (cat.items || []).map(item => ({...item, categoryName:cat.name || '', categoryId:cat.id}));
-    const seen = new Set();
-    return items.filter(item => {
-        if(!item?.url || seen.has(item.url)) return false;
-        seen.add(item.url);
-        return true;
-    }).map((item, index) => ({
-        url:item.url,
-        file_id:item.file_id || fileIdFromUrl(item.url || ''),
-        thumbnail:mentionCandidateThumbnailUrl(item),
-        kind:assetMediaKind(item),
-        name:item.name || `资产${index + 1}`,
-        alias:item.name || `资产${index + 1}`,
-        role:'asset',
-        categoryName:item.categoryName || '',
-        asset_uris:assetRegisteredUris(item),
-        mentionId:`asset_${index}_${Math.random().toString(36).slice(2, 7)}`
-    }));
-}
-function mentionCandidateImages(node, source=mentionSource){
-    return source === 'asset' ? assetMentionCandidateImages(mentionAssetCategoryId) : inputMentionCandidateImages(node);
-}
-function referenceImagesFor(node){
-    return defaultReferenceImagesFor(node);
-}
-function closeMentionPicker(){
-    mentionPicker.classList.remove('open');
-    mentionPicker.innerHTML = '';
-}
-function saveMentionRange(){
-    const sel = window.getSelection();
-    if(sel && sel.rangeCount && promptInput.contains(sel.anchorNode)){
-        mentionRange = sel.getRangeAt(0).cloneRange();
-    }
-}
-function textBeforeCaret(){
-    const sel = window.getSelection();
-    if(!sel || !sel.rangeCount || !promptInput.contains(sel.anchorNode)) return '';
-    const range = sel.getRangeAt(0).cloneRange();
-    range.selectNodeContents(promptInput);
-    range.setEnd(sel.anchorNode, sel.anchorOffset);
-    return range.toString();
-}
-function renderMentionPicker(source){
-    const node = selectedNode();
-    const inputItems = inputMentionCandidateImages(node);
-    const assetLibs = assetLibraries();
-    if(!activeAssetLibraryId || !assetLibs.some(lib => lib.id === activeAssetLibraryId)) activeAssetLibraryId = assetLibrary.active_library_id || assetLibs[0]?.id || '';
-    const libraryWithMentionAssets = assetLibs.find(lib => (lib.categories || []).some(cat => (cat.type || 'image') === 'image' && (cat.items || []).some(item => item?.url)));
-    const assetCats = assetCategories('image');
-    const hasInput = inputItems.length > 0;
-    const hasAssets = Boolean(libraryWithMentionAssets);
-    mentionSource = source || (hasInput ? 'input' : 'asset');
-    if(mentionSource === 'asset' && hasAssets && !assetCats.some(cat => (cat.items || []).some(item => item?.url)) && libraryWithMentionAssets){
-        activeAssetLibraryId = libraryWithMentionAssets.id;
-        activeAssetCategoryId = '';
-        mentionAssetCategoryId = '';
-    }
-    if(mentionSource === 'input' && !hasInput && hasAssets) mentionSource = 'asset';
-    if(mentionSource === 'asset' && !hasAssets && hasInput) mentionSource = 'input';
-    if(!hasInput && !hasAssets){ closeMentionPicker(); return; }
-    const nextAssetCats = assetCategories('image');
-    const currentAssetCat = assetCategoryForMention();
-    const assetItems = assetMentionCandidateImages(currentAssetCat?.id || '');
-    const candidates = (mentionSource === 'asset' ? assetItems : inputItems).slice(0, 36);
-    const body = candidates.length ? `<div class="mention-option-grid">${candidates.map((img, i) => `
-            <button class="mention-option" type="button" data-mention-index="${i}">
-                ${mediaKindForItem(img) === 'video' ? videoPosterHtml(img) : `<img src="${escapeHtml(img.thumbnail || img.url)}" alt="">`}
-                <span>${escapeHtml(img.alias)}</span>
-            </button>
-        `).join('')}</div>` : `<div class="mention-empty">${escapeHtml(tr('smart.mentionEmpty'))}</div>`;
-    const librarySelect = (mentionSource === 'asset' && assetLibs.length)
-        ? `<label class="mention-library-row"><span>${escapeHtml(tr('smart.assetLibrary'))}</span><select class="mention-library-select" data-mention-library>${assetLibs.map(lib => `<option value="${escapeHtml(lib.id)}" ${lib.id === activeAssetLibraryId ? 'selected' : ''}>${escapeHtml(lib.name || '资产库')}</option>`).join('')}</select></label>`
-        : '';
-    const folderChips = (mentionSource === 'asset' && nextAssetCats.length)
-        ? nextAssetCats.map(cat => {
-            const label = cat.name || tr('smart.assetFolder');
-            return `<button class="mention-folder-chip ${cat.id === mentionAssetCategoryId ? 'active' : ''}" type="button" data-mention-folder="${escapeHtml(cat.id)}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
-          }).join('')
-        : '';
-    mentionPicker.innerHTML = `
-        <div class="mention-picker-shell">
-            <div class="mention-source-tabs">
-                <button class="mention-source-tab ${mentionSource === 'input' ? 'active' : ''}" type="button" data-mention-source="input" title="${escapeHtml(tr('smart.mentionInput'))}" ${hasInput ? '' : 'disabled'}>
-                    <i data-lucide="image"></i><span>${escapeHtml(tr('smart.mentionInput'))}</span>
-                </button>
-                <button class="mention-source-tab ${mentionSource === 'asset' ? 'active' : ''}" type="button" data-mention-source="asset" title="${escapeHtml(tr('smart.mentionAssets'))}" ${hasAssets ? '' : 'disabled'}>
-                    <i data-lucide="library"></i><span>${escapeHtml(tr('smart.mentionAssets'))}</span>
-                </button>
-            </div>
-            ${librarySelect}
-            <div class="mention-folder-chips ${folderChips ? '' : 'hidden'}">
-                ${folderChips}
-            </div>
-            <div class="mention-content">
-                ${body}
-            </div>
-        </div>
-    `;
-    mentionPicker._items = candidates;
-    positionMentionPickerAtCaret();
-    mentionPicker.classList.add('open');
-    mentionPicker.querySelectorAll('[data-mention-source]').forEach(btn => {
-        btn.addEventListener('mousedown', e => {
-            e.preventDefault(); e.stopPropagation();
-            if(btn.disabled) return;
-            renderMentionPicker(btn.dataset.mentionSource);
-        });
-    });
-    mentionPicker.querySelectorAll('[data-mention-library]').forEach(select => {
-        select.addEventListener('mousedown', e => e.stopPropagation());
-        select.addEventListener('change', e => {
-            activeAssetLibraryId = e.target.value || '';
-            activeAssetCategoryId = '';
-            mentionAssetCategoryId = '';
-            renderAssetLibrary();
-            renderMentionPicker('asset');
-        });
-    });
-    mentionPicker.querySelectorAll('[data-mention-folder]').forEach(btn => {
-        btn.addEventListener('mousedown', e => {
-            e.preventDefault(); e.stopPropagation();
-            mentionAssetCategoryId = btn.dataset.mentionFolder || '';
-            renderMentionPicker('asset');
-        });
-    });
-    mentionPicker.querySelectorAll('[data-mention-index]').forEach(btn => {
-        btn.addEventListener('mousedown', e => {
-            e.preventDefault(); e.stopPropagation();
-            insertMentionToken(mentionPicker._items[Number(btn.dataset.mentionIndex)]);
-        });
-    });
-    refreshIcons();
-}
-function showMentionPicker(){
-    const node = selectedNode();
-    const hasInput = inputMentionCandidateImages(node).length > 0;
-    mentionSource = hasInput ? 'input' : 'asset';
-    renderMentionPicker(mentionSource);
-}
-function positionMentionPickerAtCaret(){
-    const row = promptInput.closest('.prompt-row');
-    const rowRect = row.getBoundingClientRect();
-    let caretRect = null;
-    const sel = window.getSelection();
-    if(sel && sel.rangeCount){
-        const range = sel.getRangeAt(0).cloneRange();
-        caretRect = range.getClientRects()[0] || range.getBoundingClientRect();
-    }
-    const inputRect = promptInput.getBoundingClientRect();
-    const pickerWidth = mentionPicker.offsetWidth || 340;
-    const maxLeft = Math.max(4, rowRect.width - pickerWidth - 4);
-    const rawLeft = (caretRect?.left || inputRect.left) - rowRect.left - 6;
-    const rawTop = (caretRect?.bottom || inputRect.top + 24) - rowRect.top + 2;
-    const left = Math.max(4, Math.min(rawLeft, maxLeft));
-    const top = Math.max(2, rawTop);
-    mentionPicker.style.left = `${left}px`;
-    mentionPicker.style.top = `${top}px`;
-}
-function maybeOpenMentionPicker(){
-    saveMentionRange();
-    const before = textBeforeCaret();
-    if(/@$/.test(before)) showMentionPicker();
-    else closeMentionPicker();
-}
-function insertMentionToken(img){
-    if(!img?.url) return;
-    promptInput.focus();
-    const sel = window.getSelection();
-    if(mentionRange){
-        sel.removeAllRanges();
-        sel.addRange(mentionRange);
-    }
-    const range = sel.rangeCount ? sel.getRangeAt(0) : document.createRange();
-    let removedAt = false;
-    if(range.startContainer?.nodeType === Node.TEXT_NODE && range.startOffset > 0){
-        const text = range.startContainer.textContent || '';
-        if(text[range.startOffset - 1] === '@'){
-            range.setStart(range.startContainer, range.startOffset - 1);
-            range.deleteContents();
-            removedAt = true;
-        }
-    }
-    if(!removedAt) {
-        const walker = document.createTreeWalker(promptInput, NodeFilter.SHOW_TEXT);
-        let lastText = null;
-        while(walker.nextNode()) lastText = walker.currentNode;
-        if(lastText && /@$/.test(lastText.textContent || '')) {
-            lastText.textContent = lastText.textContent.slice(0, -1);
-            range.selectNodeContents(promptInput);
-            range.collapse(false);
-        }
-    }
-    const token = document.createElement('span');
-    token.className = 'mention-image-token';
-    token.contentEditable = 'false';
-    token.dataset.url = img.url;
-    token.dataset.name = img.alias || img.name || '图片';
-    token.dataset.kind = mediaKindForItem(img);
-    token.dataset.nodeId = img.nodeId || '';
-    token.dataset.imageIndex = String(img.imageIndex ?? '');
-    token.dataset.assetUris = JSON.stringify(img.asset_uris || {});
-    token.innerHTML = token.dataset.kind === 'video'
-        ? `${videoPosterHtml(img)}<span>${escapeHtml(token.dataset.name)}</span>`
-        : `<img src="${escapeHtml(img.url)}" alt=""><span>${escapeHtml(token.dataset.name)}</span>`;
-    range.insertNode(token);
-    const spacer = document.createTextNode(' ');
-    token.after(spacer);
-    range.setStartAfter(spacer);
-    range.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(range);
-    closeMentionPicker();
-    promptInput.focus();
-    renderInputThumbsRow(selectedNode());
-}
-function collectPromptParts(){
-    const parts = [];
-    const walk = node => {
-        if(node.nodeType === Node.TEXT_NODE){
-            if(node.textContent) parts.push({type:'text', text:node.textContent});
-            return;
-        }
-        if(node.nodeType !== Node.ELEMENT_NODE) return;
-        if(node.classList?.contains('mention-image-token')){
-            let assetUris = {};
-            try { assetUris = JSON.parse(node.dataset.assetUris || '{}') || {}; } catch(e) { assetUris = {}; }
-            parts.push({type:'image', url:node.dataset.url || '', name:node.dataset.name || '图片', kind:node.dataset.kind || '', nodeId:node.dataset.nodeId || '', imageIndex:Number(node.dataset.imageIndex || 0), asset_uris:assetUris});
-            return;
-        }
-        if(node.tagName === 'BR') parts.push({type:'text', text:'\n'});
-        node.childNodes.forEach(walk);
-        if(node !== promptInput && ['DIV','P'].includes(node.tagName)) parts.push({type:'text', text:'\n'});
-    };
-    promptInput.childNodes.forEach(walk);
-    return parts;
-}
-function originalPromptTextFromParts(parts){
-    let text = '';
-    (parts || []).forEach(part => {
-        if(part.type === 'text'){
-            text += part.text || '';
-            return;
-        }
-        if(part.type === 'image') text += `@${part.name || '图片'}`;
-    });
-    return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=false, ctx=smartLoopContext){
-    const promptEnabled = smartPromptInputEnabledForSettings(settings);
-    const parts = promptEnabled ? collectPromptParts() : [];
-    const originalPrompt = originalPromptTextFromParts(parts);
-    const blockedRefs = blockedInputRefKeys(node);
-    const hasOverrideImages = Array.isArray(overrideDefaultImages);
-    const filteredDefaultImages = (hasOverrideImages ? overrideDefaultImages : defaultReferenceImagesFor(node, consumeDefault, ctx))
-        .filter(img => !blockedRefs.has(inputRefKey(img)));
-    const defaultRefs = uniqueReferenceImages(filteredDefaultImages);
-    const refs = defaultRefs.map((img, index) => ({...img, role:`image_${index + 1}`}));
-    let hasMentionToken = false;
-    const refMap = new Map();
-    refs.forEach((img, index) => refMap.set(img.url, index));
-    // 先按 text / ref 分段收集正文，待 refs 全部确定后再按类型生成「图N / 视频N / 音频N」标签。
-    const segments = [];
-    parts.forEach(part => {
-        if(part.type === 'text'){
-            segments.push({type:'text', text:part.text});
-            return;
-        }
-        if(!part.url) return;
-        hasMentionToken = true;
-        const mentionedKey = inputRefKey(part);
-        if(blockedRefs.has(mentionedKey)){
-            segments.push({type:'text', text:`@${part.name || '图片'}`});
-            return;
-        }
-        if(!refMap.has(part.url)){
-            refMap.set(part.url, refs.length);
-            refs.push({file_id:part.file_id || '', url:part.url, name:part.name || `图${refs.length + 1}`, nodeId:part.nodeId, imageIndex:part.imageIndex, role:`image_${refs.length + 1}`, kind:part.kind || ''});
-        }
-        segments.push({type:'ref', url:part.url, name:part.name || ''});
-    });
-    // 编号必须与下游实际传给模型的顺序一致：图片走 imageRefsOnly、视频走 videoRefsOnly、音频走 audioRefsOnly，
-    // 这里用相同的过滤函数按同样的顺序生成「图N / 视频N / 音频N」标签，保证正文里的编号与模型收到的第 N 个素材对应。
-    const refLabels = new Map();
-    imageRefsOnly(refs).forEach((ref, i) => refLabels.set(ref.url, `图${i + 1}`));
-    videoRefsOnly(refs).forEach((ref, i) => refLabels.set(ref.url, `视频${i + 1}`));
-    audioRefsOnly(refs).forEach((ref, i) => refLabels.set(ref.url, `音频${i + 1}`));
-    let body = segments.map(seg => {
-        if(seg.type === 'text') return seg.text;
-        // 未被任何类型过滤命中的引用（不会真正传给模型），退化为其名称，避免用错误的编号误导模型。
-        return refLabels.get(seg.url) || (seg.name ? `@${seg.name}` : '');
-    }).join('');
-    body = body.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-    const inputPrompt = promptEnabled ? inputPromptTextFor(node, ctx).trim() : '';
-    if(inputPrompt) body = [inputPrompt, body].filter(Boolean).join('\n\n');
-    if(!body && settings.engine === 'runninghub' && promptEnabled){
-        body = rhDefaultPromptSuggestion();
-    }
-    const displayPrompt = originalPrompt || body;
-    // 提示词正文里已用「图N」指代参考图，参考图按顺序传给模型，无需再额外注入编号对照表与「用户需求：」前缀。
-    return {
-        prompt:body,
-        displayPrompt,
-        refs:refs.map((img, index) => ({file_id:img.file_id || '', url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`, kind:img.kind || ''})),
-        mentioned:hasMentionToken && refs.length > 0
-    };
-}
+// M21 拆分（第二段）：mentionTokenHtml / promptHtmlWithMentionTokens /
+// snapshotRunMeta / attachRunMeta / stripRunInputMeta / stripImageGenerationMeta /
+// upstreamNodesForKinds / inputNodesFor / workflowInputNodesFor / imagesForNode /
+// nodeHasReferenceContent / isSelfReferenceForNode / candidateInputImagesFor /
+// defaultInputImagesFor / generatedUpstreamImagesFor / splitSmartPromptItems /
+// outputImagesForNode / selfReferenceImagesForNode / textForNode /
+// promptInputNodesFor / inputPromptTextFor / inputImagesFor / workflowInputImagesFor /
+// isGeneratedResultNode / runInputRefsForNode / inputRefKey / blockedInputRefKeys /
+// isInputRefBlocked / activeInputImagesFor / toggleInputRefBlocked /
+// defaultReferenceImagesFor / lineConnectionsFor / connectedLineNodeIds /
+// upstreamLineNodeIds / lineImagesFor / collectMentionedImagesFromPrompt /
+// uniqueReferenceImages / visibleReferenceImagesFor / inputMentionCandidateImages /
+// mentionCandidateThumbnailUrl / assetRegisteredUris / assetMentionCandidateImages /
+// mentionCandidateImages / referenceImagesFor / closeMentionPicker / saveMentionRange /
+// textBeforeCaret / renderMentionPicker / showMentionPicker /
+// positionMentionPickerAtCaret / maybeOpenMentionPicker / insertMentionToken /
+// collectPromptParts / originalPromptTextFromParts / buildPromptRequest 已迁移到
+// frontend/src/smart-canvas/mention-composer.js（经典 <script>，非 ES module，
+// 原因同 M1-M20）。
 // M4 拆分：outgoingConnectionsFor / outgoingInputConnectionsFor 已迁移到
 // frontend/src/smart-canvas/connections.js（经典 <script>，非 ES module，
 // 原因同 M1/M2/M3）。
@@ -4839,11 +3778,12 @@ function finishSelection(event){
     updateSelectionActions();
     setTimeout(() => { selectionJustFinished = false; }, 0);
 }
-selectionActions?.addEventListener('mousedown', event => {
+function selectionActionsMousedownHandler(event){
     event.preventDefault();
     event.stopPropagation();
-});
-selectionActions?.addEventListener('click', event => {
+}
+selectionActions?.addEventListener('mousedown', selectionActionsMousedownHandler);
+function selectionActionsClickHandler(event){
     const button = event.target.closest('[data-selection-action]');
     if(!button || button.disabled) return;
     event.preventDefault();
@@ -4854,7 +3794,8 @@ selectionActions?.addEventListener('click', event => {
     if(button.dataset.selectionAction === 'save'){
         openSelectionAssetSaveModal().catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
     }
-});
+}
+selectionActions?.addEventListener('click', selectionActionsClickHandler);
 // 框选状态下下载全部选中节点里的图片（打包 zip）。
 async function downloadSelectedNodesImages(){
     const ids = selectedIds.length ? selectedIds.slice() : (selectedId ? [selectedId] : []);
@@ -5089,7 +4030,7 @@ function createNodeFromMenu(type){
     scheduleSave();
     return node;
 }
-document.addEventListener('mousedown', event => {
+function documentMousedownHandler(event){
     if(event.button !== 0 || !candidatePanelNodeId) return;
     if(isCandidatePanelInteractionTarget(event.target)) return;
     if(closeCandidatePanel()){
@@ -5098,16 +4039,18 @@ document.addEventListener('mousedown', event => {
             render();
         }, 0);
     }
-}, true);
-document.addEventListener('click', event => {
+}
+document.addEventListener('mousedown', documentMousedownHandler, true);
+function documentClickHandler(event){
     if(event.button !== 0 || !expandedCandidateNodeIds.size || didPan) return;
     if(isExpandedCandidateGridInteractionTarget(event.target)) return;
     if(closeExpandedCandidateGrids()) setTimeout(() => render(), 0);
-}, true);
+}
+document.addEventListener('click', documentClickHandler, true);
 function spacePanBlockedTarget(target){
     return Boolean(target?.closest?.('button,input,textarea,select,[contenteditable="true"],.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.port-drop-menu,.smart-minimap,.selection-actions,.node-context-menu'));
 }
-shell.addEventListener('mousedown', e => {
+function shellMousedownHandler(e){
     if(e.button !== 0 || !spacePanActive || spacePanBlockedTarget(e.target)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -5119,15 +4062,17 @@ shell.addEventListener('mousedown', e => {
     viewportInteractionActive = true;
     panState = {button:0, space:true, startX:e.clientX, startY:e.clientY, ox:viewport.x, oy:viewport.y};
     shell.classList.add('panning');
-}, true);
-shell.addEventListener('mousedown', e => {
+}
+shell.addEventListener('mousedown', shellMousedownHandler, true);
+function shellMousedownHandler2(e){
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
     if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
-}, true);
-shell.addEventListener('click', e => {
+}
+shell.addEventListener('mousedown', shellMousedownHandler2, true);
+function shellClickHandler(e){
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
     if(didPan){ e.preventDefault(); e.stopPropagation(); return; }
@@ -5137,8 +4082,9 @@ shell.addEventListener('click', e => {
     const nodeEl = e.target.closest('.image-node');
     if(nodeEl?.dataset?.id) exitZoomPreviewToNode(nodeEl.dataset.id);
     else exitZoomPreview(screenToWorld(e));
-}, true);
-shell.addEventListener('pointerdown', e => {
+}
+shell.addEventListener('click', shellClickHandler, true);
+function shellPointerdownHandler(e){
     if(e.button !== 2) return;
     if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
     closeCreateMenu();
@@ -5146,8 +4092,9 @@ shell.addEventListener('pointerdown', e => {
     rightMouseDownPoint = {x:e.clientX, y:e.clientY};
     rightMouseDownViewport = {x:viewport.x, y:viewport.y};
     shell.setPointerCapture?.(e.pointerId);
-});
-shell.onmousedown = e => {
+}
+shell.addEventListener('pointerdown', shellPointerdownHandler);
+function shellMousedownHandler3(e){
     if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
     if(e.button === 2){
         if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
@@ -5179,35 +4126,40 @@ shell.onmousedown = e => {
         updateSelectionBox(e);
         return;
     }
-};
-shell.oncontextmenu = e => {
+}
+shell.onmousedown = shellMousedownHandler3;
+function shellContextmenuHandler(e){
     if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
-};
-shell.ondblclick = e => {
+}
+shell.oncontextmenu = shellContextmenuHandler;
+function shellDblclickHandler(e){
     if(didPan || e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     openCreateMenu(e);
-};
-shell.onclick = e => {
+}
+shell.ondblclick = shellDblclickHandler;
+function shellClickHandler2(e){
     if(selectionJustFinished) return;
     if(didPan || e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     closeCreateMenu();
     clearSelection();
     render();
-};
-minimap?.addEventListener('mousedown', e => {
+}
+shell.onclick = shellClickHandler2;
+function minimapMousedownHandler(e){
     if(e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     viewportInteractionActive = true;
     smartMinimapDrag = true;
     centerViewportOnWorldPoint(minimapEventToWorld(e));
-});
+}
+minimap?.addEventListener('mousedown', minimapMousedownHandler);
 function updateCanvasRightPan(e){
     if(!rightMouseDownPoint || !rightMouseDownViewport || !(e.buttons & 2)) return false;
     const distance = Math.abs(e.clientX - rightMouseDownPoint.x) + Math.abs(e.clientY - rightMouseDownPoint.y);
@@ -5229,9 +4181,10 @@ function updateCanvasRightPan(e){
     applyViewport();
     return true;
 }
-shell.addEventListener('pointermove', e => {
+function shellPointermoveHandler(e){
     if(updateCanvasRightPan(e)) e.preventDefault();
-});
+}
+shell.addEventListener('pointermove', shellPointermoveHandler);
 // 说明：onmousemove/onmouseup 原本是 window.onxxx = e => {...} 形式的
 // 匿名函数表达式赋值，不是命名函数声明——这导致 AST 符号扫描（比如
 // get_document_symbols）完全看不到这两个函数，M7 阶段就发现了这个问题
@@ -5242,330 +4195,17 @@ shell.addEventListener('pointermove', e => {
 // 之后想找它们调用了哪些函数、被哪些变量捕获），不涉及任何逻辑改动、
 // 不做物理文件搬移、不改变作用域规则（两个函数用到的所有变量还是
 // 通过共享脚本作用域访问，跟改造前完全一样）。
-function handleWindowMouseMove(e){
-    lastMouseWorld = screenToWorld(e);
-    if(updateCanvasRightPan(e)) return;
-    if(smartMinimapDrag){
-        e.preventDefault();
-        centerViewportOnWorldPoint(minimapEventToWorld(e));
-        return;
-    }
-    if(portDragState){
-        e.preventDefault();
-        const p = screenToWorld(e);
-        portDragState.currentWorld = p;
-        portDragState.moved = true;
-        const hitEl = document.elementFromPoint(e.clientX, e.clientY);
-        const portEl = hitEl?.closest?.('.node-port');
-        const nodeEl = portEl?.closest?.('.image-node') || hitEl?.closest?.('.image-node');
-        let targetId = '', targetPort = '';
-        if(nodeEl && nodeEl.dataset.id && nodeEl.dataset.id !== portDragState.fromId){
-            targetId = nodeEl.dataset.id;
-            if(portEl){
-                targetPort = portEl.dataset.port;
-            } else {
-                const rect = nodeEl.getBoundingClientRect();
-                targetPort = (e.clientX - rect.left) < rect.width / 2 ? 'in' : 'out';
-            }
-            const compatible = (portDragState.fromPort === 'out' && targetPort === 'in') || (portDragState.fromPort === 'in' && targetPort === 'out');
-            if(!compatible){ targetId = ''; targetPort = ''; }
-        }
-        portDragState.hoverTargetId = targetId;
-        portDragState.hoverPort = targetPort;
-        updatePortDragVisual();
-        return;
-    }
-    if(promptResizeState){
-        e.preventDefault();
-        const dy = e.clientY - promptResizeState.startY;
-        settings.promptH = Math.max(60, Math.min(380, promptResizeState.startH + dy));
-        promptInput.style.setProperty('--prompt-h', `${settings.promptH}px`);
-        persistActiveSmartSettings();
-        return;
-    }
-    if(selectionState){
-        e.preventDefault();
-        updateSelectionBox(e);
-        return;
-    }
-    if(previewCompareDrag){
-        e.preventDefault();
-        setPreviewComparePos(e.clientX);
-        return;
-    }
-    if(panoramaState.drag){
-        e.preventDefault();
-        const dx = e.clientX - panoramaState.drag.clientX;
-        const dy = e.clientY - panoramaState.drag.clientY;
-        panoramaState.yaw = panoramaState.drag.yaw - dx * 0.18;
-        panoramaState.pitch = Math.max(-85, Math.min(85, panoramaState.drag.pitch + dy * 0.18));
-        document.getElementById('previewStage')?.classList.add('panning');
-        return;
-    }
-    if(previewPanDrag){
-        const stage = document.getElementById('previewStage');
-        previewPan = {
-            x:previewPanDrag.startX + (e.clientX - previewPanDrag.clientX),
-            y:previewPanDrag.startY + (e.clientY - previewPanDrag.clientY)
-        };
-        stage?.classList.add('panning');
-        applyPreviewTransform();
-        return;
-    }
-    if(imageEditPanDrag){
-        const stage = document.getElementById('imageEditStage');
-        if(stage){
-            stage.scrollLeft = imageEditPanDrag.scrollLeft - (e.clientX - imageEditPanDrag.clientX);
-            stage.scrollTop = imageEditPanDrag.scrollTop - (e.clientY - imageEditPanDrag.clientY);
-        }
-        return;
-    }
-    if(cropDrag && cropState){
-        const dx = e.clientX - cropDrag.sx;
-        const dy = e.clientY - cropDrag.sy;
-        if(cropDrag.mode === 'move'){
-            cropState.x = cropDrag.start.x + dx;
-            cropState.y = cropDrag.start.y + dy;
-        } else if(cropDrag.mode === 'image'){
-            cropState.x = cropDrag.start.x + dx;
-            cropState.y = cropDrag.start.y + dy;
-        } else if(String(cropDrag.mode || '').startsWith('outpaint-')){
-            resizeOutpaintFromDrag(dx, dy);
-        } else {
-            cropState.w = cropDrag.start.w + dx;
-            cropState.h = cropDrag.start.h + dy;
-        }
-        clampCrop();
-        renderCropBox();
-        return;
-    }
-    if(thumbDragState){
-        const dx = e.clientX - thumbDragState.startX;
-        const dy = e.clientY - thumbDragState.startY;
-        const source = nodes.find(n => n.id === thumbDragState.nodeId);
-        if(!thumbDragState.detached && Math.abs(dx) + Math.abs(dy) > 6){
-            if(source && (source.images || []).length > 1){
-                const img = source.images[thumbDragState.imgIndex];
-                if(img){
-                    commitPendingUndo();
-                    undoSuppressed = true;
-                    applyNodeMetaToImage(img, source);
-                    source.images.splice(thumbDragState.imgIndex, 1);
-                    if(source.images.length <= 1){
-                        source.title = 'Image';
-                        delete source.w; delete source.h;
-                        inheritNodeMetaFromImage(source);
-                    }
-                    const point = screenToWorld(e);
-                    selectedId = '';
-                    selectedImage = {nodeId:'', index:-1};
-                    const newNode = createImageNodeAt(point, [img], {type:'smart-asset-image', select:false, skipUndo:true});
-                    undoSuppressed = false;
-                    dragState = {id:newNode.id, startX:e.clientX, startY:e.clientY, ox:newNode.x, oy:newNode.y, thumbDetached:true};
-                    thumbDragState.detached = true;
-                    render();
-                }
-            }
-        }
-        if(thumbDragState.detached) thumbDragState = null;
-        else return;
-    }
-    if(panState){
-        const dx = e.clientX - panState.startX;
-        const dy = e.clientY - panState.startY;
-        if(Math.abs(dx) + Math.abs(dy) > 3) didPan = true;
-        viewport.x = panState.ox + dx;
-        viewport.y = panState.oy + dy;
-        applyViewport();
-        return;
-    }
-    if(!dragState) return;
-    const node = nodes.find(n => n.id === dragState.id);
-    if(!node) return;
-    const moveDx = (e.clientX - dragState.startX) / viewport.scale;
-    const moveDy = (e.clientY - dragState.startY) / viewport.scale;
-    (dragState.group || [{id:dragState.id, ox:dragState.ox, oy:dragState.oy}]).forEach(item => {
-        const n = nodes.find(x => x.id === item.id);
-        if(!n) return;
-        n.x = item.ox + moveDx;
-        n.y = item.oy + moveDy;
-    });
-    if(assetLibraryOpen){
-        const hit = document.elementFromPoint(e.clientX, e.clientY);
-        if(hit && assetPanel?.contains(hit)){
-            setAssetDragOver(true);
-            clearDropHighlight();
-            setAssetDragOver(true);
-            return;
-        }
-        setAssetDragOver(false);
-    }
-    const draggedRect = nodeRect(node);
-    const rawTarget = (dragState.ctrlGroup || ['smart-image','smart-prompt','smart-loop','smart-group'].includes(node.type))
-        ? (['smart-prompt','smart-loop'].includes(node.type)
-            ? dragConnectTargetFor(node, screenToWorld(e))
-            : rectOverlapNode(node.id, draggedRect.x, draggedRect.y, draggedRect.width, draggedRect.height, dragState.groupIds))
-        : null;
-    const target = rawTarget;
-    setDropHighlight(target?.id || '');
-    moveNodeElementsDuringDrag();
-    updateLoopInsertPreview();
-    if(target) setDropHighlight(target.id);
-}
-window.onmousemove = handleWindowMouseMove;
-function finishCanvasRightClick(e){
-    if(e.button !== 2 || !rightMouseDownPoint) return;
-    const moved = panState?.button === 2;
-    const contextEvent = {clientX:e.clientX, clientY:e.clientY, target:e.target};
-    rightMouseDownPoint = null;
-    rightMouseDownViewport = null;
-    if(!moved && !e.ctrlKey && !e.metaKey){
-        setTimeout(() => openCanvasContextMenu(contextEvent), 0);
-    }
-}
-function cancelCanvasRightClick(){
-    rightMouseDownPoint = null;
-    rightMouseDownViewport = null;
-    if(panState?.button === 2){
-        panState = null;
-        shell.classList.remove('panning');
-        flushDeferredViewportRendering();
-        setTimeout(() => { didPan = false; }, 0);
-    }
-}
-window.addEventListener('pointerup', finishCanvasRightClick, true);
-window.addEventListener('pointercancel', cancelCanvasRightClick, true);
-function handleWindowMouseUp(e){
-    finishCanvasRightClick(e);
-    document.body.classList.remove('smart-node-drag');
-    if(portDragState){
-        const drag = portDragState;
-        portDragState = null;
-        shell.classList.remove('port-dragging');
-        handlePortDrop(drag, e);
-        return;
-    }
-    if(promptResizeState){ promptResizeState = null; scheduleSave(); }
-    if(selectionState) finishSelection(e);
-    if(previewCompareDrag) previewCompareDrag = false;
-    if(panoramaState.drag){
-        panoramaState.drag = null;
-        document.getElementById('previewStage')?.classList.remove('panning');
-    }
-    if(previewPanDrag){
-        previewPanDrag = null;
-        document.getElementById('previewStage')?.classList.remove('panning');
-    }
-    if(imageEditPanDrag) imageEditPanDrag = null;
-    if(cropDrag){
-        document.getElementById('cropCanvas')?.classList.remove('dragging-image');
-        cropDrag = null;
-    }
-    if(thumbDragState){
-        if(!thumbDragState.detached) discardPendingUndo();
-        thumbDragState = null;
-    }
-    if(panState) {
-        panState = null;
-        shell.classList.remove('panning');
-        flushDeferredViewportRendering();
-        scheduleSave(900);
-        setTimeout(() => { didPan = false; }, 0);
-    }
-    if(smartMinimapDrag){
-        smartMinimapDrag = false;
-        flushDeferredViewportRendering();
-    }
-    if(dragState){
-        const draggedNode = nodes.find(n => n.id === dragState.id);
-        let stateChanged = false;
-        const hit = document.elementFromPoint(e.clientX, e.clientY);
-        const droppedOnAssetPanel = assetLibraryOpen && hit && assetPanel?.contains(hit);
-        if(droppedOnAssetPanel && draggedNode && (draggedNode.images || []).length){
-            const imagesToSave = (draggedNode.images || []).filter(img => img?.file_id);
-            imagesToSave.forEach(img => { void addFileToAssetLibrary(img.file_id, img.name || draggedNode.title || 'image'); });
-            (dragState.group || [{id:dragState.id, ox:dragState.ox, oy:dragState.oy}]).forEach(item => {
-                const n = nodes.find(x => x.id === item.id);
-                if(n){ n.x = item.ox; n.y = item.oy; }
-            });
-            setAssetDragOver(false);
-            discardPendingUndo();
-            clearDropHighlight();
-            dragState = null;
-            document.body.classList.remove('smart-node-drag');
-            render();
-            scheduleSave();
-            return;
-        }
-        const autoTarget = draggedNode ? dragConnectTargetFor(draggedNode, screenToWorld(e)) : null;
-        const insertHit = draggedNode?.type === 'smart-loop' && dragState.ctrlGroup && (dragState.group || []).length <= 1
-            ? insertionConnectionForNode(draggedNode)
-            : null;
-        const draggedNodes = (dragState.group || []).map(item => nodes.find(n => n.id === item.id)).filter(Boolean);
-        const smartGroupTarget = draggedNode ? smartGroupTargetForDraggedNode(draggedNode) : null;
-        if(
-            insertHit &&
-            insertLoopNodeIntoConnection(draggedNode, insertHit)
-        ){
-            stateChanged = true;
-            render();
-        } else if(
-            smartGroupTarget &&
-            addDraggedNodesToSmartGroup(draggedNodes.length ? draggedNodes : [draggedNode], smartGroupTarget)
-        ){
-            stateChanged = true;
-            render();
-        } else if(
-            draggedNode &&
-            autoTarget &&
-            !dragState.ctrlGroup &&
-            (dragState.group || []).length <= 1 &&
-            canAutoConnectDraggedNode(draggedNode, autoTarget) &&
-            connectInputNode(draggedNode.id, autoTarget.id)
-        ){
-            stateChanged = true;
-            restoreDraggedNodePosition();
-            if(selectedId === draggedNode.id) selectedId = '';
-            render();
-        } else if(draggedNode && (draggedNode.images || []).length && (dragState.ctrlGroup || (dragState.group || []).length <= 1)){
-            const r = nodeRect(draggedNode);
-            const target = rectOverlapNode(draggedNode.id, r.x, r.y, r.width, r.height, dragState.groupIds);
-            if(target && (target.images || []).length && (dragState.ctrlGroup || (target.images || []).length > 1)){
-                stateChanged = true;
-                mergeImageNodesIntoGroup(draggedNode.id, target.id);
-                render();
-            } else if(target && !dragState.ctrlGroup && (dragState.group || []).length <= 1){
-                stateChanged = true;
-                connectInputNode(draggedNode.id, target.id);
-                if(!dragState.thumbDetached) restoreDraggedNodePosition();
-                if(selectedId === draggedNode.id) selectedId = '';
-                render();
-            } else if((dragState.group || []).some(item => {
-                const n = nodes.find(x => x.id === item.id);
-                return n && (Math.abs((Number(n.x) || 0) - item.ox) > 1 || Math.abs((Number(n.y) || 0) - item.oy) > 1);
-            })){
-                stateChanged = true;
-            }
-        } else if((dragState.group || []).some(item => {
-            const n = nodes.find(x => x.id === item.id);
-            return n && (Math.abs((Number(n.x) || 0) - item.ox) > 1 || Math.abs((Number(n.y) || 0) - item.oy) > 1);
-        }) || (draggedNode && (Math.abs((draggedNode.x || 0) - dragState.ox) > 1 || Math.abs((draggedNode.y || 0) - dragState.oy) > 1))){
-            stateChanged = true;
-        }
-        if(dragState.thumbDetached) stateChanged = true;
-        const thumbDetached = Boolean(dragState.thumbDetached);
-        if(stateChanged) commitPendingUndo();
-        else discardPendingUndo();
-        if(stateChanged || thumbDetached) suppressNodeClickUntil = Date.now() + 180;
-        clearDropHighlight();
-        loopInsertPreview = null;
-        dragState = null;
-        if(stateChanged || thumbDetached) scheduleSave();
-        refreshConnectionLayer();
-    }
-}
-window.onmouseup = handleWindowMouseUp;
-shell.addEventListener('wheel', e => {
+// M19 拆分：handleWindowMouseMove / window.onmousemove 赋值 /
+// finishCanvasRightClick / cancelCanvasRightClick /
+// window.addEventListener('pointerup'/'pointercancel', ...) /
+// handleWindowMouseUp / window.onmouseup 赋值 已迁移到
+// frontend/src/smart-canvas/canvas-render.js（追加在文件末尾，经典
+// <script>，非 ES module，原因同 M1-M18）。M18 先把这两个函数从匿名
+// 箭头函数改成具名函数声明，M19 完成真正的物理搬移。依赖的15+个交互
+// 状态变量（dragState/panState/cropDrag/portDragState 等）刻意留在
+// 这里，原因同 M16/M17。
+
+function shellWheelHandler(e){
     if(isBootLoadingActive()){
         e.preventDefault();
         e.stopPropagation();
@@ -5589,9 +4229,10 @@ shell.addEventListener('wheel', e => {
         flushDeferredViewportRendering();
     }, 140);
     scheduleSave(1200);
-}, {passive:false});
+}
+shell.addEventListener('wheel', shellWheelHandler, {passive:false});
 shell.ondragover = e => setSmartDropCopyEffect(e, true);
-shell.ondrop = async e => {
+async function shellDropHandler(e){
     e.preventDefault();
     if(e.target.closest('.image-node')) return;
     const p = screenToWorld(e);
@@ -5609,8 +4250,9 @@ shell.ondrop = async e => {
     const payload = await resolveSmartImageDropPayload(e.dataTransfer);
     if(payload.type === 'none') return;
     await handleSmartImageDropPayload(payload, '', {point:p, forceNew:true});
-};
-window.addEventListener('paste', e => {
+}
+shell.ondrop = shellDropHandler;
+function windowPasteHandler(e){
     if(isBootLoadingActive()){
         e.preventDefault();
         e.stopPropagation();
@@ -5619,8 +4261,9 @@ window.addEventListener('paste', e => {
     const editable = isEditableTarget(e.target) || isEditableTarget(document.activeElement);
     const files = clipboardEventMediaFiles(e.clipboardData);
     pasteClipboardContent(files, {editable, preventDefault:() => e.preventDefault()});
-});
-window.addEventListener('keydown', e => {
+}
+window.addEventListener('paste', windowPasteHandler);
+function windowKeydownHandler(e){
     if(isBootLoadingActive()){
         e.preventDefault();
         e.stopPropagation();
@@ -5709,13 +4352,15 @@ window.addEventListener('keydown', e => {
         applyViewport();
         scheduleSave(1200);
     }
-});
-window.addEventListener('keyup', e => {
+}
+window.addEventListener('keydown', windowKeydownHandler);
+function windowKeyupHandler(e){
     if(e.code !== 'Space') return;
     spacePanActive = false;
     shell.classList.remove('space-pan-ready');
-});
-window.addEventListener('blur', () => {
+}
+window.addEventListener('keyup', windowKeyupHandler);
+function windowBlurHandler(){
     spacePanActive = false;
     shell.classList.remove('space-pan-ready');
     if(panState?.space){
@@ -5724,15 +4369,17 @@ window.addEventListener('blur', () => {
         flushDeferredViewportRendering();
         setTimeout(() => { didPan = false; }, 0);
     }
-});
-engineSelect.onchange = () => {
+}
+window.addEventListener('blur', windowBlurHandler);
+function engineSelectChangeHandler(){
     settings.engine = engineSelect.value;
     applyRecentSmartSettingsForCurrentMode();
     syncApiKindToggleVisibility();
     renderDynamicParams();
     persistActiveSmartSettings();
     scheduleSave();
-};
+}
+engineSelect.onchange = engineSelectChangeHandler;
 function syncApiKindToggleVisibility(){
     if(!apiKindToggle) return;
     // 图片/视频/工作流生成节点类型固定，均隐藏图片/视频切换；仅非定型旧节点在 api 类引擎下保留切换
@@ -5770,7 +4417,7 @@ if(promptResize){
     });
 }
 runBtn.onclick = runGeneration;
-cascadeRunBtn.onclick = () => {
+function cascadeRunBtnClickHandler(){
     const node = selectedNode();
     const loopId = resolveSmartCascadeLoop(node?.id)?.node?.id || '';
     if(loopId && smartCascadeIsLoopRunning(loopId)) {
@@ -5778,8 +4425,9 @@ cascadeRunBtn.onclick = () => {
         return;
     }
     runSmartCascade();
-};
-fileInput.onchange = () => {
+}
+cascadeRunBtn.onclick = cascadeRunBtnClickHandler;
+function fileInputChangeHandler(){
     const groupPoint = pendingGroupUploadPoint;
     if(!fileInput.files?.length){
         pendingGroupUploadPoint = null;
@@ -5791,7 +4439,8 @@ fileInput.onchange = () => {
     pendingGroupUploadPoint = null;
     uploadTargetId = '';
     fileInput.value = '';
-};
+}
+fileInput.onchange = fileInputChangeHandler;
 if(assetToggle) assetToggle.onclick = () => toggleAssetLibrary();
 if(assetCloseBtn) assetCloseBtn.onclick = () => toggleAssetLibrary(false);
 if(smartWorkflowToggle) smartWorkflowToggle.onclick = event => {
@@ -5800,67 +4449,76 @@ if(smartWorkflowToggle) smartWorkflowToggle.onclick = event => {
     if(smartWorkflowTransferModal?.classList.contains('open')) closeSmartWorkflowTransferModal();
     else openSmartWorkflowTransferModal();
 };
-smartWorkflowImportInput?.addEventListener('change', event => {
+function smartWorkflowImportInputChangeHandler(event){
     const file = event.target.files?.[0];
     if(file) importSmartWorkflowFile(file);
     event.target.value = '';
-});
+}
+smartWorkflowImportInput?.addEventListener('change', smartWorkflowImportInputChangeHandler);
 smartWorkflowImportDropZone?.addEventListener('click', () => smartWorkflowImportInput?.click());
-smartWorkflowImportDropZone?.addEventListener('dragenter', event => {
+function smartWorkflowImportDropZoneDragenterHandler(event){
     event.preventDefault();
     event.stopPropagation();
     smartWorkflowImportDropZone.classList.add('drag-over');
-});
-smartWorkflowImportDropZone?.addEventListener('dragover', event => {
+}
+smartWorkflowImportDropZone?.addEventListener('dragenter', smartWorkflowImportDropZoneDragenterHandler);
+function smartWorkflowImportDropZoneDragoverHandler(event){
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'copy';
     smartWorkflowImportDropZone.classList.add('drag-over');
-});
-smartWorkflowImportDropZone?.addEventListener('dragleave', event => {
+}
+smartWorkflowImportDropZone?.addEventListener('dragover', smartWorkflowImportDropZoneDragoverHandler);
+function smartWorkflowImportDropZoneDragleaveHandler(event){
     event.preventDefault();
     event.stopPropagation();
     if(!smartWorkflowImportDropZone.contains(event.relatedTarget)) smartWorkflowImportDropZone.classList.remove('drag-over');
-});
-smartWorkflowImportDropZone?.addEventListener('drop', event => {
+}
+smartWorkflowImportDropZone?.addEventListener('dragleave', smartWorkflowImportDropZoneDragleaveHandler);
+function smartWorkflowImportDropZoneDropHandler(event){
     event.preventDefault();
     event.stopPropagation();
     smartWorkflowImportDropZone.classList.remove('drag-over');
     const file = [...(event.dataTransfer?.files || [])].find(item => /\.(json|zip)$/i.test(item.name || ''));
     if(file) importSmartWorkflowFile(file);
     else toast('请拖入 JSON 或 ZIP 模板文件');
-});
+}
+smartWorkflowImportDropZone?.addEventListener('drop', smartWorkflowImportDropZoneDropHandler);
 smartWorkflowTransferModal?.addEventListener('pointerdown', e => e.stopPropagation());
 smartWorkflowTransferModal?.addEventListener('mousedown', e => e.stopPropagation());
 smartWorkflowTransferModal?.addEventListener('click', e => e.stopPropagation());
-smartWorkflowTransferModal?.addEventListener('wheel', event => {
+function smartWorkflowTransferModalWheelHandler(event){
     event.stopPropagation();
-}, {passive:true, capture:true});
-smartWorkflowTransferModal?.addEventListener('dragover', event => {
+}
+smartWorkflowTransferModal?.addEventListener('wheel', smartWorkflowTransferModalWheelHandler, {passive:true, capture:true});
+function smartWorkflowTransferModalDragoverHandler(event){
     event.preventDefault();
     event.stopPropagation();
     if(smartWorkflowImportDropZone){
         event.dataTransfer.dropEffect = 'copy';
         smartWorkflowImportDropZone.classList.add('drag-over');
     }
-});
-smartWorkflowTransferModal?.addEventListener('dragleave', event => {
+}
+smartWorkflowTransferModal?.addEventListener('dragover', smartWorkflowTransferModalDragoverHandler);
+function smartWorkflowTransferModalDragleaveHandler(event){
     event.preventDefault();
     event.stopPropagation();
     if(!smartWorkflowTransferModal.contains(event.relatedTarget)) smartWorkflowImportDropZone?.classList.remove('drag-over');
-});
-smartWorkflowTransferModal?.addEventListener('drop', event => {
+}
+smartWorkflowTransferModal?.addEventListener('dragleave', smartWorkflowTransferModalDragleaveHandler);
+function smartWorkflowTransferModalDropHandler(event){
     event.preventDefault();
     event.stopPropagation();
     smartWorkflowImportDropZone?.classList.remove('drag-over');
     const file = [...(event.dataTransfer?.files || [])].find(item => /\.(json|zip)$/i.test(item.name || ''));
     if(file) importSmartWorkflowFile(file);
     else toast('请拖入 JSON 或 ZIP 模板文件');
-});
+}
+smartWorkflowTransferModal?.addEventListener('drop', smartWorkflowTransferModalDropHandler);
 assetPanel?.addEventListener('pointerdown', e => e.stopPropagation());
 assetPanel?.addEventListener('mousedown', e => e.stopPropagation());
 assetPanel?.addEventListener('click', e => e.stopPropagation());
-assetPanel?.addEventListener('wheel', e => {
+function assetPanelWheelHandler(e){
     e.stopPropagation();
     const scroller = e.target.closest?.('.asset-grid') || assetGrid;
     if(!scroller || getComputedStyle(scroller).display === 'none') return;
@@ -5869,7 +4527,8 @@ assetPanel?.addEventListener('wheel', e => {
     e.preventDefault();
     scroller.scrollTop += e.deltaY;
     scroller.scrollLeft += e.deltaX;
-}, {passive:false, capture:true});
+}
+assetPanel?.addEventListener('wheel', assetPanelWheelHandler, {passive:false, capture:true});
 assetDialogBackdrop?.addEventListener('pointerdown', e => e.stopPropagation());
 assetDialogBackdrop?.addEventListener('mousedown', e => e.stopPropagation());
 assetDialogBackdrop?.addEventListener('click', e => e.stopPropagation());
@@ -5879,7 +4538,7 @@ promptPresetPanel?.addEventListener('click', e => e.stopPropagation());
 promptTemplatePanel?.addEventListener('pointerdown', e => e.stopPropagation());
 promptTemplatePanel?.addEventListener('mousedown', e => e.stopPropagation());
 promptTemplatePanel?.addEventListener('wheel', e => e.stopPropagation(), {passive:false});
-promptTemplatePanel?.addEventListener('click', e => {
+function promptTemplatePanelClickHandler(e){
     e.stopPropagation();
     const apply = e.target.closest('[data-template-apply]');
     if(apply){ applyPromptTemplateToNode(apply.dataset.templateApply || 'positive'); return; }
@@ -5921,7 +4580,8 @@ promptTemplatePanel?.addEventListener('click', e => {
         renderPromptTemplatePanel();
         return;
     }
-});
+}
+promptTemplatePanel?.addEventListener('click', promptTemplatePanelClickHandler);
 if(promptPresetClose) promptPresetClose.onclick = closePromptPresetPanel;
 if(promptTemplateClose) promptTemplateClose.onclick = closePromptTemplatePanel;
 if(promptTemplateSearch) promptTemplateSearch.oninput = () => renderPromptTemplatePanel({preserveScroll:false});
@@ -6074,43 +4734,49 @@ async function handleAssetPanelDrop(e){
         toast(err.message || tr('smart.assetAddFail'));
     }
 }
-assetDropZone?.addEventListener('dragover', e => {
+function assetDropZoneDragoverHandler(e){
     if(hasCanvasImageDrag(e) || hasSmartImageDropData(e.dataTransfer)){
         e.preventDefault();
         e.stopPropagation();
         assetDropZone?.classList.add('drag-over');
     }
-});
+}
+assetDropZone?.addEventListener('dragover', assetDropZoneDragoverHandler);
 assetDropZone?.addEventListener('dragleave', () => assetDropZone?.classList.remove('drag-over'));
 assetDropZone?.addEventListener('drop', handleAssetPanelDrop);
 assetPanel?.addEventListener('dragover', handleAssetPanelDragOver);
-assetPanel?.addEventListener('dragleave', e => { if(!assetPanel?.contains(e.relatedTarget)) setAssetDragOver(false); });
+function assetPanelDragleaveHandler(e){ if(!assetPanel?.contains(e.relatedTarget)) setAssetDragOver(false); }
+assetPanel?.addEventListener('dragleave', assetPanelDragleaveHandler);
 assetPanel?.addEventListener('drop', handleAssetPanelDrop);
 nodeAssetSaveModal?.addEventListener('pointerdown', event => event.stopPropagation());
 nodeAssetSaveModal?.addEventListener('mousedown', event => event.stopPropagation());
-nodeAssetSaveModal?.addEventListener('click', event => {
+function nodeAssetSaveModalClickHandler(event){
     event.stopPropagation();
     if(event.target === nodeAssetSaveModal) closeNodeAssetSaveModal();
-});
+}
+nodeAssetSaveModal?.addEventListener('click', nodeAssetSaveModalClickHandler);
 nodeAssetSaveClose?.addEventListener('click', closeNodeAssetSaveModal);
 nodeAssetSaveCancel?.addEventListener('click', closeNodeAssetSaveModal);
-nodeAssetSaveLibraries?.addEventListener('click', event => {
+function nodeAssetSaveLibrariesClickHandler(event){
     const btn = event.target.closest('[data-node-asset-library]');
     if(!btn) return;
     nodeAssetSaveState.libraryId = btn.dataset.nodeAssetLibrary || '';
     nodeAssetSaveState.categoryId = assetCategoriesForLibrary(nodeAssetSaveState.libraryId, 'image')[0]?.id || '';
     renderNodeAssetSaveModal();
-});
-nodeAssetSaveFolders?.addEventListener('click', event => {
+}
+nodeAssetSaveLibraries?.addEventListener('click', nodeAssetSaveLibrariesClickHandler);
+function nodeAssetSaveFoldersClickHandler(event){
     const btn = event.target.closest('[data-node-asset-folder]');
     if(!btn) return;
     nodeAssetSaveState.categoryId = btn.dataset.nodeAssetFolder || '';
     renderNodeAssetSaveModal();
-});
-nodeAssetSaveName?.addEventListener('input', () => {
+}
+nodeAssetSaveFolders?.addEventListener('click', nodeAssetSaveFoldersClickHandler);
+function nodeAssetSaveNameInputHandler(){
     nodeAssetSaveState.name = nodeAssetSaveName.value;
-});
-nodeAssetSaveName?.addEventListener('keydown', event => {
+}
+nodeAssetSaveName?.addEventListener('input', nodeAssetSaveNameInputHandler);
+function nodeAssetSaveNameKeydownHandler(event){
     if(event.key === 'Escape'){
         event.preventDefault();
         closeNodeAssetSaveModal();
@@ -6119,8 +4785,9 @@ nodeAssetSaveName?.addEventListener('keydown', event => {
         event.preventDefault();
         nodeAssetSaveConfirm?.click();
     }
-});
-nodeAssetSaveNewFolder?.addEventListener('click', async () => {
+}
+nodeAssetSaveName?.addEventListener('keydown', nodeAssetSaveNameKeydownHandler);
+async function nodeAssetSaveNewFolderClickHandler(){
     const libraryId = nodeAssetSaveState.libraryId || assetLibraries()[0]?.id || '';
     if(!libraryId) return;
     const name = await openAssetNameDialog({title:'新建文件夹', value:'', placeholder:'输入文件夹名称', cancelValue:''});
@@ -6140,8 +4807,9 @@ nodeAssetSaveNewFolder?.addEventListener('click', async () => {
     } catch(err) {
         showErrorModal(err.message || '新建文件夹失败', '新建文件夹失败');
     }
-});
-nodeAssetSaveConfirm?.addEventListener('click', async () => {
+}
+nodeAssetSaveNewFolder?.addEventListener('click', nodeAssetSaveNewFolderClickHandler);
+async function nodeAssetSaveConfirmClickHandler(){
     try {
         nodeAssetSaveConfirm.disabled = true;
         const items = Array.isArray(nodeAssetSaveState.items) && nodeAssetSaveState.items.length
@@ -6162,31 +4830,36 @@ nodeAssetSaveConfirm?.addEventListener('click', async () => {
         showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败');
         renderNodeAssetSaveModal();
     }
-});
+}
+nodeAssetSaveConfirm?.addEventListener('click', nodeAssetSaveConfirmClickHandler);
 createMenu?.addEventListener('mousedown', event => event.stopPropagation());
-createMenu?.addEventListener('click', event => {
+function createMenuClickHandler(event){
     event.stopPropagation();
     const card = event.target.closest('[data-create-type]');
     if(card) createNodeFromMenu(card.dataset.createType || 'image');
-});
+}
+createMenu?.addEventListener('click', createMenuClickHandler);
 /* ─── 拉线菜单事件绑定 ─── */
 portDropMenu?.addEventListener('mousedown', event => event.stopPropagation());
-portDropMenu?.addEventListener('click', event => {
+function portDropMenuClickHandler(event){
     event.stopPropagation();
     const item = event.target.closest('[data-node-type]');
     if(item) handlePortDropMenuSelect(item.dataset.nodeType);
-});
-document.addEventListener('mousedown', event => {
+}
+portDropMenu?.addEventListener('click', portDropMenuClickHandler);
+function documentMousedownHandler2(event){
     if(!portDropMenu || portDropMenu.hidden) return;
     if(event.target.closest('.port-drop-menu')) return;
     closePortDropMenu();
-}, true);
+}
+document.addEventListener('mousedown', documentMousedownHandler2, true);
 composer.addEventListener('pointerdown', event => event.stopPropagation());
 composer.addEventListener('mousedown', event => event.stopPropagation());
-composer.addEventListener('click', event => {
+function composerClickHandler(event){
     if(!event.target.closest('.smart-control')) closeAllSmartPopovers();
     event.stopPropagation();
-});
+}
+composer.addEventListener('click', composerClickHandler);
 if(promptComposer){
     promptComposer.addEventListener('pointerdown', event => event.stopPropagation());
     promptComposer.addEventListener('mousedown', event => event.stopPropagation());
@@ -6194,16 +4867,17 @@ if(promptComposer){
     promptComposer.addEventListener('dblclick', event => event.stopPropagation());
 }
 promptInput.addEventListener('input', maybeOpenMentionPicker);
-promptInput.addEventListener('input', () => {
+function promptInputInputHandler(){
     delete promptInput.dataset.preserveDraftOnce;
     savePromptDraftForCurrent();
     renderInputThumbsRow(selectedNode());
     scheduleSave();
-});
+}
+promptInput.addEventListener('input', promptInputInputHandler);
 promptInput.addEventListener('keyup', maybeOpenMentionPicker);
 promptInput.addEventListener('mouseup', saveMentionRange);
 promptInput.addEventListener('focus', saveMentionRange);
-promptInput.addEventListener('keydown', event => {
+function promptInputKeydownHandler(event){
     if(event.key === 'Escape') closeMentionPicker();
     if(event.key === 'Enter'){
         // Shift+Enter 换行（保留默认行为）；输入法组合中（如中文候选词确认）不拦截。
@@ -6217,8 +4891,9 @@ promptInput.addEventListener('keydown', event => {
         // 回车直接生成图片。
         runGeneration();
     }
-});
-promptInput.addEventListener('mouseover', event => {
+}
+promptInput.addEventListener('keydown', promptInputKeydownHandler);
+function promptInputMouseoverHandler(event){
     const token = event.target.closest?.('.mention-image-token');
     if(!token) return;
     let media = mentionPreview.querySelector('img,video');
@@ -6248,8 +4923,9 @@ promptInput.addEventListener('mouseover', event => {
     mentionPreview.style.left = `${Math.min(window.innerWidth - 236, rect.left)}px`;
     mentionPreview.style.top = `${Math.min(window.innerHeight - 236, rect.bottom + 8)}px`;
     mentionPreview.style.display = 'block';
-});
-promptInput.addEventListener('mouseout', event => {
+}
+promptInput.addEventListener('mouseover', promptInputMouseoverHandler);
+function promptInputMouseoutHandler(event){
     if(event.target.closest?.('.mention-image-token')){
         mentionPreview.style.display = 'none';
         const media = mentionPreview.querySelector('img,video');
@@ -6257,17 +4933,20 @@ promptInput.addEventListener('mouseout', event => {
         media?.removeAttribute('src');
         media?.load?.();
     }
-});
+}
+promptInput.addEventListener('mouseout', promptInputMouseoutHandler);
 mentionPicker.addEventListener('mousedown', event => event.stopPropagation());
-document.addEventListener('click', event => {
+function documentClickHandler2(event){
     if(!event.target.closest('.smart-control')) closeAllSmartPopovers();
     if(!event.target.closest('.mention-picker') && !event.target.closest('#promptInput')) closeMentionPicker();
     if(!event.target.closest('.prompt-preset-panel') && !event.target.closest('.prompt-preset-edit') && !event.target.closest('.prompt-preset-save')) closePromptPresetPanel();
     if(!event.target.closest('.prompt-template-panel') && !event.target.closest('.prompt-preset-edit') && !event.target.closest('#composerTemplateBtn')) closePromptTemplatePanel();
-});
-document.addEventListener('keydown', event => {
+}
+document.addEventListener('click', documentClickHandler2);
+function documentKeydownHandler(event){
     if(event.key === 'Escape') { closeAllSmartPopovers(); closeCreateMenu(); closePortDropMenu(); closeSmartCanvasLog(); closeSmartCanvasShortcuts(); closePromptPresetPanel(); closePromptTemplatePanel(); closeNodeAssetSaveModal(); }
-});
+}
+document.addEventListener('keydown', documentKeydownHandler);
 document.getElementById('cropBox').addEventListener('mousedown', event => beginCropDrag(event, 'move'));
 document.getElementById('cropHandle').addEventListener('mousedown', event => beginCropDrag(event, 'resize'));
 document.getElementById('outpaintFrame').addEventListener('mousedown', event => {
@@ -6289,23 +4968,28 @@ document.querySelectorAll('[data-image-edit-mode]').forEach(btn => {
         setImageEditMode(btn.dataset.imageEditMode || 'crop', true);
     });
 });
-imageEditModal.addEventListener('pointerdown', event => {
+function imageEditModalPointerdownHandler(event){
     event.stopPropagation();
-});
-imageEditModal.addEventListener('mousedown', event => {
+}
+imageEditModal.addEventListener('pointerdown', imageEditModalPointerdownHandler);
+function imageEditModalMousedownHandler(event){
     event.stopPropagation();
-});
-imageEditModal.addEventListener('mousemove', event => {
+}
+imageEditModal.addEventListener('mousedown', imageEditModalMousedownHandler);
+function imageEditModalMousemoveHandler(event){
     if(previewPanDrag || previewCompareDrag || panoramaState.drag || imageEditPanDrag || cropDrag) return;
     event.stopPropagation();
-});
-imageEditModal.addEventListener('click', event => {
+}
+imageEditModal.addEventListener('mousemove', imageEditModalMousemoveHandler);
+function imageEditModalClickHandler(event){
     event.stopPropagation();
     if(event.target === imageEditModal) closeImageEditor();
-});
-imageEditModal.addEventListener('wheel', event => {
+}
+imageEditModal.addEventListener('click', imageEditModalClickHandler);
+function imageEditModalWheelHandler(event){
     event.stopPropagation();
-}, {passive:false});
+}
+imageEditModal.addEventListener('wheel', imageEditModalWheelHandler, {passive:false});
 document.getElementById('previewStage').addEventListener('mousedown', event => {
     if(imageEditMode !== 'preview' || event.button !== 0) return;
     if(event.target.closest('.preview-tools-overlay, .preview-download-overlay, .preview-nav-bar')) return;
@@ -6490,11 +5174,12 @@ document.getElementById('imageEditStage').addEventListener('wheel', event => {
     stage.scrollLeft = contentX * scale - mx;
     stage.scrollTop = contentY * scale - my;
 }, {passive:false});
-window.addEventListener('resize', () => {
+function windowResizeHandler(){
     if(cropState) syncImageEditOverflow();
     if(panoramaState.enabled) resizePanoramaViewer();
     updateNodeShortcutBar();
-});
+}
+window.addEventListener('resize', windowResizeHandler);
 window.addEventListener('studio-theme-change', event => applyTheme(event.detail?.theme || 'light'));
 try {
     const apiChannel = new BroadcastChannel('studio-api');
@@ -6506,10 +5191,11 @@ try {
         if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
     };
 } catch(e) {}
-window.addEventListener('focus', () => {
+function windowFocusHandler(){
     if(Date.now() - lastConfigRefreshAt > 1200) refreshSmartConfigFromSettings();
-});
-window.addEventListener('message', event => {
+}
+window.addEventListener('focus', windowFocusHandler);
+function windowMessageHandler(event){
     if(event.origin && event.origin !== location.origin) return;
     if(event.data?.type === 'studio-theme') applyTheme(event.data.theme || 'light');
     if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed') refreshSmartConfigFromSettings();
@@ -6518,8 +5204,9 @@ window.addEventListener('message', event => {
     if(event.data?.type === 'studio-lang' && window.StudioI18n) {
         window.StudioI18n.set(event.data.lang || 'zh');
     }
-});
-window.addEventListener('studio-lang-change', () => {
+}
+window.addEventListener('message', windowMessageHandler);
+function windowStudioLangChangeHandler(){
     renderDynamicParams();
     renderInputThumbsRow(selectedNode());
     renderAssetLibrary();
@@ -6528,8 +5215,9 @@ window.addEventListener('studio-lang-change', () => {
     }
     if(promptTemplatePanel?.classList?.contains('open')) renderPromptTemplatePanel();
     render();
-});
-window.onload = async () => {
+}
+window.addEventListener('studio-lang-change', windowStudioLangChangeHandler);
+async function windowLoadHandler(){
     showBootLoadingOverlay();
     applyTheme(localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light');
     bindNodeShortcutOverlayEvents();
@@ -6551,4 +5239,5 @@ window.onload = async () => {
     requestAnimationFrame(() => hideBootLoadingOverlay(() => {
         toast(tr('smart.thumbnailPreviewNotice'));
     }));
-};
+}
+window.onload = windowLoadHandler;

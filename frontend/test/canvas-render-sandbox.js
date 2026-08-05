@@ -8,6 +8,16 @@
 // "过于依赖 DOM/网络，不适合单元测试" 情形，因此本 sandbox 只覆盖可独立验证的
 // 纯函数：formatRunDuration / nodeRunElapsedMs / runTimePillHtml /
 // hideRunTimerForNode / smartRecoverableImageTask。
+//
+// M19 追加说明：本文件末尾追加了 handleWindowMouseMove/handleWindowMouseUp/
+// finishCanvasRightClick/cancelCanvasRightClick 以及两行顶层
+// window.addEventListener('pointerup'/'pointercancel', ...) 调用——这两行是
+// 模块加载时立即执行的顶层语句（不是延迟到函数调用时才执行），所以 sandbox
+// 的 window 对象必须提供最基本的 addEventListener 桩，否则整个 vm.runInContext
+// 会在模块加载阶段就直接抛错，导致所有测试（包括跟这次改动完全无关的
+// formatRunDuration 等纯函数）全部失败。这几个新函数本身依赖大量交互状态
+// 变量（dragState/panState/cropDrag 等 15+ 个）和 DOM 事件，跟 render() 一样
+// 不适合写单元测试，这里只是把它们需要的顶层依赖占位好，让模块能正常加载。
 import vm from 'node:vm';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,7 +41,12 @@ export function createCanvasRenderSandbox(overrides = {}) {
     };
 
     const sandbox = {
-        window: {},
+        window: { addEventListener(){}, removeEventListener(){} },
+        document: {
+            addEventListener(){}, removeEventListener(){},
+            getElementById(){ return null; },
+            elementFromPoint(){ return null; },
+        },
         console, Date, Math, Array, Object, Number, String, Boolean, Set, Map, Promise,
 
         nowMs: overrides.fns?.nowMs || (() => 1_700_000_000_000),

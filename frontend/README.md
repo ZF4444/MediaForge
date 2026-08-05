@@ -973,48 +973,247 @@ M17 已经安全拆过的 `smartClientId`/`promptTemplateCategory` 等（通常
   本身强依赖真实鼠标事件/DOM 状态，跟改造前一样不适合单元测试，
   这次改造也没有让它们变得可测——只是变得"可被工具发现"。
 
+## M19：window.onmousemove/onmouseup 物理拆分到 canvas-render.js
+
+M18 已经把这两个函数从匿名箭头函数改成了具名函数声明，M19 在此基础上
+完成真正的物理搬移——把 `handleWindowMouseMove`/`handleWindowMouseUp`
+（连同物理上紧邻、逻辑上相关的 `finishCanvasRightClick`/
+`cancelCanvasRightClick` 右键拖拽取消处理，以及两行
+`window.addEventListener('pointerup'/'pointercancel', ...)`）整体搬到
+`canvas-render.js` 末尾——它们和该文件里已有的 `dragConnectTargetFor`/
+`rectOverlapNode`/`canAutoConnectDraggedNode`/`restoreDraggedNodePosition`
+（M7 已迁移）本来就是同一个"节点拖拽/画布交互"关注点。
+
+**风险重新评估（相比 M7/M18 阶段的判断）**：详细梳理后发现，这两个
+函数调用的外部函数里，18 个已经分布在其它已拆分模块（`connections.js`/
+`image-editor.js`/`node-model.js`/`asset-library.js`/`loop-node.js`/
+`node-layout.js`），只有 14 个仍留在 `main.js`（`updateCanvasRightPan`/
+`centerViewportOnWorldPoint`/`minimapEventToWorld`/`updateSelectionBox`/
+`applyViewport`/`flushDeferredViewportRendering`/`applyNodeMetaToImage`/
+`inheritNodeMetaFromImage`/`commitPendingUndo`/`discardPendingUndo`/
+`moveNodeElementsDuringDrag`/`updateLoopInsertPreview`/`setDropHighlight`/
+`clearDropHighlight`/`setAssetDragOver`/`finishSelection`/
+`mergeImageNodesIntoGroup`/`smartGroupTargetForDraggedNode`/
+`addDraggedNodesToSmartGroup`），这些都是通过共享脚本作用域的简单函数
+调用，物理位置不影响调用方式——跟 M9/M16/M17 已经验证过的模式一致。
+真正的风险集中在**状态变量数量**（15+ 个跨函数共享读写的可变交互
+状态），但这类风险在"函数搬到哪个文件"和"函数留在原地"之间并无区别
+——状态变量本身完全不动，只是读写它们的代码换了个文件存放，这一点
+和 M16 `smartClientId`、M17 `promptTemplateCategory` 的处理方式一致。
+
+- **验证方式**：byte-diff 校验搬移内容和原文件一字不差；跨文件 grep
+  确认这4个函数（`handleWindowMouseMove`/`handleWindowMouseUp`/
+  `finishCanvasRightClick`/`cancelCanvasRightClick`）在 main.js 里
+  各 0 个定义、在 `canvas-render.js` 里各 1 个定义；`window.onmousemove`/
+  `window.onmouseup` 赋值语句各只出现在 `canvas-render.js` 里一次；
+  `git diff` 排查确认没有引入重复声明；18 个手写模块 + main.js 的 vm
+  交叉模拟（含更完整的 `document.elementFromPoint`/`window.addEventListener`
+  等桩）确认零 `ReferenceError`，且 `window.onmousemove`/`onmouseup`
+  在共享上下文里正确解析为 `function` 类型；全量前端 310 测试 + 后端
+  4 测试保持全绿。
+- **测试基础设施的连带修复**：`canvas-render-sandbox.js` 原来的
+  `window: {}` 桩缺少 `addEventListener`——M19 追加的两行顶层
+  `window.addEventListener('pointerup'/'pointercancel', ...)` 调用是
+  模块加载时立即执行的语句（不是延迟到函数调用时才执行），导致
+  sandbox 加载模块阶段直接抛错，连带让所有跟这次改动完全无关的纯
+  函数测试（`formatRunDuration` 等）也失败。修复方式是给 sandbox 的
+  `window`/`document` 补上最基本的 `addEventListener`/`elementFromPoint`
+  桩——这是一个值得记住的教训：**往一个已有模块末尾追加包含顶层
+  副作用语句的代码时，必须重新检查该模块现有 sandbox 的桩是否够用**，
+  不能假设"新加的函数不测试就不用管 sandbox"。
+- **没有新增测试**：这4个函数本身依赖 15+ 个交互状态变量和真实 DOM
+  事件，跟改造前一样不适合单元测试。
+
+## M20：顶层匿名脚本全面具名化（块2a）
+
+M18/M19 已经把 `onmousemove`/`onmouseup` 具名化并搬移，但当时的架构
+备注提到"~1400 行顶层匿名脚本"远不止这两个——`main.js` 里还有 63 处
+`obj.addEventListener('event', e => {...})` / `obj.onxxx = e => {...}`
+形式的顶层匿名事件处理器（画布交互/键盘快捷键/图片编辑器/资产库
+面板/工作流导入导出/提示词模板面板/composer 输入框等几乎所有 UI
+交互的事件绑定），全部散落在 `get_document_symbols` 扫描不到的匿名
+函数表达式里。M20 把这 63 处**全部**转换成具名函数声明 + 单独一行
+注册/赋值语句，纯语法转换，不改变任何行为。
+
+**为什么能大批量安全完成**：写了一个基于花括号平衡（正确跳过字符串/
+模板字符串/正则/注释）的 Python 脚本定位每一处顶层匿名处理器的函数体
+边界，生成形如 `<对象名><事件名>Handler` 的具名函数（重名加数字后缀，
+比如 `shellMousedownHandler`/`shellMousedownHandler2`/
+`shellMousedownHandler3`），原地替换。转换完成后跑了两层独立校验：
+1) 逐个比较"旧文件里 63 处 handler 的花括号内容"和"新文件里 63 个新增
+具名函数的花括号内容"，确认逐字节相同；2) 用 `diff` 命令直接比较新旧
+文件，人工审查每一处 diff 只包含"箭头函数头 → 具名函数声明"和"原语句
+→ 引用具名函数"这两类预期变化，额外参数（比如 `document.addEventListener(...,
+true)` 的第三个 capture 参数、`shell.addEventListener('wheel', ..., {passive:false})`
+的第三个 options 参数）全部正确保留；3) `async` 关键字在 `shell.ondrop`/
+`window.onload` 等场景下正确保留到新的具名函数声明上；4) 检查 63 个
+新生成的函数名在全文件范围内没有跟任何已有声明重名。
+
+- **验证方式**：`node --check` 语法检查；上述两层独立字节级校验
+  （函数体逐字节比较 + `diff` 人工审查）；vm 交叉模拟——用真实的 18
+  个手写模块 + 转换后的 main.js 按生产环境加载顺序在共享上下文里
+  执行一遍，确认顶层脚本（现在包含 63 个新函数声明和赋值语句）整体
+  执行零 `ReferenceError`，这是比"函数体字节校验"更进一步的验证，因为
+  它证明了转换后的代码不仅长得对，运行时也真的能正常走完；全量前端
+  310 测试 + 后端 4 测试保持全绿。
+- **效果**：`get_document_symbols` 现在能扫描到 `main.js` 里**全部**
+  函数——不再有任何匿名的顶层事件处理器藏在扫描盲区。这是为块2b
+  （拆分 @mention/composer 核心系统）铺路的关键前置步骤：现在可以用
+  标准 AST 工具精确看到每个函数的边界和调用关系，不再需要靠 grep
+  猜测顶层脚本的结构。
+- **没有新增测试**：这 63 个新具名函数本身依赖大量真实 DOM 事件/
+  全局交互状态，跟改造前一样不适合单元测试——这次纯粹是"让代码结构
+  对工具可见"，不改变可测试性。
+
+## M21：@mention 提及系统 + 提示词节点 composer 拆分（块2b）
+
+M20 让整个 main.js 对 AST 工具完全可见之后，重新用标准工具（不再靠
+grep 猜测）精确梳理 M8 阶段搁置的"提示词模板/预设/composer/@mention
+大系统"剩余部分（M17 已经拆走了"预设/模板库管理"）。发现真正的
+"@mention + composer + 生成请求引用图片收集"核心是一块不含任何顶层
+匿名脚本语句的区域，物理上分两段不连续区间（原文件 2192-2598 行 +
+2780-3461 行），中间 2609-2779 行是 M6 阶段确认的通用配额/尺寸计算
+基础设施，物理上夹在中间但完全不相关。
+
+M21 拆了 `mention-composer.js`，共79个函数，是仅次于 M8
+`image-editor.js`（约90个函数）的第二大单个模块。
+
+- **唯一源码分成二十部分**：新增
+  `frontend/src/smart-canvas/mention-composer.js`（M21），排在
+  `prompt-templates.js` 之后、`canvas-render.js` 之前加载。覆盖两大
+  子系统：
+  1. **提示词节点 composer**（`promptComposer` 面板——注意跟 main.js
+     里仍保留的 `updateComposer`/`positionComposerForNode` 操作的是
+     另一个 DOM 元素 `composer`，即图片生成节点的参数面板，两者是
+     完全独立的两个 UI，命名相似但不要混淆，这是本次评估时特别确认
+     排除的一点）：`positionPromptComposerForNode`/
+     `promptComposerParamsHtml`/`renderPromptComposer`/
+     `bindPromptComposerControls`/`updatePromptComposer`/
+     `renderInputPromptPreview`/一系列 RunningHub 输入缩略图渲染函数/
+     `renderInputThumbsRow`/`renderPromptComposerThumbs`/
+     `renderPromptComposerInputPreview`，以及输入引用缩略图的拖拽排序
+     交互（`bindInputThumbsDrag`/`inputThumbDropPlacement`/
+     `clearInputThumbDropMarkers`/`movedBeforeAfterIds`/
+     `sameOrderedIds`/`reorderInputSourceNodes`/`reorderInputThumb`）。
+  2. **@mention 提及系统 + 生成请求引用图片收集**：`mentionTokenHtml`/
+     `promptHtmlWithMentionTokens`（@提及 token 的 HTML 渲染）、
+     运行元信息快照/清理（`snapshotRunMeta`/`attachRunMeta`/
+     `stripRunInputMeta`/`stripImageGenerationMeta`）、根据画布连线
+     关系/@提及内容/候选池等多种来源推导节点生成时实际引用图片的一大
+     批函数（`upstreamNodesForKinds`/`inputNodesFor`/`imagesForNode`/
+     `runInputRefsForNode`/`defaultReferenceImagesFor`/
+     `lineConnectionsFor`/`connectedLineNodeIds` 等三十多个，是整个
+     智能画布最复杂的一套推导逻辑）、@提及选择器候选图片来源汇总
+     （`inputMentionCandidateImages`/`assetMentionCandidateImages`/
+     `mentionCandidateImages`/`referenceImagesFor`）、@提及选择器弹出
+     面板本体（`closeMentionPicker`/`renderMentionPicker`/
+     `showMentionPicker`/`positionMentionPickerAtCaret`/
+     `maybeOpenMentionPicker`/`insertMentionToken`）、最终把提示词
+     文本+引用图片组装成生成请求体的出口函数
+     （`collectPromptParts`/`originalPromptTextFromParts`/
+     `buildPromptRequest`）。
+- **刻意排除的函数**（留在 `main.js`，物理上夹在两段区间中间，容易
+  引起误判）：`StorageQuotaSignal`/`quotaDataFromPayload`/
+  `checkQuotaWarningFromResult`/`smartResponseError`/
+  `smartResponseErrorMessage`（M6 阶段确认的通用配额/错误处理基础
+  设施，被 `cascade-run.js` 大量调用，跟本文件毫无关系）；
+  `sizeForRun`/`expectedOutputSize`/`pendingBoxSize` 等一系列"预期
+  输出尺寸计算"函数（渲染占位框大小用的，跟本文件"引用图片收集"是
+  完全不同的关注点，命名容易混淆但概念不同）；`updateComposer`/
+  `positionComposerForNode`（操作另一个 DOM 元素 `composer`，见上）。
+- **回归测试**：`frontend/test/mention-composer.test.js`（24个测试），
+  覆盖 `sameOrderedIds`/`movedBeforeAfterIds` 的拖拽排序辅助逻辑、
+  `originalPromptTextFromParts` 把结构化提示词片段还原成纯文本（含
+  @图片 token 还原、多余空格/空行清理）、`mentionTokenHtml` 渲染
+  @提及 token 的 HTML（图片/视频两种媒体类型、alias 优先于 name、
+  无 url 时的空返回）、`isGeneratedResultNode` 判断一个节点是否是
+  生成结果节点的多种条件分支。`renderMentionPicker`/
+  `renderPromptComposer`/`buildPromptRequest`/各种 `xxxImagesFor`
+  引用图片收集函数强依赖真实 DOM（Selection API/contenteditable
+  光标位置）/画布全局状态/网络请求，跟 M5/M7/M8 核心批次一样不适合
+  单元测试。
+
+## M22：state.js 真正提取——核心状态变量物理搬移（块3，最终里程碑）
+
+这是本次会话计划的第三块也是最后一块高风险区域。之前多次评估都判断
+"风险量级和物理搬移一批函数完全不同"，担心需要把全部读写点改写成
+getter/setter 调用（378 处读取 + 125 处直接重新赋值，波及约 500 个
+调用点）。M22 重新审视这个假设，结合 M16/M17/M19 已经反复验证过的
+一个事实——**classic `<script>` 的顶层 `let`/`const` 声明本身就处于
+所有 `<script>` 标签共享的顶层脚本作用域里，跨文件读取和直接重新
+赋值都能正常工作，完全不需要改成 getter/setter**——发现"真正拆分
+state.js"其实可以用跟前 21 个里程碑完全一样的方式完成：只搬移
+**声明的物理位置**，不触碰任何一个调用点。
+
+M22 拆了 `state.js`，包含 6 个核心状态变量：`canvas`/`nodes`/
+`selectedId`/`selectedIds`/`selectedImage`/`viewport`。
+
+- **唯一源码分成二十一部分**：新增 `frontend/src/smart-canvas/state.js`
+  （M22），排在**全部模块最前面**加载（比 `utils.js` 还早）——这是
+  本次拆分唯一需要注意加载顺序的地方：确保所有其它模块和 `main.js`
+  在自己的函数体内访问这些变量时（永远晚于页面全部脚本加载完毕），
+  它们已经存在。
+- **规模确认**：这 6 个变量在全部 19 个已拆分模块 + main.js 里合计
+  517 次引用（`nodes` 248 次 / `viewport` 105 次 / `selectedId` 96
+  次 / `selectedIds` 68 次），分布在 16 个不同文件里几乎无处不在；
+  直接整体重新赋值（`nodes = ...`/`selectedId = ...`/`canvas = ...`）
+  的场景也有多处（`main.js` 的 `loadCanvas`/`saveCanvas`、
+  `canvas-sync.js` 的 `applyMergedServerCanvas`、`cascade-run.js`
+  等）。**一个都没有改动**——本次验证的核心就是确认这些调用点在
+  拆分前后完全零改动，物理搬移的只是 6 行声明语句本身的所在文件。
+- **验证方式**（这次的验证比前面所有里程碑都更依赖 vm 交叉模拟，
+  因为"跨文件变量共享"本身就是唯一的风险点）：先用 grep 确认 19 个
+  已拆分模块里没有任何一个在"顶层立即执行的代码"（不在函数体内）
+  读取这 6 个变量——这是唯一会让"加载顺序"产生实际影响的场景，确认
+  为零之后，物理搬移到哪个位置都是安全的；`node --check` 语法检查；
+  git diff 精确确认只删除了 6 行声明语句，替换成注释，其它代码零
+  改动；**vm 交叉模拟的关键验证**：用 20 个手写模块 + main.js 按
+  生产环境加载顺序在共享上下文里执行一遍后，**直接从 vm 上下文外部
+  对 `nodes`/`selectedId` 做一次模拟的"跨文件重新赋值"（`nodes =
+  [{id:"test1"}, {id:"test2"}]; selectedId = "test1";`），再调用
+  main.js 里真实定义的 `selectedNode()` 函数，确认它正确返回了刚刚
+  赋的新值**——这证明了"跨文件读写共享状态"这个核心假设在转换后
+  依然成立，不是理论推导，是运行时实测；全量前端 341 测试（新增
+  `state.test.js` 7个）+ 后端 4 测试保持全绿。
+- **新增测试的一个 Node vm 细节踩坑记录**：`state.test.js` 最初直接
+  读取 `sandbox.nodes` 之类的属性做断言，全部失败——原因是 Node
+  `vm` 模块 contextify 之后的 sandbox 对象**不会自动反映 `let`/
+  `const` 声明的词法绑定**（那些绑定只存在于 vm 上下文的词法环境
+  里，不是 sandbox 对象自身的属性），必须始终通过
+  `vm.runInContext('nodes', ctx)` 这种表达式求值的方式取值，不能
+  直接读 `sandbox.nodes`。这也解释了为什么本次会话所有 vm 交叉模拟
+  脚本从 M1 开始就一直用 `vm.runInContext(...)` 而不是直接读 sandbox
+  属性——不是随手选的写法，是必须这样才能拿到真实的当前值。
+- **效果**：`static/js/smart-canvas.js` 从 16590 行的单体文件，到
+  现在物理拆分出 21 个模块（含 `state.js`），本次会话计划的三大
+  高风险区块（`window.onmousemove`/`onmouseup` 物理拆分、顶层匿名
+  脚本具名化 + @mention/composer 拆分、`state.js` 真正提取）全部
+  完成。
+
 ## 仍然搁置的部分
 
-- **`state.js`**（`nodes`/`viewport`/`selectedId`/`selectedIds` 等核心全局
-  状态）依然没有拆出来。原因跟 M1 阶段分析的一样：这几个变量在
-  `main.js` 里有 378 处读取 + 125 处直接重新赋值，真要拆成独立文件需要
-  改写成 getter/setter，波及约 500 处调用点，风险量级和"物理搬移一批
-  函数"完全不同。目前 `loop-node.js` 依然是通过共享全局作用域直接读写
-  `nodes`/`selectedId`（不是 import 进来的），跟 `main.js` 里剩余代码的
-  访问方式一致。
-- **@mention/composer 核心系统**（`buildPromptRequest`/
-  `renderMentionPicker`/输入引用图片收集等）——和图片生成流程的输入
-  合成器深度耦合，且和顶层匿名脚本（画布事件绑定/app 启动序列）交织，
-  仍是未来更高风险的拆分目标。
-- **`window.onmousemove`/`window.onmouseup` 的物理拆分**——M18 已经把
-  这两个函数从匿名箭头函数改成了具名函数声明（`handleWindowMouseMove`/
-  `handleWindowMouseUp`，现在能被 AST 工具正确识别），但**函数体本身
-  仍留在 `main.js`**，没有物理搬移到 `canvas-render.js`。原因：内部
-  编排 10+ 种互斥的交互状态（拖拽/平移/裁剪/端口拖线/框选/预览对比/
-  全景/缩略图拖拽），依赖至少15个跨函数共享读写的可变状态变量，密度
-  明显高于 M16/M17 已经安全拆过的模块，物理搬移的收益不足以覆盖新增
-  风险，暂不拆分（具名化本身已经是这次的成果，为未来真要拆分铺好了
-  最基础的一步）。
 - **画布多端协作合并系统的共享 WebSocket 入口**
   `connectAssetLibrarySyncSocket`——同时分发资产库和画布更新两类
-  消息，物理上无法拆分成单一职责模块。
+  消息，物理上无法拆分成单一职责模块，这是目前唯一还留在 `main.js`
+  里、且明确判断"物理上无法继续拆分"的部分。
 
 ## 构建 & 测试
 
 ```bash
 cd frontend
 npm install
-npm run build   # 生成 ../static/dist/smart-canvas/{main.js,utils.js,loop-node.js,node-layout.js,node-model.js,connections.js,cascade-run.js,upload.js,media-display.js,candidate-pool.js,clipboard.js,node-context-ui.js,workflow-transfer.js,canvas-sync.js,prompt-templates.js,canvas-render.js,image-editor.js,asset-library.js,generation-settings.js}
+npm run build   # 生成 ../static/dist/smart-canvas/{state.js,main.js,utils.js,loop-node.js,node-layout.js,node-model.js,connections.js,cascade-run.js,upload.js,media-display.js,candidate-pool.js,clipboard.js,node-context-ui.js,workflow-transfer.js,canvas-sync.js,prompt-templates.js,mention-composer.js,canvas-render.js,image-editor.js,asset-library.js,generation-settings.js}
 npm test        # 跑全部拆分模块的 Vitest 回归测试
 ```
 
 `static/smart-canvas.html` 的加载顺序：
-`utils.js` → `loop-node.js` → `node-layout.js` → `node-model.js` →
+`state.js`（M22，必须最先加载）→ `utils.js` → `loop-node.js` →
+`node-layout.js` → `node-model.js` →
 `connections.js` → `cascade-run.js` → `upload.js` → `media-display.js` →
 `candidate-pool.js` → `clipboard.js` → `node-context-ui.js` →
 `workflow-transfer.js` → `canvas-sync.js` → `prompt-templates.js` →
-`canvas-render.js` → `image-editor.js` → `asset-library.js` →
-`generation-settings.js` → `main.js`（都是经典
+`mention-composer.js` → `canvas-render.js` → `image-editor.js` →
+`asset-library.js` → `generation-settings.js` → `main.js`（都是经典
 `<script>`，都走 `/static` 挂载和版本号注入逻辑，main.py 不需要任何
 改动）。
 

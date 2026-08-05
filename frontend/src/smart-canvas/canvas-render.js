@@ -709,3 +709,413 @@ function restoreDraggedNodePosition(){
         }
     });
 }
+
+// M19 追加：window.onmousemove / window.onmouseup 全局交互状态调度中心
+// + 右键拖拽取消处理。从 static/js/smart-canvas.js 原样剪切，未改动
+// 任何函数内部逻辑，只做了纯粹的位置搬移，追加到本文件（canvas-render.js）
+// 末尾——它们和上面的 dragConnectTargetFor/rectOverlapNode/
+// canAutoConnectDraggedNode/restoreDraggedNodePosition（M7 已迁移）
+// 本来就是同一个"节点拖拽/画布交互"关注点，物理上放在一起合情合理。
+//
+// 背景（M7 阶段的架构判断，M18 已完成前置步骤，本次 M19 完成物理拆分）：
+// M7 拆本文件时发现 `window.onmousemove`/`window.onmouseup` 是用
+// `window.onxxx = e => {...}` 匿名函数表达式赋值的形式，AST 符号扫描
+// 看不到，当时判断风险太高（10+ 种互斥交互状态耦合，横跨图片编辑器/
+// 资产库/连线等多个模块）暂不拆分。M18 先把这两个函数改成具名函数
+// 声明（不改变任何行为，纯语法转换）。M19 在此基础上完成真正的物理
+// 搬移。
+//
+// 本次追加包含：
+//   handleWindowMouseMove —— 全局 mousemove 调度中心，按互斥优先级
+//     依次判断：右键平移中 / 小地图拖拽中 / 端口连线拖拽中 / 提示词
+//     输入框高度拖拽中 / 框选中 / 预览对比拖拽中 / 全景图拖拽中 /
+//     预览图平移中 / 图片编辑器画面平移中 / 裁剪框拖拽中 / 缩略图
+//     拖拽中（含"拖出缩略图独立成节点"的特殊逻辑）/ 画布平移中 /
+//     节点拖拽中（含拖入资产库面板的高亮反馈、自动连线/合并/插入
+//     分组的候选目标高亮）。
+//   finishCanvasRightClick / cancelCanvasRightClick —— 右键按下后
+//     判断"是否发生了拖动"，没有拖动才在 pointerup 时打开右键菜单；
+//     pointercancel 时取消平移状态。这两个函数被
+//     `window.addEventListener('pointerup'/'pointercancel', ...)`
+//     绑定（这两行 addEventListener 调用也随本次搬移一并迁移）。
+//   handleWindowMouseUp —— 全局 mouseup 调度中心，按 mousemove 建立
+//     的各种状态逐一收尾：结束端口连线拖拽并尝试建立连线 / 结束提示词
+//     输入框拖拽并保存 / 结束框选 / 结束预览对比拖拽 / 结束全景图
+//     拖拽 / 结束预览图平移 / 结束图片编辑器画面平移 / 结束裁剪框
+//     拖拽 / 结束缩略图拖拽（撤销未分离的临时状态）/ 结束画布平移
+//     （延迟保存）/ 结束小地图拖拽 / 结束节点拖拽（这是最复杂的
+//     分支：拖到资产库面板则保存所有图片到资产库并还原节点位置；
+//     否则按优先级依次尝试"插入循环节点连接"/"加入智能分组"/"自动
+//     连接输入"/"合并为图片组"/"连接输入节点"，最后落地判断是否
+//     真的发生了有效变更从而决定 commit 还是 discard 撤销快照）。
+//
+// 依赖的外部全局（刻意留在 static/js/smart-canvas.js / main.js 里，
+// 通过共享脚本作用域访问，未随本次搬移迁移，因为被 main.js 里其它
+// 大量代码——尤其是各种 mousedown/pointerdown/dragstart 事件绑定——
+// 同样读写，属于跨文件共享的可变交互状态，风险量级和 state.js 一致，
+// 本次只搬移读写它们的函数本体，状态本身不搬）：
+//   交互状态变量：dragState, loopInsertPreview, selectionState,
+//     thumbDragState, panState, didPan, portDragState, smartMinimapDrag,
+//     rightMouseDownPoint, rightMouseDownViewport, cropState, cropDrag,
+//     previewPanDrag, previewCompareDrag, imageEditPanDrag,
+//     promptResizeState（声明在文件靠后位置，但属于同一类交互状态）,
+//     panoramaState, previewPan, suppressNodeClickUntil, undoSuppressed,
+//     assetLibraryOpen, lastMouseWorld
+//   核心选中状态：selectedId, selectedImage（本文件内会重新赋值，
+//     同 M2 loop-node.js 的写法）
+//   状态变量：nodes, viewport（只读/直接修改属性，未整体重新赋值）,
+//     settings（读写 promptH 字段）
+//   DOM 元素常量：promptInput, shell, assetPanel
+//
+// 反过来，本次追加的函数会调用以下仍留在 main.js 或其它已拆分模块
+// 里的函数（通过共享脚本作用域，未做任何改动，函数本身物理位置不影响
+// 调用方式）：
+//   留在 main.js：updateCanvasRightPan, centerViewportOnWorldPoint,
+//     minimapEventToWorld, updateSelectionBox, persistActiveSmartSettings,
+//     applyViewport, flushDeferredViewportRendering, applyNodeMetaToImage,
+//     inheritNodeMetaFromImage, commitPendingUndo, discardPendingUndo,
+//     moveNodeElementsDuringDrag, updateLoopInsertPreview, setDropHighlight,
+//     clearDropHighlight, setAssetDragOver, finishSelection,
+//     mergeImageNodesIntoGroup, smartGroupTargetForDraggedNode,
+//     addDraggedNodesToSmartGroup, scheduleSave, render, screenToWorld,
+//     openCanvasContextMenu
+//   connections.js（M4）：updatePortDragVisual, handlePortDrop,
+//     insertionConnectionForNode, connectInputNode, refreshConnectionLayer
+//   image-editor.js（M8）：setPreviewComparePos, applyPreviewTransform,
+//     resizeOutpaintFromDrag, clampCrop, renderCropBox
+//   node-model.js（M3）：createImageNodeAt
+//   asset-library.js（M9）：addFileToAssetLibrary
+//   loop-node.js（M2）：insertLoopNodeIntoConnection
+//   node-layout.js（M3）：nodeRect
+//   本文件（canvas-render.js，M7）：dragConnectTargetFor, rectOverlapNode,
+//     canAutoConnectDraggedNode, restoreDraggedNodePosition
+//
+// main.js 里仍保留的部分会调用本次追加的函数（通过共享脚本作用域）：
+//   各处 mousedown/pointerdown 事件绑定设置好 dragState/panState/
+//   cropDrag 等初始状态之后，等待 window.onmousemove/onmouseup 接管
+//   后续交互（这本身就是这套状态机的设计方式：mousedown 建立状态，
+//   mousemove 更新状态，mouseup 收尾状态，三段分散在不同的事件绑定
+//   点，只有后两段是本次搬移的对象）。
+function handleWindowMouseMove(e){
+    lastMouseWorld = screenToWorld(e);
+    if(updateCanvasRightPan(e)) return;
+    if(smartMinimapDrag){
+        e.preventDefault();
+        centerViewportOnWorldPoint(minimapEventToWorld(e));
+        return;
+    }
+    if(portDragState){
+        e.preventDefault();
+        const p = screenToWorld(e);
+        portDragState.currentWorld = p;
+        portDragState.moved = true;
+        const hitEl = document.elementFromPoint(e.clientX, e.clientY);
+        const portEl = hitEl?.closest?.('.node-port');
+        const nodeEl = portEl?.closest?.('.image-node') || hitEl?.closest?.('.image-node');
+        let targetId = '', targetPort = '';
+        if(nodeEl && nodeEl.dataset.id && nodeEl.dataset.id !== portDragState.fromId){
+            targetId = nodeEl.dataset.id;
+            if(portEl){
+                targetPort = portEl.dataset.port;
+            } else {
+                const rect = nodeEl.getBoundingClientRect();
+                targetPort = (e.clientX - rect.left) < rect.width / 2 ? 'in' : 'out';
+            }
+            const compatible = (portDragState.fromPort === 'out' && targetPort === 'in') || (portDragState.fromPort === 'in' && targetPort === 'out');
+            if(!compatible){ targetId = ''; targetPort = ''; }
+        }
+        portDragState.hoverTargetId = targetId;
+        portDragState.hoverPort = targetPort;
+        updatePortDragVisual();
+        return;
+    }
+    if(promptResizeState){
+        e.preventDefault();
+        const dy = e.clientY - promptResizeState.startY;
+        settings.promptH = Math.max(60, Math.min(380, promptResizeState.startH + dy));
+        promptInput.style.setProperty('--prompt-h', `${settings.promptH}px`);
+        persistActiveSmartSettings();
+        return;
+    }
+    if(selectionState){
+        e.preventDefault();
+        updateSelectionBox(e);
+        return;
+    }
+    if(previewCompareDrag){
+        e.preventDefault();
+        setPreviewComparePos(e.clientX);
+        return;
+    }
+    if(panoramaState.drag){
+        e.preventDefault();
+        const dx = e.clientX - panoramaState.drag.clientX;
+        const dy = e.clientY - panoramaState.drag.clientY;
+        panoramaState.yaw = panoramaState.drag.yaw - dx * 0.18;
+        panoramaState.pitch = Math.max(-85, Math.min(85, panoramaState.drag.pitch + dy * 0.18));
+        document.getElementById('previewStage')?.classList.add('panning');
+        return;
+    }
+    if(previewPanDrag){
+        const stage = document.getElementById('previewStage');
+        previewPan = {
+            x:previewPanDrag.startX + (e.clientX - previewPanDrag.clientX),
+            y:previewPanDrag.startY + (e.clientY - previewPanDrag.clientY)
+        };
+        stage?.classList.add('panning');
+        applyPreviewTransform();
+        return;
+    }
+    if(imageEditPanDrag){
+        const stage = document.getElementById('imageEditStage');
+        if(stage){
+            stage.scrollLeft = imageEditPanDrag.scrollLeft - (e.clientX - imageEditPanDrag.clientX);
+            stage.scrollTop = imageEditPanDrag.scrollTop - (e.clientY - imageEditPanDrag.clientY);
+        }
+        return;
+    }
+    if(cropDrag && cropState){
+        const dx = e.clientX - cropDrag.sx;
+        const dy = e.clientY - cropDrag.sy;
+        if(cropDrag.mode === 'move'){
+            cropState.x = cropDrag.start.x + dx;
+            cropState.y = cropDrag.start.y + dy;
+        } else if(cropDrag.mode === 'image'){
+            cropState.x = cropDrag.start.x + dx;
+            cropState.y = cropDrag.start.y + dy;
+        } else if(String(cropDrag.mode || '').startsWith('outpaint-')){
+            resizeOutpaintFromDrag(dx, dy);
+        } else {
+            cropState.w = cropDrag.start.w + dx;
+            cropState.h = cropDrag.start.h + dy;
+        }
+        clampCrop();
+        renderCropBox();
+        return;
+    }
+    if(thumbDragState){
+        const dx = e.clientX - thumbDragState.startX;
+        const dy = e.clientY - thumbDragState.startY;
+        const source = nodes.find(n => n.id === thumbDragState.nodeId);
+        if(!thumbDragState.detached && Math.abs(dx) + Math.abs(dy) > 6){
+            if(source && (source.images || []).length > 1){
+                const img = source.images[thumbDragState.imgIndex];
+                if(img){
+                    commitPendingUndo();
+                    undoSuppressed = true;
+                    applyNodeMetaToImage(img, source);
+                    source.images.splice(thumbDragState.imgIndex, 1);
+                    if(source.images.length <= 1){
+                        source.title = 'Image';
+                        delete source.w; delete source.h;
+                        inheritNodeMetaFromImage(source);
+                    }
+                    const point = screenToWorld(e);
+                    selectedId = '';
+                    selectedImage = {nodeId:'', index:-1};
+                    const newNode = createImageNodeAt(point, [img], {type:'smart-asset-image', select:false, skipUndo:true});
+                    undoSuppressed = false;
+                    dragState = {id:newNode.id, startX:e.clientX, startY:e.clientY, ox:newNode.x, oy:newNode.y, thumbDetached:true};
+                    thumbDragState.detached = true;
+                    render();
+                }
+            }
+        }
+        if(thumbDragState.detached) thumbDragState = null;
+        else return;
+    }
+    if(panState){
+        const dx = e.clientX - panState.startX;
+        const dy = e.clientY - panState.startY;
+        if(Math.abs(dx) + Math.abs(dy) > 3) didPan = true;
+        viewport.x = panState.ox + dx;
+        viewport.y = panState.oy + dy;
+        applyViewport();
+        return;
+    }
+    if(!dragState) return;
+    const node = nodes.find(n => n.id === dragState.id);
+    if(!node) return;
+    const moveDx = (e.clientX - dragState.startX) / viewport.scale;
+    const moveDy = (e.clientY - dragState.startY) / viewport.scale;
+    (dragState.group || [{id:dragState.id, ox:dragState.ox, oy:dragState.oy}]).forEach(item => {
+        const n = nodes.find(x => x.id === item.id);
+        if(!n) return;
+        n.x = item.ox + moveDx;
+        n.y = item.oy + moveDy;
+    });
+    if(assetLibraryOpen){
+        const hit = document.elementFromPoint(e.clientX, e.clientY);
+        if(hit && assetPanel?.contains(hit)){
+            setAssetDragOver(true);
+            clearDropHighlight();
+            setAssetDragOver(true);
+            return;
+        }
+        setAssetDragOver(false);
+    }
+    const draggedRect = nodeRect(node);
+    const rawTarget = (dragState.ctrlGroup || ['smart-image','smart-prompt','smart-loop','smart-group'].includes(node.type))
+        ? (['smart-prompt','smart-loop'].includes(node.type)
+            ? dragConnectTargetFor(node, screenToWorld(e))
+            : rectOverlapNode(node.id, draggedRect.x, draggedRect.y, draggedRect.width, draggedRect.height, dragState.groupIds))
+        : null;
+    const target = rawTarget;
+    setDropHighlight(target?.id || '');
+    moveNodeElementsDuringDrag();
+    updateLoopInsertPreview();
+    if(target) setDropHighlight(target.id);
+}
+window.onmousemove = handleWindowMouseMove;
+function finishCanvasRightClick(e){
+    if(e.button !== 2 || !rightMouseDownPoint) return;
+    const moved = panState?.button === 2;
+    const contextEvent = {clientX:e.clientX, clientY:e.clientY, target:e.target};
+    rightMouseDownPoint = null;
+    rightMouseDownViewport = null;
+    if(!moved && !e.ctrlKey && !e.metaKey){
+        setTimeout(() => openCanvasContextMenu(contextEvent), 0);
+    }
+}
+function cancelCanvasRightClick(){
+    rightMouseDownPoint = null;
+    rightMouseDownViewport = null;
+    if(panState?.button === 2){
+        panState = null;
+        shell.classList.remove('panning');
+        flushDeferredViewportRendering();
+        setTimeout(() => { didPan = false; }, 0);
+    }
+}
+window.addEventListener('pointerup', finishCanvasRightClick, true);
+window.addEventListener('pointercancel', cancelCanvasRightClick, true);
+function handleWindowMouseUp(e){
+    finishCanvasRightClick(e);
+    document.body.classList.remove('smart-node-drag');
+    if(portDragState){
+        const drag = portDragState;
+        portDragState = null;
+        shell.classList.remove('port-dragging');
+        handlePortDrop(drag, e);
+        return;
+    }
+    if(promptResizeState){ promptResizeState = null; scheduleSave(); }
+    if(selectionState) finishSelection(e);
+    if(previewCompareDrag) previewCompareDrag = false;
+    if(panoramaState.drag){
+        panoramaState.drag = null;
+        document.getElementById('previewStage')?.classList.remove('panning');
+    }
+    if(previewPanDrag){
+        previewPanDrag = null;
+        document.getElementById('previewStage')?.classList.remove('panning');
+    }
+    if(imageEditPanDrag) imageEditPanDrag = null;
+    if(cropDrag){
+        document.getElementById('cropCanvas')?.classList.remove('dragging-image');
+        cropDrag = null;
+    }
+    if(thumbDragState){
+        if(!thumbDragState.detached) discardPendingUndo();
+        thumbDragState = null;
+    }
+    if(panState) {
+        panState = null;
+        shell.classList.remove('panning');
+        flushDeferredViewportRendering();
+        scheduleSave(900);
+        setTimeout(() => { didPan = false; }, 0);
+    }
+    if(smartMinimapDrag){
+        smartMinimapDrag = false;
+        flushDeferredViewportRendering();
+    }
+    if(dragState){
+        const draggedNode = nodes.find(n => n.id === dragState.id);
+        let stateChanged = false;
+        const hit = document.elementFromPoint(e.clientX, e.clientY);
+        const droppedOnAssetPanel = assetLibraryOpen && hit && assetPanel?.contains(hit);
+        if(droppedOnAssetPanel && draggedNode && (draggedNode.images || []).length){
+            const imagesToSave = (draggedNode.images || []).filter(img => img?.file_id);
+            imagesToSave.forEach(img => { void addFileToAssetLibrary(img.file_id, img.name || draggedNode.title || 'image'); });
+            (dragState.group || [{id:dragState.id, ox:dragState.ox, oy:dragState.oy}]).forEach(item => {
+                const n = nodes.find(x => x.id === item.id);
+                if(n){ n.x = item.ox; n.y = item.oy; }
+            });
+            setAssetDragOver(false);
+            discardPendingUndo();
+            clearDropHighlight();
+            dragState = null;
+            document.body.classList.remove('smart-node-drag');
+            render();
+            scheduleSave();
+            return;
+        }
+        const autoTarget = draggedNode ? dragConnectTargetFor(draggedNode, screenToWorld(e)) : null;
+        const insertHit = draggedNode?.type === 'smart-loop' && dragState.ctrlGroup && (dragState.group || []).length <= 1
+            ? insertionConnectionForNode(draggedNode)
+            : null;
+        const draggedNodes = (dragState.group || []).map(item => nodes.find(n => n.id === item.id)).filter(Boolean);
+        const smartGroupTarget = draggedNode ? smartGroupTargetForDraggedNode(draggedNode) : null;
+        if(
+            insertHit &&
+            insertLoopNodeIntoConnection(draggedNode, insertHit)
+        ){
+            stateChanged = true;
+            render();
+        } else if(
+            smartGroupTarget &&
+            addDraggedNodesToSmartGroup(draggedNodes.length ? draggedNodes : [draggedNode], smartGroupTarget)
+        ){
+            stateChanged = true;
+            render();
+        } else if(
+            draggedNode &&
+            autoTarget &&
+            !dragState.ctrlGroup &&
+            (dragState.group || []).length <= 1 &&
+            canAutoConnectDraggedNode(draggedNode, autoTarget) &&
+            connectInputNode(draggedNode.id, autoTarget.id)
+        ){
+            stateChanged = true;
+            restoreDraggedNodePosition();
+            if(selectedId === draggedNode.id) selectedId = '';
+            render();
+        } else if(draggedNode && (draggedNode.images || []).length && (dragState.ctrlGroup || (dragState.group || []).length <= 1)){
+            const r = nodeRect(draggedNode);
+            const target = rectOverlapNode(draggedNode.id, r.x, r.y, r.width, r.height, dragState.groupIds);
+            if(target && (target.images || []).length && (dragState.ctrlGroup || (target.images || []).length > 1)){
+                stateChanged = true;
+                mergeImageNodesIntoGroup(draggedNode.id, target.id);
+                render();
+            } else if(target && !dragState.ctrlGroup && (dragState.group || []).length <= 1){
+                stateChanged = true;
+                connectInputNode(draggedNode.id, target.id);
+                if(!dragState.thumbDetached) restoreDraggedNodePosition();
+                if(selectedId === draggedNode.id) selectedId = '';
+                render();
+            } else if((dragState.group || []).some(item => {
+                const n = nodes.find(x => x.id === item.id);
+                return n && (Math.abs((Number(n.x) || 0) - item.ox) > 1 || Math.abs((Number(n.y) || 0) - item.oy) > 1);
+            })){
+                stateChanged = true;
+            }
+        } else if((dragState.group || []).some(item => {
+            const n = nodes.find(x => x.id === item.id);
+            return n && (Math.abs((Number(n.x) || 0) - item.ox) > 1 || Math.abs((Number(n.y) || 0) - item.oy) > 1);
+        }) || (draggedNode && (Math.abs((draggedNode.x || 0) - dragState.ox) > 1 || Math.abs((draggedNode.y || 0) - dragState.oy) > 1))){
+            stateChanged = true;
+        }
+        if(dragState.thumbDetached) stateChanged = true;
+        const thumbDetached = Boolean(dragState.thumbDetached);
+        if(stateChanged) commitPendingUndo();
+        else discardPendingUndo();
+        if(stateChanged || thumbDetached) suppressNodeClickUntil = Date.now() + 180;
+        clearDropHighlight();
+        loopInsertPreview = null;
+        dragState = null;
+        if(stateChanged || thumbDetached) scheduleSave();
+        refreshConnectionLayer();
+    }
+}
+window.onmouseup = handleWindowMouseUp;

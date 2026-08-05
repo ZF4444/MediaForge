@@ -25,12 +25,17 @@
  *   赋值（如 createLoopNode 里的 `selectedId = node.id`），这类赋值必须
  *   靠经典脚本共享全局作用域才能工作——ES module 的具名 import 是只读
  *   绑定，重新赋值会直接报运行时错误。所以这些拆分出来的文件都保持
- *   经典脚本语法，通过 <script src> 顺序（utils.js → loop-node.js →
- *   main.js）加载，main.js 里对这些函数的调用方式不变。
+ *   经典脚本语法，通过 <script src> 顺序（state.js → utils.js →
+ *   loop-node.js → ... → main.js）加载，main.js 里对这些函数的调用方式
+ *   不变。
  *
- *   等后续某个模块的拆分需要认真解决全局作用域问题时（比如 state.js
- *   真正拆分、给全部内联 onclick 引用的函数补上 window.xxx = xxx），
- *   这个脚本才会切换成调用 `vite build`。
+ *   M22 已经把 canvas/nodes/selectedId/selectedIds/selectedImage/viewport
+ *   这几个核心状态变量的声明搬到了 state.js（排在最前面加载），验证
+ *   过的结论是：classic <script> 的顶层 let/const 声明本身就处于所有
+ *   <script> 标签共享的顶层脚本作用域里，跨文件读取和直接重新赋值
+ *   都能正常工作，不需要改成 getter/setter 调用——真正让这次拆分保持
+ *   低风险的关键是"只搬移声明的物理位置，不改变访问方式"，500+ 处
+ *   读取/重新赋值调用点一处都没有改动。
  */
 import { copyFileSync, mkdirSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -55,15 +60,16 @@ mkdirSync(dirname(mainStagingCopy), { recursive: true });
 copyFileSync(mainSrc, mainStagingCopy);
 
 // 手写源码文件（经典脚本，各自独立拆出的模块），直接复制。
-// 加载顺序（同时也是这里列出的顺序）：utils.js（M1）→ loop-node.js（M2）→
+// 加载顺序（同时也是这里列出的顺序）：state.js（M22，必须最先加载）→
+// utils.js（M1）→ loop-node.js（M2）→
 // node-layout.js → node-model.js（M3）→ connections.js（M4）→
 // cascade-run.js（M5）→ upload.js（M6）→ media-display.js（M11）→
 // candidate-pool.js（M12）→ clipboard.js（M13）→ node-context-ui.js（M14）→
 // workflow-transfer.js（M15）→ canvas-sync.js（M16）→
-// prompt-templates.js（M17）→ canvas-render.js（M7）→
-// image-editor.js（M8）→ asset-library.js（M9）→
+// prompt-templates.js（M17）→ mention-composer.js（M21）→
+// canvas-render.js（M7/M19）→ image-editor.js（M8）→ asset-library.js（M9）→
 // generation-settings.js（M10）→ main.js。
-const handwrittenFiles = ['utils.js', 'loop-node.js', 'node-layout.js', 'node-model.js', 'connections.js', 'cascade-run.js', 'upload.js', 'media-display.js', 'candidate-pool.js', 'clipboard.js', 'node-context-ui.js', 'workflow-transfer.js', 'canvas-sync.js', 'prompt-templates.js', 'canvas-render.js', 'image-editor.js', 'asset-library.js', 'generation-settings.js'];
+const handwrittenFiles = ['state.js', 'utils.js', 'loop-node.js', 'node-layout.js', 'node-model.js', 'connections.js', 'cascade-run.js', 'upload.js', 'media-display.js', 'candidate-pool.js', 'clipboard.js', 'node-context-ui.js', 'workflow-transfer.js', 'canvas-sync.js', 'prompt-templates.js', 'mention-composer.js', 'canvas-render.js', 'image-editor.js', 'asset-library.js', 'generation-settings.js'];
 for (const name of handwrittenFiles) {
   const src = resolve(frontendRoot, 'src/smart-canvas', name);
   const dest = resolve(outDir, name);
