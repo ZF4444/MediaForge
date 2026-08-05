@@ -17,6 +17,10 @@ scripts/sync_to_remote.sh
 static/dist/
 frontend/node_modules/
 frontend/dist/
-# M0 阶段的生成文件（构建时从 static/js/smart-canvas.js 复制而来，不是源码）
+# M0 阶段的生成文件（构建时从 static/js/<page>.js 复制而来，不是源码）
 frontend/src/smart-canvas/main.js
+frontend/src/api-settings/main.js
+frontend/src/asset-manager/main.js
+frontend/src/comfyui-settings/main.js
+frontend/src/index/main.js
 

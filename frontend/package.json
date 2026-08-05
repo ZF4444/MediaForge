@@ -4,8 +4,8 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-smart-canvas.mjs",
-    "dev": "node scripts/build-smart-canvas.mjs",
+    "build": "node scripts/build-pages.mjs",
+    "dev": "node scripts/build-pages.mjs",
     "test": "vitest run"
   },
   "devDependencies": {

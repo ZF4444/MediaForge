@@ -1,7 +1,24 @@
 # frontend/
 
-智能画布（`static/js/smart-canvas.js`）前端重构的源码目录，对应
-`docs/前端重构计划.md`。
+多个前端页面模块化重构的源码目录，对应 `docs/前端重构计划.md`。
+
+**范围**：目前覆盖五个页面——`smart-canvas`（智能画布，M1-M22，见下方
+主体章节）、`api-settings`（API 设置页）、`asset-manager`（素材库管理
+页）、`comfyui-settings`（ComfyUI 设置页）、`index`（应用外壳，见文末
+对应章节）。**`static/js/canvas.js`（普通画布/无限画布）明确不在
+范围内**——已确认未来会弃用，只需保证能打开旧画布，不值得投入模块化
+重构的精力，保持现状手写单文件即可。`static/js/ltx-director-timeline.js`
+（4111 行）也暂不纳入范围——这是一个 ComfyUI 自定义节点的前端 widget
+脚本，代码结构是单个 3363 行的 `TimelineEditor` class（通过
+`beforeRegisterNodeDef` 注册进 ComfyUI），跟其它几个页面"很多独立
+顶层函数"的结构完全不同，拆分一个 class 的方法需要更谨慎的方案（比如
+mixin 模式），风险收益比跟目前这几个页面不一样，值得单独评估。
+
+五个页面共用同一套构建基础设施（`frontend/scripts/build-pages.mjs`，
+一个脚本通过页面注册表驱动全部页面的构建），但各自的模块拆分是独立
+进行的，互不依赖。
+
+## 智能画布（smart-canvas）
 
 ## 当前状态：M2（部分完成，同 M1 的范围原则）
 
@@ -1197,13 +1214,13 @@ M22 拆了 `state.js`，包含 6 个核心状态变量：`canvas`/`nodes`/
   消息，物理上无法拆分成单一职责模块，这是目前唯一还留在 `main.js`
   里、且明确判断"物理上无法继续拆分"的部分。
 
-## 构建 & 测试
+## 智能画布：构建 & 测试
 
 ```bash
 cd frontend
 npm install
 npm run build   # 生成 ../static/dist/smart-canvas/{state.js,main.js,utils.js,loop-node.js,node-layout.js,node-model.js,connections.js,cascade-run.js,upload.js,media-display.js,candidate-pool.js,clipboard.js,node-context-ui.js,workflow-transfer.js,canvas-sync.js,prompt-templates.js,mention-composer.js,canvas-render.js,image-editor.js,asset-library.js,generation-settings.js}
-npm test        # 跑全部拆分模块的 Vitest 回归测试
+npm test        # 跑全部拆分模块的 Vitest 回归测试（三个页面的测试共用一次 npm test）
 ```
 
 `static/smart-canvas.html` 的加载顺序：
@@ -1220,7 +1237,312 @@ npm test        # 跑全部拆分模块的 Vitest 回归测试
 **重要**：每次修改了 `static/js/smart-canvas.js` 或
 `frontend/src/smart-canvas/` 下任何一个手写模块文件之后，必须重新
 运行 `npm run build`，否则 `static/smart-canvas.html` 加载到的会是
-旧版本。
+旧版本。这个规则对下面 api-settings/asset-manager 两个页面同样适用。
+
+## API 设置页（api-settings）
+
+`static/js/api-settings.js` 用跟智能画布完全一样的方法论拆分：不改成
+ES module（原因见文首），只做"物理搬移函数到独立文件"，状态变量和
+真正跨子系统共享的核心逻辑留在 `main.js`。这个页面比智能画布小得多
+（拆分前 2564 行），且拆分前所有顶层函数已经是具名声明（没有 M20 那种
+"顶层匿名脚本"问题），所以直接一步做完整拆分，没有分成多个里程碑。
+
+- **拆出 5 个模块**（`frontend/src/api-settings/`，`<script>` 加载顺序
+  即下面的列出顺序，全部排在 `main.js` 之前）：
+  - `rh-workflow-editor.js`（966 行，约 55 个函数）：RunningHub AI 应用
+    配置的整套编辑体验——粘贴 `/run/ai-app/...` 链接创建卡片、卡片
+    缩略图上传、工作流字段拉取与归一化、字段编辑弹层、画布节点映射
+    预览、"测试运行"整套提交/轮询/取结果逻辑、编辑器滚动位置保持。
+    这是本次迁移里最大的单个子系统。
+  - `provider-onboarding.js`（162 行，6 个函数）：新用户首次接触
+    ModelScope/RunningHub 供应商时的引导卡片。
+  - `recommend-api.js`（149 行，6 个函数）："推荐 API"弹层——展示内置
+    推荐平台列表，一键保存 Key。
+  - `jimeng-cli.js`（172 行，10 个函数）：即梦 CLI 登录/登出/余额查询/
+    帮助文档弹层整套流程。`jimengLoginTimer`（登录状态轮询定时器 id）
+    是个只在这个子系统内部使用的 `let` 状态，判断为模块局部状态，
+    跟随函数一起搬过去了——跟 `providers`/`selectedId` 这类真正跨模块
+    共享的核心状态不同，那些依然留在 `main.js`。
+  - `ms-lora.js`（87 行，6 个函数）：ModelScope 供应商专属的 LoRA
+    列表管理（新增/更新/删除一条 LoRA 配置）。
+- **留在 `main.js`**（1146 行，55.3% 缩减）：`providers`/`selectedId`
+  核心状态、`provider()`/`syncEditor()`/`renderEditor()`/
+  `saveProviders()`/`loadProviders()` 供应商 CRUD 核心、模型 CRUD、
+  连接测试（`testConnection`/`probeAsync`/`fetchModels`）、模型选择器
+  弹层（`openModelPicker` 等）、通用工具（`escapeHtml`/`tr`/`setStatus`/
+  `broadcastStudioApiChange` 等）、全部配置常量
+  （`VOLCENGINE_*`/`MS_*`/`RH_*`/`JIMENG_*`/`ONBOARDING_GUIDES`/
+  `RECOMMENDED_APIS`）。
+- **内联 `onclick` 依赖的验证**：`api-settings.html` 有 40 处内联
+  `onclick`/`onchange` 属性直接引用 window 全局函数（比智能画布的写法
+  更依赖这个机制），拆分后专门用 vm 模拟验证了这些内联属性引用的函数
+  （`toggleRhWorkflowEditorField`/`saveOnboardingRunningHubKey`/
+  `updateMsLora` 等）在跨文件加载后依然能通过 `typeof fn === 'function'`
+  正确解析——经典脚本顶层函数声明自动挂到共享作用域这个机制，在
+  多文件场景下同样成立。
+- **验证**：语法检查、`git diff` 精确核对删除了 1425 行（RH 模块 933 +
+  其余 4 个模块 492，与预期完全一致）、跨文件 grep 确认 0/1 分布、
+  vm 交叉模拟验证全部 5 模块 + main.js 加载零 `ReferenceError`、
+  341→369 前端测试保持不受影响（新增 28 个：`rh-workflow-editor.test.js`
+  23 个 + `ms-lora.test.js` 5 个，覆盖 `parseRunningHubRunRef`/
+  `rhWorkflowFieldKind`/`normalizeRhWorkflowField`/`rhEditorSortedFields`/
+  `mediaAcceptForRhKind`/`rhPreviewRandomValue`/`normalizeLoraStrength`/
+  `msLoraTargetOptions` 等纯逻辑函数）、后端 4 测试不受影响。
+
+## 素材库管理页（asset-manager）
+
+`static/js/asset-manager.js` 同样用跟智能画布一样的方法论拆分。这是
+本次迁移里规模最大的单个文件（拆分前 2715 行，约 150 个函数，67 个
+`let` 状态变量）。跟 api-settings 的一个显著区别：这个页面**零内联
+事件绑定**，所有交互都走一个巨大的 `handleClick` 委托函数（304 行，
+根据 `event.target.closest(...)` 匹配各种 `data-xxx` 属性分发到具体
+操作），`handleClick` 本身跟几乎全部子系统都有耦合，判断为"物理上
+最好留在 main.js"，跟智能画布的 `syncEditor`/`renderEditor` 是同一类
+角色——核心调度器，不拆。
+
+- **拆出 6 个模块**（`frontend/src/asset-manager/`，`<script>` 加载
+  顺序即下面列出顺序）：
+  - `storage-manager.js`（331 行，17 个函数）：存储用量总览、分页/
+    排序/筛选后的文件列表拉取、批量删除、存储管理面板渲染。
+  - `local-assets.js`（387 行，23 个函数）：两个子标签页——"本地上传"
+    （用户直接从本机上传的临时素材）+ "本地"（挂载在服务器上的共享
+    文件夹浏览），这两者物理上相邻、经常互相调用，合并成一个模块。
+  - `asset-library.js`（585 行，29 个函数）：正式资产库（图片/视频等
+    媒体素材）的 CRUD——库/分类管理、卡片渲染、上传、剪贴板（含"本地"
+    剪贴板到资产库的粘贴桥接，这是本地素材和正式资产库之间唯一的
+    桥梁，所以放在这个模块而不是 `local-assets.js`）。这是本次迁移里
+    最大的单个子系统。
+  - `prompt-library.js`（477 行，17 个函数）：提示词库的 CRUD，跟
+    `asset-library.js` 结构对称（库/分类管理、卡片渲染、增删改）。
+  - `avatar-registration.js`（199 行，9 个函数 + 2 个常量）：把资产库
+    里的图片注册成 AI 供应商的"头像"角色，含异步注册状态轮询。
+  - `detail-lightbox.js`（204 行，13 个函数）：两个逻辑独立但物理相邻
+    的交互——详情预览灯箱（全屏大图/视频预览，支持拖拽平移和滚轮
+    缩放）+ 框选（marquee selection，按住鼠标拖拽画框多选卡片）。
+- **留在 `main.js`**（751 行，72.3% 缩减）：全部 67 个状态变量、
+  `handleClick`（304 行中央分发）、`render`/`switchTab`/`loadAll`、
+  通用工具（`escapeHtml`/`apiJson`/`setStatus`/`refreshIcons`/
+  `assetKind`/`assetKindLabel`/`assetThumb`——最后三个虽然像是"资产库
+  专属"，但因为被 storage/local/asset-library 等多个子系统共用，判断
+  为通用工具留在 main.js，跟 `escapeHtml` 同类）、`renderCanvasAssetsManager`
+  （"画布资产"标签页的占位函数，功能待完善，18 行太小不值得单独拆）。
+- **一次踩坑记录**：第一次尝试写 `storage-manager.js` 时手写了函数体
+  （没有严格从原文件 `sed` 提取），凭记忆重写的 API 请求参数、HTML
+  结构和返回值逻辑跟原文件出现了大量不一致，被 byte-diff 完全揪出来，
+  只能整个重做。**之后严格执行"header 注释单独写 + `sed` 精确提取到
+  临时文件 + `cat` 拼接 + byte-diff 校验"流程，不再手写任何一行函数
+  体**，后面 6 个模块全部一次性 byte-diff 通过。这个教训被写进这里
+  是为了强调：物理搬移函数体永远应该是机械的复制粘贴操作，凭记忆
+  重写等于在没有必要的地方引入了新代码，一旦库/模型/接口细节记错，
+  就是一个真实的功能回归。
+- **另一次疏漏**：批量删除脚本的 `ranges` 列表一次漏掉了两段（虽然
+  已经提取到模块文件，但没有从 `main.js` 里删除，导致这几个函数
+  重复定义在两个地方），被跨文件 grep 检查（确认每个函数在全部文件
+  里恰好出现 1 次）发现并修复。这也是为什么"交叉 grep 确认 0/1 分布"
+  是这套验证流程里不能省略的一步——光靠 `node --check` 语法检查不会
+  报错，重复定义在浏览器里也不一定马上出问题（后定义的会覆盖前面的，
+  可能表现正常但实际上跑的是脚本里更靠后的那份定义）。
+- **`frontend/test/` 目录是所有页面共用的扁平目录，测试文件名需要
+  全局唯一**：智能画布已经有一个 `asset-library.test.js`（M9 模块，
+  智能画布内嵌的资产库面板，跟这次 asset-manager 页面新拆出来的
+  `asset-library.js` 是完全不同的两个模块，只是恰好同名）。这次没有
+  给 asset-manager 的 `asset-library.js` 写测试文件所以没有实际冲突，
+  但未来如果要补测试，需要用带页面前缀的文件名（比如
+  `asset-manager-asset-library.test.js`）来避免撞名。
+- **验证**：语法检查、`git diff` 精确核对删除了 2031 行 + 插入 67 行
+  注释、跨文件 grep 确认全部 154 个函数在 main.js（14 个）+ 6 个模块
+  （140 个）之间零重复零遗漏、vm 交叉模拟验证全部 6 模块 + main.js
+  加载零 `ReferenceError`（含调用真实函数 `assetLibraries()` 验证跨
+  模块状态读取正确）、369→408 前端测试保持不受影响（新增 39 个：
+  `storage-manager.test.js` 15 个 + `local-assets.test.js` 15 个 +
+  `detail-lightbox.test.js` 9 个，覆盖 `storageUsagePercent`/
+  `storagePageInfo`/`isLocalMediaFile`/`localItemKind`/`localFolderTotal`/
+  `indexSharedTree`/`rectsIntersect`/`marqueeTargetSelector` 等纯逻辑
+  函数）、后端 4 测试不受影响。
+- **跳过测试的模块**：`asset-library.js`/`prompt-library.js`/
+  `avatar-registration.js`/`provider-onboarding.js`/`recommend-api.js`/
+  `jimeng-cli.js` 没有写专门的单元测试——这些模块的函数基本都是
+  DB-CRUD/网络请求为主（跟智能画布 M5/M7/M8 核心批次同类不适合单元
+  测试）或者过于 trivial（如 `openLocalItem` 就是 `window.open` 一行）。
+
+## ComfyUI 设置页（comfyui-settings）
+
+`static/js/comfyui-settings.js` 同样用一样的方法论拆分（拆分前 1397
+行，81 个函数，21 个状态变量，跟 api-settings 类似规模）。这个页面是
+"自定义 ComfyUI 工作流 → 生成可视化编辑器"的配置工具：上传原始
+ComfyUI workflow JSON，把某些节点输入暴露成可配置字段，在画布节点里
+使用。
+
+- **拆出 5 个模块**（`frontend/src/comfyui-settings/`，`<script>`
+  加载顺序即下面列出顺序）：
+  - `comfy-instances.js`（68 行，6 个函数）：ComfyUI 服务实例管理
+    （地址 + 备注的增删改查），页面里唯一跟"工作流编辑"完全解耦的
+    独立子系统。
+  - `node-graph-editor.js`（276 行，10 个函数）："图编辑模式"下的
+    节点关系图可视化——按依赖关系分层布局（`computeLayers`，一个纯粹
+    的拓扑排序/图分层算法，读取 ComfyUI workflow JSON 里
+    `[nodeId, outputIndex]` 形式的节点间引用关系）、SVG 节点图渲染、
+    缩放平移、点击节点弹出参数编辑弹层。
+  - `field-editor.js`（224 行，11 个函数）：把工作流某个节点输入
+    "暴露"成可配置字段（`toggleField`）、字段类型猜测
+    （`guessType`，按字段名关键字/取值类型猜测合理的默认展示类型：
+    数字/滑块/文本/长文本/图片/视频/音频）、字段属性编辑、下拉选项
+    管理。
+  - `preview-panel.js`（154 行，11 个函数）：右侧实时预览面板——每个
+    已暴露字段的输入控件渲染、随机数字段支持
+    （`randomValueForField`/`fieldSupportsRandom`，数字类字段可以标记
+    为"每次运行随机取值"）、图片预览放大弹层。
+  - `mini-canvas.js`（272 行，12 个函数）："画布测试"模式下的迷你
+    交互式节点图——跟 `node-graph-editor.js` 展示同一份工作流数据，
+    但这里是给用户摆放"提示词卡片"/"媒体卡片"、手动连线来快速试跑
+    工作流，是跟图编辑模式并列的另一种工作区视图
+    （`workspaceMode === 'canvas'`）。
+- **留在 `main.js`**（531 行，62% 缩减）：全部 21 个状态变量、i18n
+  辅助函数（`tr`/`tf`/`refreshLanguageView`/`applyLanguage`/
+  `currentLang`/`typeLabel`）、节点展示文本
+  （`nodeLabel`/`nodeSub`/`nodeIcon`/`inputLabel`，跟随
+  `NODE_INFO`/`INPUT_LABELS` 常量）、媒体字段通用工具
+  （`fieldKind`/`isMediaField`/`mediaFieldLabel`/`mediaAccept`/
+  `mediaUploadText`/`mediaUploadFailedText`/`mediaPreviewHtml`——虽然
+  像是某个子系统专属，但因为被 field-editor/preview-panel/mini-canvas
+  三个模块共用，判断为通用工具留在 main.js）、工作流 CRUD 核心
+  （`loadList`/`renderList`/`selectWorkflow`/`updateWorkflowTitle`/
+  `setWorkspaceMode`/`renderEditor`/`renderWorkspaceView`/`onUpload`/
+  `onSave`/`onDelete`/`onRun`/`fieldsFromMiniCanvas`/`pickImage`——这些
+  函数互相调用、共享 `currentWorkflow`/`currentConfig` 核心状态，是
+  整个页面的调度中枢，跟 asset-manager 的 `handleClick`、
+  api-settings 的 `syncEditor`/`renderEditor` 是同一类角色，判断为
+  不拆）。`renderWorkspaceView` 专门确认过是个薄分发函数（只负责按
+  `workspaceMode` 切换显示 `renderGraph` 还是
+  `renderMiniCanvasPreview`，本身不到 20 行），留在 main.js 而不是
+  归入某个具体子系统模块。
+- **验证**：语法检查、`git diff` 精确核对删除了约 890 行、跨文件 grep
+  确认全部 85 个函数在 main.js（33 个）+ 5 个模块（52 个）之间零重复
+  零遗漏、vm 交叉模拟验证全部 5 模块 + main.js 加载零 `ReferenceError`
+  （含验证内联 onclick 依赖的跨模块函数如 `toggleField`/`graphZoom`/
+  `addMiniNode` 全部可访问）、408→434 前端测试保持不受影响（新增 26
+  个：`field-editor.test.js` 9 个（`guessType`/`makeFieldId`/
+  `fieldFor`）+ `preview-panel.test.js` 11 个
+  （`fieldSupportsRandom`/`isPreviewRandomActive`/`randomValueForField`/
+  `randomButtonHtml`）+ `node-graph-editor.test.js` 6 个
+  （`computeLayers` 的拓扑分层算法：线性依赖链/多分支合流/孤立节点/
+  无效引用/空工作流），后端 4 测试不受影响。
+- **跳过测试的模块**：`comfy-instances.js`/`mini-canvas.js` 没有写
+  专门的单元测试——前者是纯 CRUD/网络请求，后者的函数基本都依赖真实
+  DOM 拖拽事件（`bindMiniCanvas`）或 `currentConfig`/`miniTestNodes`
+  状态耦合过深，独立测试价值不高。
+
+## 应用外壳（index）
+
+`static/index.html` 是承载全部其它页面的"外壳"——每个功能页面（画布/
+API 设置/素材库/ComfyUI 设置等）都以 `<iframe>` 形式挂载在这个页面
+里，侧边栏导航负责切换哪个 iframe 是 active。这跟前四次迁移的性质
+不同：前四次是**独立页面**，出问题最多影响那一个页面；这次是**全局
+外壳**，出问题可能影响整个应用的导航——所以这次额外做了更谨慎的
+风险分级，只搬移了两类低风险内容，核心调度逻辑（`switchUI`）刻意
+不拆。
+
+**这是本次会话第一次把"内联 `<script>`"变成独立外部文件**——前四个
+页面本来就已经是外部 `.js` 文件，这次是先把 `static/index.html` 内联
+的 800 行主脚本块 + 40 行独立的版本检测脚本块，原样搬到新建的
+`static/js/index.js`，再套用同一套模块拆分方法论。
+
+- **拆出 3 个模块**（`frontend/src/index/`）：
+  - `help-feedback.js`（491 行）：帮助面板 + 反馈组件 + 系统公告，
+    三块物理相邻。其中反馈组件（`initFeedbackWidget`）和帮助面板
+    （`initHelpDrawer`，含一个手写的极简 Markdown 渲染器
+    `renderMarkdown`，不依赖第三方库）**本来就是用 IIFE 包裹的**
+    （`(function xxx(){...})()`，原作者的写法，不是本次迁移引入的）
+    ——这是这次会话里风险最低的一类拆分：整个 IIFE 作为不可分割的
+    单元物理搬移，内部实现一行不改。系统公告部分
+    （`showAnnouncementModal` 等）不在 IIFE 里，但同样只依赖
+    DOM/localStorage，没有跨模块状态耦合。
+  - `theme-lang-sync.js`（108 行）：外壳自身的主题/语言切换按钮 +
+    把切换结果广播给全部子页面 iframe（`broadcastTheme`/
+    `broadcastLanguage`，通过 `postMessage` 通知每个 iframe）。
+  - `version-check.js`（61 行）：定期轮询 `/api/version`，检测到不
+    兼容更新时展示强制刷新弹窗，检测到补丁更新时展示可关闭提示条。
+    本来就是一个完全独立自包含的 IIFE，跟主体代码零函数级依赖，只
+    共享两个 DOM 元素 id——是这次拆分里耦合度最低的一块。
+- **留在 `static/js/index.js`**（300 行）：唯一客户端 id 生成
+  （`generateUUID`/`CID`）、侧边栏固定/收起状态、本地功能分组折叠
+  状态、**核心的 iframe 切换调度 `switchUI`**（处理"离开确认"页面
+  守卫消息、通知被切走的页面、切换 active 类名、恢复本地导航折叠
+  状态——这是整个外壳唯一真正意义上的调度中枢，跟 asset-manager 的
+  `handleClick`、api-settings 的 `syncEditor`/`renderEditor` 是完全
+  相同的角色，判断为不拆）、跨 iframe 广播供应商/工作流变更消息
+  （`forwardStudioApiChange`）、刷新后恢复上次激活页面
+  （`restoreActivePage`）、按用户权限裁剪侧边栏入口
+  （`applyAccessControl`）、到 `/ws/stats` 的 WebSocket 连接（在线
+  人数/云端状态/画布更新/资产库更新等消息的接收和跨 iframe 转发）。
+- **跨模块桥接**：`initHelpDrawer` IIFE 内部有一行
+  `window.closeHelpDrawer = closeHelp;`（显式挂到 window，因为
+  `closeHelp` 本身是 IIFE 私有作用域函数，只能这样才能被外部访问）
+  ——main.js 保留的 `switchUI` 切换页面时会调用
+  `window.closeHelpDrawer()` 收起帮助面板。这行代码原样保留未改动，
+  vm 交叉模拟专门验证过这个桥接在物理拆分成不同文件后依然工作
+  正常（`typeof window.closeHelpDrawer === 'function'`）。
+- **本次迁移顺带修复的一个既存 bug**：`toggleLanguage()` 原来还调用
+  了三个全项目里都没有定义的函数——`updateProjectUpdateTitle()`/
+  `refreshUpdateButtonText()`/`refreshProjectUpdateModalText()`（应该
+  是某个"检测项目更新"相关功能被删除后遗留的死代码引用）。每次点击
+  语言切换按钮都会在语言实际切换成功之后抛出 `ReferenceError`（语言
+  切换本身不受影响，因为崩溃前的代码已经执行完，但控制台会有一个
+  未捕获异常）。这跟模块拆分无关，是读代码时顺带发现并清理的，删除
+  前明确跟用户确认过。
+- **验证**：语法检查、`git diff` 精确核对 `static/index.html` 删除了
+  840 行、vm 交叉模拟验证 2 个模块 + main.js 加载零 `ReferenceError`
+  （含专门验证 `window.closeHelpDrawer` 跨文件桥接、内联 onclick
+  依赖的 `switchUI`/`toggleTheme`/`toggleLanguage` 等函数全部可访问）、
+  `version-check.js` 独立验证零依赖加载、434 前端测试 + 4 后端测试
+  保持不受影响（本次没有新增单元测试——`help-feedback.js`/
+  `theme-lang-sync.js`/`version-check.js` 的可测函数基本都被 IIFE
+  私有作用域包裹，不修改源码结构就无法从外部访问，判断为不值得为了
+  测试而改变现有的封装设计）。
+- **一次真实的事故记录（HTML 文件损坏，已修复）**：用 Python 脚本
+  批量删除两处区间（版本检测脚本块 + 主脚本块）并插入替换内容时，
+  文件末尾残留了一段孤立的旧代码片段（从 `else {` 的后半段
+  `lse {` 开始，一直到重复的 `})();`/`</script>`/`</body>`/`</html>`），
+  导致 `<script>`/`</script>` 标签数量不匹配（12 开 13 闭）、
+  `</body>`/`</html>` 各出现了两次。这是本次会话第一次在 **HTML 文件**
+  （而不是纯 JS 文件）上做批量区间删除，而 HTML 文件的收尾标签
+  （`</body></html>`）离最后一个删除区间非常近，一旦删除区间的边界
+  计算有任何偏差，残留的尾部内容会跟收尾标签"重叠"从而不容易通过
+  单纯看 diff 摘要发现（`git diff --stat` 的行数统计当时看起来正常，
+  真正暴露问题的是显式检查 `<script>`/`</script>`/`</body>`/`</html>`
+  这几个标签的出现次数是否配对——这是本次事故里最终用来定位问题的
+  方法，后续在 HTML 文件上做批量删除时会预先做这个检查，不能只看
+  `git diff --stat` 的行数摘要）。修复方式是直接删除残留片段。这次
+  事故发生在 vm 交叉模拟（验证的是拆出去的 3 个 JS 模块本身，不检查
+  `index.html` 的 HTML 结构）已经全部通过之后，说明"JS 模块本身没问题"
+  和"HTML 引用它们的宿主文件没有被搞坏"是两件需要分别验证的事，缺一
+  不可。
+
+## 五个页面共用的构建流程
+
+```bash
+cd frontend
+npm install
+npm run build   # 一次性构建全部五个页面（smart-canvas + api-settings + asset-manager + comfyui-settings + index）
+npm test        # 跑全部五个页面的 Vitest 回归测试
+```
+
+`frontend/scripts/build-pages.mjs` 是通用的多页面构建脚本（取代了
+早期只认识智能画布一个页面的 `build-smart-canvas.mjs`），内部维护一份
+`PAGES` 注册表，每个页面登记 `page`（对应 `frontend/src/<page>/` 和
+`static/dist/<page>/`）、`mainSrc`（该页面唯一源码在 `static/js/` 下的
+路径）、`handwrittenFiles`（已拆分模块的文件名列表，顺序即
+`<script src>` 加载顺序）。新增一个页面只需要往这个注册表加一条配置。
+
+`static/api-settings.html`、`static/asset-manager.html`、
+`static/comfyui-settings.html`、`static/index.html` 的 `<script>` 标签
+已经从直接指向 `/static/js/<page>.js` 改成指向
+`/static/dist/<page>/main.js` + 各拆分模块——**这意味着这几个页面
+现在也需要先跑 `npm run build` 才能生效**，跟智能画布的规则完全一致。
+如果只改了 `static/js/api-settings.js`/`static/js/asset-manager.js`/
+`static/js/comfyui-settings.js`/`static/js/index.js`，忘记
+`npm run build`，页面加载到的会是旧版本代码。
+
 
 
 
