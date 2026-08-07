@@ -44,7 +44,7 @@ const PAGES = [
       'state.js', 'utils.js', 'loop-node.js', 'node-layout.js', 'node-model.js',
       'connections.js', 'cascade-run.js', 'upload.js', 'media-display.js',
       'candidate-pool.js', 'clipboard.js', 'node-context-ui.js', 'workflow-transfer.js',
-      'canvas-sync.js', 'prompt-templates.js', 'mention-composer.js', 'canvas-render.js',
+      'canvas-sync.js', 'prompt-templates.js', 'prompt-task-rules.js', 'mention-composer.js', 'canvas-render.js',
       'image-editor.js', 'asset-library.js', 'generation-settings.js',
     ],
   },

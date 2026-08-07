@@ -1830,26 +1830,6 @@ function openSmartCanvasShortcuts(){
 function closeSmartCanvasShortcuts(){
     smartShortcutModal?.classList.remove('open');
 }
-function smartRuleTemplateItems(libraryId){
-    const hidden = new Set(promptTemplateOverrides.hiddenBuiltinIds || []);
-    return promptLibraries.filter(library => library.id === libraryId).flatMap(library => (library.items || [])
-        .filter(template => template?.id && template?.positive && !(library.id === 'system' && hidden.has(template.id)))
-        .map(template => ({
-            ...template,
-            ...(library.id === 'system' ? (promptTemplateOverrides.editedBuiltins?.[template.id] || {}) : {}),
-            key:`${library.id}:${template.id}`,
-            libraryName:library.name || tr('smart.promptTemplateLibrary')
-        })));
-}
-function smartRuleTemplateOptions(libraryId, selectedKey){
-    const templates = smartRuleTemplateItems(libraryId);
-    if(!templates.length) return `<option value="">${escapeHtml(tr('smart.promptTemplateEmpty'))}</option>`;
-    return templates.map(template => `<option value="${escapeAttr(template.key)}" ${template.key === selectedKey ? 'selected' : ''}>${escapeHtml(`${template.libraryName} · ${promptTemplateName(template)}`)}</option>`).join('');
-}
-function smartRuleTemplateContent(libraryId, selectedKey, fallback){
-    const templates = smartRuleTemplateItems(libraryId);
-    return (templates.find(template => template.key === selectedKey) || templates[0])?.positive || fallback;
-}
 function promptNodeBodyHtml(node){
     node.llmProvider = resolveChatProviderId(node.llmProvider || '');
     node.llmModel = resolveChatModel(node.llmModel || '', node.llmProvider);

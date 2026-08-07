@@ -93,9 +93,8 @@
 //     smart-prompt 节点自身的渲染与交互逻辑，物理上紧邻本文件之后，
 //     但是不同的子系统（节点本身 vs 模板库管理）。
 //   smartRuleTemplateItems/smartRuleTemplateOptions/smartRuleTemplateContent
-//     —— 物理上紧邻 promptNodeBodyHtml 之前，是"提示词规则模板"（不同于
-//     本文件的"提示词模板库"）的数据查询，命名相似但概念不同，容易混淆，
-//     留在 main.js。
+//     —— 反推/扩写任务从专用提示词库读取规则的查询逻辑，已拆至
+//     prompt-task-rules.js。
 //   @mention 选择器/输入引用图片收集/buildPromptRequest 等和图片生成
 //     composer 深度耦合、且和 ~1400 行顶层匿名脚本交织的部分——仍然
 //     是未来更高风险的拆分目标，本次不动。

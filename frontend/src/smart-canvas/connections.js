@@ -291,7 +291,9 @@ function handlePortDropMenuSelect(nodeType){
         const w = 316, h = 194;
         const x = isOut ? p.x : p.x - w;
         const y = p.y - h / 2;
-        newNode = createPromptNode(x, y, {skipUndo:true, select:true});
+        // 节点和连线必须作为同一次画布变更提交，避免创建节点时的
+        // 自动渲染/保存先于 connectInputNode() 执行而留下孤立文本节点。
+        newNode = createPromptNode(x, y, {skipUndo:true, select:true, deferRender:true, deferSave:true});
     } else if(nodeType === 'loop'){
         const w = 340, h = 168;
         const x = isOut ? p.x : p.x - w;

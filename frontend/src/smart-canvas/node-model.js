@@ -126,8 +126,8 @@ function createPromptNode(x, y, options={}){
     };
     nodes.push(node);
     if(options.select !== false) selectedId = node.id;
-    render();
-    scheduleSave();
+    if(!options.deferRender) render();
+    if(!options.deferSave) scheduleSave();
     return node;
 }
 function createSmartGroupNode(x, y, options={}){

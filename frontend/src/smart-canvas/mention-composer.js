@@ -327,6 +327,17 @@ function renderInputThumbsRow(node){
     inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}</div>`;
     bindInputThumbsDrag(node, dedup);
 }
+
+function promptNodeInputMediaForLLM(node){
+    const refs = smartImageUsesWorkflowInput(node) ? workflowInputImagesFor(node) : inputImagesFor(node);
+    return (refs || []).filter(ref => ref?.url);
+}
+
+function promptNodeInputImages(node){
+    if(!node) return [];
+    return promptNodeInputMediaForLLM(node);
+}
+
 // 提示词节点配置框的输入图：与图片生成节点使用相同的缩略图渲染与交互（含断开按钮、视频预览、拖拽排序）。
 function renderPromptComposerThumbs(node){
     if(!promptComposerThumbs) return;
