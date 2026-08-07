@@ -2222,18 +2222,16 @@ function createEditedResultNode(sourceNode, images, options={}){
     return output;
 }
 const OUTPAINT_FILL_PROMPT = '请只对白色空白区域进行图像扩展和环境补全。白色区域是需要生成的新内容，非白色区域是原始图像，必须完全保持不变，不允许重绘、修改、移动、缩放、裁剪、变形或改变任何颜色、纹理、细节、光影和边缘。\n请根据原始图像的画风、透视、构图、光照方向、材质、色彩、清晰度和细节密度，自然延展画面内容，使新生成区域与原图无缝衔接。扩展内容应看起来像原图本来就存在的一部分，保持一致的艺术风格、镜头视角、比例关系和空间逻辑。\n重点：只填充白色区域；原始非白色图像区域必须保持100%不变。';
-// 扩图完成后，在扩图结果节点后自动接一个空白生成节点，预置为 AI生成(api引擎) 并填入扩图专用提示词，
-// 用户只需确认后点击运行即可对白色留白区域进行智能补全。
+// 扩图完成后，在扩图结果节点后自动接一个标准图片生成节点，仅填入扩图提示词。
+// 保持与菜单和拉线创建的生成节点使用同一套初始化、渲染和 Composer 配置。
 function chainOutpaintGenerationNode(outpaintNode){
     if(!outpaintNode) return null;
     const rect = nodeRect(outpaintNode);
     const point = nextOutputPositionForSource(outpaintNode, null);
-    const genNode = createImageNodeAt({
+    const genNode = createGenerationNodeByKind('image', {
         x:point.x + Math.round(rect.width / 2),
         y:point.y + Math.round(rect.height / 2)
-    }, [], {select:true, skipUndo:true});
-    genNode.title = 'AI生成';
-    genNode.runSettings = {...(genNode.runSettings || {}), engine:'api'};
+    }, {select:true, skipUndo:true});
     connectInputNode(outpaintNode.id, genNode.id);
     setPromptDraftForNode(genNode, OUTPAINT_FILL_PROMPT);
     return genNode;
