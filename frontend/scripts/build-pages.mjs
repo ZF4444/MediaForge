@@ -67,6 +67,12 @@ const PAGES = [
     handwrittenFiles: ['comfy-instances.js', 'node-graph-editor.js', 'field-editor.js', 'preview-panel.js', 'mini-canvas.js'],
   },
   {
+    // 工作流设置父页：承载 ComfyUI 工作流与 RH 应用两个同源子页。
+    page: 'workflow-settings',
+    mainSrc: 'static/js/workflow-settings.js',
+    handwrittenFiles: [],
+  },
+  {
     // 应用外壳/app shell（迁移中，见 frontend/README.md 的 index 章节）
     page: 'index',
     mainSrc: 'static/js/index.js',

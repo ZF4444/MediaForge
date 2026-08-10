@@ -1,3 +1,9 @@
+const apiSettingsQuery = new URLSearchParams(window.location.search);
+const isRunningHubAppsPage = apiSettingsQuery.get('mode') === 'runninghub-apps';
+const isEmbeddedApiSettings = apiSettingsQuery.get('embedded') === '1';
+if(isRunningHubAppsPage) document.body.classList.add('runninghub-apps-page');
+if(isEmbeddedApiSettings) document.body.classList.add('embedded-api-settings');
+
 let providers = [];
 let selectedId = '';
 const providerList = document.getElementById('providerList');
@@ -184,7 +190,8 @@ function provider(){
     return visibleProviders().find(item => item.id === selectedId) || visibleProviders()[0] || providers[0];
 }
 function isProviderTemporarilyHidden(item){
-    return false;
+    if(isRunningHubAppsPage) return item?.id !== 'runninghub';
+    return item?.id === 'runninghub';
 }
 function visibleProviders(){
     return (providers || []).filter(item => !isProviderTemporarilyHidden(item));
@@ -1005,7 +1012,9 @@ async function loadProviders(){
     try {
         const data = await fetch('/api/providers').then(r => r.json());
         providers = data.providers || [];
-        selectedId = sortedProviders()[0]?.id || '';
+        selectedId = isRunningHubAppsPage
+            ? providers.find(item => item.id === 'runninghub')?.id || ''
+            : sortedProviders()[0]?.id || '';
         renderEditor();
         setStatus('');
     } catch(err) {
@@ -1135,6 +1144,12 @@ window.addEventListener('studio-lang-change', () => {
 window.onload = () => {
     if(window.StudioTheme) window.StudioTheme.apply();
     if(window.StudioI18n) window.StudioI18n.apply();
+    if(isRunningHubAppsPage){
+        const title = document.querySelector('.page-head .title');
+        const subtitle = document.querySelector('.page-head .sub');
+        if(title) title.textContent = 'RH应用';
+        if(subtitle) subtitle.textContent = '管理 RunningHub API Key 和可用于智能画布的 AI 应用。';
+    }
     syncRecommendView();
     loadProviders();
     // 平台名输入时实时预览生成的 ID

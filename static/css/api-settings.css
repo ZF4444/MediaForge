@@ -313,6 +313,17 @@ body.studio-theme-dark .rh-key-item { border-color:var(--line-strong); backgroun
 body.show-runninghub .api-standard-key-row,
 body.show-runninghub .api-key-label,
 body.show-runninghub #keyHint { display:none !important; }
+body.runninghub-apps-page .sidebar,
+body.runninghub-apps-page .provider-onboarding-card,
+body.runninghub-apps-page .models-toolbar,
+body.runninghub-apps-page .model-grid,
+body.runninghub-apps-page .ms-lora-block,
+body.runninghub-apps-page .api-page-delete-btn,
+body.runninghub-apps-page .provider-enable-toggle { display:none !important; }
+body.runninghub-apps-page .layout { grid-template-columns:minmax(0,1fr); }
+body.runninghub-apps-page .content { max-width:1120px; width:100%; margin:0 auto; }
+body.embedded-api-settings .page { padding:18px 24px 48px; }
+body.embedded-api-settings .page-head { display:none; }
 body.show-jimeng .api-base-url-field,
 body.show-jimeng .api-key-field { display:none !important; }
 .jimeng-cli-panel { grid-column:1/-1; display:none; flex-direction:column; gap:12px; margin-top:2px; padding:14px; border:1px solid var(--line); border-radius:14px; background:var(--soft); }

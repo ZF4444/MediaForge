@@ -109,7 +109,6 @@ function updateField(fieldId, key, value){
     if(key === 'name' || key === 'min' || key === 'max' || key === 'step' || key === 'default' || key === 'options' || key === 'random_enabled'){
         renderPreview();
         if(workspaceMode === 'canvas') renderMiniCanvasPreview(miniCanvasHost, true);
-        if(popupNodeId === f.node) refreshPopupBody();
         return;
     }
     renderEditor();

@@ -71,3 +71,19 @@ describe('fieldFor', () => {
         expect(run(ctx, "fieldFor('node1', 'seed')")).toBeUndefined();
     });
 });
+
+describe('updateField', () => {
+    it('编辑字段名称时不重建节点弹窗，避免输入框失去焦点', () => {
+        let refreshCount = 0;
+        const ctx = createFieldEditorSandbox({
+            popupNodeId: 'node1',
+            currentConfig: {fields: [{id: 'f1', node: 'node1', input: 'value', name: ''}]},
+            fns: {refreshPopupBody: () => { refreshCount += 1; }},
+        });
+
+        run(ctx, "updateField('f1', 'name', 'ti')");
+
+        expect(run(ctx, "currentConfig.fields[0].name")).toBe('ti');
+        expect(refreshCount).toBe(0);
+    });
+});

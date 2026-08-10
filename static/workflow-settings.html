@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工作流设置</title>
+    <script src="/static/js/theme.js"></script>
+    <link rel="stylesheet" href="/static/css/theme.css">
+    <link rel="stylesheet" href="/static/css/workflow-settings.css">
+</head>
+<body>
+    <main class="workflow-settings-shell">
+        <header class="workflow-settings-head">
+            <div>
+                <h1>工作流设置</h1>
+                <p>管理本地 ComfyUI 工作流和 RunningHub 应用。</p>
+            </div>
+            <nav class="workflow-settings-tabs" aria-label="工作流设置子页面">
+                <button class="active" type="button" data-workflow-page="comfyui">
+                    <span>ComfyUI工作流</span>
+                </button>
+                <button type="button" data-workflow-page="runninghub">
+                    <span>RH应用</span>
+                </button>
+            </nav>
+        </header>
+        <iframe id="workflowSettingsFrame" title="工作流设置内容" scrolling="yes"></iframe>
+    </main>
+    <script src="/static/dist/workflow-settings/main.js"></script>
+</body>
+</html>
