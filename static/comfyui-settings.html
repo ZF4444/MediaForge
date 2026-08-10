@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作流设置</title>
+    <title>ComfyUI工作流</title>
     <script>
         (function(){
             try {
@@ -27,7 +27,7 @@
         <div class="wrap">
             <header class="page-head">
                 <div>
-                    <div class="title" data-i18n="comfy.title">工作流设置</div>
+                    <div class="title" data-i18n="comfy.title">ComfyUI工作流</div>
                     <div class="sub" data-i18n="comfy.subtitle">选择本地 ComfyUI 工作流，配置可暴露到画布的输入参数。</div>
                 </div>
                 <div id="status" class="status"></div>
@@ -46,7 +46,7 @@
                                 <i data-lucide="save" class="w-3.5 h-3.5"></i><span>保存</span>
                             </button>
                         </div>
-                        <div style="font-size:10.5px;color:var(--faint);line-height:1.55;font-weight:600">格式：<span style="font-family:ui-monospace,Menlo,monospace">host:port</span>（如 <span style="font-family:ui-monospace,Menlo,monospace">127.0.0.1:8188</span>）</div>
+                        <div style="font-size:10.5px;color:var(--faint);line-height:1.55;font-weight:600">格式：<span style="font-family:ui-monospace,Menlo,monospace">host:port</span>、完整 URL 或 HTTPS 域名（如 <span style="font-family:ui-monospace,Menlo,monospace">127.0.0.1:8188</span>、<span style="font-family:ui-monospace,Menlo,monospace">https://example.com</span>）。无协议域名默认使用 HTTPS。</div>
                     </div>
 
                     <div class="side-card workflow-panel workflow-panel-comfy">

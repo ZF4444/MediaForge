@@ -9,6 +9,7 @@ import json
 import urllib.request
 
 from app.core.auth import current_user_id
+from app.core.comfyui import comfyui_url
 from app.services.business_metadata import metadata_connection, insert_history_record
 from app.services.storage import compact_media_refs, file_refs_from_urls, normalize_media_refs, remove_media_url, urls_from_file_refs
 
@@ -98,7 +99,7 @@ def delete_history_files(record):
 
 def get_comfy_history(comfy_address, prompt_id):
     try:
-        with urllib.request.urlopen(f"http://{comfy_address}/history/{prompt_id}") as response:
+        with urllib.request.urlopen(comfyui_url(comfy_address, f"/history/{prompt_id}")) as response:
             return json.loads(response.read())
     except Exception:
         return {}
