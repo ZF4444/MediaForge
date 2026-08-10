@@ -440,20 +440,12 @@ let settings = {
     msCustomSize:'',
     msCustomWidth:'',
     msCustomHeight:'',
-    comfyMode:'text',
     comfyWorkflow:'',
     comfyParams:{},
     rhConfigKey:'',
     rhInstanceType:'',
     rhParams:{},
     rhRandomActive:{},
-    width:1024,
-    height:1024,
-    enhanceStrength:0.5,
-    enhanceUpscale:false,
-    enhanceUpscaleRes:2048,
-    editUpscale:false,
-    editUpscaleRes:2048,
     promptH:124
 };
 const MS_GEN_MODELS = {
@@ -481,7 +473,18 @@ const RES_PIXEL_LIMIT = { '1k':2359296, '2k':4194304, '4k':8294400 };
 // 加载，此处调用方式不变，无需 import）。
 function cloneSmartSettings(source=settings){
     try {
-        return JSON.parse(JSON.stringify(source || {}));
+        const cloned = JSON.parse(JSON.stringify(source || {}));
+        if(cloned.engine === 'comfy'){
+            delete cloned.comfyMode;
+            delete cloned.width;
+            delete cloned.height;
+            delete cloned.enhanceStrength;
+            delete cloned.enhanceUpscale;
+            delete cloned.enhanceUpscaleRes;
+            delete cloned.editUpscale;
+            delete cloned.editUpscaleRes;
+        }
+        return cloned;
     } catch(e) {
         return {...(source || {})};
     }
@@ -537,7 +540,7 @@ function smartSettingsModeKey(source=settings){
     const engine = ['api','volcengine','modelscope','comfy','runninghub'].includes(source?.engine) ? source.engine : 'api';
     if(engine === 'api') return `api:${source?.apiKind === 'video' ? 'video' : 'image'}`;
     if(engine === 'volcengine') return `volcengine:${source?.apiKind === 'video' ? 'video' : 'image'}`;
-    if(engine === 'comfy') return `comfy:${['text','enhance','edit','custom'].includes(source?.comfyMode) ? source.comfyMode : 'text'}`;
+    if(engine === 'comfy') return 'comfy';
     if(engine === 'runninghub') return 'runninghub';
     return 'modelscope';
 }
@@ -610,18 +613,19 @@ function genKindIcon(node){
     return 'image';
 }
 /* 各类生成节点允许的引擎：
-   图片生成 / 视频生成 → AI生成(api) 与 工作流(runninghub)；工作流生成 → 工作流(runninghub)。
+   图片生成 / 视频生成 → AI生成(api)、ComfyUI 工作流(comfy) 与 RH 应用(runninghub)；
+   工作流生成 → ComfyUI 工作流(comfy) 与 RH 应用(runninghub)。
    已移除火山引擎(volcengine)、MS生成(modelscope)选项。
    返回 null 表示不限制（非定型节点，保留全部引擎）。 */
 function allowedEnginesForNode(node){
-    if(node?.genKind === 'image') return ['api','runninghub'];
-    if(node?.genKind === 'video') return ['api','runninghub'];
-    if(node?.genKind === 'workflow') return ['runninghub'];
+    if(node?.genKind === 'image') return ['api','comfy','runninghub'];
+    if(node?.genKind === 'video') return ['api','comfy','runninghub'];
+    if(node?.genKind === 'workflow') return ['comfy','runninghub'];
     return null;
 }
 /* 根据生成节点类型返回默认引擎 */
 function defaultEngineForGenKind(kind){
-    if(kind === 'workflow') return 'runninghub';
+    if(kind === 'workflow') return 'comfy';
     return 'api';
 }
 /* 统一创建"图片生成/视频生成/工作流生成"三类生成节点，供左键创建菜单与拉线菜单共用 */
@@ -633,7 +637,7 @@ function createGenerationNodeByKind(kind, point, options={}){
         node.runSettings = {engine:'api', apiKind:'video'};
     } else if(kind === 'workflow'){
         node.genKind = 'workflow';
-        node.runSettings = {engine:'runninghub'};
+        node.runSettings = {engine:'comfy', comfyWorkflow:'', comfyParams:{}};
     } else {
         node.genKind = 'image';
         // 图片生成节点创建后默认使用「AI生成」(api)，不继承最近使用的工作流等设置
@@ -1707,7 +1711,7 @@ function smartRunPlatformLabel(run){
 }
 function smartRunRequestMeta(run){
     const s = run?.settings || {};
-    if(s.engine === 'comfy') return {workflow_json:s.comfyWorkflow || '', mode:s.comfyMode || 'text'};
+    if(s.engine === 'comfy') return {workflow_json:s.comfyWorkflow || ''};
     if(s.engine === 'modelscope') return {backend:'Modelscope', model:s.msgenModel || '', custom_model:s.msCustomModel || ''};
     if(run?.kind === 'video') return {provider_id:s.videoProvider || '', model:s.videoModel || '', duration:s.videoDuration || '', aspect_ratio:s.videoAspect || '', resolution:s.videoResolution || ''};
     return {provider_id:s.provider_id || '', model:s.model || '', size:run?.size || '', quality:s.quality || '', n:s.count || 1};
@@ -2265,11 +2269,6 @@ function sizeForRun(sourceSettings=settings){
 }
 function expectedOutputSize(){
     if(settings.engine === 'comfy'){
-        if(settings.comfyMode === 'text'){
-            const w = Number(settings.width) || 1024;
-            const h = Number(settings.height) || 1024;
-            return {w, h};
-        }
         return {w:1024, h:1024};
     }
     if(settings.engine === 'runninghub') return {w:1024, h:1024};
@@ -2291,11 +2290,6 @@ function explicitRequestOutputSizeForPending(){
         const sizeStr = apiImageSize(settings.msRatio || 'square', settings.msResolution || '1k', settings.msCustomRatio || '', settings.msCustomSize || '', settings.msRatioMatched || '');
         const parsed = parseSizeValue(sizeStr);
         if(parsed) return {w:Number(parsed.width) || 1024, h:Number(parsed.height) || 1024};
-    }
-    if(settings.engine === 'comfy' && settings.comfyMode === 'text'){
-        const w = Number(settings.width) || 1024;
-        const h = Number(settings.height) || 1024;
-        return {w, h};
     }
     return null;
 }
@@ -3168,27 +3162,6 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
 async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     const allRefs = refs || [];
     const imageRefs = imageRefsOnly(allRefs);
-    const mode = runSettings.comfyMode || 'text';
-    if(mode === 'text'){
-        const data = await runQueuedSmartComfyGenerate({prompt, width:Number(runSettings.width || 1024), height:Number(runSettings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId});
-        const urls = resultMediaUrls(data);
-        return {urls, kind:mediaKindForUrls(urls, 'image')};
-    }
-    if(mode === 'enhance'){
-        if(!imageRefs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
-        const inputName = await comfyNameForRef(imageRefs[0]);
-        const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(runSettings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
-        const urls = resultMediaUrls(data);
-        return {urls, kind:mediaKindForUrls(urls, 'image')};
-    }
-    if(mode === 'edit'){
-        if(!imageRefs.length) throw new Error(tr('smart.errEditNeedRefs'));
-        const names = [];
-        for(const ref of imageRefs.slice(0, 3)) names.push(await comfyNameForRef(ref));
-        const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
-        const urls = resultMediaUrls(data);
-        return {urls, kind:mediaKindForUrls(urls, 'image')};
-    }
     const workflowName = runSettings.comfyWorkflow || comfyWorkflows[0]?.name || '';
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
     const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
@@ -3286,7 +3259,7 @@ async function runPromptLLMNode(nodeId){
 // submitRunningHubGeneration / pollRunningHubTask /
 // runRunningHubGeneration / runApiVideoGeneration /
 // runModelscopeGeneration / urlToBase64 / sleep / runComfyGeneration /
-// runComfyText / runComfyEnhance / runComfyEdit / comfyNameForRef
+// comfyNameForRef
 // 已迁移到 frontend/src/smart-canvas/cascade-run.js（经典 <script>，
 // 非 ES module，原因同 M1-M4）。
 function smartPendingTasks(node){

@@ -486,11 +486,7 @@ function activateCanvasVideoPreview(itemEl){
 function smartRunTaskLabel(run){
     const s = run?.settings || {};
     if(run?.kind === 'video') return s.videoModel || 'Video';
-    if(s.engine === 'comfy'){
-        if(s.comfyMode === 'custom') return s.comfyWorkflow || 'ComfyUI';
-        const labels = {text:tr('canvas.comfyModeText') || '文生图', enhance:tr('canvas.comfyModeEnhance') || '图片增强', edit:tr('canvas.comfyModeEdit') || '图片编辑'};
-        return labels[s.comfyMode || 'text'] || 'ComfyUI';
-    }
+    if(s.engine === 'comfy') return s.comfyWorkflow || 'ComfyUI';
     if(s.engine === 'modelscope'){
         return s.msgenModel === 'custom' ? (s.msCustomModel || 'Modelscope') : (MS_GEN_MODELS[s.msgenModel]?.label || s.msgenModel || 'Modelscope');
     }

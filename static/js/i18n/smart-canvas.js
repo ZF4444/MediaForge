@@ -146,8 +146,6 @@
         "smart.videoTextToVideo": { zh: "文生视频", en: "Text to Video" },
         "smart.videoMultimodal": { zh: "全能参考", en: "All-purpose Reference" },
         "smart.videoUseFrameRoles": { zh: "首尾帧", en: "First/Last Frames" },
-        "smart.comfyMode": { zh: "ComfyUI 模式", en: "ComfyUI Mode" },
-        "smart.upscaleTarget": { zh: "超分目标", en: "Upscale Target" },
         "smart.workflow": { zh: "工作流", en: "Workflow" },
         "smart.noWorkflow": { zh: "暂无 ComfyUI 工作流", en: "No ComfyUI workflow" },
         "smart.noOption": { zh: "无选项", en: "No options" },

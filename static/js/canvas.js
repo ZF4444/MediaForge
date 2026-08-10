@@ -2543,23 +2543,7 @@ function addComfyNode(point){
         y:p.y,
         w:420,
         h:460,
-        mode:'text',
-        width:1024,
-        height:1024,
-        enhanceStrength:0.5,
-        enhanceUpscale:false,
-        enhanceUpscaleRes:2048,
-        editUpscale:false,
-        editUpscaleRes:2048,
-        editModel:allImageModels(imageApiProviders()[0]?.id || 'comfly')[0] || models.gpt,
-        ratio:'square',
-        resolution:'1k',
-        customRatio:'',
-        customSize:'',
-        customRatioWidth:'',
-        customRatioHeight:'',
-        customWidth:'',
-        customHeight:'',
+        mode:'custom',
         comfyWorkflow:'',
         comfyParams:{},
         count:1,
@@ -5151,9 +5135,6 @@ function pendingPreviewSizeFromRefs(refs=[]){
 function pendingPreviewSizeForRun(node, options={}){
     const requestSize = normalizedPendingPreviewSize(options.requestSize) || pendingPreviewSizeFromSizeString(options.requestSize);
     if(requestSize) return requestSize;
-    if(node?.type === 'comfy' && (node.mode || 'text') === 'text'){
-        return normalizedPendingPreviewSize({w:Number(node.width || 1024), h:Number(node.height || 1024)});
-    }
     return pendingPreviewSizeFromRefs(options.refs || []);
 }
 function pendingOutputStyle(pending){
@@ -8037,31 +8018,28 @@ function renderComfyBody(node){
     const inputSources = generatorSources(node);
     const ordered = orderedSources(node, inputSources);
     const mediaInputs = ordered.filter(src => src.refs?.length);
-    const imageInputs = mediaInputs
-        .map(src => ({...src, refs:imageRefsOnly(src.refs || [])}))
-        .filter(src => src.refs?.length);
     const promptInputs = ordered.filter(src => src.prompt && !src.refs?.length);
-    const mode = node.mode || 'text';
-    const imageFieldCount = mode === 'custom' ? comfyFields(node, 'image').length : 0;
-    const videoFieldCount = mode === 'custom' ? comfyFields(node, 'video').length : 0;
-    const audioFieldCount = mode === 'custom' ? comfyFields(node, 'audio').length : 0;
+    node.mode = 'custom';
+    delete node.width;
+    delete node.height;
+    delete node.enhanceStrength;
+    delete node.enhanceUpscale;
+    delete node.enhanceUpscaleRes;
+    delete node.editUpscale;
+    delete node.editUpscaleRes;
+    const mode = 'custom';
+    const imageFieldCount = comfyFields(node, 'image').length;
+    const videoFieldCount = comfyFields(node, 'video').length;
+    const audioFieldCount = comfyFields(node, 'audio').length;
     const mediaFieldCount = imageFieldCount + videoFieldCount + audioFieldCount;
-    if(mode === 'custom'){
-        const validWorkflow = validComfyWorkflowName(node.comfyWorkflow);
-        if(node.comfyWorkflow && node.comfyWorkflow !== validWorkflow) node.comfyWorkflow = validWorkflow;
-        if(!node.comfyWorkflow && validWorkflow) node.comfyWorkflow = validWorkflow;
-    }
+    const validWorkflow = validComfyWorkflowName(node.comfyWorkflow);
+    if(node.comfyWorkflow && node.comfyWorkflow !== validWorkflow) node.comfyWorkflow = validWorkflow;
+    if(!node.comfyWorkflow && validWorkflow) node.comfyWorkflow = validWorkflow;
     wrap.innerHTML = `
-        <div class="mode-tabs">
-            <button type="button" data-mode="text" class="${mode === 'text' ? 'active' : ''}">${tr('canvas.comfyModeText')}</button>
-            <button type="button" data-mode="enhance" class="${mode === 'enhance' ? 'active' : ''}">${tr('canvas.comfyModeEnhance')}</button>
-            <button type="button" data-mode="edit" class="${mode === 'edit' ? 'active' : ''}">${tr('canvas.comfyModeEdit')}</button>
-            <button type="button" data-mode="custom" class="${mode === 'custom' ? 'active' : ''}">${tr('canvas.comfyModeCustom')}</button>
-        </div>
         <div class="comfy-content">
             <div class="prompt-list"></div>
-            <div class="comfy-images ${(mode === 'text' || (mode === 'custom' && !mediaFieldCount)) ? 'hidden' : ''}">
-                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">${mode === 'custom' ? `Media · Images ${imageFieldCount} · Videos ${videoFieldCount} · Audio ${audioFieldCount}` : 'Images'}</div>
+            <div class="comfy-images ${!mediaFieldCount ? 'hidden' : ''}">
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Media · Images ${imageFieldCount} · Videos ${videoFieldCount} · Audio ${audioFieldCount}</div>
                 <div class="input-list mt-2"></div>
             </div>
         </div>
@@ -8074,22 +8052,8 @@ function renderComfyBody(node){
             ${retryBarHtml(node)}
         </div>
     `;
-    wrap.querySelectorAll('[data-mode]').forEach(btn => {
-        btn.onclick = e => {
-            e.stopPropagation();
-            node.mode = btn.dataset.mode;
-            if(node.mode === 'custom' && !hasComfyWorkflow(node.comfyWorkflow) && comfyWorkflows[0]?.name){
-                node.comfyWorkflow = comfyWorkflows[0].name;
-                ensureComfyWorkflow(node.comfyWorkflow).then(() => render());
-            }
-            render();
-            scheduleSave();
-        };
-    });
     renderPromptPreview(wrap.querySelector('.prompt-list'), promptInputs);
-    if(mode !== 'text' && !(mode === 'custom' && !mediaFieldCount)){
-        renderComfyImages(wrap.querySelector('.input-list'), node, mode === 'custom' ? mediaInputs : imageInputs);
-    }
+    if(mediaFieldCount) renderComfyImages(wrap.querySelector('.input-list'), node, mediaInputs);
     renderComfySettings(wrap.querySelector('.comfy-settings'), node);
     wrap.querySelector('.comfy-run').onclick = e => { e.stopPropagation(); runCanvasGenerate(node.id); };
     bindCascadeButtons(wrap, node.id);
@@ -8771,56 +8735,20 @@ async function runRhNode(nodeId, opts={}){
     }
 }
 function renderComfySettings(container, node){
-    const mode = node.mode || 'text';
-    if(mode === 'text'){
-        container.innerHTML = `
-            <div class="gen-settings-row">
-                <label class="field"><div class="setting-title">${tr('canvas.width')}</div><input class="setting-input" data-field="width" type="number" min="64" step="64" value="${Number(node.width || 1024)}"></label>
-                <label class="field"><div class="setting-title">${tr('canvas.height')}</div><input class="setting-input" data-field="height" type="number" min="64" step="64" value="${Number(node.height || 1024)}"></label>
-            </div>
-        `;
-    } else if(mode === 'enhance'){
-        const strength = Number(node.enhanceStrength ?? 0.5);
-        container.innerHTML = `
-            <div class="gen-settings-row">
-                <label class="field" style="flex:1">
-                    <div class="setting-title" style="display:flex;justify-content:space-between">
-                        <span>${tr('studio.enhancementStrength')}</span><span class="enhance-strength-val">${strength.toFixed(2)}</span>
-                    </div>
-                    <input type="range" class="canvas-range enhance-strength-slider" data-field="enhanceStrength" min="0.1" max="1.0" step="0.05" value="${strength}">
-                </label>
-            </div>
-            <div class="gen-settings-row">
-                <button type="button" class="setting-check ${node.enhanceUpscale ? 'active' : ''}" data-toggle-field="enhanceUpscale"><span class="check-dot"></span>${tr('studio.superResolution')}</button>
-                <select class="select-lite ${node.enhanceUpscale ? '' : 'opacity-40 cursor-not-allowed'}" data-field="enhanceUpscaleRes" ${node.enhanceUpscale ? '' : 'disabled'}><option value="2048">2X (2048)</option><option value="4096">4X (4096)</option></select>
-            </div>
-        `;
-        container.querySelector('[data-field="enhanceUpscaleRes"]').value = String(node.enhanceUpscaleRes || 2048);
-    } else if(mode === 'edit'){
-        container.innerHTML = `
-            <div class="gen-settings-row">
-                <button type="button" class="setting-check ${node.editUpscale ? 'active' : ''}" data-toggle-field="editUpscale"><span class="check-dot"></span>${tr('studio.superResolution')}</button>
-                <select class="select-lite ${node.editUpscale ? '' : 'opacity-40 cursor-not-allowed'}" data-field="editUpscaleRes" ${node.editUpscale ? '' : 'disabled'}><option value="2048">2X (2048)</option><option value="4096">4X (4096)</option></select>
-            </div>
-        `;
-        container.querySelector('[data-field="editUpscaleRes"]').value = String(node.editUpscaleRes || 2048);
-    } else if(mode === 'custom'){
-        const selected = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
-        if(node.comfyWorkflow && node.comfyWorkflow !== selected) node.comfyWorkflow = selected;
-        const data = currentComfyWorkflow(node);
-        const fields = data?.config?.fields || [];
-        const settingFields = fields.filter(f => comfyFieldKind(f) === 'setting');
-        container.innerHTML = `
-            <div class="gen-settings-row">
-                <select class="select-lite comfy-workflow-select" data-field="comfyWorkflow" style="width:100%">${comfyWorkflowOptions(selected)}</select>
-            </div>
-            ${!selected ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoWorkflow')}</div>` : (!data ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyLoadingWorkflow')}</div>` : '')}
-            ${data ? settingFields.map(f => renderComfyCustomField(node, f)).join('') || `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoExtraParams')}</div>` : ''}
-        `;
-        if(selected && !data) ensureComfyWorkflow(selected).then(() => render());
-    } else {
-        container.innerHTML = '';
-    }
+    node.mode = 'custom';
+    const selected = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
+    if(node.comfyWorkflow && node.comfyWorkflow !== selected) node.comfyWorkflow = selected;
+    const data = currentComfyWorkflow(node);
+    const fields = data?.config?.fields || [];
+    const settingFields = fields.filter(f => comfyFieldKind(f) === 'setting');
+    container.innerHTML = `
+        <div class="gen-settings-row">
+            <select class="select-lite comfy-workflow-select" data-field="comfyWorkflow" style="width:100%">${comfyWorkflowOptions(selected)}</select>
+        </div>
+        ${!selected ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoWorkflow')}</div>` : (!data ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyLoadingWorkflow')}</div>` : '')}
+        ${data ? settingFields.map(f => renderComfyCustomField(node, f)).join('') || `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoExtraParams')}</div>` : ''}
+    `;
+    if(selected && !data) ensureComfyWorkflow(selected).then(() => render());
     container.querySelectorAll('[data-toggle-field]').forEach(btn => {
         btn.onmousedown = e => e.stopPropagation();
         btn.onclick = e => {
@@ -9610,26 +9538,6 @@ async function comfyNameForRef(ref){
     if(!ref.url) throw new Error(langIsEn() ? 'Missing input image' : '缺少输入图片');
     return uploadCanvasUrlToComfy(ref.url);
 }
-async function runComfyUpscale(imageUrl, resolution){
-    if(!imageUrl) throw new Error(actionFailed('studio.superResolution', langIsEn() ? 'missing input image' : '缺少输入图片'));
-    const nextInput = await uploadCanvasUrlToComfy(imageUrl);
-    const upscale = await fetch('/api/generate', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-            workflow_json:'upscale.json',
-            params:{
-                "15": { image:nextInput },
-                "172": { seed:Math.floor(Math.random() * 4294967295), resolution:Number(resolution || 2048) }
-            },
-            type:'enhance',
-            client_id:CLIENT_ID
-        })
-    }).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, actionFailed('studio.superResolution'))); return r.json(); });
-    if(upscale.error) throw new Error(actionFailed('studio.superResolution', upscale.error));
-    if(!upscale.images?.length) throw new Error(noReturnedImage('studio.superResolution'));
-    return upscale.images || [];
-}
 function comfyResultOutputs(result){
     return resultMediaUrls(result);
 }
@@ -10263,21 +10171,20 @@ async function runComfyNode(nodeId, opts={}){
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
     const allRefs = sources.flatMap(s => s.refs || []);
     const refs = imageRefsOnly(allRefs);
-    const mode = node.mode || 'text';
-    const customImageFields = mode === 'custom' ? comfyFields(node, 'image') : [];
-    const customVideoFields = mode === 'custom' ? comfyFields(node, 'video') : [];
-    const customAudioFields = mode === 'custom' ? comfyFields(node, 'audio') : [];
-    const customPromptFields = mode === 'custom' ? comfyFields(node, 'prompt') : [];
-    if((mode === 'text' || (mode === 'custom' && customPromptFields.length)) && !prompt){ alert(tr('canvas.needPrompt')); return; }
-    if((mode !== 'text' && mode !== 'custom' && !refs.length) || (mode === 'custom' && refs.length < customImageFields.length)){ alert(tr('canvas.needImage')); return; }
-    if(mode === 'custom' && videoRefsOnly(allRefs).length < customVideoFields.length){ alert(langIsEn() ? 'Please connect enough video inputs for this ComfyUI workflow.' : '请为这个 ComfyUI 工作流连接足够的视频输入'); return; }
-    if(mode === 'custom' && audioRefsOnly(allRefs).length < customAudioFields.length){ alert(langIsEn() ? 'Please connect enough audio inputs for this ComfyUI workflow.' : '请为这个 ComfyUI 工作流连接足够的音频输入'); return; }
+    node.mode = 'custom';
+    const customImageFields = comfyFields(node, 'image');
+    const customVideoFields = comfyFields(node, 'video');
+    const customAudioFields = comfyFields(node, 'audio');
+    const customPromptFields = comfyFields(node, 'prompt');
+    if(customPromptFields.length && !prompt){ alert(tr('canvas.needPrompt')); return; }
+    if(refs.length < customImageFields.length){ alert(tr('canvas.needImage')); return; }
+    if(videoRefsOnly(allRefs).length < customVideoFields.length){ alert(langIsEn() ? 'Please connect enough video inputs for this ComfyUI workflow.' : '请为这个 ComfyUI 工作流连接足够的视频输入'); return; }
+    if(audioRefsOnly(allRefs).length < customAudioFields.length){ alert(langIsEn() ? 'Please connect enough audio inputs for this ComfyUI workflow.' : '请为这个 ComfyUI 工作流连接足够的音频输入'); return; }
     let out = outputForNode(node, 480);
     const pendingId = uid('p');
     const run = runSnapshot(node, prompt, refs);
     run.taskLabel = comfyRunLabel(node);
-    const requestSize = mode === 'text' ? {width:Number(node.width || 1024), height:Number(node.height || 1024)} : null;
-    if(out) out._pending = [...(out._pending||[]), makePendingForRun(pendingId, run, node, {refs, requestSize, cascadeTargetId})];
+    if(out) out._pending = [...(out._pending||[]), makePendingForRun(pendingId, run, node, {refs, cascadeTargetId})];
     if(!opts.cascade){
         node.running = true;
         refreshRunNodes(node, out);
@@ -10286,49 +10193,9 @@ async function runComfyNode(nodeId, opts={}){
     else refreshRunNodes(node, out);
     try {
         let images = [];
-        if(mode === 'text'){
-            run.taskLabel = tr('canvas.comfyText');
-            const result = await cascadeFetch('/api/generate', {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({
-                    prompt,
-                    width:Number(node.width || 1024),
-                    height:Number(node.height || 1024),
-                    workflow_json:'Z-Image.json',
-                    type:'zimage',
-                    client_id:CLIENT_ID
-                })
-            }, {cascadeTargetId}).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, actionFailed('canvas.comfyText'))); return r.json(); });
-            run.request = requestMetaFromResult(result);
-            images = comfyResultOutputs(result);
-        } else if(mode === 'enhance'){
-            run.taskLabel = tr('canvas.comfyEnhance');
-            const inputName = await comfyNameForRef(refs[0]);
-            const enhance = await cascadeFetch('/api/generate', {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({
-                    workflow_json:'Z-Image-Enhance.json',
-                    params:{
-                        "15": { image:inputName },
-                        "204": { value:Number(node.enhanceStrength ?? 0.5) }
-                    },
-                    type:'enhance',
-                    client_id:CLIENT_ID
-                })
-            }, {cascadeTargetId}).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, actionFailed('canvas.comfyEnhance'))); return r.json(); });
-            run.request = requestMetaFromResult(enhance);
-            if(enhance.error) throw new Error(actionFailed('canvas.comfyEnhance', enhance.error));
-            if(!enhance.images?.length) throw new Error(noReturnedImage('canvas.comfyEnhance'));
-            if(node.enhanceUpscale){
-                images = await runComfyUpscale(enhance.images?.[0], node.enhanceUpscaleRes || 2048);
-            } else {
-                images = enhance.images || [];
-            }
-        } else if(mode === 'custom'){
+        {
             const workflowName = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
-            run.taskLabel = workflowName || tr('canvas.comfyCustom');
+            run.taskLabel = workflowName || 'ComfyUI';
             if(node.comfyWorkflow && node.comfyWorkflow !== workflowName) node.comfyWorkflow = workflowName;
             const wf = await ensureComfyWorkflow(workflowName);
             if(!workflowName || !wf) throw new Error(tr('canvas.comfyNoWorkflow'));
@@ -10375,38 +10242,11 @@ async function runComfyNode(nodeId, opts={}){
                     type:'workflow-custom',
                     client_id:CLIENT_ID
                 })
-            }, {cascadeTargetId}).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, actionFailed('canvas.comfyCustom'))); return r.json(); });
+            }, {cascadeTargetId}).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, actionFailed('canvas.comfyGenerate'))); return r.json(); });
             run.request = requestMetaFromResult(result);
-            if(result.error) throw new Error(actionFailed('canvas.comfyCustom', result.error));
+            if(result.error) throw new Error(actionFailed('canvas.comfyGenerate', result.error));
             images = comfyResultOutputs(result);
-            if(!images.length) throw new Error(noReturnedImage('canvas.comfyCustom'));
-        } else {
-            run.taskLabel = tr('canvas.comfyEdit');
-            const names = [];
-            for (const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref));
-            const result = await cascadeFetch('/api/generate', {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({
-                    prompt,
-                    workflow_json:'Flux2-Klein.json',
-                    type:'klein',
-                    params:{
-                        "168": { text:prompt },
-                        "158": { noise_seed:Math.floor(Math.random() * 1000000) },
-                        "278": { image:names[0] || "" },
-                        "270": { image:names[1] || "" },
-                        "292": { image:names[2] || "" },
-                        "313": { value:Boolean(names[1]) },
-                        "314": { value:Boolean(names[2]) }
-                    },
-                    client_id:CLIENT_ID
-                })
-            }, {cascadeTargetId}).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, actionFailed('canvas.comfyEdit'))); return r.json(); });
-            run.request = requestMetaFromResult(result);
-            if(result.error) throw new Error(actionFailed('canvas.comfyEdit', result.error));
-            if(!result.images?.length) throw new Error(noReturnedImage('canvas.comfyEdit'));
-            images = node.editUpscale ? await runComfyUpscale(result.images?.[0], node.editUpscaleRes || 2048) : result.images || [];
+            if(!images.length) throw new Error(noReturnedImage('canvas.comfyGenerate'));
         }
         const meta = collectRunMeta(out, pendingId);
         if(out) out._pending = (out._pending||[]).filter(p => p.id !== pendingId);
@@ -11121,12 +10961,7 @@ function runSnapshot(node, prompt, refs=[]){
     };
 }
 function comfyRunLabel(node){
-    const mode = node?.mode || 'text';
-    if(mode === 'text') return tr('canvas.comfyText');
-    if(mode === 'enhance') return tr('canvas.comfyEnhance');
-    if(mode === 'edit') return tr('canvas.comfyEdit');
-    if(mode === 'custom') return node?.comfyWorkflow || tr('canvas.comfyCustom');
-    return 'ComfyUI';
+    return node?.comfyWorkflow || 'ComfyUI';
 }
 function runTaskLabel(run){
     const node = run?.node || {};
@@ -11159,12 +10994,7 @@ function runPlatformLabel(run){
     return run?.nodeType || 'Generate';
 }
 function comfyLabelFromWorkflow(workflow){
-    const name = String(workflow || '').toLowerCase();
-    if(!name) return '';
-    if(name === 'z-image.json') return tr('canvas.comfyText');
-    if(name === 'z-image-enhance.json' || name === 'upscale.json') return tr('canvas.comfyEnhance');
-    if(name === 'flux2-klein.json') return tr('canvas.comfyEdit');
-    return workflow;
+    return String(workflow || '');
 }
 function logTaskLabel(log){
     const req = log?.request || {};

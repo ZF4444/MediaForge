@@ -84,8 +84,7 @@ async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runSt
 // === 第 2 批：中等复杂度的 provider 调用函数 ===
 //   ComfyUI 队列基础设施：createSmartComfyTask / waitSmartComfyTaskResult /
 //     runQueuedSmartComfyGenerate / comfyParamsFromWorkflowValues
-//   ComfyUI 具体调用：comfyFieldKind / runComfyGeneration / runComfyText /
-//     runComfyEnhance / runComfyEdit / comfyNameForRef / sleep
+//   ComfyUI 具体调用：comfyFieldKind / runComfyGeneration / comfyNameForRef / sleep
 //   其它 provider 调用：runApiGeneration / submitRunningHubGeneration /
 //     pollRunningHubTask / runRunningHubGeneration / runApiVideoGeneration /
 //     runModelscopeGeneration / urlToBase64
@@ -324,10 +323,6 @@ function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
 async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     const allRefs = refs || [];
     refs = imageRefsOnly(allRefs);
-    const mode = settings.comfyMode || 'text';
-    if(mode === 'text') return runComfyText(node, prompt, pendingNode, meta);
-    if(mode === 'enhance') return runComfyEnhance(node, refs, pendingNode, meta);
-    if(mode === 'edit') return runComfyEdit(node, prompt, refs, pendingNode, meta);
     const workflowName = settings.comfyWorkflow || comfyWorkflows[0]?.name || '';
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
     const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
@@ -366,52 +361,6 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
         finalizePendingNode(pendingNode, outputUrls, meta, kind);
     } else {
         const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out);
-        attachRunMeta(created, meta);
-        addConnection(node.id, created.id);
-    }
-    clearPromptInput({preserveDraft:true});
-    scheduleSave();
-}
-async function runComfyText(node, prompt, pendingNode, meta){
-    const data = await runQueuedSmartComfyGenerate({prompt, width:Number(settings.width || 1024), height:Number(settings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId});
-    const out = data.outputs || data.images || [];
-    if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
-    if(pendingNode){
-        finalizePendingNode(pendingNode, out, meta);
-    } else {
-        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, file_id:fileIdFromUrl(url), name:`comfy-${i + 1}.png`})));
-        attachRunMeta(created, meta);
-        addConnection(node.id, created.id);
-    }
-    clearPromptInput({preserveDraft:true});
-    scheduleSave();
-}
-async function runComfyEnhance(node, refs, pendingNode, meta){
-    if(!refs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
-    const inputName = await comfyNameForRef(refs[0]);
-    const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
-    const out = data.outputs || data.images || [];
-    if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
-    if(pendingNode){
-        finalizePendingNode(pendingNode, out, meta);
-    } else {
-        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, file_id:fileIdFromUrl(url), name:`enhance-${i + 1}.png`})));
-        attachRunMeta(created, meta);
-        addConnection(node.id, created.id);
-    }
-    scheduleSave();
-}
-async function runComfyEdit(node, prompt, refs, pendingNode, meta){
-    if(!refs.length) throw new Error(tr('smart.errEditNeedRefs'));
-    const names = [];
-    for(const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref));
-    const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
-    const out = data.outputs || data.images || [];
-    if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
-    if(pendingNode){
-        finalizePendingNode(pendingNode, out, meta);
-    } else {
-        const created = createNode((node.x || 0) + nodeRect(node).width + 40, node.y || 0, out.map((url, i) => ({url, file_id:fileIdFromUrl(url), name:`edit-${i + 1}.png`})));
         attachRunMeta(created, meta);
         addConnection(node.id, created.id);
     }
@@ -502,7 +451,7 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
     );
     const prompt = (request.prompt || '').trim();
     const displayPrompt = (request.displayPrompt || '').trim();
-    if((!prompt && smartPromptInputEnabledForSettings(runSettings)) || (!displayPrompt && !(runSettings.engine === 'comfy' && runSettings.comfyMode === 'enhance') && smartPromptInputEnabledForSettings(runSettings))){
+    if((!prompt && smartPromptInputEnabledForSettings(runSettings)) || (!displayPrompt && smartPromptInputEnabledForSettings(runSettings))){
         settings = previousSettings;
         throw new Error('链路节点缺少提示词');
     }
@@ -593,7 +542,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         const request = buildPromptRequestForNode(rootNode, refsForRequest.length ? refsForRequest : null, ctx);
         const prompt = (request.prompt || '').trim();
         const displayPrompt = (request.displayPrompt || '').trim();
-        if((!prompt && smartPromptInputEnabledForSettings(runSettings)) || (!displayPrompt && !(runSettings.engine === 'comfy' && runSettings.comfyMode === 'enhance') && smartPromptInputEnabledForSettings(runSettings))) throw new Error('链路节点缺少提示词');
+        if((!prompt && smartPromptInputEnabledForSettings(runSettings)) || (!displayPrompt && smartPromptInputEnabledForSettings(runSettings))) throw new Error('链路节点缺少提示词');
         const meta = {
             prompt,
             displayPrompt:request.displayPrompt || '',
@@ -1077,7 +1026,7 @@ async function runGeneration(){
     const expectedCount = settings.engine === 'runninghub'
         ? 1
         : settings.engine === 'comfy'
-        ? (settings.comfyMode === 'text' || settings.comfyMode === 'enhance' || settings.comfyMode === 'edit' || settings.comfyMode === 'custom' ? 1 : 1)
+        ? 1
         : Math.max(1, Math.min(4, Number(settings.count || 1)));
     const apiConcurrentRun = isApiLikeEngine(settings.engine) || settings.engine === 'runninghub' || settings.engine === 'modelscope';
     const nodeHasImages = (node.images || []).some(img => img?.url);
@@ -1252,5 +1201,3 @@ async function runGeneration(){
         render();
     }
 }
-
-

@@ -517,6 +517,7 @@ function renderDynamicParams(){
     if(!dynamicParams) return;
     const node = activeSettingsSubject();
     const allowedEngines = allowedEnginesForNode(node);
+    const unifiedWorkflowNode = ['image','video','workflow'].includes(node?.genKind);
     settings.engine = ['api','volcengine','modelscope','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
     // 定型生成节点：强制引擎落在允许列表内，避免继承到画布默认/最近使用的错误引擎（如图片节点误用工作流配置框）
     if(allowedEngines && !allowedEngines.includes(settings.engine)){
@@ -529,13 +530,31 @@ function renderDynamicParams(){
     clearVolcengineSelectionOutsideVolcengine(settings);
     // 按节点类型过滤引擎下拉可选项
     Array.from(engineSelect.options).forEach(opt => {
-        opt.hidden = allowedEngines ? !allowedEngines.includes(opt.value) : opt.value === 'comfy';
+        opt.hidden = unifiedWorkflowNode && opt.value === 'comfy'
+            ? true
+            : allowedEngines ? !allowedEngines.includes(opt.value) : opt.value === 'comfy';
     });
-    engineSelect.value = settings.engine;
-    // 工作流生成节点固定engine=runninghub，隐藏engine下拉；图片/视频生成节点保留engine下拉（仅限允许引擎）
-    const isWorkflowNode = node?.genKind === 'workflow';
-    engineSelect.style.display = isWorkflowNode ? 'none' : '';
+    // 定型节点把 ComfyUI 与 RH 统一展示为一个“工作流”入口，具体来源在配置框中选择。
+    engineSelect.value = unifiedWorkflowNode && ['comfy','runninghub'].includes(settings.engine)
+        ? 'runninghub'
+        : settings.engine;
     clearComposerHeadParams();
+    if(node?.genKind === 'workflow'){
+        // 工作流节点在配置框中统一列出 ComfyUI 工作流与 RH 应用，避免再通过引擎下拉切换来源。
+        engineSelect.style.display = 'none';
+        syncApiKindToggleVisibility();
+        renderWorkflowNodeParams();
+        bindDynamicParams();
+        updatePromptPlaceholder();
+        syncComposerPromptVisibility();
+        renderInputThumbsRow(selectedNode());
+        renderInputPromptPreview(selectedNode());
+        persistActiveSmartSettings();
+        if(window.lucide) lucide.createIcons();
+        return;
+    }
+    // 图片和视频节点保留引擎选择；可选项由各自的 allowedEngines 过滤。
+    engineSelect.style.display = '';
     syncApiKindToggleVisibility();
     if(settings.engine === 'api'){
         if(settings.apiKind === 'video') renderApiVideoParams();
@@ -626,14 +645,9 @@ function renderRunningHubParams(){
     const fields = rhActiveFields();
     settings.rhParams = settings.rhParams || {};
     settings.rhRandomActive = settings.rhRandomActive || {};
-    if(composerHeadParams){
-        composerHeadParams.innerHTML = `
-            ${renderRhConfigControl(ref)}
-            ${renderRhMachineControl()}
-        `;
-    }
+    if(composerHeadParams) composerHeadParams.innerHTML = '';
     if(!ref){
-        dynamicParams.innerHTML = `<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>`;
+        dynamicParams.innerHTML = `${renderWorkflowSourceControl()}<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>`;
         return;
     }
     const params = fields.filter(field => {
@@ -641,6 +655,8 @@ function renderRunningHubParams(){
         return !['image','video','audio','prompt'].includes(role);
     });
     dynamicParams.innerHTML = `
+        ${renderWorkflowSourceControl()}
+        ${renderRhMachineControl()}
         ${params.length ? params.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(fields.length ? tr('smart.rhNoParams') : tr('smart.rhNeedFields'))}</div>`}
     `;
 }
@@ -719,56 +735,60 @@ function renderMsParams(){
     `;
 }
 function renderComfyParams(){
-    settings.comfyMode = ['text','enhance','edit','custom'].includes(settings.comfyMode) ? settings.comfyMode : 'text';
-    const modeOptions = [
-        ['text', tr('canvas.comfyModeText') || '文生图'],
-        ['enhance', tr('canvas.comfyModeEnhance') || '图片增强'],
-        ['edit', tr('canvas.comfyModeEdit') || '图片编辑'],
-        ['custom', tr('canvas.comfyModeCustom') || '自定义']
-    ];
-    if(settings.comfyMode === 'custom'){
-        if(!settings.comfyWorkflow || !comfyWorkflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
-        if(settings.comfyWorkflow && !comfyWorkflowCache[settings.comfyWorkflow]) ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
-    }
-    let html = '';
-    if(settings.comfyMode === 'text'){
-        html += `<div class="num-compact"><span class="num-label">${escapeHtml(tr('smart.width'))}</span><input type="number" data-param="width" value="${Number(settings.width || 1024)}"></div>
-            <div class="num-compact"><span class="num-label">${escapeHtml(tr('smart.height'))}</span><input type="number" data-param="height" value="${Number(settings.height || 1024)}"></div>`;
-    } else if(settings.comfyMode === 'enhance'){
-        html += `<div class="num-compact"><span class="num-label">${escapeHtml(tr('smart.strength'))}</span><input type="number" min="0.1" max="1" step="0.05" data-param="enhanceStrength" value="${Number(settings.enhanceStrength ?? 0.5)}"></div>
-            <button type="button" class="setting-check ${settings.enhanceUpscale ? 'active' : ''}" data-toggle-param="enhanceUpscale"><span class="check-box"></span><span>${escapeHtml(tr('smart.superResolution'))}</span></button>
-            ${settings.enhanceUpscale ? renderUpscalePill('enhanceUpscaleRes', Number(settings.enhanceUpscaleRes || 2048)) : ''}`;
-    } else if(settings.comfyMode === 'edit'){
-        html += `<button type="button" class="setting-check ${settings.editUpscale ? 'active' : ''}" data-toggle-param="editUpscale"><span class="check-box"></span><span>${escapeHtml(tr('smart.superResolution'))}</span></button>
-            ${settings.editUpscale ? renderUpscalePill('editUpscaleRes', Number(settings.editUpscaleRes || 2048)) : ''}`;
-    } else {
-        const wf = comfyWorkflowCache[settings.comfyWorkflow];
-        const fields = (wf?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
-        html += renderComfyWorkflowControl();
-        html += fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`);
-    }
+    if(!settings.comfyWorkflow || !comfyWorkflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
+    if(settings.comfyWorkflow && !comfyWorkflowCache[settings.comfyWorkflow]) ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
+    const wf = comfyWorkflowCache[settings.comfyWorkflow];
+    const fields = (wf?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
     dynamicParams.innerHTML = `
-        <div class="smart-control comfy-mode-control">
-            <button class="smart-pill" type="button"><i data-lucide="workflow"></i><span>${escapeHtml(modeOptions.find(([v]) => v === settings.comfyMode)?.[1] || 'ComfyUI')}</span></button>
-            <div class="smart-popover compact-popover">
-                <div class="smart-popover-title">${escapeHtml(tr('smart.comfyMode'))}</div>
-                <div class="model-list">
-                    ${modeOptions.map(([value, label]) => `<button type="button" class="direct-option ${value === settings.comfyMode ? 'active' : ''}" data-smart-param="comfyMode" data-smart-value="${escapeHtml(value)}"><span>${escapeHtml(label)}</span></button>`).join('')}
-                </div>
-            </div>
-        </div>
-        ${html}
+        ${renderWorkflowSourceControl()}
+        ${fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`)}
     `;
 }
-function renderUpscalePill(paramKey, current){
-    const opts = [2048, 4096];
-    const labels = {2048:'2X / 2048', 4096:'4X / 4096'};
-    return `<div class="smart-control upscale-control">
-        <button class="smart-pill" type="button"><i data-lucide="maximize-2"></i><span>${escapeHtml(labels[current] || `${current}px`)}</span></button>
-        <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.upscaleTarget'))}</div>
-            <div class="model-list">
-                ${opts.map(v => `<button type="button" class="direct-option ${v === current ? 'active' : ''}" data-smart-param="${escapeHtml(paramKey)}" data-smart-value="${v}"><span>${escapeHtml(labels[v])}</span></button>`).join('')}
+function renderWorkflowNodeParams(){
+    const isComfy = settings.engine === 'comfy';
+    let fields = [];
+    let body = '';
+    if(isComfy){
+        if(!settings.comfyWorkflow || !comfyWorkflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
+        if(settings.comfyWorkflow && !comfyWorkflowCache[settings.comfyWorkflow]) ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
+        fields = (comfyWorkflowCache[settings.comfyWorkflow]?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
+        body = fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`);
+    } else {
+        const ref = selectedRunningHubRef();
+        settings.rhParams = settings.rhParams || {};
+        settings.rhRandomActive = settings.rhRandomActive || {};
+        if(!ref) body = `${renderRhMachineControl()}<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>`;
+        else {
+            fields = rhActiveFields().filter(field => !['image','video','audio','prompt'].includes(rhFieldRole(field)));
+            body = `${renderRhMachineControl()}${fields.length ? fields.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(tr('smart.rhNoParams'))}</div>`}`;
+        }
+    }
+    dynamicParams.innerHTML = `${renderWorkflowSourceControl()}${body}`;
+}
+function renderWorkflowSourceControl(){
+    const comfyItems = comfyWorkflows.map(workflow => ({
+        value:`comfy:${workflow.name}`,
+        label:workflow.title || workflow.name.replace('.json', ''),
+        active:settings.engine === 'comfy' && workflow.name === settings.comfyWorkflow
+    }));
+    const rhItems = runningHubAllEntries().map(ref => ({
+        value:`runninghub:${runningHubEntryKey(ref.kind, ref.id)}`,
+        label:runningHubEntryLabel(ref.entry, ref.kind),
+        active:settings.engine === 'runninghub' && settings.rhConfigKey === runningHubEntryKey(ref.kind, ref.id)
+    }));
+    const active = comfyItems.find(item => item.active) || rhItems.find(item => item.active);
+    const label = active?.label || tr('smart.workflow');
+    const group = (title, icon, items) => items.length ? `
+        <div class="model-list-label rh-list-label">${escapeHtml(title)}<span class="count">${items.length}</span></div>
+        ${items.map(item => `<button type="button" class="direct-option ${item.active ? 'active' : ''}" data-smart-param="workflowSource" data-smart-value="${escapeHtml(item.value)}"><i data-lucide="${icon}"></i><span>${escapeHtml(item.label)}</span></button>`).join('')}
+    ` : '';
+    return `<div class="smart-control workflow-control">
+        <button class="smart-pill" type="button"><i data-lucide="layers"></i><span class="sub">${escapeHtml(label)}</span><i data-lucide="chevron-down" class="pill-caret"></i></button>
+        <div class="smart-popover compact-popover rh-picker-popover">
+            <div class="smart-popover-title">${escapeHtml(tr('smart.workflow'))}</div>
+            <div class="model-list rh-config-list">
+                ${group('ComfyUI 工作流', 'layers', comfyItems)}
+                ${group('RH 应用', 'sparkles', rhItems)}
             </div>
         </div>
     </div>`;
@@ -1397,14 +1417,24 @@ function smartComfyRandomValue(field){
     return Math.floor(value);
 }
 function setDynamicSetting(key, value){
-    const numericKeys = new Set(['count','width','height','videoDuration','enhanceStrength','enhanceUpscaleRes','editUpscaleRes','customRatioWidth','customRatioHeight','customWidth','customHeight','msCustomRatioWidth','msCustomRatioHeight','msCustomWidth','msCustomHeight']);
-    const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','comfyMode','comfyWorkflow','quality','count','enhanceUpscaleRes','editUpscaleRes','rhConfigKey','rhInstanceType']);
+    const numericKeys = new Set(['count','videoDuration','customRatioWidth','customRatioHeight','customWidth','customHeight','msCustomRatioWidth','msCustomRatioHeight','msCustomWidth','msCustomHeight']);
+    const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','workflowSource','comfyWorkflow','quality','count','rhConfigKey','rhInstanceType']);
     settings[key] = numericKeys.has(key) && value !== '' ? Number(value) : value;
     if(key === 'provider_id') settings.model = '';
     if(key === 'videoProvider') settings.videoModel = '';
     if(key === 'videoMultimodal' && settings.videoMultimodal) settings.videoUseFrameRoles = false;
     if(key === 'videoUseFrameRoles' && settings.videoUseFrameRoles) settings.videoMultimodal = false;
-    if(key === 'comfyMode') applyRecentSmartSettingsForCurrentMode();
+    if(key === 'workflowSource'){
+        const match = String(value || '').match(/^(comfy|runninghub):(.*)$/);
+        if(match){
+            settings.engine = match[1];
+            if(match[1] === 'comfy') settings.comfyWorkflow = match[2];
+            else settings.rhConfigKey = match[2];
+            settings.comfyParams = {};
+            settings.rhParams = {};
+            settings.rhRandomActive = {};
+        }
+    }
     if(key === 'resolution'){
         if(settings.resolution === 'custom') settings.ratio = '';
         else if(!settings.ratio) settings.ratio = 'square';
