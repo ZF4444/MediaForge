@@ -2307,7 +2307,6 @@ async function applyImageOutpaint(){
             natural_h:outH
         }], {title:'Outpaint'});
         applyOutpaintSizeToSmartParams(outW, outH);
-        setPromptDraftForNode(node, 'Remove white area and fill the scene');
         promptInput.dataset.preserveDraftOnce = '1';
         if(outpaintNode) chainOutpaintGenerationNode(outpaintNode);
         closeImageEditor();
