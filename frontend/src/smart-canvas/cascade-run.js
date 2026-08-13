@@ -1198,6 +1198,10 @@ async function runGeneration(){
             clearNodeRunningState(pendingNode);
             runBtn.disabled = false;
         }
+        // A user may open another node while this run is in flight. Do not let
+        // the completed node's restored settings overwrite that node's panel.
+        const activeSubject = activeSettingsSubject();
+        if(activeSubject && activeSubject.id !== node.id) settings = smartSettingsForNode(activeSubject);
         render();
     }
 }

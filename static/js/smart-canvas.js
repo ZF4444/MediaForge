@@ -2571,7 +2571,10 @@ function finalizePendingNode(pendingNode, urls, meta, kind='image'){
     const metaTarget = pendingNode._runMetaTargetId ? nodes.find(n => n.id === pendingNode._runMetaTargetId) : pendingNode;
     if(metaTarget) attachRunMeta(metaTarget, meta);
     if(actualKind !== 'image') pendingNode.images = (pendingNode.images || []).map(img => stripImageGenerationMeta(img));
-    selectedId = pendingNode._selectAfterRunId || pendingNode.id;
+    // Do not steal focus from a node the user opened while this task ran.
+    // A freshly branched output remains selected only when it is still active.
+    const completionTargetId = pendingNode._selectAfterRunId || pendingNode.id;
+    if(!selectedId || selectedId === pendingNode.id || selectedId === completionTargetId) selectedId = completionTargetId;
     delete pendingNode._runMetaTargetId;
     delete pendingNode._selectAfterRunId;
     delete pendingNode._rerunPreviousImages;
