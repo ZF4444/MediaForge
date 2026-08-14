@@ -315,6 +315,8 @@ body.show-runninghub .api-key-label,
 body.show-runninghub #keyHint { display:none !important; }
 body.runninghub-apps-page .sidebar,
 body.runninghub-apps-page .provider-onboarding-card,
+body.runninghub-apps-page .comfy-backend-block,
+body.runninghub-apps-page #providerBasicBlock,
 body.runninghub-apps-page .models-toolbar,
 body.runninghub-apps-page .model-grid,
 body.runninghub-apps-page .ms-lora-block,
@@ -324,6 +326,12 @@ body.runninghub-apps-page .layout { grid-template-columns:minmax(0,1fr); }
 body.runninghub-apps-page .content { max-width:1120px; width:100%; margin:0 auto; }
 body.embedded-api-settings .page { padding:18px 24px 48px; }
 body.embedded-api-settings .page-head { display:none; }
+.comfy-instances-list { display:flex; flex-direction:column; gap:8px; }
+.comfy-instance-row { display:grid; grid-template-columns:24px minmax(0,1fr) 36px; gap:8px; align-items:center; padding:5px; border:1px solid var(--line); border-radius:11px; background:var(--soft); }
+.comfy-instance-number { color:var(--faint); font-size:11px; font-weight:900; text-align:center; }
+.comfy-instance-input { width:100%; height:34px; padding:0 10px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); outline:none; font:700 12px ui-monospace,Menlo,monospace; }
+.comfy-instance-input:focus { border-color:var(--text); }
+.comfy-backend-actions { display:flex; gap:8px; }
 body.show-jimeng .api-base-url-field,
 body.show-jimeng .api-key-field { display:none !important; }
 .jimeng-cli-panel { grid-column:1/-1; display:none; flex-direction:column; gap:12px; margin-top:2px; padding:14px; border:1px solid var(--line); border-radius:14px; background:var(--soft); }

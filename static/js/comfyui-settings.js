@@ -188,10 +188,7 @@ function mediaPreviewHtml(kind, url, name='', compact=false){
 // frontend/src/comfyui-settings/mini-canvas.js。
 
 // —— ComfyUI 后端地址管理 ——
-let comfyInstances = [];
-// [comfyui-settings 迁移] loadComfyInstances/renderComfyInstances/addComfyInstance/
-// updateComfyInstance/removeComfyInstance/saveComfyInstances 已拆分到
-// frontend/src/comfyui-settings/comfy-instances.js。
+// ComfyUI 服务地址在 API 设置页维护；工作流页只负责工作流本身。
 
 async function loadList(){
     try {
@@ -526,6 +523,4 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshIcons();
     if(window.StudioI18n) StudioI18n.apply();
     loadList();
-    loadComfyInstances();
 });
-

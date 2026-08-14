@@ -56,7 +56,22 @@
 
                     <section id="providerOnboardingCard" class="provider-onboarding-card" hidden></section>
 
-                    <section class="block">
+                    <section id="comfyBackendBlock" class="block comfy-backend-block">
+                        <div class="block-head">
+                            <div>
+                                <div class="block-title">ComfyUI 服务</div>
+                                <div class="block-desc">管理工作流运行所使用的 ComfyUI 后端地址。</div>
+                            </div>
+                        </div>
+                        <div id="comfyInstancesList" class="comfy-instances-list"></div>
+                        <div class="comfy-backend-actions">
+                            <button class="action-btn" type="button" onclick="addComfyInstance()"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>添加后端</span></button>
+                            <button class="action-btn save-btn" type="button" onclick="saveComfyInstances()"><i data-lucide="save" class="w-3.5 h-3.5"></i><span>保存地址</span></button>
+                        </div>
+                        <div class="hint">支持 host:port、完整 URL 或 HTTPS 域名；无协议域名默认使用 HTTPS。</div>
+                    </section>
+
+                    <section id="providerBasicBlock" class="block">
                         <div class="block-head">
                             <div>
                                 <div class="block-title" data-i18n="api.basicInfo">基本信息</div>
@@ -431,6 +446,7 @@
 
     <script src="/static/js/upload-quota-dialog.js"></script>
     <script src="/static/dist/api-settings/rh-workflow-editor.js"></script>
+    <script src="/static/dist/api-settings/comfy-instances.js"></script>
     <script src="/static/dist/api-settings/provider-onboarding.js"></script>
     <script src="/static/dist/api-settings/recommend-api.js"></script>
     <script src="/static/dist/api-settings/jimeng-cli.js"></script>
