@@ -226,6 +226,7 @@ import httpx
 
 from app.config import VIDEO_POLL_TIMEOUT
 from app.core.http_client import shared_http_client
+from app.core.outbound import validate_external_http_url
 from app.core.storage_io import run_storage_io
 from app.services.storage import normalize_media_ref, save_media_bytes
 
@@ -258,8 +259,8 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
         raise RuntimeError("本地媒体 URL 已停用；请使用 MinIO file_id")
     try:
         timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
-        async with shared_http_client(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(value)
+        async with shared_http_client(timeout=timeout) as client:
+            response = await client.get(validate_external_http_url(value, label="生成结果地址"))
             response.raise_for_status()
             content_type = response.headers.get("Content-Type", "")
             if "jpeg" in content_type or "jpg" in content_type:

@@ -7,6 +7,7 @@ from psycopg_pool import PoolTimeout
 
 from app.core import database
 from app.core.log_context import reset_log_context, set_log_context
+from app.core.retry import retry_operation_id
 from app.services import storage
 
 
@@ -119,3 +120,19 @@ def test_database_retries_only_connection_checkout(monkeypatch):
     asyncio.run(scenario())
     assert pool.calls == 3
     assert len(sleeps) == 2
+
+
+def test_retry_operation_id_prefers_durable_task_id_without_http_request():
+    token = set_log_context(task_id="canvas_img_123")
+    try:
+        assert retry_operation_id("ai") == "canvas_img_123"
+    finally:
+        reset_log_context(token)
+
+
+def test_retry_operation_id_prefers_http_request_id():
+    token = set_log_context(request_id="req_123", task_id="canvas_img_123")
+    try:
+        assert retry_operation_id("ai") == "req_123"
+    finally:
+        reset_log_context(token)

@@ -103,3 +103,29 @@ def test_shared_http_client_proxy_forwards_unknown_attributes():
         await http_client.close_http_client()
 
     asyncio.run(scenario())
+
+
+def test_pinned_network_backend_connects_to_validated_ip(monkeypatch):
+    class Backend:
+        def __init__(self):
+            self.host = ""
+
+        async def connect_tcp(self, host, _port, **_kwargs):
+            self.host = host
+            return object()
+
+        async def connect_unix_socket(self, *_args, **_kwargs):
+            return object()
+
+        async def sleep(self, _seconds):
+            return None
+
+    backend = Backend()
+    monkeypatch.setattr(http_client, "resolve_public_host_addresses", lambda *_args: ("8.8.8.8",))
+
+    async def scenario():
+        pinned = http_client._PinnedNetworkBackend(backend)
+        await pinned.connect_tcp("provider.example", 443)
+
+    asyncio.run(scenario())
+    assert backend.host == "8.8.8.8"

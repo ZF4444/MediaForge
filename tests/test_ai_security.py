@@ -27,8 +27,17 @@ def test_provider_endpoint_allows_public_address(monkeypatch):
     assert outbound.validate_public_http_url("https://api.example.test/v1/") == "https://api.example.test/v1"
 
 
-def test_private_provider_requires_deployment_allowlist(monkeypatch):
+def test_private_provider_is_rejected_even_when_legacy_allowlist_is_set(monkeypatch):
     monkeypatch.setattr(outbound.socket, "getaddrinfo", lambda *_args, **_kwargs: _address("10.0.0.8"))
     monkeypatch.setenv("AI_PROVIDER_ALLOWED_HOSTS", "ai.internal.example")
 
-    assert outbound.validate_public_http_url("https://ai.internal.example/v1") == "https://ai.internal.example/v1"
+    with pytest.raises(HTTPException, match="内网"):
+        outbound.validate_public_http_url("https://ai.internal.example/v1")
+
+
+def test_external_media_url_never_uses_provider_internal_allowlist(monkeypatch):
+    monkeypatch.setattr(outbound.socket, "getaddrinfo", lambda *_args, **_kwargs: _address("10.0.0.8"))
+    monkeypatch.setenv("AI_PROVIDER_ALLOWED_HOSTS", "ai.internal.example")
+
+    with pytest.raises(HTTPException, match="内网"):
+        outbound.validate_external_http_url("https://ai.internal.example/file.png")

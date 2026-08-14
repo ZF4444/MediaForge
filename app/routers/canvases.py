@@ -224,7 +224,9 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
     if incoming_client_id:
         canvas["last_client_id"] = incoming_client_id
     await asyncio.to_thread(save_canvas, canvas)
-    await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
+    await manager.broadcast_canvas_updated(
+        canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id, current_user_id(),
+    )
     return {"canvas": {"id": canvas_id, "updated_at": canvas.get("updated_at", 0)}}
 
 

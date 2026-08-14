@@ -233,7 +233,9 @@ def save_asset_library(lib):
         sync_asset_library_rows(cur, envelope_id, persisted, int(lib["updated_at"]))
     loop = get_global_loop()
     if loop:
-        asyncio.run_coroutine_threadsafe(manager.broadcast_asset_library_updated(int(lib["updated_at"])), loop)
+        asyncio.run_coroutine_threadsafe(
+            manager.broadcast_asset_library_updated(int(lib["updated_at"]), uid), loop,
+        )
 
 
 def sync_asset_library_rows(cur, envelope_id: str, lib: Dict[str, Any], timestamp: int) -> None:

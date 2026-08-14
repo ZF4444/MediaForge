@@ -59,6 +59,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse, JSONRes
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.log_context import bind_log_context
+from app.core.retry import retry_operation_id
 from app.core.logging import audit_event, configure_logging, get_logger, get_task_logger
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.core.comfyui import comfyui_url, normalize_comfyui_endpoint
@@ -156,6 +157,10 @@ GLOBAL_LOOP = None
 STORAGE_CLEANUP_TASK = None
 STORAGE_CACHE_CLEANUP_TASK = None
 SESSION_LAST_SEEN_TASK = None
+CANVAS_TASK_RECOVERY_TASK = None
+CANVAS_TASK_WORKER_TASK = None
+WEBSOCKET_PUBSUB_TASK = None
+PROVIDER_CONFIG_SYNC_TASK = None
 APP_VERSION = "2026.05.19"
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
@@ -166,17 +171,37 @@ from app.core.database import DatabaseUnavailableError, close_database_pool, ope
 from app.core.redis_client import RedisUnavailableError, close_redis_client, open_redis_client, redis_readiness_status
 from app.core.metrics import render_metrics
 from app.core.storage_io import StorageIOOverloaded, refresh_storage_io_metrics, run_storage_io
-from app.core.http_client import close_http_client, get_http_client, open_http_client, shared_http_client
-from app.core.outbound import validate_public_http_url
+from app.core.http_client import close_http_client, get_http_client, new_outbound_http_client, open_http_client, shared_http_client
+from app.core.outbound import validate_external_http_url, validate_public_http_url
+from app.core.ws_pubsub import publish_websocket_event, websocket_pubsub_loop
+from app.core.provider_config_events import provider_config_event_loop, publish_provider_config_changed
 from app.ai.gateway import provider_operation
 from app.ai.registry import ImageAdapterRegistry, ImageGenerationRequest
+from app.services.canvas_tasks import (
+    acknowledge_canvas_task,
+    claim_canvas_task,
+    create_canvas_task,
+    dequeue_canvas_tasks,
+    enqueue_canvas_task,
+    ensure_canvas_task_consumer_group,
+    get_canvas_task,
+    has_canvas_task_claim,
+    list_recoverable_canvas_tasks,
+    reclaim_canvas_task_messages,
+    release_canvas_task_claim,
+    release_canvas_task_dispatch,
+    refresh_canvas_task_lease,
+    update_claimed_canvas_task,
+    update_canvas_task,
+)
 
 @app.on_event("startup")
 async def startup_event():
-    global GLOBAL_LOOP, SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
+    global GLOBAL_LOOP, SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, PROVIDER_CONFIG_SYNC_TASK
     try:
         await open_database_pool()
         await open_redis_client()
+        manager.set_publisher(publish_websocket_event)
         app.state.http = await open_http_client()
         await run_storage_io(verify_storage_startup)
         # Business metadata is a separate schema layer above ``files``.  Keep
@@ -196,6 +221,15 @@ async def startup_event():
             STORAGE_CACHE_CLEANUP_TASK = asyncio.create_task(storage_cache_cleanup_loop())
         if SESSION_LAST_SEEN_TASK is None:
             SESSION_LAST_SEEN_TASK = asyncio.create_task(session_last_seen_flush_loop())
+        if WEBSOCKET_PUBSUB_TASK is None:
+            WEBSOCKET_PUBSUB_TASK = asyncio.create_task(websocket_pubsub_loop(manager))
+        if PROVIDER_CONFIG_SYNC_TASK is None:
+            PROVIDER_CONFIG_SYNC_TASK = asyncio.create_task(provider_config_event_loop(refresh_api_providers_cache))
+        await ensure_canvas_task_consumer_group()
+        if CANVAS_TASK_RECOVERY_ENABLED and CANVAS_TASK_RECOVERY_TASK is None:
+            CANVAS_TASK_RECOVERY_TASK = asyncio.create_task(canvas_task_recovery_loop())
+        if CANVAS_TASK_WORKER_ENABLED and CANVAS_TASK_WORKER_TASK is None:
+            CANVAS_TASK_WORKER_TASK = asyncio.create_task(canvas_task_worker_loop())
         logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
     except Exception:
         await close_http_client()
@@ -206,7 +240,7 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK
+    global SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, PROVIDER_CONFIG_SYNC_TASK
     if STORAGE_CLEANUP_TASK is not None:
         STORAGE_CLEANUP_TASK.cancel()
         STORAGE_CLEANUP_TASK = None
@@ -216,6 +250,18 @@ async def shutdown_event():
     if SESSION_LAST_SEEN_TASK is not None:
         SESSION_LAST_SEEN_TASK.cancel()
         SESSION_LAST_SEEN_TASK = None
+    if CANVAS_TASK_RECOVERY_TASK is not None:
+        CANVAS_TASK_RECOVERY_TASK.cancel()
+        CANVAS_TASK_RECOVERY_TASK = None
+    if CANVAS_TASK_WORKER_TASK is not None:
+        CANVAS_TASK_WORKER_TASK.cancel()
+        CANVAS_TASK_WORKER_TASK = None
+    if WEBSOCKET_PUBSUB_TASK is not None:
+        WEBSOCKET_PUBSUB_TASK.cancel()
+        WEBSOCKET_PUBSUB_TASK = None
+    if PROVIDER_CONFIG_SYNC_TASK is not None:
+        PROVIDER_CONFIG_SYNC_TASK.cancel()
+        PROVIDER_CONFIG_SYNC_TASK = None
     try:
         await flush_session_last_seen()
     except Exception:
@@ -268,22 +314,34 @@ async def prometheus_metrics():
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
-    await manager.connect(websocket, client_id)
+    token = websocket.cookies.get(SESSION_COOKIE_NAME, "")
+    try:
+        session = await get_session(token) if token else None
+    except RedisUnavailableError:
+        await websocket.close(code=1013, reason="认证服务暂不可用")
+        return
+    if not session or not session.get("user_id"):
+        await websocket.close(code=1008, reason="未登录")
+        return
+    await manager.connect(websocket, str(session["user_id"]), client_id or "")
     try:
         while True:
             data = await websocket.receive_text()
             if data == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
     except WebSocketDisconnect:
-        await manager.disconnect(websocket, client_id)
+        await manager.disconnect(websocket)
     except Exception:
         logger.exception("websocket handler failed", extra={"event": "websocket_handler_failed"})
-        await manager.disconnect(websocket, client_id)
+        await manager.disconnect(websocket)
 
 # --- 配置区域 ---
 # 已迁移至 app/config.py（值完全一致），此处导入以保持原模块级名称可用。
 from app.config import (
     CLIENT_ID,
+    CANVAS_TASK_RECOVERY_ENABLED,
+    CANVAS_TASK_WORKER_ENABLED,
+    REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS,
     BASE_DIR,
     WORKFLOW_DIR,
     WORKFLOW_PATH,
@@ -1232,6 +1290,8 @@ def save_api_providers(providers):
     _API_PROVIDERS_CACHE = merge_default_api_providers([
         normalize_provider(item) for item in providers if isinstance(item, dict)
     ])
+    if GLOBAL_LOOP and GLOBAL_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(publish_provider_config_changed(), GLOBAL_LOOP)
 
 # 依赖注入：把 load_api_providers 交给 access_control 模块，用于动态枚举
 # 画布「AI生成」引擎下的可选模型清单（画布节点访问控制）。避免 access_control
@@ -1482,9 +1542,6 @@ from app.models import (
     WorkflowRunRequest,
     ComfyInstancesPayload,
 )
-
-CANVAS_TASKS: Dict[str, Dict[str, Any]] = {}
-CANVAS_TASK_LOCK = Lock()
 
 # --- 负载均衡 ---
 
@@ -1844,6 +1901,10 @@ def api_headers(json_body=True, provider=None, model=""):
         headers = {"Accept": "application/json", "Authorization": bearer_auth_value(api_key)}
     if json_body:
         headers["Content-Type"] = "application/json"
+    # Most AI gateways accept this standard header, while gateways that do not
+    # implement idempotency safely ignore it. It is stable for an HTTP request
+    # or durable canvas task, so transport retries cannot create a second job.
+    headers["Idempotency-Key"] = retry_operation_id("ai")
     return headers
 
 def selected_model(requested, fallback):
@@ -2657,8 +2718,9 @@ async def jimeng_prepare_local_media(ref_url, kind="image"):
         temp_paths.append(path)
         return path, temp_paths
     if text.startswith(("http://", "https://")):
-        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0), follow_redirects=True) as client:
-            response = await client.get(text)
+        remote_url = validate_external_http_url(text, label="即梦参考素材地址")
+        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)) as client:
+            response = await client.get(remote_url)
             response.raise_for_status()
             clean_path = urllib.parse.urlparse(text).path
             suffix = os.path.splitext(clean_path)[1] or mimetypes.guess_extension(response.headers.get("content-type", "")) or suffix
@@ -3435,7 +3497,7 @@ async def apimart_upload_post(client, upload_url, headers, file_tuple, timeout=6
         try:
             if attempt == 0:
                 return await client.post(upload_url, headers=headers, files=files, timeout=timeout)
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=max(120.0, float(timeout)), write=120.0, pool=20.0), follow_redirects=True) as fresh:
+            async with new_outbound_http_client(timeout=httpx.Timeout(connect=20.0, read=max(120.0, float(timeout)), write=120.0, pool=20.0)) as fresh:
                 return await fresh.post(upload_url, headers=headers, files=files, timeout=timeout)
         except Exception as e:
             if not is_transient_tls_error(e) or attempt == APIMART_UPLOAD_RETRY_ATTEMPTS - 1:
@@ -3861,7 +3923,7 @@ async def upload_video_to_litterbox(path: str, source_url: str) -> Dict[str, str
     time_value = os.getenv("LITTERBOX_TIME", "72h").strip() or "72h"
     ct = content_type_for_path(path)
     try:
-        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=600.0, write=600.0, pool=20.0), follow_redirects=True) as client:
+        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=600.0, write=600.0, pool=20.0)) as client:
             with open(path, "rb") as fh:
                 files = {"fileToUpload": (os.path.basename(path), fh, ct)}
                 data = {"reqtype": "fileupload", "time": time_value}
@@ -3881,7 +3943,7 @@ async def upload_video_to_temp_sh(path: str, source_url: str) -> Dict[str, str]:
     upload_url = os.getenv("TEMP_SH_UPLOAD_URL", "https://temp.sh/upload").strip() or "https://temp.sh/upload"
     ct = content_type_for_path(path)
     try:
-        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=600.0, write=600.0, pool=20.0), follow_redirects=True) as client:
+        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=600.0, write=600.0, pool=20.0)) as client:
             with open(path, "rb") as fh:
                 files = {"file": (os.path.basename(path), fh, ct)}
                 response = await client.post(upload_url, files=files)
@@ -4451,7 +4513,7 @@ def runninghub_extract_outputs(data):
 async def runninghub_store_remote_output(client, remote):
     if not str(remote or "").startswith(("http://", "https://")):
         return remote
-    response = await client.get(remote, follow_redirects=True)
+    response = await client.get(validate_external_http_url(remote, label="RunningHub 输出地址"))
     if not response.is_success:
         raise HTTPException(status_code=502, detail=f"RunningHub 输出下载失败：HTTP {response.status_code}")
     content_type = response.headers.get("content-type", "")
@@ -4844,7 +4906,7 @@ async def runninghub_upload_local_to_filename(client, provider, url):
         with open(path, "rb") as fh:
             content = fh.read()
     elif text.startswith(("http://", "https://")):
-        response = await client.get(text, follow_redirects=True)
+        response = await client.get(validate_external_http_url(text, label="RunningHub 素材地址"))
         response.raise_for_status()
         content = response.content
         content_type = response.headers.get("content-type") or "application/octet-stream"
@@ -5341,7 +5403,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
         reference_images=list(reference_images or []),
         provider=provider,
     )
-    async with provider_operation(provider["id"], "image_generation"):
+    async with provider_operation(provider["id"], "image_generation", user_id=current_user_id()):
         return await IMAGE_ADAPTERS.dispatch(image_adapter_key(provider, request.model), request)
 
 def upstream_message_from_record(item):
@@ -5663,7 +5725,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     filename = "asset.bin"
     content_type = "application/octet-stream"
     content = b""
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0), follow_redirects=True) as client:
+    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0)) as client:
         entry = await run_storage_io(resolve_file_reference, url=source_url) if source_url else None
         path = None if entry else await run_storage_io(runninghub_local_asset_path, source_url)
         if entry:
@@ -5681,7 +5743,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
             with open(path, "rb") as f:
                 content = f.read()
         elif source_url.startswith(("http://", "https://")):
-            response = await client.get(source_url)
+            response = await client.get(validate_external_http_url(source_url, label="素材地址"))
             if not response.is_success:
                 raise HTTPException(status_code=400, detail=f"下载素材失败 HTTP {response.status_code}")
             content = response.content
@@ -5718,7 +5780,7 @@ async def runninghub_upload_asset_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"读取上传素材失败：{exc}") from exc
     if not content:
         raise HTTPException(status_code=400, detail="素材为空，无法上传到 RunningHub")
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0), follow_redirects=True) as client:
+    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0)) as client:
         upload_url = runninghub_endpoint_url(provider, "/task/openapi/upload")
         files = {"file": (filename, content, content_type)}
         data = {"apiKey": api_key, "fileType": "input"}
@@ -5906,11 +5968,21 @@ async def ai_models():
 
 @app.get("/api/providers")
 async def api_providers():
-    return {"providers": public_api_providers(include_credentials=access_control.is_admin(current_user_id()))}
+    from app.services.business_metadata import get_app_setting_with_version
+    _value, version = get_app_setting_with_version("api_providers", [])
+    return {"providers": public_api_providers(include_credentials=access_control.is_admin(current_user_id())), "version": version}
 
 @app.put("/api/providers")
-def save_providers(payload: List[ApiProviderPayload]):
+def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = Header(None, alias="If-Match")):
     require_admin()
+    if if_match is None:
+        raise HTTPException(status_code=428, detail="保存 Provider 配置必须携带 If-Match 版本号，请刷新后重试。")
+    try:
+        expected_version = int(str(if_match or "").strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="If-Match 必须是 Provider 配置版本号") from exc
+    if expected_version < 0:
+        raise HTTPException(status_code=400, detail="If-Match 必须是 Provider 配置版本号")
     providers = []
     env_updates = {}
     # 收集每个 item 的 primary 字段
@@ -5957,7 +6029,14 @@ def save_providers(payload: List[ApiProviderPayload]):
         winner = primary_indices[-1]
         for i, p in enumerate(providers):
             p["primary"] = (i == winner)
-    save_api_providers(providers)
+    from app.services.business_metadata import set_app_setting_if_version
+    version = set_app_setting_if_version("api_providers", providers, expected_version)
+    if version is None:
+        raise HTTPException(status_code=409, detail="Provider 配置已被其他管理员修改，请刷新后再保存。")
+    global _API_PROVIDERS_CACHE
+    _API_PROVIDERS_CACHE = merge_default_api_providers([normalize_provider(item) for item in providers])
+    if GLOBAL_LOOP and GLOBAL_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(publish_provider_config_changed(), GLOBAL_LOOP)
     if env_updates:
         update_env_values(env_updates)
         reload_env_globals()   # 立即将最新 env 值同步回模块全局变量，无需重启
@@ -5968,7 +6047,7 @@ def save_providers(payload: List[ApiProviderPayload]):
         resource_id="global",
         after={"provider_ids": [provider["id"] for provider in providers], "key_fields_changed": len(env_updates)},
     )
-    return {"providers": [public_provider(p, include_credentials=True) for p in providers]}
+    return {"providers": [public_provider(p, include_credentials=True) for p in providers], "version": version}
 
 # --- ModelScope Token (从 env 读取，不再支持通过 UI 修改) ---
 
@@ -6235,7 +6314,7 @@ async def test_provider_connection(payload: TestConnectionPayload):
     except httpx.HTTPError as e:
         if protocol == "volcengine":
             try:
-                async with httpx.AsyncClient(timeout=15) as client:
+                async with new_outbound_http_client(timeout=15) as client:
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                     if detected:
                         message = f"{probe.get('message') or '方舟任务接口可达'}；但模型列表请求失败，已使用默认 Seedance 模型。"
@@ -6421,7 +6500,7 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
     except httpx.HTTPError as e:
         if protocol == "volcengine":
             try:
-                async with httpx.AsyncClient(timeout=15) as client:
+                async with new_outbound_http_client(timeout=15) as client:
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                     if detected:
                         payload = volcengine_default_model_payload(
@@ -6521,7 +6600,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
     }
     await asyncio.to_thread(save_to_history, result)
     if GLOBAL_LOOP:
-        asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
+        asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
     return result
 
 @app.post("/api/online-image")
@@ -6534,7 +6613,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
     task_id = str(payload.task_id or "").strip()
     timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
     try:
-        async with shared_http_client(timeout=timeout, follow_redirects=True) as client:
+        async with shared_http_client(timeout=timeout) as client:
             raw = await fetch_image_task_payload(client, task_id, provider)
     except httpx.HTTPStatusError as exc:
         log_net_error(f"查询生图任务 HTTP状态错误 provider={provider.get('id')} task_id={task_id}", exc)
@@ -6576,7 +6655,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         }
         await asyncio.to_thread(save_to_history, result)
         if GLOBAL_LOOP:
-            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
+            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
         return result
     if status in IMAGE_TASK_FAILED_STATUSES:
         return {
@@ -6596,33 +6675,38 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         "raw": raw,
     }
 
+async def canvas_task_lease_heartbeat(task_id: str, lease_token: str):
+    interval = max(5, REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS)
+    while True:
+        await asyncio.sleep(interval)
+        if not await refresh_canvas_task_lease(task_id, lease_token):
+            return
+
+
 async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
+    lease_token = await claim_canvas_task(task_id, CLIENT_ID)
+    if not lease_token:
+        return
     bind_log_context(task_id=task_id)
     started = time.perf_counter()
     task_logger.info(
         "canvas image task started",
         extra={"event": "task_started", "provider": payload.provider_id, "operation": "image_generation", "status": "running"},
     )
-    with CANVAS_TASK_LOCK:
-        if task_id in CANVAS_TASKS:
-            CANVAS_TASKS[task_id]["status"] = "running"
-            CANVAS_TASKS[task_id]["updated_at"] = time.time()
+    if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
+        await release_canvas_task_claim(task_id, lease_token)
+        return
+    lease_heartbeat = asyncio.create_task(canvas_task_lease_heartbeat(task_id, lease_token))
     try:
         result = await build_online_image_result(payload)
         try:
             quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
         except Exception:
             quota_warning = None
-        with CANVAS_TASK_LOCK:
-            task_data = {
-                "status": "succeeded",
-                "result": result,
-                "error": "",
-                "updated_at": time.time(),
-            }
-            if quota_warning:
-                task_data["quota_warning"] = quota_warning
-            CANVAS_TASKS[task_id].update(task_data)
+        task_data = {"status": "succeeded", "result": result, "error": ""}
+        if quota_warning:
+            task_data["quota_warning"] = quota_warning
+        await update_claimed_canvas_task(task_id, lease_token, **task_data)
         task_logger.info(
             "canvas image task completed",
             extra={"event": "task_completed", "provider": payload.provider_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
@@ -6630,17 +6714,9 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     except JimengPendingError as exc:
         # 即梦云端还在排队：标记为 jimeng_pending，前端据 submit_id 持久续查（任务未丢失）
         info = jimeng_pending_payload(exc)
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
-                "status": "jimeng_pending",
-                "jimeng_pending": True,
-                "submit_id": exc.submit_id,
-                "kind": exc.kind,
-                "queue_info": exc.queue_info,
-                "message": info["message"],
-                "error": "",
-                "updated_at": time.time(),
-            })
+        await update_claimed_canvas_task(task_id, lease_token, status="jimeng_pending", jimeng_pending=True,
+                                 submit_id=exc.submit_id, kind=exc.kind, queue_info=exc.queue_info,
+                                 message=info["message"], error="")
         task_logger.warning(
             "canvas image task remains queued upstream",
             extra={"event": "task_poll_pending", "provider": "jimeng", "operation": "image_generation", "status": "pending", "upstream_task_id": exc.submit_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
@@ -6663,20 +6739,21 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
                 "used_bytes": exc.used_bytes,
                 "incoming_bytes": exc.incoming_bytes,
             })
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update(failure)
+        await update_claimed_canvas_task(task_id, lease_token, **failure)
         task_logger.exception(
             "canvas image task failed",
             extra={"event": "task_failed", "provider": payload.provider_id, "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
+    finally:
+        lease_heartbeat.cancel()
+        await release_canvas_task_claim(task_id, lease_token)
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
     require_model_access(payload.provider_id, payload.model)
     task_id = f"canvas_img_{uuid.uuid4().hex}"
     owner_id = current_user_id()
-    with CANVAS_TASK_LOCK:
-        CANVAS_TASKS[task_id] = {
+    await create_canvas_task({
             "id": task_id,
             "type": "online-image",
             "status": "queued",
@@ -6687,32 +6764,36 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             "provider_id": payload.provider_id,
             "model": payload.model,
             "owner_id": owner_id,
-        }
+            "request": payload.model_dump(mode="json"),
+        })
     task_logger.info(
         "canvas image task submitted",
         extra={"event": "task_submitted", "task_id": task_id, "provider": payload.provider_id, "operation": "image_generation", "status": "queued"},
     )
-    asyncio.create_task(run_canvas_image_task(task_id, payload))
+    await enqueue_canvas_task(task_id)
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/canvas-image-tasks/{task_id}")
 async def get_canvas_image_task(task_id: str):
-    with CANVAS_TASK_LOCK:
-        task = dict(CANVAS_TASKS.get(task_id) or {})
+    task = await get_canvas_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="画布任务不存在，可能服务已重启或任务已过期")
     if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
+    task.pop("request", None)
     return task
 
 async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
+    lease_token = await claim_canvas_task(task_id, CLIENT_ID)
+    if not lease_token:
+        return
     bind_log_context(task_id=task_id)
     started = time.perf_counter()
     task_logger.info("canvas ComfyUI task started", extra={"event": "task_started", "provider": "comfyui", "operation": "image_generation", "status": "running"})
-    with CANVAS_TASK_LOCK:
-        if task_id in CANVAS_TASKS:
-            CANVAS_TASKS[task_id]["status"] = "running"
-            CANVAS_TASKS[task_id]["updated_at"] = time.time()
+    if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
+        await release_canvas_task_claim(task_id, lease_token)
+        return
+    lease_heartbeat = asyncio.create_task(canvas_task_lease_heartbeat(task_id, lease_token))
     try:
         result = await asyncio.to_thread(generate, payload)
         if isinstance(result, dict) and result.get("error"):
@@ -6721,16 +6802,10 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
         except Exception:
             quota_warning = None
-        with CANVAS_TASK_LOCK:
-            task_data = {
-                "status": "succeeded",
-                "result": result,
-                "error": "",
-                "updated_at": time.time(),
-            }
-            if quota_warning:
-                task_data["quota_warning"] = quota_warning
-            CANVAS_TASKS[task_id].update(task_data)
+        task_data = {"status": "succeeded", "result": result, "error": ""}
+        if quota_warning:
+            task_data["quota_warning"] = quota_warning
+        await update_claimed_canvas_task(task_id, lease_token, **task_data)
         task_logger.info(
             "canvas ComfyUI task completed",
             extra={"event": "task_completed", "provider": "comfyui", "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
@@ -6751,19 +6826,20 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
                 "used_bytes": exc.used_bytes,
                 "incoming_bytes": exc.incoming_bytes,
             })
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update(failure)
+        await update_claimed_canvas_task(task_id, lease_token, **failure)
         task_logger.exception(
             "canvas ComfyUI task failed",
             extra={"event": "task_failed", "provider": "comfyui", "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
+    finally:
+        lease_heartbeat.cancel()
+        await release_canvas_task_claim(task_id, lease_token)
 
 @app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(payload: GenerateRequest):
     task_id = f"canvas_comfy_{uuid.uuid4().hex}"
     owner_id = current_user_id()
-    with CANVAS_TASK_LOCK:
-        CANVAS_TASKS[task_id] = {
+    await create_canvas_task({
             "id": task_id,
             "type": "comfy",
             "status": "queued",
@@ -6773,23 +6849,95 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
             "error": "",
             "workflow_json": payload.workflow_json,
             "owner_id": owner_id,
-        }
+            "request": payload.model_dump(mode="json"),
+        })
     task_logger.info(
         "canvas ComfyUI task submitted",
         extra={"event": "task_submitted", "task_id": task_id, "provider": "comfyui", "operation": "image_generation", "status": "queued"},
     )
-    asyncio.create_task(run_canvas_comfy_task(task_id, payload))
+    await enqueue_canvas_task(task_id)
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")
 async def get_canvas_comfy_task(task_id: str):
-    with CANVAS_TASK_LOCK:
-        task = dict(CANVAS_TASKS.get(task_id) or {})
+    task = await get_canvas_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在，可能服务已重启或任务已过期")
     if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
+    task.pop("request", None)
     return task
+
+
+async def recover_canvas_tasks_once():
+    for task in await list_recoverable_canvas_tasks():
+        if task.get("status") == "running":
+            if not await has_canvas_task_claim(task["id"]):
+                await update_canvas_task(
+                    task["id"], status="interrupted",
+                    error="执行 worker 已失联；为避免重复提交上游任务，未自动重试。",
+                )
+            continue
+        request = task.get("request")
+        if not isinstance(request, dict):
+            await update_canvas_task(task["id"], status="failed", error="任务恢复数据缺失")
+            continue
+        try:
+            await enqueue_canvas_task(task["id"])
+        except Exception:
+            logger.exception("canvas task recovery failed", extra={"event": "task_recovery_failed", "task_id": task.get("id")})
+
+
+async def canvas_task_recovery_loop():
+    while True:
+        try:
+            await recover_canvas_tasks_once()
+        except RedisUnavailableError:
+            logger.exception("canvas task recovery storage unavailable", extra={"event": "task_recovery_storage_failed"})
+        except Exception:
+            logger.exception("canvas task recovery loop failed", extra={"event": "task_recovery_failed"})
+        await asyncio.sleep(REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS)
+
+
+async def execute_canvas_task(task_id: str):
+    task = await get_canvas_task(task_id)
+    if not task or task.get("status") != "queued":
+        return
+    request = task.get("request")
+    if not isinstance(request, dict):
+        await update_canvas_task(task_id, status="failed", error="任务执行数据缺失")
+        return
+    context_token = current_user_var.set(str(task.get("owner_id") or ""))
+    try:
+        if task.get("type") == "online-image":
+            await run_canvas_image_task(task_id, OnlineImageRequest.model_validate(request))
+        elif task.get("type") == "comfy":
+            await run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request))
+        else:
+            await update_canvas_task(task_id, status="failed", error="不支持的画布任务类型")
+    finally:
+        current_user_var.reset(context_token)
+
+
+async def canvas_task_worker_loop():
+    while True:
+        try:
+            messages = await reclaim_canvas_task_messages(CLIENT_ID)
+            if not messages:
+                messages = await dequeue_canvas_tasks(CLIENT_ID)
+            for message_id, task_id in messages:
+                try:
+                    await execute_canvas_task(task_id)
+                    await acknowledge_canvas_task(message_id)
+                    await release_canvas_task_dispatch(task_id)
+                except Exception:
+                    logger.exception("canvas task worker execution failed", extra={"event": "task_worker_failed", "task_id": task_id})
+        except RedisUnavailableError:
+            logger.exception("canvas task worker storage unavailable", extra={"event": "task_worker_storage_failed"})
+            await asyncio.sleep(REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS)
+        except Exception:
+            logger.exception("canvas task worker loop failed", extra={"event": "task_worker_loop_failed"})
+            await asyncio.sleep(REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS)
 
 # --- Canvas Video ---
 
@@ -7099,10 +7247,7 @@ def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
     suffix_text = " ".join(suffixes)
     return f"{text} {suffix_text}".strip() if text else suffix_text
 
-@app.post("/api/canvas-video")
-async def canvas_video(payload: CanvasVideoRequest):
-    require_model_access(payload.provider_id, payload.model)
-    provider = get_api_provider(payload.provider_id)
+async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     if is_jimeng_provider(provider):
         return await generate_jimeng_video(payload, provider)
     base_url = video_api_root(provider)
@@ -7458,6 +7603,14 @@ async def canvas_video(payload: CanvasVideoRequest):
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
 
+
+@app.post("/api/canvas-video")
+async def canvas_video(payload: CanvasVideoRequest):
+    require_model_access(payload.provider_id, payload.model)
+    provider = get_api_provider(payload.provider_id)
+    async with provider_operation(provider["id"], "video_generation", user_id=current_user_id()):
+        return await _canvas_video_impl(payload, provider)
+
 # --- Caption Rules (per-user) ---
 
 _CAPTION_RULES_BUILTIN = None
@@ -7515,10 +7668,8 @@ def save_expand_rules(payload: dict):
 
 # --- Canvas LLM ---
 
-@app.post("/api/canvas-llm")
-async def canvas_llm(payload: CanvasLLMRequest):
+async def _canvas_llm_impl(payload: CanvasLLMRequest):
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
-    require_model_access(payload.provider, model)
     _llm_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
     system_prompt = (payload.system_prompt or "").strip()
     upstream_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
@@ -7610,6 +7761,15 @@ async def canvas_llm(payload: CanvasLLMRequest):
         raise HTTPException(status_code=502, detail=f"解析上游响应失败：{exc}") from exc
     text = "".join(content_parts_acc).strip() or "接口返回了空回复。"
     return {"text": text, "model": model, "raw_usage": raw_usage}
+
+
+@app.post("/api/canvas-llm")
+async def canvas_llm(payload: CanvasLLMRequest):
+    _chat_base, _chat_headers, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    require_model_access(payload.provider, model)
+    provider_id = payload.provider if payload.provider != "modelscope" else "modelscope"
+    async with provider_operation(provider_id, "llm", user_id=current_user_id()):
+        return await _canvas_llm_impl(payload)
 
 # --- 对话管理 ---
 # 路由已迁移至 app/routers/conversations.py，通过 app.include_router 注册。
@@ -8039,17 +8199,19 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             if msg:
                 upstream_messages.append(msg)
         try:
-            async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
-                conv_req_body = {"model": model, "messages": upstream_messages}
-                if _conv_is_apimart:
-                    conv_req_body["stream"] = False
-                response = await client.post(
-                    f"{chat_base}/chat/completions",
-                    headers=chat_hdrs,
-                    json=conv_req_body,
-                )
-                response.raise_for_status()
-                raw = response.json()
+            provider_id = payload.provider if payload.provider != "modelscope" else "modelscope"
+            async with provider_operation(provider_id, "llm", user_id=user_id):
+                async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
+                    conv_req_body = {"model": model, "messages": upstream_messages}
+                    if _conv_is_apimart:
+                        conv_req_body["stream"] = False
+                    response = await client.post(
+                        f"{chat_base}/chat/completions",
+                        headers=chat_hdrs,
+                        json=conv_req_body,
+                    )
+                    response.raise_for_status()
+                    raw = response.json()
         except httpx.HTTPStatusError as exc:
             body = exc.response.text or ""
             friendly = friendly_chat_error_detail(body, model, _conv_provider)
@@ -8112,36 +8274,40 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         raw_usage = None
         yield sse_event({"type": "meta", "conversation": conversation})
         try:
-            async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
-                async with client.stream(
-                    "POST",
-                    f"{chat_base}/chat/completions",
-                    headers=chat_hdrs,
-                    json={"model": model, "messages": upstream_messages, "stream": True},
-                ) as response:
-                    if response.status_code >= 400:
-                        detail = await response.aread()
-                        body = detail.decode("utf-8", errors="ignore")
-                        friendly = friendly_chat_error_detail(body, model, _stream_provider)
-                        yield sse_event({"type": "error", "detail": friendly or f"上游接口错误：{body}"})
-                        return
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        if line.startswith("data:"):
-                            line = line[5:].strip()
-                        if line == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if isinstance(chunk, dict) and chunk.get("usage"):
-                            raw_usage = chunk.get("usage")
-                        delta = text_delta_from_chat_chunk(chunk)
-                        if delta:
-                            content_parts.append(delta)
-                            yield sse_event({"type": "delta", "delta": delta})
+            provider_id = payload.provider if payload.provider != "modelscope" else "modelscope"
+            async with provider_operation(provider_id, "llm", user_id=user_id):
+                async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{chat_base}/chat/completions",
+                        headers=chat_hdrs,
+                        json={"model": model, "messages": upstream_messages, "stream": True},
+                    ) as response:
+                        if response.status_code >= 400:
+                            detail = await response.aread()
+                            body = detail.decode("utf-8", errors="ignore")
+                            friendly = friendly_chat_error_detail(body, model, _stream_provider)
+                            raise HTTPException(status_code=response.status_code, detail=friendly or f"上游接口错误：{body}")
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            if line.startswith("data:"):
+                                line = line[5:].strip()
+                            if line == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            if isinstance(chunk, dict) and chunk.get("usage"):
+                                raw_usage = chunk.get("usage")
+                            delta = text_delta_from_chat_chunk(chunk)
+                            if delta:
+                                content_parts.append(delta)
+                                yield sse_event({"type": "delta", "delta": delta})
+        except HTTPException as exc:
+            yield sse_event({"type": "error", "detail": str(exc.detail)})
+            return
         except httpx.HTTPError as exc:
             yield sse_event({"type": "error", "detail": f"请求上游接口失败：{exc}"})
             return
@@ -8213,22 +8379,22 @@ async def poll_angle_cloud(req: CloudPollRequest):
                     record = {"timestamp": time.time(), "prompt": f"Resumed {task_id}", "images": [local_path], "type": "angle"}
                     await asyncio.to_thread(save_to_history, record)
                     if req.client_id:
-                        await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
+                        await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id, current_user_id())
                     return await _attach_quota_warning_async(await run_storage_io(media_response_item, local_path, "", "image"))
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     if req.client_id:
-                        await manager.send_personal_message({"type": "cloud_status", "status": "FAILED", "task_id": task_id}, req.client_id)
+                        await manager.send_personal_message({"type": "cloud_status", "status": "FAILED", "task_id": task_id}, req.client_id, current_user_id())
                     raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
 
                 if i % 5 == 0 and req.client_id:
                     await manager.send_personal_message({
                         "type": "cloud_status", "status": f"{status} ({i}/300)",
                         "task_id": task_id, "progress": i, "total": 300
-                    }, req.client_id)
+                    }, req.client_id, current_user_id())
 
             if req.client_id:
-                await manager.send_personal_message({"type": "cloud_status", "status": "TIMEOUT", "task_id": task_id}, req.client_id)
+                await manager.send_personal_message({"type": "cloud_status", "status": "TIMEOUT", "task_id": task_id}, req.client_id, current_user_id())
             return {"status": "timeout", "task_id": task_id, "message": "Task still pending"}
 
     except HTTPException:
@@ -8301,26 +8467,26 @@ async def generate_angle_cloud(req: CloudGenRequest):
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "angle"}
                     await asyncio.to_thread(save_to_history, record)
                     if req.client_id:
-                        await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
+                        await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id, current_user_id())
                     if GLOBAL_LOOP:
-                        asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
+                        asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record, current_user_id()), GLOBAL_LOOP)
                     item = await run_storage_io(media_response_item, local_path, "", "image")
                     item["task_id"] = task_id
                     return await _attach_quota_warning_async(item)
 
                 elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
                     if req.client_id:
-                        await manager.send_personal_message({"type": "cloud_status", "status": "FAILED", "task_id": task_id}, req.client_id)
+                        await manager.send_personal_message({"type": "cloud_status", "status": "FAILED", "task_id": task_id}, req.client_id, current_user_id())
                     raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
 
                 if i % 5 == 0 and req.client_id:
                     await manager.send_personal_message({
                         "type": "cloud_status", "status": f"{status} ({i}/300)",
                         "task_id": task_id, "progress": i, "total": 300
-                    }, req.client_id)
+                    }, req.client_id, current_user_id())
 
             if req.client_id:
-                await manager.send_personal_message({"type": "cloud_status", "status": "TIMEOUT", "task_id": task_id}, req.client_id)
+                await manager.send_personal_message({"type": "cloud_status", "status": "TIMEOUT", "task_id": task_id}, req.client_id, current_user_id())
             return {"status": "timeout", "task_id": task_id, "message": "Task still pending"}
 
     except HTTPException:
@@ -8400,7 +8566,7 @@ async def generate_cloud(req: CloudGenRequest):
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "cloud"}
                     await asyncio.to_thread(save_to_history, record)
                     try:
-                        await manager.broadcast_new_image(record)
+                        await manager.broadcast_new_image(record, current_user_id())
                     except Exception:
                         pass
                     return await _attach_quota_warning_async(await run_storage_io(media_response_item, local_path, "", "image"))
@@ -8502,7 +8668,7 @@ async def ms_generate(req: MsGenerateRequest):
                         }
                         await asyncio.to_thread(save_to_history, record)
                         if GLOBAL_LOOP:
-                            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
+                            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record, current_user_id()), GLOBAL_LOOP)
                         item = await run_storage_io(media_response_item, local_path, "", "image")
                         item["task_id"] = task_id
                         return await _attach_quota_warning_async(item)
@@ -8718,7 +8884,7 @@ def generate(req: GenerateRequest):
         }
         save_to_history(result)
         if GLOBAL_LOOP:
-            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
+            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
         return result
 
     except Exception as e:

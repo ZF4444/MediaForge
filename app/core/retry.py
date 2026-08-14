@@ -27,5 +27,9 @@ def retry_delay_seconds(failed_attempt: int) -> float:
 
 
 def retry_operation_id(prefix: str) -> str:
-    request_id = str(get_log_context().get("request_id") or "").strip()
-    return request_id or f"{prefix}_{uuid.uuid4().hex}"
+    context = get_log_context()
+    request_id = str(context.get("request_id") or "").strip()
+    task_id = str(context.get("task_id") or "").strip()
+    # Background workers do not have an HTTP request ID. Their durable task ID
+    # is the correct idempotency scope across worker restarts and retries.
+    return request_id or task_id or f"{prefix}_{uuid.uuid4().hex}"

@@ -83,8 +83,9 @@ CREATE TABLE IF NOT EXISTS smart_canvas_node_files (
 CREATE INDEX IF NOT EXISTS idx_smart_canvas_node_files_file ON smart_canvas_node_files(file_id);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL DEFAULT 1
 );
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id TEXT NOT NULL, key TEXT NOT NULL, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id, key)
@@ -190,12 +191,36 @@ def get_app_setting(key: str, default: Any = None) -> Any:
     return row["value_json"] if row else default
 
 
+def get_app_setting_with_version(key: str, default: Any = None) -> tuple[Any, int]:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT value_json,version FROM app_settings WHERE key=%s", (key,))
+        row = cur.fetchone()
+    return (row["value_json"], int(row["version"])) if row else (default, 0)
+
+
 def set_app_setting(key: str, value: Any) -> Any:
     from app.core.utils import now_ms
     now = now_ms()
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO app_settings(key,value_json,created_at,updated_at) VALUES(%s,%s,%s,%s) ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=EXCLUDED.updated_at", (key, json_value(value), now, now))
+        cur.execute("INSERT INTO app_settings(key,value_json,created_at,updated_at) VALUES(%s,%s,%s,%s) ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=EXCLUDED.updated_at,version=app_settings.version+1", (key, json_value(value), now, now))
     return value
+
+
+def set_app_setting_if_version(key: str, value: Any, expected_version: int) -> int | None:
+    """Compare-and-set an application setting and return its next version."""
+    from app.core.utils import now_ms
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO app_settings(key,value_json,created_at,updated_at,version)
+               VALUES(%s,%s,%s,%s,1)
+               ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,
+                   updated_at=EXCLUDED.updated_at,version=app_settings.version+1
+               WHERE app_settings.version=%s RETURNING version""",
+            (key, json_value(value), now, now, expected_version),
+        )
+        row = cur.fetchone()
+    return int(row["version"]) if row else None
 
 
 def get_user_setting(user_id: str, key: str, default: Any = None) -> Any:

@@ -10,7 +10,7 @@
 | uv | 最新版 | Python 依赖管理 |
 | Node.js / npm | Node.js 18+ | 前端模块构建 |
 | PostgreSQL | 14+ | 用户、会话和元数据存储 |
-| Redis | 6+ | 会话缓存和实时状态 |
+| Redis | 6.2+ | 会话缓存、画布任务队列和崩溃消息接管 |
 | MinIO | 最新稳定版 | 图片、视频和素材存储 |
 | FFmpeg | 5.0+ | 视频封面、抽帧和视频理解 |
 
@@ -165,6 +165,45 @@ uv run python main.py --host 0.0.0.0 --port 3000
 ```bash
 uv run uvicorn main:app --host 0.0.0.0 --port 3000 --workers 1
 ```
+
+画布生成任务使用 Redis Streams 持久化。单进程部署保持默认即可；多 API
+worker 部署时，API 进程必须关闭任务消费和恢复扫描，并单独启动一个或多个
+任务 worker：
+
+```bash
+# API 副本：只处理 HTTP/WebSocket
+CANVAS_TASK_WORKER_ENABLED=false CANVAS_TASK_RECOVERY_ENABLED=false \
+  uv run uvicorn main:app --host 0.0.0.0 --port 3000 --workers 2
+
+# 独立任务进程：消费 Redis Streams、接管崩溃 worker 的 pending 消息并恢复排队任务
+uv run python -m app.workers.canvas
+```
+
+相关 Redis 参数可通过环境变量调整：`REDIS_CANVAS_TASK_LEASE_SECONDS`、
+`REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS`、`REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS`
+和 `REDIS_CANVAS_TASK_STREAM_MAXLEN`。pending 接管阈值应大于正常任务启动前的
+最大停顿时间，且不要小于租约刷新间隔。
+
+任务 worker 的租约值是一次执行一换的 fencing token。任务状态和结果仅允许当前 token
+通过 Redis 原子脚本写入；已失租的 worker 即使随后返回，也不会覆盖接管者的结果。对于不支持
+查询上游任务 ID 的供应商，`running` 任务在 worker 失联后会标记为 `interrupted`，不会自动重投，
+以避免重复生成和计费。上游请求同时携带稳定的 `Idempotency-Key`（HTTP 请求 ID 或画布任务 ID）。
+
+AI Provider 默认通过 Redis 进行跨进程限流与熔断。可按 Provider 设置
+`AI_PROVIDER_<ID>_REQUESTS_PER_WINDOW`、`AI_PROVIDER_<ID>_USER_REQUESTS_PER_WINDOW`、
+`AI_PROVIDER_<ID>_CIRCUIT_FAILURE_THRESHOLD` 和
+`AI_PROVIDER_<ID>_CIRCUIT_COOLDOWN_SECONDS`；全局同名变量可作为默认值。
+
+Provider 配置保存后会通过 Redis 立即使各进程缓存失效；
+`PROVIDER_CONFIG_CACHE_REFRESH_SECONDS`（默认 30 秒）是 Pub/Sub 短暂断线时的最终一致性兜底。
+Provider 设置页会携带配置版本进行条件保存；多位管理员同时修改时，后提交的一方会收到冲突提示，
+必须刷新后重新合并，避免静默覆盖。该版本锁当前保护 Provider 元数据；API Key 仍由受权限保护的
+环境配置管理，生产部署应把它们进一步迁入 Secret Manager 或加密数据库字段。
+
+Provider Base URL 只能直接指向公网可路由地址。服务会在每次建立 TCP 连接时重新解析并固定
+该次连接使用的 IP，以阻断 DNS 重绑定；已废弃的 `AI_PROVIDER_ALLOWED_HOSTS` 不再放行内网地址。
+确需访问私有上游时，应配置受控出网代理 `AI_OUTBOUND_PROXY=http://proxy.example:3128`，并由该代理
+实施目标地址 allowlist、DNS 解析与重定向校验；不要将它指向未经隔离的通用代理。
 
 推荐使用 systemd 管理服务：
 

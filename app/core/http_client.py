@@ -17,19 +17,21 @@ applies the call site's original timeout/follow_redirects as defaults on
 individual calls override them exactly as before. No new connection or TLS
 handshake is created, and ``__aexit__`` does not close the shared client.
 
-A small number of call sites intentionally build a throwaway
-``httpx.AsyncClient`` to retry with a brand-new connection after a suspected
-TLS/connection-level failure. Those must keep constructing their own
-short-lived client (``httpx.AsyncClient(...)`` directly) and must not be
-migrated to ``shared_http_client``.
+A small number of call sites need a throwaway connection after a suspected
+TLS/connection-level failure. They use ``new_outbound_http_client`` so the
+fresh connection retains the same DNS-rebinding protection as the shared
+client.
 """
 
 from __future__ import annotations
 
+import os
 from types import TracebackType
 from typing import Any
 
 import httpx
+import httpcore
+from httpcore._backends.auto import AutoBackend
 
 from app.config import (
     HTTP_CLIENT_KEEPALIVE_CONNECTIONS,
@@ -40,10 +42,53 @@ from app.config import (
     HTTP_CLIENT_TIMEOUT_WRITE_SECONDS,
 )
 from app.core.logging import get_logger
+from app.core.outbound import OutboundAddressError, resolve_public_host_addresses
 
 logger = get_logger("http_client")
 _CLIENT: httpx.AsyncClient | None = None
 _UNSET = object()
+
+
+class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
+    """Resolve, validate, then connect to the exact IP selected for this TCP socket."""
+
+    def __init__(self, delegate: httpcore.AsyncNetworkBackend | None = None) -> None:
+        self._delegate = delegate or AutoBackend()
+
+    async def connect_tcp(self, host: str, port: int, timeout=None, local_address=None, socket_options=None):
+        try:
+            addresses = resolve_public_host_addresses(host, port)
+        except OutboundAddressError as exc:
+            raise httpcore.ConnectError(f"outbound destination rejected: {exc}") from exc
+        last_error = None
+        for address in addresses:
+            try:
+                return await self._delegate.connect_tcp(
+                    address, port, timeout=timeout, local_address=local_address, socket_options=socket_options,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_error = exc
+        assert last_error is not None
+        raise last_error
+
+    async def connect_unix_socket(self, path: str, timeout=None, socket_options=None):
+        return await self._delegate.connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
+
+    async def sleep(self, seconds: float) -> None:
+        await self._delegate.sleep(seconds)
+
+
+class _PinnedAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    """httpx transport backed by a DNS-pinning httpcore network backend."""
+
+    def __init__(self, *, limits: httpx.Limits) -> None:
+        super().__init__(limits=limits, trust_env=False)
+        self._pool = httpcore.AsyncConnectionPool(
+            max_connections=limits.max_connections,
+            max_keepalive_connections=limits.max_keepalive_connections,
+            keepalive_expiry=limits.keepalive_expiry,
+            network_backend=_PinnedNetworkBackend(),
+        )
 
 
 class HttpClientUnavailableError(RuntimeError):
@@ -155,22 +200,39 @@ def shared_http_client(*, timeout: Any = _UNSET, follow_redirects: Any = _UNSET)
     return _SharedHttpClientContext(timeout=timeout, follow_redirects=follow_redirects)
 
 
+def new_outbound_http_client(*, timeout: Any, follow_redirects: bool = False) -> httpx.AsyncClient:
+    """Create an isolated outbound client with the standard egress safeguards.
+
+    This is reserved for recovery paths that must discard a potentially bad
+    pooled connection. Provider calls must not construct ``httpx.AsyncClient``
+    directly, because direct transports can resolve a hostname again after the
+    endpoint validator accepted it.
+    """
+    limits = httpx.Limits(max_connections=1, max_keepalive_connections=0)
+    outbound_proxy = str(os.getenv("AI_OUTBOUND_PROXY", "")).strip()
+    transport = (
+        httpx.AsyncHTTPTransport(limits=limits, proxy=outbound_proxy, trust_env=False)
+        if outbound_proxy else _PinnedAsyncHTTPTransport(limits=limits)
+    )
+    return httpx.AsyncClient(timeout=timeout, transport=transport, follow_redirects=follow_redirects)
+
+
 async def open_http_client() -> httpx.AsyncClient:
     """Create the process-local shared client during application startup."""
     global _CLIENT
     if _CLIENT is not None:
         return _CLIENT
 
-    client = httpx.AsyncClient(
+    limits = httpx.Limits(
+        max_connections=HTTP_CLIENT_MAX_CONNECTIONS,
+        max_keepalive_connections=HTTP_CLIENT_KEEPALIVE_CONNECTIONS,
+    )
+    client = new_outbound_http_client(
         timeout=httpx.Timeout(
             connect=HTTP_CLIENT_TIMEOUT_CONNECT_SECONDS,
             read=HTTP_CLIENT_TIMEOUT_READ_SECONDS,
             write=HTTP_CLIENT_TIMEOUT_WRITE_SECONDS,
             pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
-        ),
-        limits=httpx.Limits(
-            max_connections=HTTP_CLIENT_MAX_CONNECTIONS,
-            max_keepalive_connections=HTTP_CLIENT_KEEPALIVE_CONNECTIONS,
         ),
         follow_redirects=False,
     )
@@ -206,4 +268,3 @@ async def close_http_client() -> None:
         return
     await client.aclose()
     logger.info("shared HTTP client closed", extra={"event": "http_client_closed"})
-

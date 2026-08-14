@@ -5,6 +5,7 @@ if(isRunningHubAppsPage) document.body.classList.add('runninghub-apps-page');
 if(isEmbeddedApiSettings) document.body.classList.add('embedded-api-settings');
 
 let providers = [];
+let providersVersion = null;
 let selectedId = '';
 const providerList = document.getElementById('providerList');
 const editorTitle = document.getElementById('editorTitle');
@@ -1012,6 +1013,7 @@ async function loadProviders(){
     try {
         const data = await fetch('/api/providers').then(r => r.json());
         providers = data.providers || [];
+        providersVersion = Number.isInteger(data.version) ? data.version : null;
         selectedId = isRunningHubAppsPage
             ? providers.find(item => item.id === 'runninghub')?.id || ''
             : sortedProviders()[0]?.id || '';
@@ -1055,9 +1057,13 @@ async function saveProviders(){
     }
     setStatus(tr('api.saving'));
     try {
+        if(providersVersion === null){
+            await loadProviders();
+            throw new Error('Provider configuration version is unavailable; reload before saving.');
+        }
         const res = await fetch('/api/providers', {
             method:'PUT',
-            headers:{'Content-Type':'application/json'},
+            headers:{'Content-Type':'application/json', 'If-Match':String(providersVersion)},
             body:JSON.stringify(providers.map(item => ({
                 id:item.id,
                 name:item.name,
@@ -1088,6 +1094,7 @@ async function saveProviders(){
         if(!res.ok) throw new Error((await res.json()).detail || tr('api.saveFailed'));
         const data = await res.json();
         providers = data.providers || providers;
+        providersVersion = Number.isInteger(data.version) ? data.version : providersVersion;
         providers.forEach(item => {
             delete item.api_key;
             delete item.volcengine_access_key_id;

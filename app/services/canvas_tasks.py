@@ -1,0 +1,299 @@
+"""Redis-backed state and leases for asynchronous canvas generation tasks."""
+
+from __future__ import annotations
+
+import json
+import time
+import uuid
+from typing import Any
+
+from redis.exceptions import RedisError
+
+from app.config import (
+    REDIS_CANVAS_TASK_LEASE_SECONDS,
+    REDIS_CANVAS_TASK_PREFIX,
+    REDIS_CANVAS_TASK_CONSUMER_GROUP,
+    REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS,
+    REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS,
+    REDIS_CANVAS_TASK_STREAM,
+    REDIS_CANVAS_TASK_STREAM_MAXLEN,
+    REDIS_CANVAS_TASK_TTL_SECONDS,
+)
+from app.core.redis_client import RedisUnavailableError, get_redis_client
+
+
+_INDEX_KEY = f"{REDIS_CANVAS_TASK_PREFIX}active"
+_REFRESH_LEASE_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
+_RELEASE_LEASE_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+_UPDATE_CLAIMED_TASK_SCRIPT = """
+-- TASK_UPDATE_IF_CLAIMED
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then
+  return false
+end
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return false
+end
+local record = cjson.decode(raw)
+local changes = cjson.decode(ARGV[2])
+for key, value in pairs(changes) do
+  record[key] = value
+end
+record['updated_at'] = tonumber(ARGV[3])
+local encoded = cjson.encode(record)
+redis.call('SET', KEYS[1], encoded, 'EX', ARGV[4])
+if record['status'] == 'queued' or record['status'] == 'running' then
+  redis.call('ZADD', KEYS[3], tonumber(ARGV[3]) + tonumber(ARGV[4]), ARGV[5])
+else
+  redis.call('ZREM', KEYS[3], ARGV[5])
+end
+return encoded
+"""
+
+
+def _task_key(task_id: str) -> str:
+    return f"{REDIS_CANVAS_TASK_PREFIX}{task_id}"
+
+
+def _lease_key(task_id: str) -> str:
+    return f"{REDIS_CANVAS_TASK_PREFIX}lease:{task_id}"
+
+
+def _dispatch_key(task_id: str) -> str:
+    return f"{REDIS_CANVAS_TASK_PREFIX}dispatch:{task_id}"
+
+
+def _unavailable(operation: str, exc: BaseException) -> RedisUnavailableError:
+    return RedisUnavailableError(f"Redis 画布任务存储不可用（{operation}）")
+
+
+async def create_canvas_task(task: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(task["id"])
+    now = time.time()
+    record = {**task, "created_at": task.get("created_at", now), "updated_at": task.get("updated_at", now)}
+    client = get_redis_client()
+    try:
+        pipeline = client.pipeline(transaction=False)
+        pipeline.set(_task_key(task_id), json.dumps(record, separators=(",", ":")), ex=REDIS_CANVAS_TASK_TTL_SECONDS)
+        pipeline.zadd(_INDEX_KEY, {task_id: now + REDIS_CANVAS_TASK_TTL_SECONDS})
+        await pipeline.execute()
+    except RedisError as exc:
+        raise _unavailable("create", exc) from exc
+    return record
+
+
+async def get_canvas_task(task_id: str) -> dict[str, Any] | None:
+    client = get_redis_client()
+    try:
+        raw = await client.get(_task_key(task_id))
+    except RedisError as exc:
+        raise _unavailable("read", exc) from exc
+    if not raw:
+        return None
+    try:
+        record = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+async def update_canvas_task(task_id: str, **changes: Any) -> dict[str, Any] | None:
+    record = await get_canvas_task(task_id)
+    if record is None:
+        return None
+    record.update(changes)
+    record["updated_at"] = time.time()
+    client = get_redis_client()
+    try:
+        await client.set(_task_key(task_id), json.dumps(record, separators=(",", ":")), ex=REDIS_CANVAS_TASK_TTL_SECONDS)
+        if record.get("status") in {"queued", "running"}:
+            await client.zadd(_INDEX_KEY, {task_id: record["updated_at"] + REDIS_CANVAS_TASK_TTL_SECONDS})
+        else:
+            await client.zrem(_INDEX_KEY, task_id)
+    except RedisError as exc:
+        raise _unavailable("update", exc) from exc
+    return record
+
+
+async def update_claimed_canvas_task(
+    task_id: str, lease_token: str, **changes: Any,
+) -> dict[str, Any] | None:
+    """Atomically persist a worker result only while it owns the task lease.
+
+    ``lease_token`` is a fencing token, not a stable worker ID. A worker that
+    wakes after its lease expired cannot overwrite output written by the worker
+    that subsequently acquired the task.
+    """
+    now = time.time()
+    client = get_redis_client()
+    try:
+        raw = await client.eval(
+            _UPDATE_CLAIMED_TASK_SCRIPT,
+            3,
+            _task_key(task_id),
+            _lease_key(task_id),
+            _INDEX_KEY,
+            lease_token,
+            json.dumps(changes, separators=(",", ":")),
+            now,
+            REDIS_CANVAS_TASK_TTL_SECONDS,
+            task_id,
+        )
+    except RedisError as exc:
+        raise _unavailable("claimed_update", exc) from exc
+    if not raw:
+        return None
+    try:
+        record = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+async def claim_canvas_task(task_id: str, worker_id: str) -> str | None:
+    """Acquire a lease and return a per-attempt fencing token."""
+    client = get_redis_client()
+    lease_token = f"{worker_id}:{uuid.uuid4().hex}"
+    try:
+        claimed = await client.set(_lease_key(task_id), lease_token, nx=True, ex=REDIS_CANVAS_TASK_LEASE_SECONDS)
+        return lease_token if claimed else None
+    except RedisError as exc:
+        raise _unavailable("claim", exc) from exc
+
+
+async def refresh_canvas_task_lease(task_id: str, worker_id: str) -> bool:
+    client = get_redis_client()
+    try:
+        return bool(await client.eval(
+            _REFRESH_LEASE_SCRIPT, 1, _lease_key(task_id), worker_id, REDIS_CANVAS_TASK_LEASE_SECONDS,
+        ))
+    except RedisError as exc:
+        raise _unavailable("lease_refresh", exc) from exc
+
+
+async def release_canvas_task_claim(task_id: str, worker_id: str) -> None:
+    client = get_redis_client()
+    try:
+        await client.eval(_RELEASE_LEASE_SCRIPT, 1, _lease_key(task_id), worker_id)
+    except RedisError as exc:
+        raise _unavailable("release", exc) from exc
+
+
+async def has_canvas_task_claim(task_id: str) -> bool:
+    client = get_redis_client()
+    try:
+        return bool(await client.get(_lease_key(task_id)))
+    except RedisError as exc:
+        raise _unavailable("lease_read", exc) from exc
+
+
+async def ensure_canvas_task_consumer_group() -> None:
+    client = get_redis_client()
+    try:
+        try:
+            await client.xgroup_create(REDIS_CANVAS_TASK_STREAM, REDIS_CANVAS_TASK_CONSUMER_GROUP, id="0", mkstream=True)
+        except RedisError as exc:
+            if "BUSYGROUP" not in str(exc):
+                raise
+    except RedisError as exc:
+        raise _unavailable("consumer_group", exc) from exc
+
+
+async def enqueue_canvas_task(task_id: str) -> str:
+    client = get_redis_client()
+    try:
+        claimed = await client.set(
+            _dispatch_key(task_id), "1", nx=True, ex=REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS,
+        )
+        if not claimed:
+            return ""
+        try:
+            return str(await client.xadd(
+                REDIS_CANVAS_TASK_STREAM, {"task_id": task_id}, maxlen=REDIS_CANVAS_TASK_STREAM_MAXLEN,
+                approximate=True,
+            ))
+        except RedisError:
+            await client.delete(_dispatch_key(task_id))
+            raise
+    except RedisError as exc:
+        raise _unavailable("enqueue", exc) from exc
+
+
+async def dequeue_canvas_tasks(consumer_id: str, *, block_ms: int = 1000) -> list[tuple[str, str]]:
+    client = get_redis_client()
+    try:
+        messages = await client.xreadgroup(
+            REDIS_CANVAS_TASK_CONSUMER_GROUP, consumer_id,
+            {REDIS_CANVAS_TASK_STREAM: ">"}, count=1, block=block_ms,
+        )
+    except RedisError as exc:
+        raise _unavailable("dequeue", exc) from exc
+    return [
+        (str(message_id), str(fields.get("task_id") or ""))
+        for _stream, entries in messages or []
+        for message_id, fields in entries
+        if fields.get("task_id")
+    ]
+
+
+async def reclaim_canvas_task_messages(consumer_id: str) -> list[tuple[str, str]]:
+    """Claim pending messages from workers that stopped making progress."""
+    client = get_redis_client()
+    try:
+        claimed = await client.xautoclaim(
+            REDIS_CANVAS_TASK_STREAM,
+            REDIS_CANVAS_TASK_CONSUMER_GROUP,
+            consumer_id,
+            min_idle_time=REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS,
+            start_id="0-0",
+            count=1,
+        )
+    except RedisError as exc:
+        raise _unavailable("pending_claim", exc) from exc
+    entries = claimed[1] if isinstance(claimed, (tuple, list)) and len(claimed) > 1 else []
+    return [
+        (str(message_id), str(fields.get("task_id") or ""))
+        for message_id, fields in entries or []
+        if fields.get("task_id")
+    ]
+
+
+async def acknowledge_canvas_task(message_id: str) -> None:
+    client = get_redis_client()
+    try:
+        await client.xack(REDIS_CANVAS_TASK_STREAM, REDIS_CANVAS_TASK_CONSUMER_GROUP, message_id)
+    except RedisError as exc:
+        raise _unavailable("ack", exc) from exc
+
+
+async def release_canvas_task_dispatch(task_id: str) -> None:
+    client = get_redis_client()
+    try:
+        await client.delete(_dispatch_key(task_id))
+    except RedisError as exc:
+        raise _unavailable("dispatch_release", exc) from exc
+
+
+async def list_recoverable_canvas_tasks() -> list[dict[str, Any]]:
+    client = get_redis_client()
+    try:
+        await client.zremrangebyscore(_INDEX_KEY, "-inf", time.time())
+        task_ids = await client.zrange(_INDEX_KEY, 0, -1)
+    except RedisError as exc:
+        raise _unavailable("recover_list", exc) from exc
+    records = []
+    for task_id in task_ids:
+        record = await get_canvas_task(str(task_id))
+        if record and record.get("status") in {"queued", "running"}:
+            records.append(record)
+    return records

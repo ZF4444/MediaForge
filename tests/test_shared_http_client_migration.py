@@ -16,9 +16,8 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN_PY = os.path.join(ROOT, "main.py")
 
-# 这些行号上的 httpx.AsyncClient(...) 是故意在 TLS/连接层瞬时错误后用全新连接重试，
-# 不能迁移为共享客户端；本测试按“调用点数量”而不是行号锚定，避免文件后续编辑导致误报。
-EXPECTED_DIRECT_ASYNC_CLIENT_CALLS = 3
+# 即使需要新连接的恢复路径也必须通过 new_outbound_http_client()，以保留 DNS 固定解析。
+EXPECTED_DIRECT_ASYNC_CLIENT_CALLS = 0
 
 
 def _load_main_source() -> str:
@@ -27,7 +26,7 @@ def _load_main_source() -> str:
 
 
 def test_main_py_has_bounded_number_of_direct_async_client_calls():
-    """裸露的 httpx.AsyncClient(...) 只应保留连接重试逃生舱，其余必须走共享客户端。"""
+    """main.py 不得直接创建客户端，所有外呼必须复用受控出站传输。"""
     source = _load_main_source()
     tree = ast.parse(source, filename=MAIN_PY)
     direct_calls = 0
@@ -42,8 +41,8 @@ def test_main_py_has_bounded_number_of_direct_async_client_calls():
             direct_calls += 1
     assert direct_calls == EXPECTED_DIRECT_ASYNC_CLIENT_CALLS, (
         f"预期 main.py 中仅保留 {EXPECTED_DIRECT_ASYNC_CLIENT_CALLS} 处独立 httpx.AsyncClient(...)"
-        f"（连接重试逃生舱），实际发现 {direct_calls} 处。新增的外部 HTTP 调用必须使用"
-        " app.core.http_client.shared_http_client()/get_http_client()。"
+        f"，实际发现 {direct_calls} 处。新增的外部 HTTP 调用必须使用"
+        " app.core.http_client.shared_http_client()/get_http_client()/new_outbound_http_client()。"
     )
 
 

@@ -9,7 +9,7 @@ def normalize_comfyui_endpoint(value: str) -> str:
     hostname is treated as a hosted gateway and defaults to HTTPS. Operators
     can always choose explicitly by supplying ``http://`` or ``https://``.
     """
-    raw = str(value or "").strip().rstrip("/")
+    raw = str(value or "").strip()
     if not raw:
         raise ValueError("ComfyUI 后端地址不能为空")
 
