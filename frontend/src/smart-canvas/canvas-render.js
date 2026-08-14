@@ -170,16 +170,8 @@ function refreshRunTimerPills(){
     if(active && !runTimerInterval) runTimerInterval = setInterval(refreshRunTimerPills, 1000);
     if(!active && runTimerInterval){ clearInterval(runTimerInterval); runTimerInterval = null; }
 }
-function render(){
-    const mediaStates = captureMediaPlaybackStates();
-    const reusableNodes = new Map();
-    world.querySelectorAll('.image-node').forEach(el => {
-        const node = nodes.find(n => n.id === el.dataset.id);
-        if(smartNodeHasLiveMedia(node)) reusableNodes.set(node.id, el);
-    });
-    let migratedCandidates = false;
-    const nodeHtmlEntries = nodes.map(node => {
-        if(migrateGeneratedImagesToCandidatePool(node)) migratedCandidates = true;
+function smartNodeHtmlEntry(node){
+        const migratedCandidates = migrateGeneratedImagesToCandidatePool(node);
         const imgs = node.images || [];
         const title = node.type === 'smart-group' ? (node.title || '智能分组') : node.type === 'smart-prompt' ? 'Prompt' : node.type === 'smart-loop' ? 'Loop' : (imgs.length > 1 ? 'Group' : imgs.length ? 'Image' : escapeHtml(genKindLabel(node)));
         const scale = nodeScale(node);
@@ -208,7 +200,20 @@ function render(){
             <div class="node-port port-in" data-port="in" title="input"></div>
             <div class="node-port port-out" data-port="out" title="output"></div>
         </div>`;
-        return {node, html};
+        return {node, html, migratedCandidates};
+}
+function render(){
+    const mediaStates = captureMediaPlaybackStates();
+    const reusableNodes = new Map();
+    world.querySelectorAll('.image-node').forEach(el => {
+        const node = nodes.find(n => n.id === el.dataset.id);
+        if(smartNodeHasLiveMedia(node)) reusableNodes.set(node.id, el);
+    });
+    let migratedCandidates = false;
+    const nodeHtmlEntries = nodes.map(node => {
+        const entry = smartNodeHtmlEntry(node);
+        if(entry.migratedCandidates) migratedCandidates = true;
+        return entry;
     });
     const tpl = document.createElement('template');
     tpl.innerHTML = nodeHtmlEntries.map(entry => entry.html).join('');
@@ -281,7 +286,49 @@ function render(){
     refreshRunTimerPills();
     if(migratedCandidates) scheduleSave();
 }
-function measureSmartNodeImages(){
+async function renderBootCanvas(onProgress, batchSize=40){
+    const total = nodes.length;
+    const safeBatchSize = Math.max(1, Number(batchSize) || 40);
+    const report = (percent, label) => onProgress?.(percent, label);
+    report(0, `正在构建节点 0 / ${total}`);
+    await nextFrame();
+
+    world.replaceChildren();
+    world.insertAdjacentHTML('beforeend', renderConnections());
+    for(let start = 0; start < total; start += safeBatchSize){
+        const entries = nodes.slice(start, start + safeBatchSize).map(smartNodeHtmlEntry);
+        const tpl = document.createElement('template');
+        tpl.innerHTML = entries.map(entry => entry.html).join('');
+        world.appendChild(tpl.content);
+        const completed = Math.min(start + safeBatchSize, total);
+        report(total ? completed / total * 50 : 50, `正在构建节点 ${completed} / ${total}`);
+        await nextFrame();
+    }
+    const nodeElements = [...world.querySelectorAll('.image-node')];
+    for(let start = 0; start < nodeElements.length; start += safeBatchSize){
+        const completed = Math.min(start + safeBatchSize, nodeElements.length);
+        bindNodeEvents(nodeElements.slice(start, completed));
+        report(50 + (nodeElements.length ? completed / nodeElements.length * 15 : 15), `正在绑定节点 ${completed} / ${nodeElements.length}`);
+        await nextFrame();
+    }
+    if(!nodeElements.length) report(65, '正在绑定节点 0 / 0');
+
+    const connectionElements = [...world.querySelectorAll('[data-conn-index]')];
+    for(let start = 0; start < connectionElements.length; start += safeBatchSize){
+        const completed = Math.min(start + safeBatchSize, connectionElements.length);
+        bindConnectionEvents(connectionElements.slice(start, completed));
+        report(65 + (connectionElements.length ? completed / connectionElements.length * 5 : 5), `正在绑定连线 ${completed} / ${connectionElements.length}`);
+        await nextFrame();
+    }
+    if(!connectionElements.length) report(70, '正在准备资源');
+    updateComposer();
+    updatePromptComposer();
+    refreshRunTimerPills();
+    updateSelectionActions();
+    report(70, '正在准备资源');
+}
+function measureSmartNodeImages({applyReady=false, renderOnChange=true}={}){
+    let changed = false;
     world.querySelectorAll('.image-node img,.image-node video').forEach(imgEl => {
         const candidatePanel = imgEl.closest('.candidate-panel');
         const nodeEl = imgEl.closest('.image-node');
@@ -304,17 +351,25 @@ function measureSmartNodeImages(){
             if(!isVideo && imageResolutionLabel(image)) return;
             image.natural_w = w;
             image.natural_h = h;
+            changed = true;
             if(candidatePanel) syncCandidateImageDimensions(node, image, w, h);
             applyThumbDisplaySizeToElement(itemEl, image, Math.max(itemEl?.clientWidth || 0, itemEl?.clientHeight || 0));
-            render();
-            scheduleSave();
+            if(renderOnChange){
+                render();
+                scheduleSave();
+            }
         };
         if(isVideo){
-            if(imgEl.readyState >= 1) apply();
+            if(imgEl.readyState >= 1){
+                if(applyReady) apply();
+            }
             else imgEl.addEventListener('loadedmetadata', apply, {once:true});
-        } else if(imgEl.complete) apply();
+        } else if(imgEl.complete){
+            if(applyReady) apply();
+        }
         else imgEl.addEventListener('load', apply, {once:true});
     });
+    return changed;
 }
 
 function pickMediaForSmartNode(nodeId){
@@ -333,8 +388,8 @@ function pickMediaForSmartNode(nodeId){
     document.body.appendChild(input);
     input.click();
 }
-function bindNodeEvents(){
-    world.querySelectorAll('.image-node').forEach(el => {
+function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
+    nodeElements.forEach(el => {
         const id = el.dataset.id;
         const nodeForControls = nodes.find(n => n.id === id);
         if(nodeForControls?.type === 'smart-prompt') bindPromptNodeControls(el, nodeForControls);

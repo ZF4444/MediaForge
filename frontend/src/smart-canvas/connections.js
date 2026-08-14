@@ -132,8 +132,8 @@ function requestRefreshConnectionLayer(){
         refreshConnectionLayer();
     });
 }
-function bindConnectionEvents(){
-    world.querySelectorAll('[data-conn-index]').forEach(el => {
+function bindConnectionEvents(connectionElements=world.querySelectorAll('[data-conn-index]')){
+    connectionElements.forEach(el => {
         el.addEventListener('mousedown', e => {
             if(e.button !== 0) return;
             e.stopPropagation();

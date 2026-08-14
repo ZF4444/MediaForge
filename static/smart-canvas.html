@@ -26,12 +26,14 @@
         <div id="bootLoadingOverlay" class="boot-loading-overlay" aria-live="polite" aria-busy="true">
             <div class="boot-loading-card">
                 <div class="boot-loading-visual" aria-hidden="true">
-                    <span class="boot-loading-ring ring-a"></span>
-                    <span class="boot-loading-ring ring-b"></span>
-                    <span class="boot-loading-core"></span>
+                    <svg class="boot-loading-ring" viewBox="0 0 100 100">
+                        <circle class="boot-loading-ring-track" cx="50" cy="50" r="42"></circle>
+                        <circle id="bootLoadingRingProgress" class="boot-loading-ring-progress" cx="50" cy="50" r="42"></circle>
+                    </svg>
+                    <span id="bootLoadingPercent" class="boot-loading-percent">0%</span>
                 </div>
                 <div class="boot-loading-title">正在载入智能画布</div>
-                <div class="boot-loading-sub">节点、连线和配置正在准备中</div>
+                <div id="bootLoadingSub" class="boot-loading-sub">正在准备画布</div>
             </div>
         </div>
         <div id="world" class="world"></div>

@@ -2,6 +2,9 @@ const params = new URLSearchParams(location.search);
 const canvasId = params.get('id') || '';
 const shell = document.getElementById('shell');
 const bootLoadingOverlay = document.getElementById('bootLoadingOverlay');
+const bootLoadingRingProgress = document.getElementById('bootLoadingRingProgress');
+const bootLoadingPercent = document.getElementById('bootLoadingPercent');
+const bootLoadingSub = document.getElementById('bootLoadingSub');
 const world = document.getElementById('world');
 const composer = document.getElementById('composer');
 const nodeShortcutOverlay = document.getElementById('nodeShortcutOverlay');
@@ -87,6 +90,19 @@ function showBootLoadingOverlay(){
     if(!bootLoadingOverlay) return;
     bootLoadingOverlay.classList.remove('is-hidden', 'is-fading');
     bootLoadingOverlay.setAttribute('aria-busy', 'true');
+    updateBootLoadingProgress(0, 0, '正在准备画布');
+}
+function updateBootLoadingProgress(completed=0, total=0, label=''){
+    const safeTotal = Math.max(0, Number(total) || 0);
+    const safeCompleted = Math.max(0, Math.min(safeTotal, Number(completed) || 0));
+    const percent = safeTotal ? Math.round(safeCompleted / safeTotal * 100) : 0;
+    updateBootLoadingPercent(percent, label);
+}
+function updateBootLoadingPercent(percent=0, label=''){
+    const safePercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+    if(bootLoadingRingProgress) bootLoadingRingProgress.style.strokeDashoffset = `${263.9 * (1 - safePercent / 100)}`;
+    if(bootLoadingPercent) bootLoadingPercent.textContent = `${safePercent}%`;
+    if(bootLoadingSub && label) bootLoadingSub.textContent = label;
 }
 function hideBootLoadingOverlay(onHidden){
     if(!bootLoadingOverlay){
@@ -160,19 +176,47 @@ function mediaReadyPromise(el){
     }
     return Promise.resolve();
 }
-async function waitForVisibleBootMedia(timeoutMs=2500){
+async function waitForVisibleBootMedia(timeoutMs=2500, startPercent=0, endPercent=100){
+    const updateMediaProgress = (completed, total, label) => {
+        const ratio = total ? Math.max(0, Math.min(1, completed / total)) : 1;
+        updateBootLoadingPercent(startPercent + (endPercent - startPercent) * ratio, label);
+    };
     await nextFrame();
     const idSet = new Set(bootVisibleNodeIds());
-    if(!idSet.size) return;
+    if(!idSet.size){
+        updateMediaProgress(1, 1, '画布已准备就绪');
+        return;
+    }
     const media = [...world.querySelectorAll('.image-node img, .image-node video')].filter(el => {
         const nodeEl = el.closest('.image-node');
         return nodeEl?.dataset?.id && idSet.has(nodeEl.dataset.id);
     });
-    if(!media.length) return;
-    await Promise.race([
-        Promise.all(media.map(mediaReadyPromise)),
-        new Promise(resolve => setTimeout(resolve, timeoutMs))
-    ]);
+    const uniqueMedia = [...new Map(media.map(el => [
+        `${el.tagName}:${el.currentSrc || el.getAttribute('src') || el.dataset?.originalSrc || ''}`,
+        el
+    ])).values()];
+    const total = uniqueMedia.length;
+    if(!total){
+        updateMediaProgress(1, 1, '画布已准备就绪');
+        return;
+    }
+    let completed = 0;
+    updateMediaProgress(completed, total, `正在加载资源 ${completed} / ${total}`);
+    await nextFrame();
+    let progressQueue = Promise.resolve();
+    await Promise.all(uniqueMedia.map(async el => {
+        await Promise.race([
+            mediaReadyPromise(el),
+            new Promise(resolve => setTimeout(resolve, timeoutMs))
+        ]);
+        progressQueue = progressQueue.then(async () => {
+            completed += 1;
+            updateMediaProgress(completed, total, `正在加载资源 ${completed} / ${total}`);
+            await nextFrame();
+        });
+        await progressQueue;
+    }));
+    updateMediaProgress(total, total, '画布已准备就绪');
 }
 let minimapViewport = document.getElementById('minimapViewport');
 // M22 拆分：canvas / nodes / selectedId / selectedIds / selectedImage / viewport
@@ -1413,7 +1457,7 @@ function connectAssetLibrarySyncSocket(){
 // canvasImageDragPayload 已迁移到
 // frontend/src/smart-canvas/asset-library.js（经典 <script>，非 ES module，
 // 原因同 M1-M8）。
-async function loadCanvas(){
+async function loadCanvas({renderCanvas=true}={}){
     if(!canvasId) return;
     try {
         clearTimeout(suppressAutoSaveReleaseTimer);
@@ -1447,10 +1491,12 @@ async function loadCanvas(){
         if(settings.comfy_params && !settings.comfyParams) settings.comfyParams = settings.comfy_params;
         updateProviderModels();
         applyViewport();
-        render();
-        resumeSmartPendingTasks();
-        resumeJimengPendingNodes();
-        startCanvasMetaPoll();
+        if(renderCanvas){
+            render();
+            resumeSmartPendingTasks();
+            resumeJimengPendingNodes();
+            startCanvasMetaPoll();
+        }
         suppressAutoSaveReleaseTimer = setTimeout(() => {
             suppressAutoSave = false;
             suppressAutoSaveReleaseTimer = null;
@@ -1459,12 +1505,14 @@ async function loadCanvas(){
                 scheduleSave();
             }
         }, 2000);
+        return true;
     } catch(e) {
         clearTimeout(suppressAutoSaveReleaseTimer);
         suppressAutoSaveReleaseTimer = null;
         suppressAutoSave = false;
         deferredAutoSaveNeeded = false;
         toast(e.message || tr('smart.toastCanvasFail'));
+        return false;
     }
 }
 function scheduleSave(delay=450){
@@ -2549,6 +2597,7 @@ function extractCurrentImagesToSource(node, meta=null){
 }
 function finalizePendingNode(pendingNode, urls, meta, kind='image'){
     if(!pendingNode) return;
+    if(!Number(pendingNode.pending || 0) && pendingNode.runFinishedAt) return;
     const imgs = normalizeOutputMediaItems(urls, kind, meta);
     const actualKind = mediaKindForUrls(imgs, kind);
     if(actualKind === 'image') addGeneratedCandidatesToNode(pendingNode, imgs, {main:'firstNew'});
@@ -2955,7 +3004,8 @@ function cleanHistoryImages(images=[]){
         .filter(img => img?.url)
         .map(img => stripImageGenerationMeta({...img}))
         .filter(img => {
-            const key = `${img.kind || ''}|${img.url || ''}`;
+            const identity = img.file_id || img.fileId || img.url || '';
+            const key = `${img.kind || ''}|${identity}`;
             if(seen.has(key)) return false;
             seen.add(key);
             return true;
@@ -2967,7 +3017,8 @@ function uniqueGeneratedImages(images=[]){
         .filter(img => img?.url)
         .map(img => ({...img}))
         .filter(img => {
-            const key = `${img.kind || ''}|${img.url || ''}`;
+            const identity = img.file_id || img.fileId || img.url || '';
+            const key = `${img.kind || ''}|${identity}`;
             if(seen.has(key)) return false;
             seen.add(key);
             return true;
@@ -3550,7 +3601,9 @@ async function pollSmartPendingTask(task){
 }
 function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     if(!node || !taskId) return;
-    node.pendingTasks = smartPendingTasks(node).filter(task => task.taskId !== taskId);
+    const pendingTasks = smartPendingTasks(node);
+    if(!pendingTasks.some(task => task.taskId === taskId)) return;
+    node.pendingTasks = pendingTasks.filter(task => task.taskId !== taskId);
     node.pending = Math.max(0, Number(node.pending || 0) - 1);
     const additions = normalizeOutputMediaItems(images, kind, imageRunMetaForNodeFallback(node));
     const actualKind = mediaKindForUrls(additions, kind);
@@ -5181,19 +5234,37 @@ async function windowLoadHandler(){
     loadPromptPresets();
     loadPromptTemplateGroups();
     loadPromptTemplateOverrides();
-    await loadPromptTemplates();
+    const promptTemplatesPromise = loadPromptTemplates();
     if(window.StudioI18n) window.StudioI18n.apply();
     if(window.lucide) lucide.createIcons();
     connectAssetLibrarySyncSocket();
-    await loadCanvas();
+    const canvasLoaded = await loadCanvas({renderCanvas:false});
     const configPromise = loadConfig();
     const assetLibraryPromise = loadAssetLibrary();
-    await Promise.allSettled([configPromise, assetLibraryPromise]);
+    if(canvasLoaded){
+        await renderBootCanvas((percent, label) => {
+            updateBootLoadingPercent(percent, label);
+        });
+        updateBootLoadingPercent(70, '正在校正素材尺寸');
+        if(measureSmartNodeImages({applyReady:true, renderOnChange:false})) render();
+        resumeSmartPendingTasks();
+        resumeJimengPendingNodes();
+        startCanvasMetaPoll();
+    }
+    await waitForVisibleBootMedia(2500, canvasLoaded ? 70 : 0, 100);
+    await Promise.allSettled([promptTemplatesPromise, configPromise, assetLibraryPromise]);
     syncApiKindToggleVisibility();
-    render();
-    await waitForVisibleBootMedia();
+    updateComposer();
+    updatePromptComposer();
     requestAnimationFrame(() => hideBootLoadingOverlay(() => {
         toast(tr('smart.thumbnailPreviewNotice'));
+        const finishBootEnhancements = () => {
+            requestRenderMinimap();
+            if(window.lucide) lucide.createIcons();
+            measureSmartNodeImages();
+        };
+        if(window.requestIdleCallback) window.requestIdleCallback(finishBootEnhancements, {timeout:1000});
+        else setTimeout(finishBootEnhancements, 0);
     }));
 }
 window.onload = windowLoadHandler;
