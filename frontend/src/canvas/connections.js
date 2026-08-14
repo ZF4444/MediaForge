@@ -1,9 +1,9 @@
-// 从 static/js/smart-canvas.js 剪切出的连线（connection）数据与渲染逻辑（M4 拆分批次）。
+// 从 static/js/canvas.js 剪切出的连线（connection）数据与渲染逻辑（M4 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1 utils.js / M2 loop-node.js /
-// M3 node-layout.js、node-model.js 同一个原因）：smart-canvas.js 依赖经典
-// <script> 的全局作用域语义，static/smart-canvas.html 里 57 处内联
+// M3 node-layout.js、node-model.js 同一个原因）：canvas.js 依赖经典
+// <script> 的全局作用域语义，static/canvas.html 里 57 处内联
 // onclick="xxx()" 都依赖这一点。所以这里同样只做"物理文件拆分"：
 // connections.js 保持经典脚本语法，通过 <script src="connections.js">
 // 排在 node-model.js 之后、main.js 之前加载。
@@ -23,7 +23,7 @@
 // 连线菜单功能内部使用，未在文件其它地方被引用，随函数一起搬过来）：
 //   portDropMenuDrag, portDropMenuScreenPoint
 //
-// 依赖的外部全局（都还留在 static/js/smart-canvas.js / main.js 里，
+// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   DOM 元素：shell, world, portDropMenu
 //   状态变量：nodes, canvas, dragState, portDragState, loopInsertPreview,
@@ -230,7 +230,7 @@ function handlePortDrop(drag, e){
         return;
     }
     if(!drag.moved){ clearPortDragVisual(); discardPendingUndo(); render(); return; }
-    if(hit?.closest?.('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.smart-minimap')){
+    if(hit?.closest?.('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.canvas-minimap')){
         clearPortDragVisual(); discardPendingUndo(); render(); return;
     }
     // 弹出节点类型选择菜单，保留连线视觉

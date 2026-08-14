@@ -137,7 +137,7 @@ function renderAssetManager(){
                 <div class="asset-grid">
                     ${renderUploadCard(cat)}
                     ${items.map(item => renderAssetCard(item)).join('')}
-                    ${items.length ? '' : '<div class="empty-state">当前分组还没有素材，可以上传，或从智能画布输出保存到素材库。</div>'}
+                    ${items.length ? '' : '<div class="empty-state">当前分组还没有素材，可以上传，或从画布输出保存到素材库。</div>'}
                 </div>
             </div>
         </section>

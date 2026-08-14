@@ -167,6 +167,9 @@ from app.core.redis_client import RedisUnavailableError, close_redis_client, ope
 from app.core.metrics import render_metrics
 from app.core.storage_io import StorageIOOverloaded, refresh_storage_io_metrics, run_storage_io
 from app.core.http_client import close_http_client, get_http_client, open_http_client, shared_http_client
+from app.core.outbound import validate_public_http_url
+from app.ai.gateway import provider_operation
+from app.ai.registry import ImageAdapterRegistry, ImageGenerationRequest
 
 @app.on_event("startup")
 async def startup_event():
@@ -1131,7 +1134,7 @@ def normalize_endpoint_override(value, label):
     if len(endpoint) > 300 or re.search(r"\s", endpoint):
         raise HTTPException(status_code=400, detail=f"{label} 不合法，请填写类似 /v1/images/edits 的路径")
     if re.match(r"^https?://", endpoint, re.I):
-        return endpoint.rstrip("/")
+        return validate_public_http_url(endpoint, label=label)
     if not endpoint.startswith("/"):
         raise HTTPException(status_code=400, detail=f"{label} 需要以 /v1/... 开头，或填写完整 http(s) 地址")
     return endpoint
@@ -1141,7 +1144,7 @@ def provider_endpoint_url(provider, key, default_path):
     override = str((provider or {}).get(key) or "").strip()
     if override:
         if re.match(r"^https?://", override, re.I):
-            return override.rstrip("/")
+            return validate_public_http_url(override, label="Provider 端点")
         parsed = urllib.parse.urlsplit(base_url)
         if parsed.scheme and parsed.netloc:
             return f"{parsed.scheme}://{parsed.netloc}{override}"
@@ -1153,7 +1156,7 @@ def provider_endpoint_url(provider, key, default_path):
 
 def runninghub_endpoint_url(provider, path):
     base_url = str((provider or {}).get("base_url") or RUNNINGHUB_DEFAULT_BASE_URL).strip().rstrip("/")
-    return f"{base_url}{path}"
+    return f"{validate_public_http_url(base_url, label='Provider Base URL')}{path}"
 
 def normalize_provider(item):
     provider_id = str(item.get("id") or "").strip().lower()
@@ -1161,8 +1164,8 @@ def normalize_provider(item):
         raise HTTPException(status_code=400, detail=f"API 平台 ID 不合法：{provider_id or '(empty)'}")
     name = re.sub(r"\s+", " ", str(item.get("name") or provider_id).strip())[:60] or provider_id
     base_url = str(item.get("base_url") or "").strip().rstrip("/")
-    if base_url and not re.match(r"^https?://", base_url):
-        raise HTTPException(status_code=400, detail=f"{name} 的 Base URL 需要以 http:// 或 https:// 开头")
+    if base_url:
+        base_url = validate_public_http_url(base_url, label=f"{name} 的 Base URL")
     protocol = str(item.get("protocol") or "openai").strip().lower()
     if protocol not in SUPPORTED_PROVIDER_PROTOCOLS:
         protocol = "openai"
@@ -1231,19 +1234,21 @@ def save_api_providers(providers):
     ])
 
 # 依赖注入：把 load_api_providers 交给 access_control 模块，用于动态枚举
-# 智能画布「AI生成」引擎下的可选模型清单（画布节点访问控制）。避免 access_control
+# 画布「AI生成」引擎下的可选模型清单（画布节点访问控制）。避免 access_control
 # 反向 import main.py 造成循环依赖。
 import app.core.access_control as access_control
 access_control.set_image_models_provider(load_api_providers)
 
-def public_provider(provider):
+def public_provider(provider, *, include_credentials=False):
+    item = {**provider}
+    if not include_credentials:
+        return item
     key = provider_env_key_value(provider["id"])
-    item = {
-        **provider,
+    item.update({
         "has_key": bool(key),
         "key_preview": mask_secret(key),
         "key_env": provider_key_env(provider["id"]),
-    }
+    })
     if provider.get("id") == "volcengine":
         ak = volcengine_access_key_value()
         sk = volcengine_secret_key_value()
@@ -1259,8 +1264,22 @@ def public_provider(provider):
         })
     return item
 
-def public_api_providers():
-    return [public_provider(p) for p in load_api_providers()]
+def public_api_providers(*, include_credentials=False):
+    return [public_provider(p, include_credentials=include_credentials) for p in load_api_providers()]
+
+
+def require_admin() -> str:
+    uid = current_user_id()
+    if not access_control.is_admin(uid):
+        raise HTTPException(status_code=403, detail="需要管理员权限。")
+    return uid
+
+
+def require_model_access(provider_id: str, model: str) -> str:
+    uid = current_user_id()
+    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, provider_id, model):
+        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员在访问控制中开放。")
+    return uid
 
 def get_primary_provider_id(providers=None):
     """返回当前首选 provider 的 id；优先 primary=True 的，否则取第一个非 modelscope 的，再次取第一个。"""
@@ -1323,31 +1342,39 @@ def env_quote(value):
     return text
 
 def update_env_values(updates):
-    os.makedirs(os.path.dirname(API_ENV_FILE), exist_ok=True)
-    lines = []
-    if os.path.exists(API_ENV_FILE):
-        with open(API_ENV_FILE, "r", encoding="utf-8-sig") as f:
-            lines = f.read().splitlines()
-    seen = set()
-    next_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in line:
-            next_lines.append(line)
-            continue
-        key = line.split("=", 1)[0].strip()
-        if key in updates:
-            next_lines.append(f"{key}={env_quote(updates[key])}")
-            os.environ[key] = str(updates[key] or "")
-            seen.add(key)
-        else:
-            next_lines.append(line)
-    for key, value in updates.items():
-        if key not in seen:
-            next_lines.append(f"{key}={env_quote(value)}")
-            os.environ[key] = str(value or "")
-    with open(API_ENV_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(next_lines).rstrip() + "\n")
+    with GLOBAL_CONFIG_LOCK:
+        os.makedirs(os.path.dirname(API_ENV_FILE), exist_ok=True)
+        lines = []
+        if os.path.exists(API_ENV_FILE):
+            with open(API_ENV_FILE, "r", encoding="utf-8-sig") as f:
+                lines = f.read().splitlines()
+        seen = set()
+        next_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in line:
+                next_lines.append(line)
+                continue
+            key = line.split("=", 1)[0].strip()
+            if key in updates:
+                next_lines.append(f"{key}={env_quote(updates[key])}")
+                os.environ[key] = str(updates[key] or "")
+                seen.add(key)
+            else:
+                next_lines.append(line)
+        for key, value in updates.items():
+            if key not in seen:
+                next_lines.append(f"{key}={env_quote(value)}")
+                os.environ[key] = str(value or "")
+        fd, tmp_path = tempfile.mkstemp(prefix=".env.", dir=os.path.dirname(API_ENV_FILE), text=True)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write("\n".join(next_lines).rstrip() + "\n")
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, API_ENV_FILE)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
 BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 
@@ -1769,21 +1796,6 @@ from app.routers.conversations import (
     new_conversation,
     load_conversation,
     list_conversations,
-)
-
-# --- 画布管理数据逻辑 ---
-# helpers 与路由已迁移至 app/routers/canvases.py（原样迁移）。
-# 此处导入以保持原模块级名称可用（如有 main 内残留引用）。
-from app.routers.canvases import (
-    save_canvas,
-    normalize_canvas_kind,
-    new_canvas,
-    load_canvas,
-    CANVAS_COLORS,
-    normalize_canvas_color,
-    canvas_record,
-    iter_canvas_records,
-    list_canvases,
 )
 
 def display_title(text):
@@ -5116,20 +5128,7 @@ async def generate_omnilojo_provider_image(prompt, size, model, reference_images
         raw = response.json()
         return extract_image_from_chat_response(raw), raw
 
-async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly"):
-    provider = get_api_provider(provider_id)
-    if provider["id"] == "modelscope":
-        return await generate_modelscope_provider_image(prompt, size, model, reference_images, provider)
-    if is_jimeng_provider(provider):
-        return await generate_jimeng_provider_image(prompt, size, model, reference_images, provider)
-    if is_runninghub_provider(provider):
-        return await generate_runninghub_provider_image(prompt, size, model, reference_images, provider, quality)
-    if is_omnilojo_provider(provider):
-        return await generate_omnilojo_provider_image(prompt, size, model, reference_images, provider)
-    if effective_protocol(provider, model) == "gemini":
-        return await generate_gemini_provider_image(prompt, size, model, reference_images, provider)
-    if is_volcengine_provider(provider):
-        return await generate_volcengine_provider_image(prompt, size, model, reference_images, provider)
+async def generate_openai_compatible_provider_image(prompt, size, quality, model, reference_images=None, provider=None):
     is_gpt2 = is_gpt_image_2_model(model)
     is_apimart = is_apimart_provider(provider)
     quality = str(quality or "").strip().lower()
@@ -5262,6 +5261,88 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 raise
         task_result = await wait_for_image_task(client, task_id, provider)
         return extract_image(task_result), task_result
+
+
+async def _image_adapter_modelscope(request: ImageGenerationRequest):
+    return await generate_modelscope_provider_image(
+        request.prompt, request.size, request.model, request.reference_images, request.provider,
+    )
+
+
+async def _image_adapter_jimeng(request: ImageGenerationRequest):
+    return await generate_jimeng_provider_image(
+        request.prompt, request.size, request.model, request.reference_images, request.provider,
+    )
+
+
+async def _image_adapter_runninghub(request: ImageGenerationRequest):
+    return await generate_runninghub_provider_image(
+        request.prompt, request.size, request.model, request.reference_images, request.provider, request.quality,
+    )
+
+
+async def _image_adapter_omnilojo(request: ImageGenerationRequest):
+    return await generate_omnilojo_provider_image(
+        request.prompt, request.size, request.model, request.reference_images, request.provider,
+    )
+
+
+async def _image_adapter_gemini(request: ImageGenerationRequest):
+    return await generate_gemini_provider_image(
+        request.prompt, request.size, request.model, request.reference_images, request.provider,
+    )
+
+
+async def _image_adapter_volcengine(request: ImageGenerationRequest):
+    return await generate_volcengine_provider_image(
+        request.prompt, request.size, request.model, request.reference_images, request.provider,
+    )
+
+
+async def _image_adapter_openai(request: ImageGenerationRequest):
+    return await generate_openai_compatible_provider_image(
+        request.prompt, request.size, request.quality, request.model, request.reference_images, request.provider,
+    )
+
+
+IMAGE_ADAPTERS = ImageAdapterRegistry()
+IMAGE_ADAPTERS.register("modelscope", _image_adapter_modelscope)
+IMAGE_ADAPTERS.register("jimeng", _image_adapter_jimeng)
+IMAGE_ADAPTERS.register("runninghub", _image_adapter_runninghub)
+IMAGE_ADAPTERS.register("omnilojo", _image_adapter_omnilojo)
+IMAGE_ADAPTERS.register("gemini", _image_adapter_gemini)
+IMAGE_ADAPTERS.register("volcengine", _image_adapter_volcengine)
+IMAGE_ADAPTERS.register("openai", _image_adapter_openai)
+
+
+def image_adapter_key(provider, model: str) -> str:
+    if provider.get("id") == "modelscope":
+        return "modelscope"
+    if is_jimeng_provider(provider):
+        return "jimeng"
+    if is_runninghub_provider(provider):
+        return "runninghub"
+    if is_omnilojo_provider(provider):
+        return "omnilojo"
+    if effective_protocol(provider, model) == "gemini":
+        return "gemini"
+    if is_volcengine_provider(provider):
+        return "volcengine"
+    return "openai"
+
+
+async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly"):
+    provider = get_api_provider(provider_id)
+    request = ImageGenerationRequest(
+        prompt=str(prompt or ""),
+        size=str(size or ""),
+        quality=str(quality or ""),
+        model=str(model or ""),
+        reference_images=list(reference_images or []),
+        provider=provider,
+    )
+    async with provider_operation(provider["id"], "image_generation"):
+        return await IMAGE_ADAPTERS.dispatch(image_adapter_key(provider, request.model), request)
 
 def upstream_message_from_record(item):
     role = item.get("role")
@@ -5825,10 +5906,11 @@ async def ai_models():
 
 @app.get("/api/providers")
 async def api_providers():
-    return {"providers": public_api_providers()}
+    return {"providers": public_api_providers(include_credentials=access_control.is_admin(current_user_id()))}
 
 @app.put("/api/providers")
 def save_providers(payload: List[ApiProviderPayload]):
+    require_admin()
     providers = []
     env_updates = {}
     # 收集每个 item 的 primary 字段
@@ -5886,13 +5968,14 @@ def save_providers(payload: List[ApiProviderPayload]):
         resource_id="global",
         after={"provider_ids": [provider["id"] for provider in providers], "key_fields_changed": len(env_updates)},
     )
-    return {"providers": [public_provider(p) for p in providers]}
+    return {"providers": [public_provider(p, include_credentials=True) for p in providers]}
 
 # --- ModelScope Token (从 env 读取，不再支持通过 UI 修改) ---
 
 @app.get("/api/config/token")
 async def get_global_token():
-    return {"token": modelscope_api_key() or ""}
+    require_admin()
+    return {"configured": bool(modelscope_api_key())}
 
 # --- 在线生图 (COMFLY) ---
 
@@ -6098,6 +6181,7 @@ def parse_upstream_models(raw, protocol="openai"):
 @app.post("/api/providers/test-connection")
 async def test_provider_connection(payload: TestConnectionPayload):
     """测试请求地址是否可用：调上游 /v1/models。验证通过时同时把模型清单按类别返回，避免再调一次拉取接口。"""
+    require_admin()
     protocol = protocol_from_payload(payload)
     if protocol == "jimeng":
         status = await jimeng_status()
@@ -6112,11 +6196,7 @@ async def test_provider_connection(payload: TestConnectionPayload):
             "all": [*JIMENG_DEFAULT_IMAGE_MODELS, *JIMENG_DEFAULT_VIDEO_MODELS],
             "raw": status.get("raw"),
         }
-    base_url = (payload.base_url or "").strip().rstrip("/")
-    if not base_url:
-        raise HTTPException(status_code=400, detail="请先填写请求地址")
-    if not re.match(r"^https?://", base_url):
-        raise HTTPException(status_code=400, detail="请求地址必须以 http:// 或 https:// 开头")
+    base_url = validate_public_http_url(payload.base_url, label="请求地址")
     api_key = api_key_from_payload(payload, protocol)
     if not api_key:
         key_name = "方舟 API Key" if protocol == "volcengine" else "API Key"
@@ -6168,9 +6248,8 @@ async def test_provider_connection(payload: TestConnectionPayload):
 async def probe_async_endpoint(payload: TestConnectionPayload):
     """验证异步协议：用假 task_id 请求 GET /v1/tasks/{fake_id}。
     收到 400 Invalid task ID = 端点存在且 Key 有效；401/403 = Key 无效；404/连接失败 = 不支持异步端点。"""
-    base_url = (payload.base_url or "").strip().rstrip("/")
-    if not base_url:
-        raise HTTPException(status_code=400, detail="请先填写请求地址")
+    require_admin()
+    base_url = validate_public_http_url(payload.base_url, label="请求地址")
     protocol = protocol_from_payload(payload)
     api_key = api_key_from_payload(payload, protocol)
     if not api_key:
@@ -6284,11 +6363,7 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
             "video_models": JIMENG_DEFAULT_VIDEO_MODELS,
             "all": [*JIMENG_DEFAULT_IMAGE_MODELS, *JIMENG_DEFAULT_VIDEO_MODELS],
         }
-    base_url = (base_url or "").strip().rstrip("/")
-    if not base_url:
-        raise HTTPException(status_code=400, detail="请先填写请求地址")
-    if not re.match(r"^https?://", base_url):
-        raise HTTPException(status_code=400, detail="请求地址必须以 http:// 或 https:// 开头")
+    base_url = validate_public_http_url(base_url, label="请求地址")
     api_key = volcengine_provider_api_key(api_key) if protocol == "volcengine" else (api_key or "").strip()
     if not api_key:
         key_name = "方舟 API Key" if protocol == "volcengine" else "API Key"
@@ -6384,6 +6459,7 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
 @app.post("/api/providers/fetch-models")
 async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
     """按页面当前表单值拉取模型，支持新增平台未保存时直接使用临时 Base URL / Key。"""
+    require_admin()
     protocol = protocol_from_payload(payload)
     api_key = api_key_from_payload(payload, protocol)
     return await fetch_models_from_upstream(payload.base_url, api_key, protocol)
@@ -6391,6 +6467,7 @@ async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
 @app.get("/api/providers/{provider_id}/fetch-models")
 async def fetch_upstream_models(provider_id: str):
     """从已保存的上游 OpenAI 兼容接口拉取 /v1/models 列表，按名称智能分类为 image/chat/video。"""
+    require_admin()
     provider = get_api_provider_exact(provider_id)
     api_key = os.getenv(provider_key_env(provider["id"]), "")
     if not api_key:
@@ -6401,6 +6478,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
     provider = get_api_provider(payload.provider_id)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
     model = selected_model(payload.model, default_model)
+    require_model_access(provider["id"], model)
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
     count = max(1, min(8, int(payload.n or 1)))
     async def generate_one():
@@ -6594,10 +6672,9 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
-    uid = current_user_id()
-    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, payload.provider_id, payload.model):
-        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员在访问控制中开放。")
+    require_model_access(payload.provider_id, payload.model)
     task_id = f"canvas_img_{uuid.uuid4().hex}"
+    owner_id = current_user_id()
     with CANVAS_TASK_LOCK:
         CANVAS_TASKS[task_id] = {
             "id": task_id,
@@ -6609,6 +6686,7 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             "error": "",
             "provider_id": payload.provider_id,
             "model": payload.model,
+            "owner_id": owner_id,
         }
     task_logger.info(
         "canvas image task submitted",
@@ -6623,6 +6701,8 @@ async def get_canvas_image_task(task_id: str):
         task = dict(CANVAS_TASKS.get(task_id) or {})
     if not task:
         raise HTTPException(status_code=404, detail="画布任务不存在，可能服务已重启或任务已过期")
+    if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
+        raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
     return task
 
 async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
@@ -6681,6 +6761,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
 @app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(payload: GenerateRequest):
     task_id = f"canvas_comfy_{uuid.uuid4().hex}"
+    owner_id = current_user_id()
     with CANVAS_TASK_LOCK:
         CANVAS_TASKS[task_id] = {
             "id": task_id,
@@ -6691,6 +6772,7 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
             "result": None,
             "error": "",
             "workflow_json": payload.workflow_json,
+            "owner_id": owner_id,
         }
     task_logger.info(
         "canvas ComfyUI task submitted",
@@ -6705,6 +6787,8 @@ async def get_canvas_comfy_task(task_id: str):
         task = dict(CANVAS_TASKS.get(task_id) or {})
     if not task:
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在，可能服务已重启或任务已过期")
+    if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
+        raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
     return task
 
 # --- Canvas Video ---
@@ -6780,6 +6864,7 @@ def video_output_urls(raw):
 
 def video_api_root(provider):
     base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
+    base_url = validate_public_http_url(base_url, label="Provider Base URL")
     if is_volcengine_provider(provider):
         if base_url.endswith("/api/v3"):
             base_url = base_url[: -len("/api/v3")]
@@ -7016,9 +7101,7 @@ def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
 
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
-    uid = current_user_id()
-    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, payload.provider_id, payload.model):
-        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员在访问控制中开放。")
+    require_model_access(payload.provider_id, payload.model)
     provider = get_api_provider(payload.provider_id)
     if is_jimeng_provider(provider):
         return await generate_jimeng_video(payload, provider)
@@ -7435,6 +7518,7 @@ def save_expand_rules(payload: dict):
 @app.post("/api/canvas-llm")
 async def canvas_llm(payload: CanvasLLMRequest):
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    require_model_access(payload.provider, model)
     _llm_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
     system_prompt = (payload.system_prompt or "").strip()
     upstream_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
@@ -7533,7 +7617,7 @@ async def canvas_llm(payload: CanvasLLMRequest):
 # --- 画布管理 ---
 # 路由已迁移至 app/routers/canvases.py，通过 app.include_router 注册。
 
-@app.get("/api/smart-canvas/prompt-templates")
+@app.get("/api/canvas/prompt-templates")
 async def smart_canvas_prompt_templates():
     try:
         template_path = prompt_template_markdown_path()
@@ -7923,6 +8007,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         provider = get_api_provider(image_provider_id)
         default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
         model = selected_model(payload.image_model or payload.model, default_model)
+        require_model_access(provider["id"], model)
         try:
             image_data, raw = await generate_ai_image(payload.message, payload.size, payload.quality, model, refs, provider["id"])
             local_url = await save_ai_image_to_output(image_data, prefix="chat_")
@@ -7944,6 +8029,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         }
     else:
         chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+        require_model_access(payload.provider, model)
         _conv_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
         _conv_is_apimart = is_apimart_provider(_conv_provider)
         history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
@@ -8012,6 +8098,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     await asyncio.to_thread(save_conversation, user_id, conversation)
 
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    require_model_access(payload.provider, model)
     _stream_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
     history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
     upstream_messages = [{"role": "system", "content": SYSTEM_PROMPT}]

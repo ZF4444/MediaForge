@@ -1148,7 +1148,7 @@ window.onload = () => {
         const title = document.querySelector('.page-head .title');
         const subtitle = document.querySelector('.page-head .sub');
         if(title) title.textContent = 'RH应用';
-        if(subtitle) subtitle.textContent = '管理 RunningHub API Key 和可用于智能画布的 AI 应用。';
+        if(subtitle) subtitle.textContent = '管理 RunningHub API Key 和可用于画布的 AI 应用。';
     }
     syncRecommendView();
     loadProviders();

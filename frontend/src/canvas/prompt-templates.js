@@ -1,9 +1,9 @@
 // M17 拆分：提示词预设（prompt preset）+ 提示词模板库（prompt template）
-// 管理系统。从 static/js/smart-canvas.js 原样剪切，未改动任何函数签名/
+// 管理系统。从 static/js/canvas.js 原样剪切，未改动任何函数签名/
 // 内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M16 同一个原因）：
-// smart-canvas.html 依赖经典 <script> 的全局作用域语义，57 处内联
+// canvas.html 依赖经典 <script> 的全局作用域语义，57 处内联
 // onclick="xxx()" 都依赖这一点。所以这里同样只做"物理文件拆分"：
 // prompt-templates.js 保持经典脚本语法，通过
 // <script src="prompt-templates.js"> 排在 canvas-sync.js 之后、
@@ -26,7 +26,7 @@
 //     loadPromptTemplateGroups/savePromptTemplateGroups/
 //     loadPromptTemplateOverrides/savePromptTemplateOverrides
 //   模板库加载与选择：loadPromptTemplates（从
-//     /api/prompt-libraries 或旧版 /api/smart-canvas/prompt-templates
+//     /api/prompt-libraries 或旧版 /api/canvas/prompt-templates
 //     兜底加载）/activePromptLibrary/renderPromptLibrarySelect
 //   模板数据查询/格式化：promptTemplateItems/promptTemplateText/
 //     promptTemplateName/promptTemplateScene/promptTemplateSearchText/
@@ -48,7 +48,7 @@
 //     createPromptTemplateGroup/renamePromptTemplateGroup/
 //     deletePromptTemplateGroup
 //
-// 依赖的外部全局（刻意留在 static/js/smart-canvas.js / main.js 里，
+// 依赖的外部全局（刻意留在 static/js/canvas.js / main.js 里，
 // 通过共享脚本作用域访问，未随本文件迁移）：
 //   状态变量（本文件读写，main.js 里其它代码——主要是顶层匿名脚本里
 //   模板面板的分类/搜索/编辑模式点击事件绑定——也会读写，属于跨函数
@@ -152,7 +152,7 @@ async function loadPromptTemplates(){
         const data = await fetch('/api/prompt-libraries').then(r => r.ok ? r.json() : {library:{libraries:[]}});
         promptLibraries = Array.isArray(data.library?.libraries) ? data.library.libraries : [];
         if(!promptLibraries.length) {
-            const fallback = await fetch('/api/smart-canvas/prompt-templates').then(r => r.ok ? r.json() : {templates:[]});
+            const fallback = await fetch('/api/canvas/prompt-templates').then(r => r.ok ? r.json() : {templates:[]});
             builtinPromptTemplates = Array.isArray(fallback.templates) ? fallback.templates.filter(t => t?.id && t?.positive) : [];
             promptLibraries = [{id:'system', name:'系统提示词库', readonly:true, items:builtinPromptTemplates}];
         } else {

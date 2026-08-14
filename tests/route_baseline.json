@@ -875,7 +875,7 @@
     "APIRoute"
   ],
   [
-    "/api/smart-canvas/prompt-templates",
+    "/api/canvas/prompt-templates",
     [
       "GET"
     ],

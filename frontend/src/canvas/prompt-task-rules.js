@@ -1,7 +1,7 @@
 // 图片反推与提示词扩写任务的规则查询。
 //
 // 规则仍来自后端的专用提示词库（caption / expand），这是 2026-07-15
-// 最终确定的数据模型。该文件保持 classic script，以便与其它智能画布
+// 最终确定的数据模型。该文件保持 classic script，以便与其它画布
 // 模块共享 promptLibraries 和 promptTemplateOverrides。
 
 function smartRuleTemplateItems(libraryId){

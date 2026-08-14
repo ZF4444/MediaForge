@@ -156,6 +156,26 @@ TRANSIENT_RETRIES = Counter(
     registry=REGISTRY,
 )
 
+AI_PROVIDER_REQUESTS = Counter(
+    "mediaforge_ai_provider_requests_total",
+    "AI provider operations by provider, operation, and result.",
+    ("provider", "operation", "status"),
+    registry=REGISTRY,
+)
+AI_PROVIDER_REQUEST_SECONDS = Histogram(
+    "mediaforge_ai_provider_request_seconds",
+    "AI provider operation duration by provider and operation.",
+    ("provider", "operation"),
+    buckets=(0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800),
+    registry=REGISTRY,
+)
+AI_PROVIDER_INFLIGHT = Gauge(
+    "mediaforge_ai_provider_inflight",
+    "AI provider operations currently executing.",
+    ("provider", "operation"),
+    registry=REGISTRY,
+)
+
 
 def update_pool_stats(stats: dict) -> None:
     DB_POOL_SIZE.set(float(stats.get("pool_size", 0) or 0))

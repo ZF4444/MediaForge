@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
-const STATE_SRC = fs.readFileSync(path.resolve(repoRoot, 'frontend/src/smart-canvas/state.js'), 'utf8');
+const STATE_SRC = fs.readFileSync(path.resolve(repoRoot, 'frontend/src/canvas/state.js'), 'utf8');
 
 function loadStateContext() {
     const sandbox = { console };

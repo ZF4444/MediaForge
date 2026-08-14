@@ -3,14 +3,14 @@
 // 覆盖范围：
 //   1. apiErrorMessage：从各种可能的后端错误响应结构里提取可读的错误
 //      文案（字符串/FastAPI 风格的 detail 数组/普通对象/兜底 JSON）。
-//   2. normalizeImportedSmartWorkflow：把三种可能的导入 JSON 结构
+//   2. normalizeImportedCanvasWorkflow：把三种可能的导入 JSON 结构
 //      （纯数组/{nodes,connections}/{workflow:{nodes,connections}}）
 //      统一归一化为 {nodes, connections} 形式。
-//   3. smartWorkflowFilename：按画布标题+时间戳生成导出文件名（清理
+//   3. canvasWorkflowFilename：按画布标题+时间戳生成导出文件名（清理
 //      非法字符）。
 //
-// exportSelectedSmartWorkflow/importSmartWorkflowFile/
-// insertSmartWorkflowIntoCanvas 等函数强依赖真实 DOM/网络请求/node
+// exportSelectedCanvasWorkflow/importCanvasWorkflowFile/
+// insertCanvasWorkflowIntoCanvas 等函数强依赖真实 DOM/网络请求/node
 // 全局状态，跟 M5/M7/M8 核心批次一样不适合单元测试，不在本文件覆盖
 // 范围内。
 import { describe, it, expect } from 'vitest';
@@ -63,61 +63,61 @@ describe('apiErrorMessage', () => {
     });
 });
 
-describe('normalizeImportedSmartWorkflow', () => {
+describe('normalizeImportedCanvasWorkflow', () => {
     it('纯数组形式：视为 nodes，connections 为空', () => {
-        const { normalizeImportedSmartWorkflow } = createWorkflowTransferSandbox();
+        const { normalizeImportedCanvasWorkflow } = createWorkflowTransferSandbox();
         const nodes = [{ id: 'n1' }];
-        expect(normalizeImportedSmartWorkflow(nodes)).toEqual({ nodes, connections: [] });
+        expect(normalizeImportedCanvasWorkflow(nodes)).toEqual({ nodes, connections: [] });
     });
 
     it('{nodes, connections} 形式：直接使用', () => {
-        const { normalizeImportedSmartWorkflow } = createWorkflowTransferSandbox();
+        const { normalizeImportedCanvasWorkflow } = createWorkflowTransferSandbox();
         const data = { nodes: [{ id: 'n1' }], connections: [{ from: 'n1', to: 'n2' }] };
-        expect(normalizeImportedSmartWorkflow(data)).toEqual(data);
+        expect(normalizeImportedCanvasWorkflow(data)).toEqual(data);
     });
 
     it('{nodes} 形式无 connections 时补空数组', () => {
-        const { normalizeImportedSmartWorkflow } = createWorkflowTransferSandbox();
+        const { normalizeImportedCanvasWorkflow } = createWorkflowTransferSandbox();
         const data = { nodes: [{ id: 'n1' }] };
-        expect(normalizeImportedSmartWorkflow(data)).toEqual({ nodes: data.nodes, connections: [] });
+        expect(normalizeImportedCanvasWorkflow(data)).toEqual({ nodes: data.nodes, connections: [] });
     });
 
     it('{workflow:{nodes,connections}} 形式：解包 workflow 字段', () => {
-        const { normalizeImportedSmartWorkflow } = createWorkflowTransferSandbox();
+        const { normalizeImportedCanvasWorkflow } = createWorkflowTransferSandbox();
         const data = { workflow: { nodes: [{ id: 'n1' }], connections: [{ from: 'n1', to: 'n2' }] } };
-        expect(normalizeImportedSmartWorkflow(data)).toEqual({ nodes: data.workflow.nodes, connections: data.workflow.connections });
+        expect(normalizeImportedCanvasWorkflow(data)).toEqual({ nodes: data.workflow.nodes, connections: data.workflow.connections });
     });
 
     it('无法识别的结构返回空的 nodes/connections', () => {
-        const { normalizeImportedSmartWorkflow } = createWorkflowTransferSandbox();
-        expect(normalizeImportedSmartWorkflow({})).toEqual({ nodes: [], connections: [] });
-        expect(normalizeImportedSmartWorkflow(null)).toEqual({ nodes: [], connections: [] });
+        const { normalizeImportedCanvasWorkflow } = createWorkflowTransferSandbox();
+        expect(normalizeImportedCanvasWorkflow({})).toEqual({ nodes: [], connections: [] });
+        expect(normalizeImportedCanvasWorkflow(null)).toEqual({ nodes: [], connections: [] });
     });
 });
 
-describe('smartWorkflowFilename', () => {
+describe('canvasWorkflowFilename', () => {
     it('使用 canvas.title 作为文件名基础，清理非法字符', () => {
         const sandbox = createWorkflowTransferSandbox({ canvas: { title: 'My/Test:Canvas' } });
-        const filename = sandbox.smartWorkflowFilename('json');
+        const filename = sandbox.canvasWorkflowFilename('json');
         expect(filename).toMatch(/^My_Test_Canvas-workflow-\d+\.json$/);
     });
 
     it('标题里的空格替换为短横线', () => {
         const sandbox = createWorkflowTransferSandbox({ canvas: { title: 'my canvas title' } });
-        const filename = sandbox.smartWorkflowFilename('zip');
+        const filename = sandbox.canvasWorkflowFilename('zip');
         expect(filename).toMatch(/^my-canvas-title-workflow-\d+\.zip$/);
     });
 
-    it('没有 canvas.title 且找不到 DOM 元素时回退为 smart-canvas', () => {
+    it('没有 canvas.title 且找不到 DOM 元素时回退为 canvas', () => {
         const sandbox = createWorkflowTransferSandbox({ canvas: null });
-        const filename = sandbox.smartWorkflowFilename('json');
-        expect(filename).toMatch(/^smart-canvas-workflow-\d+\.json$/);
+        const filename = sandbox.canvasWorkflowFilename('json');
+        expect(filename).toMatch(/^canvas-workflow-\d+\.json$/);
     });
 
     it('标题过长时截断到 48 字符以内', () => {
         const longTitle = 'a'.repeat(100);
         const sandbox = createWorkflowTransferSandbox({ canvas: { title: longTitle } });
-        const filename = sandbox.smartWorkflowFilename('json');
+        const filename = sandbox.canvasWorkflowFilename('json');
         const basePart = filename.split('-workflow-')[0];
         expect(basePart.length).toBeLessThanOrEqual(48);
     });

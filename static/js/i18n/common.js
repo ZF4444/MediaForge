@@ -21,7 +21,7 @@
         "nav.gaussian": { zh: "视角微调", en: "Fine Angle" },
         "nav.poseStudio": { zh: "姿势编辑", en: "Pose Editor" },
         "nav.gpt": { zh: "GPT 对话", en: "GPT Chat" },
-        "nav.canvas": { zh: "无限画布", en: "Infinite Canvas" },
+        "nav.canvas": { zh: "无限画布", en: "Canvas" },
         "nav.assetManager": { zh: "素材库", en: "Assets" },
         "bulk.manage": { zh: "管理", en: "Manage" },
         "bulk.selectAll": { zh: "全选", en: "Select All" },

@@ -1,12 +1,12 @@
 // M21 拆分：@mention 提及系统 + 提示词节点 composer（promptComposer）+
-// 生成请求引用图片收集系统。从 static/js/smart-canvas.js 原样剪切，
+// 生成请求引用图片收集系统。从 static/js/canvas.js 原样剪切，
 // 未改动任何函数内部逻辑，只做了纯粹的位置搬移，物理上分两段不连续
 // 区间（原文件 2192-2598 行 + 2780-3461 行，中间 2609-2779 行是 M6
 // 阶段确认的通用配额/尺寸计算基础设施，物理上夹在中间但完全不相关，
 // 排除在外，详见下方"刻意排除"）。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M20 同一个原因）：
-// smart-canvas.html 依赖经典 <script> 的全局作用域语义，57 处内联
+// canvas.html 依赖经典 <script> 的全局作用域语义，57 处内联
 // onclick="xxx()" 都依赖这一点。所以这里同样只做"物理文件拆分"：
 // mention-composer.js 保持经典脚本语法，通过
 // <script src="mention-composer.js"> 排在 prompt-templates.js 之后、
@@ -54,7 +54,7 @@
 //     lineImagesFor / collectMentionedImagesFromPrompt / uniqueReferenceImages /
 //     visibleReferenceImagesFor —— 根据画布连线关系、@提及内容、候选池等
 //     多种来源，计算一个节点在生成时实际会用到哪些"输入引用图片"，是
-//     整个智能画布最复杂的一套推导逻辑。
+//     整个画布最复杂的一套推导逻辑。
 //     inputMentionCandidateImages / mentionCandidateThumbnailUrl /
 //     assetRegisteredUris / assetMentionCandidateImages / mentionCandidateImages /
 //     referenceImagesFor —— @提及选择器候选图片来源（资产库/画布节点/
@@ -67,7 +67,7 @@
 //     最终把提示词文本 + 引用图片组装成发给后端的生成请求体，是本系统的
 //     出口函数。
 //
-// 依赖的外部全局（刻意留在 static/js/smart-canvas.js / main.js 里，
+// 依赖的外部全局（刻意留在 static/js/canvas.js / main.js 里，
 // 通过共享脚本作用域访问，未随本文件迁移）：
 //   状态变量：nodes, viewport, settings（只读，可能被 renderPromptComposer
 //     等函数修改属性但不整体重新赋值）, mentionPickerState 及其它 mention
@@ -627,7 +627,7 @@ function stripImageGenerationMeta(img){
     return img;
 }
 // M4 拆分：addConnection / connectInputNode 已迁移到
-// frontend/src/smart-canvas/connections.js（经典 <script>，同上）。
+// frontend/src/canvas/connections.js（经典 <script>，同上）。
 function upstreamNodesForKinds(node, kinds=['input']){
     if(!node) return [];
     const allowed = new Set(kinds);
@@ -690,7 +690,7 @@ function splitSmartPromptItems(text){
 // smartLoopPromptVisiting / smartLoopInputPromptItems /
 // smartLoopSelectedInputPrompt / smartLoopPrompt / smartLoopTotalInputImages /
 // smartLoopInputImages / smartLoopPreviewImages 已迁移到
-// frontend/src/smart-canvas/loop-node.js（经典 <script>，同上）。
+// frontend/src/canvas/loop-node.js（经典 <script>，同上）。
 function outputImagesForNode(node, consume=false, ctx=smartLoopContext){
     if(node?.type === 'smart-group') return imagesForNode(node).filter(img => img?.url);
     if(node?.type === 'smart-loop') return smartLoopInputImages(node, ctx);
@@ -720,7 +720,7 @@ function inputPromptTextFor(node, ctx=smartLoopContext){
         .filter(Boolean)
         .join('\n\n');
 }
-// M2 拆分：upstreamLoopPromptNodesFor 已迁移到 frontend/src/smart-canvas/loop-node.js。
+// M2 拆分：upstreamLoopPromptNodesFor 已迁移到 frontend/src/canvas/loop-node.js。
 function inputImagesFor(node, consume=false, ctx=smartLoopContext){
     return inputNodesFor(node).flatMap(input => outputImagesForNode(input, consume, ctx));
 }

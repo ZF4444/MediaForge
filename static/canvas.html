@@ -4,239 +4,406 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/images/logo.png" type="image/png">
-    <title>无限画布</title>
+    <title data-i18n="canvas.title">画布</title>
     <script>
         (function(){
             try {
                 var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
                 if(theme === 'dark') {
-                    document.documentElement.classList.add('studio-theme-dark');
                     document.documentElement.classList.add('theme-dark');
+                    document.documentElement.classList.add('studio-theme-dark');
                 }
             } catch(e) {}
         })();
     </script>
-    <script src="/static/vendor/js/tailwindcss-cdn.js"></script>
     <script src="/static/vendor/js/lucide.js"></script>
     <script src="/static/js/theme.js"></script>
     <script src="/static/js/i18n.js"></script>
     <link rel="stylesheet" href="/static/css/canvas.css">
-    <link rel="stylesheet" href="/static/css/theme.css">
 </head>
 <body>
-    <div id="shell" class="shell no-canvas">
-        <div class="topbar">
-            <div class="panel canvas-nav">
-                <button id="backToManagerBtn" class="tool-btn" type="button" title="返回画布管理" aria-label="返回画布管理" data-i18n-title="canvas.backToManager"><i data-lucide="arrow-left" class="w-4 h-4"></i></button>
-                <div class="canvas-nav-meta">
-                    <div id="currentCanvasTitle" class="current-canvas-title">未命名画布</div>
-                    <div id="currentCanvasTime" class="current-canvas-time">--</div>
+    <div id="shell" class="shell">
+        <div id="bootLoadingOverlay" class="boot-loading-overlay" aria-live="polite" aria-busy="true">
+            <div class="boot-loading-card">
+                <div class="boot-loading-visual" aria-hidden="true">
+                    <svg class="boot-loading-ring" viewBox="0 0 100 100">
+                        <circle class="boot-loading-ring-track" cx="50" cy="50" r="42"></circle>
+                        <circle id="bootLoadingRingProgress" class="boot-loading-ring-progress" cx="50" cy="50" r="42"></circle>
+                    </svg>
+                    <span id="bootLoadingPercent" class="boot-loading-percent">0%</span>
                 </div>
-                <p id="saveState" style="display:none" data-i18n="canvas.chooseFirst">请选择或新建画布</p>
-            </div>
-            <div id="quickToolbar" class="panel toolbar editor-only">
-                <button class="tool-btn toolbar-toggle" type="button" onclick="toggleQuickToolbar()" title="折叠快捷菜单" aria-label="折叠快捷菜单"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-                <div class="toolbar-items">
-                    <button class="tool-btn" onclick="addImageNode()"><i data-lucide="image-plus" class="w-4 h-4"></i><span data-i18n="canvas.image">图片</span></button>
-                    <button class="tool-btn" onclick="openPromptSubMenu(this, event)"><i data-lucide="text-cursor-input" class="w-4 h-4"></i><span data-i18n="canvas.prompt">提示词</span><i data-lucide="chevron-down" class="w-3 h-3" style="opacity:.4"></i></button>
-                    <button class="tool-btn" onclick="addLoopNode()"><i data-lucide="repeat-2" class="w-4 h-4"></i><span data-i18n="canvas.loop">循环</span></button>
-                    <button class="tool-btn" onclick="addLLMNode()"><i data-lucide="message-square-text" class="w-4 h-4"></i>LLM</button>
-                    <button class="tool-btn" onclick="addGeneratorNode()"><i data-lucide="wand-sparkles" class="w-4 h-4"></i><span data-i18n="canvas.apiGenerate">AI生成</span></button>
-                    <button class="tool-btn" onclick="addMsGenNode()"><i data-lucide="cloud-lightning" class="w-4 h-4"></i><span data-i18n="canvas.msGenerate">MS生成</span></button>
-                    <button class="tool-btn" onclick="addVideoNode()"><i data-lucide="clapperboard" class="w-4 h-4"></i><span data-i18n="canvas.videoGenerate">视频生成</span></button>
-                    <button class="tool-btn" onclick="addRhNode()"><i data-lucide="workflow" class="w-4 h-4"></i><span data-i18n="canvas.rhGenerate">RH生成</span></button>
-                    <button class="tool-btn" onclick="addComfyNode()"><i data-lucide="workflow" class="w-4 h-4"></i>ComfyUI</button>
-                    <button class="tool-btn" onclick="addLTXDirectorNode()"><i data-lucide="film" class="w-4 h-4"></i><span data-i18n="canvas.ltxDirector">LTX Director</span></button>
-                    <button class="tool-btn" onclick="addOutputNode()"><i data-lucide="circle-dot" class="w-4 h-4"></i>Output</button>
-                    <button class="tool-btn" onclick="groupSelectedImages()"><i data-lucide="group" class="w-4 h-4"></i><span data-i18n="canvas.group">分组</span></button>
-                </div>
-                <div class="toolbar-fixed">
-                    <button id="canvasAssetToggle" class="tool-btn toolbar-asset canvas-asset-toggle" type="button" title="资产库" aria-label="资产库"><i data-lucide="library" class="w-4 h-4"></i><span>资产库</span></button>
-                    <button class="tool-btn toolbar-log" onclick="openCanvasLog()" title="日志" aria-label="日志" data-i18n-title="canvas.logs"><i data-lucide="list-todo" class="w-4 h-4"></i><span data-i18n="canvas.logs">日志</span></button>
-                </div>
+                <div class="boot-loading-title">正在载入画布</div>
+                <div id="bootLoadingSub" class="boot-loading-sub">正在准备画布</div>
             </div>
         </div>
-
-        <div id="canvasGate" class="canvas-gate">
-            <div class="gate-panel">
-                <div class="gate-head">
-                    <div class="gate-head-text">
-                        <div class="gate-title-row">
-                            <div id="gateTitleText" class="gate-title">选择画布</div>
-                            <span id="gateCountPill" class="gate-count-pill">0</span>
+        <div id="world" class="world"></div>
+        <div id="composer" class="composer">
+            <div class="composer-card">
+                <div class="composer-head">
+                    <div class="composer-head-left">
+                        <select id="engineSelect" class="engine-select">
+                            <option value="api" data-i18n="smart.engineApi">AI生成</option>
+                            <option value="volcengine" data-i18n="smart.engineVolcengine">火山引擎</option>
+                            <option value="modelscope" data-i18n="smart.engineMs">MS生成</option>
+                            <option value="comfy" data-i18n="smart.engineComfy" hidden>ComfyUI生成</option>
+                            <option value="runninghub" data-i18n="smart.engineRh">工作流</option>
+                        </select>
+                        <div id="composerHeadParams" class="composer-head-params"></div>
+                        <div id="apiKindToggle" class="kind-toggle" style="display:none">
+                            <button type="button" data-kind="image" class="active"><i data-lucide="image"></i><span data-i18n="smart.kindImage">图片</span></button>
+                            <button type="button" data-kind="video"><i data-lucide="film"></i><span data-i18n="smart.kindVideo">视频</span></button>
                         </div>
-                        <div id="gateSubtitle" class="gate-subtitle">打开已有画布，或新建一个开始创作。</div>
-                    </div>
-                    <div class="gate-head-actions">
-                        <div id="gateSortSwitch" class="gate-sort" role="group" aria-label="排序方式">
-                            <button type="button" class="gate-sort-btn active" data-sort="recent" data-i18n="canvas.sortRecent">最近编辑</button>
-                            <button type="button" class="gate-sort-btn" data-sort="name" data-i18n="canvas.sortName">名称</button>
-                        </div>
-                        <button id="gateRefreshBtn" class="gate-icon-btn" type="button" title="刷新列表" aria-label="刷新列表" data-i18n-title="canvas.refresh">
-                            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
-                        </button>
-                        <button id="gateAssetManagerBtn" class="gate-icon-btn gate-manager-btn" type="button" title="资产库管理" aria-label="资产库管理" hidden>
-                            <i data-lucide="library" class="w-4 h-4"></i>
-                            <span>素材库管理</span>
-                        </button>
-                        <button id="gateCreateSmartBtn" class="smart-create-btn" type="button"><i data-lucide="sparkles" class="w-4 h-4"></i><span data-i18n="canvas.newSmartCanvas">新建智能画布</span></button>
                     </div>
                 </div>
-                <div id="gateStatus" class="gate-status" data-i18n="canvas.loadingCanvases">正在加载画布列表...</div>
-                <div class="gate-create-row">
-                    <input id="gateTitleInput" class="gate-name-input" type="text" maxlength="80" placeholder="新画布名称（可留空使用默认）" data-i18n-placeholder="canvas.newCanvasPlaceholder">
-                    <button id="gateConfirmBtn" class="create-confirm" type="button" title="确定" aria-label="确定" data-i18n-title="common.confirm"><i data-lucide="check" class="w-4 h-4"></i></button>
-                    <button id="gateCancelBtn" class="create-cancel" type="button" title="取消" aria-label="取消" data-i18n-title="common.cancel"><i data-lucide="x" class="w-4 h-4"></i></button>
+                <div id="inputThumbsRow" class="input-thumbs-row"></div>
+                <div id="inputPromptPreview" class="input-prompt-preview"></div>
+                <div class="prompt-row">
+                    <div id="promptInput" class="prompt-input" contenteditable="true" data-i18n-placeholder="smart.promptPlaceholderBasic" data-placeholder="描述任何你想要生成的内容"></div>
+                    <button id="composerTemplateBtn" class="composer-template-btn" type="button" title="模板库" aria-label="模板库" data-i18n-title="smart.promptTemplateLibrary">
+                        <i data-lucide="library"></i><span data-i18n="smart.promptTemplateLibrary">模板库</span>
+                    </button>
+                    <div id="mentionPicker" class="mention-picker"></div>
+                    <div id="promptResize" class="prompt-resize" data-i18n-title="smart.promptResize" title="拖拽调整文本框高度"></div>
                 </div>
-                <div id="gateCanvasList" class="gate-list"></div>
+                <div class="param-row">
+                    <div id="dynamicParams" class="dynamic-params"></div>
+                </div>
+                <div class="composer-actions">
+                    <button id="cascadeRunBtn" class="run-btn cascade-run-btn" type="button" style="display:none"><i data-lucide="workflow"></i><span>运行链路</span></button>
+                    <button id="runBtn" class="run-btn" type="button"><i data-lucide="sparkles"></i><span data-i18n="smart.run">运行</span></button>
+                </div>
             </div>
         </div>
-
-        <div id="board" class="board editor-only">
-            <div id="dropOverlay" class="drop-overlay" data-i18n="canvas.dropImage">拖放图片到画布</div>
-            <div id="selectionBox" class="selection-box"></div>
-            <div id="selectionHub" class="selection-hub"></div>
-            <div id="createMenu" class="create-menu">
-                <button class="menu-btn" onclick="menuAdd('image')"><i data-lucide="image-plus" class="w-4 h-4"></i><span data-i18n="canvas.imageCard">上传节点</span></button>
-                <button class="menu-btn" onclick="openPromptSubMenu(this, event)"><i data-lucide="text-cursor-input" class="w-4 h-4"></i><span data-i18n="canvas.prompt">提示词</span><i data-lucide="chevron-right" class="w-3 h-3" style="margin-left:auto;opacity:.4"></i></button>
-                <button class="menu-btn" onclick="menuAdd('loop')"><i data-lucide="repeat-2" class="w-4 h-4"></i><span data-i18n="canvas.loopNode">循环节点</span></button>
-                <button class="menu-btn" onclick="menuAdd('llm')"><i data-lucide="message-square-text" class="w-4 h-4"></i><span data-i18n="canvas.llmNode">LLM 节点</span></button>
-                <button class="menu-btn" onclick="menuAdd('generator')"><i data-lucide="wand-sparkles" class="w-4 h-4"></i><span data-i18n="canvas.apiGenerate">AI生成</span></button>
-                <button class="menu-btn" onclick="menuAdd('msgen')"><i data-lucide="cloud-lightning" class="w-4 h-4"></i><span data-i18n="canvas.modelscopeGenerate">Modelscope生成</span></button>
-                <button class="menu-btn" onclick="menuAdd('video')"><i data-lucide="clapperboard" class="w-4 h-4"></i><span data-i18n="canvas.videoGenerateNode">视频生成</span></button>
-                <button class="menu-btn" onclick="menuAdd('rh')"><i data-lucide="workflow" class="w-4 h-4"></i><span data-i18n="canvas.rhGenerate">RH生成</span></button>
-                <button class="menu-btn" onclick="menuAdd('comfy')"><i data-lucide="workflow" class="w-4 h-4"></i><span data-i18n="canvas.comfyGenerate">ComfyUI 生成</span></button>
-                <button class="menu-btn" onclick="menuAdd('ltxDirector')"><i data-lucide="film" class="w-4 h-4"></i><span data-i18n="canvas.ltxDirector">LTX Director</span></button>
-                <button class="menu-btn" onclick="menuAdd('output')"><i data-lucide="circle-dot" class="w-4 h-4"></i>Output</button>
-            </div>
-            <div id="linkCreateMenu" class="create-menu"></div>
-            <div id="promptSubMenu" class="create-menu"></div>
-            <div id="nodeInputMenu" class="create-menu"></div>
-            <div id="nodeOutputMenu" class="create-menu"></div>
-            <div id="imageNodeMenu" class="create-menu"></div>
-            <div id="promptMentionMenu" class="create-menu prompt-mention-menu"></div>
-            <div id="world" class="world">
-                <svg id="links" class="links"></svg>
-                <div id="linkControls" class="link-controls"></div>
-                <div id="nodes"></div>
-            </div>
-            <div id="minimap" class="minimap" title="导航地图">
-                <div id="minimapContent" class="minimap-content">
-                    <div id="minimapViewport" class="minimap-viewport"></div>
+        <div id="promptComposer" class="composer prompt-composer">
+            <div class="composer-card prompt-composer-card">
+                <div class="composer-head">
+                    <div class="composer-head-left">
+                        <select id="promptTaskSelect" class="engine-select">
+                            <option value="llm" data-i18n="smart.promptLlmMode">对话</option>
+                            <option value="caption" data-i18n="smart.promptCaptionMode">反推</option>
+                            <option value="expand" data-i18n="smart.promptExpandMode">扩写</option>
+                        </select>
+                    </div>
                 </div>
-            </div>
-            <aside id="canvasAssetPanel" class="canvas-asset-panel">
-                <div class="canvas-asset-head">
-                    <strong><i data-lucide="library" class="w-4 h-4"></i><span>资产库</span></strong>
-                    <button id="canvasAssetCloseBtn" class="canvas-asset-icon-btn" type="button" title="关闭"><i data-lucide="x" class="w-4 h-4"></i></button>
+                <div id="promptComposerThumbs" class="input-thumbs-row"></div>
+                <div id="promptComposerInputPreview" class="input-prompt-preview"></div>
+                <div id="promptComposerInstructionRow" class="prompt-row">
+                    <textarea id="promptComposerInstruction" class="prompt-composer-instruction"></textarea>
                 </div>
-                <select id="canvasAssetLibrarySelect" class="canvas-asset-select"></select>
-                <div class="canvas-asset-row">
-                    <select id="canvasAssetCategorySelect" class="canvas-asset-select"></select>
-                    <button id="canvasAssetAddCategoryBtn" class="canvas-asset-icon-btn" type="button" title="新建分组"><i data-lucide="folder-plus" class="w-4 h-4"></i></button>
+                <div class="param-row">
+                    <div id="promptComposerParams" class="dynamic-params"></div>
                 </div>
-                <div id="canvasAssetDropZone" class="canvas-asset-drop">拖入图片或输出保存到当前分组</div>
-                <div id="canvasAssetGrid" class="canvas-asset-grid"></div>
-            </aside>
-            <div id="canvasAssetHoverPreview" class="canvas-asset-hover-preview" hidden>
-                <img alt="asset preview">
-                <video muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback" style="display:none"></video>
-                <div class="canvas-asset-hover-name"></div>
+                <div class="composer-actions">
+                    <button id="promptComposerRunBtn" class="run-btn" type="button"><i data-lucide="play"></i><span data-i18n="common.run">运行</span></button>
+                </div>
             </div>
         </div>
-        <div class="hint editor-only" data-i18n="canvas.hint">拖拽画布或按住滚轮移动，Ctrl 框选多选，拖动选中节点可一起移动。图片/提示词节点右下端口拖线到生成节点。</div>
-        <div id="outputLightbox" class="output-lightbox" onclick="closeOutputLightbox()">
-            <div id="outputLightboxShell" class="output-lightbox-shell" onclick="event.stopPropagation()">
-            <div id="outputPreview" class="output-preview">
-                <div id="outputCompareContainer" class="output-compare">
-                    <img id="outputCompareResult" alt="result image">
-                    <div id="outputCompareOriginalWrap" class="output-compare-original-wrap">
-                        <img id="outputCompareOriginal" alt="input image">
-                    </div>
-                    <div id="outputCompareSlider" class="output-compare-slider">
-                        <div class="output-compare-handle"><i data-lucide="move-horizontal" class="w-4 h-4"></i></div>
-                    </div>
-                </div>
-                <img id="outputLightboxImg" class="output-single-img" src="" alt="output preview">
-                <video id="outputLightboxVideo" class="output-single-video" src="" controls playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback" style="display:none"></video>
-                <div class="output-preview-bar">
-                    <div id="outputResolution" class="output-resolution">--</div>
-                    <div class="output-preview-actions">
-                        <button id="outputDownloadBtn" class="preview-icon-btn" type="button" title="下载" aria-label="下载" data-i18n-title="canvas.download"><i data-lucide="download" class="w-4 h-4"></i></button>
-                        <button id="outputDownloadAllBtn" class="preview-icon-btn" type="button" title="下载全部图片" aria-label="下载全部图片" data-i18n-title="canvas.outputDownloadAllImages" style="display:none"><i data-lucide="archive" class="w-4 h-4"></i></button>
-                        <button class="preview-icon-btn" type="button" title="关闭" aria-label="关闭" onclick="closeOutputLightbox()" data-i18n-title="common.close"><i data-lucide="x" class="w-4 h-4"></i></button>
-                    </div>
-                </div>
-            </div>
-            <div id="outputPromptPanel" class="output-prompt-panel">
-                <div id="outputPromptText" class="output-prompt-text"></div>
-                <div class="output-prompt-actions">
-                    <button id="outputCopyPromptBtn" class="preview-text-btn secondary" type="button"><i data-lucide="copy" class="w-3.5 h-3.5"></i><span data-i18n="canvas.copyPrompt">复制提示词</span></button>
-                    <button id="outputRerunBtn" class="preview-text-btn" type="button"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span data-i18n="canvas.rerun">再次运行</span></button>
-                </div>
-            </div>
-            </div>
-        </div>
-        <div id="promptTemplateModal" class="prompt-template-modal" onclick="closePromptTemplateModal()">
-            <div id="promptTemplatePanel" class="prompt-template-panel" onclick="event.stopPropagation()">
-                <div class="prompt-template-head">
-                    <div>
-                        <strong data-i18n="smart.promptTemplateLibrary">模板库</strong>
-                        <span data-i18n="canvas.promptTemplateSystem">系统提示词</span>
-                    </div>
-                    <button id="promptTemplateClose" type="button" title="关闭" aria-label="关闭" data-i18n-title="common.close"><i data-lucide="x"></i></button>
-                </div>
-                <select id="promptTemplateLibrarySelect" class="prompt-template-library-select" title="选择提示词库"></select>
-                <div class="prompt-template-search">
-                    <i data-lucide="search"></i>
-                    <input id="promptTemplateSearch" type="search" placeholder="搜索模板..." data-i18n-placeholder="canvas.promptTemplateSearch">
-                </div>
-                <div id="promptTemplateCats" class="prompt-template-cats"></div>
-                <div id="promptTemplateBody" class="prompt-template-body"></div>
+        <div id="nodeShortcutOverlay" class="node-shortcut-overlay"></div>
+        <div id="nodeContextMenu" class="node-context-menu" role="menu" hidden></div>
+        <div id="canvasTitle" class="canvas-title" data-i18n="canvas.title">画布</div>
+        <div id="createMenu" class="create-menu">
+            <div class="create-menu-grid">
+                <button class="create-card" type="button" data-create-type="image">
+                    <span class="create-card-icon"><i data-lucide="image"></i></span>
+                    <span>
+                        <div class="create-card-title">图片生成</div>
+                        <div class="create-card-sub">AI 绘画、图片编辑</div>
+                    </span>
+                </button>
+                <button class="create-card" type="button" data-create-type="video">
+                    <span class="create-card-icon"><i data-lucide="play-square"></i></span>
+                    <span>
+                        <div class="create-card-title">视频生成</div>
+                        <div class="create-card-sub">AI 视频、动画合成</div>
+                    </span>
+                </button>
+                <button class="create-card" type="button" data-create-type="workflow">
+                    <span class="create-card-icon"><i data-lucide="workflow"></i></span>
+                    <span>
+                        <div class="create-card-title">工作流生成</div>
+                        <div class="create-card-sub">ComfyUI 工作流 / RH 应用</div>
+                    </span>
+                </button>
+                <button class="create-card" type="button" data-create-type="group">
+                    <span class="create-card-icon"><i data-lucide="group"></i></span>
+                    <span>
+                        <div class="create-card-title">分组</div>
+                        <div class="create-card-sub">把提示词、图片、循环收进同一组</div>
+                    </span>
+                </button>
+                <button class="create-card" type="button" data-create-type="prompt">
+                    <span class="create-card-icon"><i data-lucide="text-cursor-input"></i></span>
+                    <span>
+                        <div class="create-card-title">提示词</div>
+                        <div class="create-card-sub">手写或用 LLM 生成文本</div>
+                    </span>
+                </button>
+                <button class="create-card" type="button" data-create-type="loop">
+                    <span class="create-card-icon"><i data-lucide="repeat-2"></i></span>
+                    <span>
+                        <div class="create-card-title">循环节点</div>
+                        <div class="create-card-sub">控制链路运行轮数和批次</div>
+                    </span>
+                </button>
             </div>
         </div>
-        <div id="logModal" class="log-modal" onclick="closeCanvasLog()">
+        <!-- 拉线释放后弹出的节点类型选择菜单 -->
+        <div id="portDropMenu" class="port-drop-menu" hidden>
+            <div class="port-drop-menu-title">引用该节点生成</div>
+            <button class="port-drop-menu-item" type="button" data-node-type="text">
+                <span class="port-drop-menu-icon"><i data-lucide="align-left"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">文本生成</span>
+                    <span class="port-drop-menu-item-desc">脚本、广告词、品牌文案</span>
+                </span>
+            </button>
+            <button class="port-drop-menu-item" type="button" data-node-type="image">
+                <span class="port-drop-menu-icon"><i data-lucide="image"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">图片生成</span>
+                    <span class="port-drop-menu-item-desc">AI 绘画、图片编辑</span>
+                </span>
+            </button>
+            <button class="port-drop-menu-item" type="button" data-node-type="video">
+                <span class="port-drop-menu-icon"><i data-lucide="play-square"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">视频生成</span>
+                    <span class="port-drop-menu-item-desc">AI 视频、动画合成</span>
+                </span>
+            </button>
+            <button class="port-drop-menu-item" type="button" data-node-type="workflow">
+                <span class="port-drop-menu-icon"><i data-lucide="workflow"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">工作流生成</span>
+                    <span class="port-drop-menu-item-desc">ComfyUI 工作流 / RH 应用</span>
+                </span>
+            </button>
+            <button class="port-drop-menu-item" type="button" data-node-type="loop">
+                <span class="port-drop-menu-icon"><i data-lucide="repeat-2"></i></span>
+                <span class="port-drop-menu-item-text">
+                    <span class="port-drop-menu-item-name">循环节点</span>
+                    <span class="port-drop-menu-item-desc">批量迭代图片与提示词</span>
+                </span>
+            </button>
+        </div>
+        <input id="fileInput" type="file" accept="image/*,video/*,audio/*" multiple hidden>
+        <div id="promptPresetPanel" class="prompt-preset-panel">
+            <div class="prompt-preset-panel-head">
+                <span>提示词预设</span>
+                <button id="promptPresetClose" type="button" title="关闭"><i data-lucide="x"></i></button>
+            </div>
+            <div id="promptPresetStatus" class="prompt-preset-status"></div>
+            <div class="prompt-preset-fields">
+                <select id="promptPresetSelect"></select>
+                <input id="promptPresetName" type="text" placeholder="预设名称">
+                <textarea id="promptPresetText" placeholder="预设内容"></textarea>
+            </div>
+            <div class="prompt-preset-actions">
+                <button id="promptPresetApply" type="button">应用</button>
+                <button id="promptPresetDelete" class="danger" type="button">删除</button>
+                <span style="flex:1"></span>
+                <button id="promptPresetNew" type="button">存为新预设</button>
+                <button id="promptPresetSave" class="primary" type="button">保存修改</button>
+            </div>
+        </div>
+        <div id="promptTemplatePanel" class="prompt-template-panel">
+            <div class="prompt-template-head">
+                <div>
+                    <strong>提示词模板库</strong>
+                    <span>内置标准库 + 我的预设</span>
+                </div>
+                <button id="promptTemplateClose" type="button" title="关闭"><i data-lucide="x"></i></button>
+            </div>
+            <select id="promptTemplateLibrarySelect" class="prompt-template-library-select" title="选择提示词库"></select>
+            <div class="prompt-template-search">
+                <i data-lucide="search"></i>
+                <input id="promptTemplateSearch" type="search" placeholder="搜索模板...">
+            </div>
+            <div id="promptTemplateCats" class="prompt-template-cats"></div>
+            <div id="promptTemplateBody" class="prompt-template-body"></div>
+        </div>
+        <div id="minimap" class="canvas-minimap" aria-hidden="true">
+            <div id="minimapContent" class="canvas-minimap-content">
+                <div id="minimapViewport" class="canvas-minimap-viewport"></div>
+            </div>
+        </div>
+        <button id="canvasWorkflowToggle" class="canvas-workflow-toggle" type="button" title="导入导出模板" aria-label="导入导出模板"><i data-lucide="package-open"></i><span>模板</span></button>
+        <button id="canvasShortcutToggle" class="canvas-shortcut-toggle" type="button" onclick="openCanvasShortcuts()" title="快捷键" aria-label="快捷键" data-i18n-title="smart.shortcuts"><i data-lucide="keyboard"></i><span data-i18n="smart.shortcuts">快捷键</span></button>
+        <button id="canvasLogToggle" class="canvas-log-toggle" type="button" onclick="openCanvasLog()" title="日志" aria-label="日志" data-i18n-title="canvas.logs"><i data-lucide="list-todo"></i><span data-i18n="canvas.logs">日志</span></button>
+        <button id="assetToggle" class="asset-toggle" type="button"><i data-lucide="library"></i><span data-i18n="smart.assetLibrary">资产库</span></button>
+        <aside id="canvasWorkflowTransferModal" class="workflow-transfer-panel" hidden>
+            <div class="workflow-transfer-head">
+                <div>
+                    <div class="workflow-transfer-title">导入导出模板</div>
+                    <div id="canvasWorkflowTransferSub" class="workflow-transfer-sub">导出选中节点，或把模板导入到当前画布</div>
+                </div>
+                <button class="asset-mini-btn" type="button" onclick="closeSmartWorkflowTransferModal()" title="关闭"><i data-lucide="x"></i></button>
+            </div>
+            <div class="workflow-transfer-body">
+                <section class="workflow-transfer-card">
+                    <div class="workflow-transfer-card-head"><i data-lucide="upload"></i><strong>导出模板</strong></div>
+                    <p>使用当前选中的节点和它们之间的连线生成模板。</p>
+                    <div id="canvasWorkflowExportMeta" class="workflow-transfer-meta">未选择节点</div>
+                    <div class="workflow-transfer-actions workflow-export-actions">
+                        <button class="workflow-transfer-btn secondary" type="button" onclick="exportSelectedSmartWorkflow(false)"><i data-lucide="file-json"></i><span>导出 JSON</span></button>
+                        <button class="workflow-transfer-btn primary" type="button" onclick="exportSelectedSmartWorkflow(true)"><i data-lucide="package"></i><span>导出并包含资源</span></button>
+                    </div>
+                </section>
+                <section class="workflow-transfer-card">
+                    <div class="workflow-transfer-card-head"><i data-lucide="download"></i><strong>导入模板</strong></div>
+                    <p>支持模板 JSON，也支持包含资源的 ZIP 包。导入内容会追加到当前画布。</p>
+                    <div id="canvasWorkflowImportDropZone" class="workflow-import-drop">
+                        <i data-lucide="file-up"></i>
+                        <span>拖入 JSON / ZIP 模板</span>
+                        <small>或点击选择文件</small>
+                    </div>
+                    <input id="canvasWorkflowImportInput" type="file" accept=".json,.zip,application/json,application/zip" hidden>
+                </section>
+            </div>
+        </aside>
+        <aside id="assetPanel" class="asset-panel">
+            <div class="asset-head">
+                <div class="asset-title"><i data-lucide="library"></i><span data-i18n="smart.assetLibrary">资产库</span></div>
+                <button id="assetCloseBtn" class="asset-mini-btn" type="button" title="收起" data-i18n-title="common.close"><i data-lucide="chevron-right"></i></button>
+            </div>
+            <div class="asset-tabs">
+                <button class="asset-tab active" type="button" data-asset-tab="image" data-i18n="smart.assetImages">图片资产</button>
+                <button class="asset-tab" type="button" data-asset-tab="workflow" data-i18n="smart.assetWorkflows">模板</button>
+            </div>
+            <div id="assetImageControls">
+                <select id="assetLibrarySelect" class="asset-category-select asset-library-select" title="选择资产库"></select>
+                <div class="asset-category-row">
+                    <select id="assetCategorySelect" class="asset-category-select"></select>
+                    <button id="assetAddCategoryBtn" class="asset-mini-btn" type="button" title="新建文件夹" data-i18n-title="smart.assetNewFolder"><i data-lucide="folder-plus"></i></button>
+                    <button id="assetRenameCategoryBtn" class="asset-mini-btn" type="button" title="重命名文件夹" data-i18n-title="smart.assetRenameFolder"><i data-lucide="pencil"></i></button>
+                </div>
+            </div>
+            <div id="assetDropZone" class="asset-drop-zone" data-i18n="smart.assetDropHint">把画布图片拖到这里保存到当前文件夹</div>
+            <div id="assetGrid" class="asset-grid"></div>
+            <div id="workflowEmpty" class="workflow-empty" style="display:none" data-i18n="smart.assetWorkflowEmpty">模板资产先预留在这里，后续接入。</div>
+        </aside>
+        <div id="assetDialogBackdrop" class="asset-dialog-backdrop" hidden>
+            <div class="asset-dialog">
+                <div class="asset-dialog-title"><i data-lucide="folder-pen"></i><span id="assetDialogTitle">命名</span></div>
+                <textarea id="assetDialogInput" class="asset-dialog-input" rows="1" autocomplete="off"></textarea>
+                <div class="asset-dialog-actions">
+                    <button id="assetDialogCancel" class="asset-dialog-btn secondary" type="button" data-i18n="common.cancel">取消</button>
+                    <button id="assetDialogOk" class="asset-dialog-btn primary" type="button" data-i18n="common.confirm">确定</button>
+                </div>
+            </div>
+        </div>
+        <div id="nodeAssetSaveModal" class="node-asset-save-backdrop" hidden>
+            <div class="node-asset-save-modal">
+                <div class="node-asset-save-head">
+                    <div class="node-asset-save-title"><i data-lucide="library"></i><span>保存到资产库</span></div>
+                    <button id="nodeAssetSaveClose" class="asset-mini-btn" type="button" title="关闭"><i data-lucide="x"></i></button>
+                </div>
+                <div class="node-asset-save-toolbar">
+                    <div id="nodeAssetSaveLibraries" class="node-asset-save-libraries"></div>
+                    <button id="nodeAssetSaveNewFolder" class="node-asset-save-new-folder" type="button"><i data-lucide="folder-plus"></i><span>新建文件夹</span></button>
+                </div>
+                <div id="nodeAssetSaveFolders" class="node-asset-save-folders"></div>
+                <label class="node-asset-save-field">
+                    <span>资产名称</span>
+                    <input id="nodeAssetSaveName" type="text" autocomplete="off" placeholder="输入资产名称">
+                </label>
+                <div class="node-asset-save-actions">
+                    <button id="nodeAssetSaveCancel" class="asset-dialog-btn secondary" type="button" data-i18n="common.cancel">取消</button>
+                    <button id="nodeAssetSaveConfirm" class="asset-dialog-btn primary" type="button">保存</button>
+                </div>
+            </div>
+        </div>
+        <div id="assetHoverPreview" class="asset-hover-preview" hidden>
+            <img alt="asset preview">
+            <div class="asset-hover-name"></div>
+        </div>
+        <div id="selectionBox" class="selection-box"></div>
+        <div id="selectionActions" class="selection-actions" hidden>
+            <button type="button" data-selection-action="save"><i data-lucide="library"></i><span>加入资产</span></button>
+            <button type="button" data-selection-action="download-all"><i data-lucide="download"></i><span>下载全部</span></button>
+            <button type="button" data-selection-action="group"><i data-lucide="group"></i><span>打组</span></button>
+            <button type="button" data-selection-action="export"><i data-lucide="package-open"></i><span>导出模板</span></button>
+        </div>
+        <div id="canvasLogModal" class="log-modal" onclick="closeCanvasLog()">
             <div class="log-panel" onclick="event.stopPropagation()">
                 <div class="log-head">
                     <div class="log-title" data-i18n="canvas.generationLogs">生成日志</div>
                     <button class="preview-icon-btn" type="button" onclick="closeCanvasLog()" title="关闭" data-i18n-title="common.close"><i data-lucide="x" class="w-4 h-4"></i></button>
                 </div>
-                <div id="logList" class="log-list"></div>
+                <div id="canvasLogList" class="log-list"></div>
             </div>
         </div>
-        <div id="assetManagerModal" class="asset-manager-modal" onclick="closeAssetManager()">
-            <div class="asset-manager-panel" onclick="event.stopPropagation()">
-                <div class="asset-manager-head">
-                    <div>
-                        <div class="asset-manager-title">资产库管理</div>
-                        <div class="asset-manager-sub">管理图片资产库和提示词库</div>
-                    </div>
-                    <button class="preview-icon-btn" type="button" onclick="closeAssetManager()" title="关闭"><i data-lucide="x" class="w-4 h-4"></i></button>
+        <div id="canvasShortcutModal" class="shortcut-modal" onclick="closeCanvasShortcuts()">
+            <div class="shortcut-panel" onclick="event.stopPropagation()">
+                <div class="shortcut-head">
+                    <div class="shortcut-title"><i data-lucide="keyboard"></i><span data-i18n="smart.shortcuts">快捷键</span></div>
+                    <button class="preview-icon-btn" type="button" onclick="closeCanvasShortcuts()" title="关闭" data-i18n-title="common.close"><i data-lucide="x" class="w-4 h-4"></i></button>
                 </div>
-                <div class="asset-manager-tabs">
-                    <button class="active" type="button" data-manager-tab="assets"><i data-lucide="image" class="w-4 h-4"></i><span>图片资产</span></button>
-                    <button type="button" data-manager-tab="prompts"><i data-lucide="text-cursor-input" class="w-4 h-4"></i><span>提示词库</span></button>
+                <div class="shortcut-list">
+                    <div class="shortcut-section-title" data-i18n="smart.shortcutSectionNavigate">画布导航</div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>空格 + 左键</kbd><span class="shortcut-key-separator">/</span><kbd>右键</kbd><span class="shortcut-key-separator">/</span><kbd>中键</kbd></span><span data-i18n="smart.shortcutPan">拖动画布</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>滚轮</kbd></span><span data-i18n="smart.shortcutZoom">缩放画布或预览图片</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd></span><span data-i18n="smart.shortcutArrowPan">移动画布，配合 Shift 可移动更快</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>左键</kbd></span><span data-i18n="smart.shortcutBoxSelect">空白处拖拽框选节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>双击空白</kbd></span><span data-i18n="smart.shortcutCreateMenu">打开快捷菜单</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Z</kbd></span><span data-i18n="smart.shortcutOverview">缩小画布视图</span></div>
+                    <div class="shortcut-section-title" data-i18n="smart.shortcutSectionNodes">节点操作</div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>C</kbd></span><span data-i18n="smart.shortcutCopy">复制选中的节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>V</kbd></span><span data-i18n="smart.shortcutPaste">粘贴节点或剪贴板图片</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>Z</kbd></span><span data-i18n="smart.shortcutUndo">撤销上一步操作</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Del</kbd><kbd>Backspace</kbd></span><span data-i18n="smart.shortcutDelete">删除选中节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Alt</kbd><kbd>拖拽</kbd></span><span data-i18n="smart.shortcutDuplicate">拖拽时复制节点</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>G</kbd></span><span data-i18n="smart.shortcutGroup">将选中节点打组</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Ctrl/Cmd</kbd><kbd>Shift</kbd><kbd>G</kbd></span><span data-i18n="smart.shortcutUngroup">释放选中的分组</span></div>
+                    <div class="shortcut-section-title" data-i18n="smart.shortcutSectionPreview">预览与面板</div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>双击图片</kbd></span><span data-i18n="smart.shortcutPreview">打开图片或视频预览</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>←</kbd><kbd>→</kbd></span><span data-i18n="smart.shortcutPreviewNav">切换图片或视频帧</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>A</kbd></span><span data-i18n="smart.shortcutAssets">打开/关闭资源库</span></div>
+                    <div class="shortcut-item"><span class="shortcut-keys"><kbd>Esc</kbd></span><span data-i18n="smart.shortcutClosePanels">关闭预览窗口</span></div>
                 </div>
-                <div id="assetManagerBody" class="asset-manager-body"></div>
             </div>
         </div>
-        <div id="imageEditModal" class="image-edit-modal" onclick="closeImageEditor()">
-            <div class="image-edit-panel" onclick="event.stopPropagation()">
+        <div id="imageEditModal" class="image-edit-modal">
+            <div class="image-edit-panel">
                 <div class="image-edit-head">
-                    <div class="image-edit-headline">
+                    <div>
                         <div id="imageEditTitle" class="image-edit-title" data-i18n="canvas.editImage">编辑图片</div>
                         <div id="imageEditSub" class="image-edit-sub" data-i18n="canvas.editImageSub">选择裁剪、遮罩或画笔模式</div>
                     </div>
                     <div class="image-edit-mode">
-                        <button type="button" data-image-edit-mode="preview" class="active"><i data-lucide="eye" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modePreview">预览</span></button>
+                        <button type="button" data-image-edit-mode="preview" class="active"><i data-lucide="eye" class="w-3.5 h-3.5"></i><span data-i18n="smart.modePreview">预览</span></button>
                         <button type="button" data-image-edit-mode="crop"><i data-lucide="crop" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeCrop">裁剪</span></button>
-                        <button type="button" data-image-edit-mode="outpaint"><i data-lucide="expand" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeOutpaint">扩展</span></button>
+                        <button type="button" data-image-edit-mode="outpaint"><i data-lucide="expand" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeOutpaint">Expand</span></button>
                         <button type="button" data-image-edit-mode="mask"><i data-lucide="brush" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeMask">遮罩</span></button>
                         <button type="button" data-image-edit-mode="brush"><i data-lucide="paintbrush" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeBrush">画笔</span></button>
                         <button type="button" data-image-edit-mode="grid"><i data-lucide="grid-3x3" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeGrid">宫格切分</span></button>
+                        <button id="gridJoinModeBtn" type="button" data-image-edit-mode="gridjoin"><i data-lucide="layout-grid" class="w-3.5 h-3.5"></i><span data-i18n="canvas.modeGridJoin">宫格拼接</span></button>
                     </div>
-                    <div class="image-edit-head-end">
-                        <button class="preview-icon-btn" type="button" onclick="closeImageEditor()" title="关闭" data-i18n-title="common.close"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    <button class="preview-icon-btn" type="button" onclick="closeImageEditor()" title="关闭" data-i18n-title="common.close"><i data-lucide="x" class="w-4 h-4"></i></button>
+                </div>
+                <div id="imagePreviewTools" class="image-edit-tools">
+                    <span id="previewMetaHint" class="image-edit-sub" style="margin-left:auto"></span>
+                    <div id="panoramaControls" class="panorama-controls" style="display:none">
+                        <div class="panorama-control-group">
+                            <div class="panorama-control-line">
+                                <span class="panorama-control-label" data-i18n="smart.panoramaRatio">视窗比例</span>
+                                <button type="button" data-panorama-ratio="square">1:1</button>
+                                <button type="button" data-panorama-ratio="portrait">2:3</button>
+                                <button type="button" data-panorama-ratio="landscape">3:2</button>
+                                <button type="button" data-panorama-ratio="portrait43">3:4</button>
+                                <button type="button" data-panorama-ratio="landscape43">4:3</button>
+                                <button type="button" data-panorama-ratio="story">9:16</button>
+                                <button type="button" data-panorama-ratio="wide" class="active">16:9</button>
+                                <button type="button" data-panorama-ratio="ultrawide">21:9</button>
+                                <button type="button" data-panorama-ratio="ultratall">9:21</button>
+                                <button type="button" data-panorama-ratio="custom" data-i18n="smart.custom">自定义</button>
+                                <label id="panoramaCustomRatio" class="panorama-custom-ratio" style="display:none">
+                                    <input id="panoramaRatioW" type="number" min="1" max="999" step="1" value="16" aria-label="ratio width">
+                                    <span>:</span>
+                                    <input id="panoramaRatioH" type="number" min="1" max="999" step="1" value="9" aria-label="ratio height">
+                                </label>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div id="imageMaskTools" class="image-edit-tools">
@@ -282,11 +449,52 @@
                     <label class="grid-gap-control"><span data-i18n="canvas.gridGap">间隔(px)</span> <input id="gridGapSize" type="range" min="0" max="240" step="1" value="0"><span id="gridGapValue" class="grid-gap-value">0</span></label>
                     <span id="gridSplitCount" class="image-edit-sub"></span>
                 </div>
+                <div id="imageGridJoinTools" class="image-edit-tools">
+                    <div class="grid-preset-row">
+                        <span class="image-edit-sub" data-i18n="canvas.gridJoinPresets">拼接</span>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(1, 2)">1×2</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 1)">2×1</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 2)">2×2</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(2, 3)">2×3</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(3, 2)">3×2</button>
+                        <button class="grid-preset-btn" type="button" onclick="applyGridJoinPreset(3, 3)">3×3</button>
+                        <button class="grid-preset-btn" type="button" onclick="resetGridJoinLayout()" data-i18n="canvas.gridJoinAuto">自动</button>
+                    </div>
+                    <div class="grid-preset-row">
+                        <span class="image-edit-sub" data-i18n="canvas.gridJoinSize">尺寸</span>
+                        <button class="grid-preset-btn" type="button" data-grid-join-size="1024" onclick="setGridJoinOutputSize(1024)">1K</button>
+                        <button class="grid-preset-btn active" type="button" data-grid-join-size="2048" onclick="setGridJoinOutputSize(2048)">2K</button>
+                        <button class="grid-preset-btn" type="button" data-grid-join-size="4096" onclick="setGridJoinOutputSize(4096)">4K</button>
+                    </div>
+                    <label class="grid-gap-control"><span data-i18n="canvas.gridGap">间隔(px)</span> <input id="gridJoinGapSize" type="range" min="0" max="240" step="1" value="0"><span id="gridJoinGapValue" class="grid-gap-value">0</span></label>
+                    <span id="gridJoinCount" class="image-edit-sub"></span>
+                </div>
                 <div id="imageEditStage" class="image-edit-stage">
                     <div class="image-edit-stage-inner">
+                        <div id="previewStage" class="preview-stage" style="display:none">
+                            <div id="previewFrame" class="preview-frame">
+                                <img id="previewCurrentImage" class="preview-current" alt="current">
+                                <video id="previewCurrentVideo" class="preview-current preview-current-video" controls preload="metadata" crossorigin="anonymous" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback" style="display:none"></video>
+                                <div id="panoramaStage" class="panorama-stage" style="display:none">
+                                    <canvas id="panoramaCanvas"></canvas>
+                                    <div id="panoramaLoading" class="panorama-loading" data-i18n="smart.panoramaLoading">加载中...</div>
+                                </div>
+                                <div id="previewCompareLayer" class="preview-compare-layer">
+                                    <img id="previewCompareImage" alt="original">
+                                </div>
+                                <div id="previewCompareHandle" class="preview-compare-handle" data-i18n-title="smart.compareDrag" title="拖动对比"></div>
+                            </div>
+                            <div id="previewNavBar" class="preview-nav-bar" aria-label="图片切换">
+                                <button id="previewPrevBtn" class="preview-nav-btn" type="button" onclick="navigatePreviewImage(-1)" title="上一张" aria-label="上一张"><i data-lucide="chevron-left"></i></button>
+                                <span id="previewNavIndex" class="preview-nav-index" aria-live="polite"></span>
+                                <button id="previewNextBtn" class="preview-nav-btn" type="button" onclick="navigatePreviewImage(1)" title="下一张" aria-label="下一张"><i data-lucide="chevron-right"></i></button>
+                            </div>
+                        </div>
                         <div id="cropCanvas" class="crop-canvas">
                             <img id="cropImage" alt="crop source">
+                            <div id="gridJoinCanvas" class="grid-join-canvas"></div>
                             <canvas id="editDrawCanvas" class="edit-draw-canvas"></canvas>
+                            <div id="brushCursor" class="brush-cursor"></div>
                             <canvas id="editTextCanvas" class="edit-text-canvas"></canvas>
                             <div id="cropBox" class="crop-box">
                                 <div id="cropHandle" class="crop-handle"></div>
@@ -301,42 +509,93 @@
                             <div id="outpaintResolution" class="outpaint-resolution"></div>
                         </div>
                     </div>
+                    <div class="preview-download-overlay">
+                        <button id="previewDownloadBtn" class="compare-toggle" type="button" onclick="downloadPreviewImage()"><i data-lucide="download" class="w-4 h-4"></i><span data-i18n="canvas.download">Download</span></button>
+                        <button id="previewDownloadAllBtn" class="compare-toggle" type="button" onclick="downloadPreviewGroup()" style="display:none"><i data-lucide="archive" class="w-4 h-4"></i><span>下载全部</span></button>
+                    </div>
+                    <div class="preview-tools-overlay">
+                        <div id="compareThumbs" class="compare-thumbs" style="display:none"></div>
+                        <div class="preview-action-row">
+                            <button id="panoramaToggleBtn" class="compare-toggle" type="button" onclick="togglePanoramaPreview()" style="display:none"><i data-lucide="globe-2" class="w-4 h-4"></i><span data-i18n="smart.panorama360">360全景</span></button>
+                            <button id="panoramaExportBtn" class="compare-toggle" type="button" onclick="exportPanoramaFrame()" style="display:none"><i data-lucide="image-down" class="w-4 h-4"></i><span data-i18n="smart.panoramaExport">导出画面</span></button>
+                            <button id="compareToggleBtn" class="compare-toggle" type="button" onclick="togglePreviewCompare()" style="display:none"><i data-lucide="columns-2" class="w-4 h-4"></i><span data-i18n="smart.compareSource">对比原图</span></button>
+                        </div>
+                    </div>
                 </div>
                 <div class="image-edit-actions">
                     <span id="imageEditZoomLabel" style="color:#94a3b8;font-size:11px;font-weight:800;padding:0 4px;margin-right:auto;cursor:pointer;user-select:none" title="双击重置缩放" ondblclick="resetImageEditZoom()">100%</span>
-                    <button class="image-edit-btn secondary" type="button" onclick="resetCropBox()"><i data-lucide="rotate-ccw" class="w-4 h-4"></i><span data-i18n="canvas.reset">重置</span></button>
-                    <button class="image-edit-btn secondary" type="button" onclick="closeImageEditor()" data-i18n="common.cancel">取消</button>
+                    <div id="videoFrameTools" class="video-frame-tools" style="display:none">
+                        <button class="image-edit-btn secondary" type="button" onclick="exportVideoFrame('first')"><i data-lucide="skip-back" class="w-4 h-4"></i><span>导出首帧</span></button>
+                        <button class="image-edit-btn primary" type="button" onclick="exportVideoFrame('current')"><i data-lucide="image-down" class="w-4 h-4"></i><span>导出当前帧</span></button>
+                        <button class="image-edit-btn secondary" type="button" onclick="exportVideoFrame('last')"><i data-lucide="skip-forward" class="w-4 h-4"></i><span>导出尾帧</span></button>
+                    </div>
+                    <button id="imageEditCancelBtn" class="image-edit-btn secondary" type="button" onclick="closeImageEditor()" data-i18n="common.cancel">取消</button>
                     <button id="imageEditApplyBtn" class="image-edit-btn primary" type="button" onclick="applyImageEdit()"><i data-lucide="crop" class="w-4 h-4"></i><span data-i18n="canvas.applyCrop">应用裁剪</span></button>
                 </div>
             </div>
         </div>
-        <div id="errorModal" class="error-modal" onclick="closeErrorModal()">
-            <div class="error-panel" onclick="event.stopPropagation()">
-                <div class="error-head">
-                    <div id="errorTitle" class="error-title" data-i18n="canvas.generationFailed">生成失败</div>
-                    <button class="preview-icon-btn" type="button" title="关闭" aria-label="关闭" onclick="closeErrorModal()"><i data-lucide="x" class="w-4 h-4"></i></button>
-                </div>
-                <div id="errorMessage" class="error-message"></div>
-                <div class="error-actions">
-                    <button class="error-btn" type="button" onclick="copyErrorMessage()"><i data-lucide="copy" class="w-4 h-4"></i><span>复制</span></button>
-                    <button class="error-btn primary" type="button" onclick="closeErrorModal()">关闭</button>
-                </div>
+        <div id="toast" class="toast"></div>
+        <div id="uploadProgress" class="upload-progress" role="status" aria-live="polite">
+            <div class="upload-progress-row">
+                <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+                <span id="uploadProgressLabel" class="upload-progress-label"></span>
+                <span id="uploadProgressPercent" class="upload-progress-percent">0%</span>
             </div>
+            <div class="upload-progress-track"><div id="uploadProgressBar" class="upload-progress-bar"></div></div>
         </div>
-        <div id="classicCanvasDeprecationModal" class="classic-canvas-deprecation-modal" role="dialog" aria-modal="true" aria-labelledby="classicCanvasDeprecationTitle" onclick="closeClassicCanvasDeprecationModal()">
-            <div class="classic-canvas-deprecation-panel" onclick="event.stopPropagation()">
-                <div class="classic-canvas-deprecation-icon"><i data-lucide="triangle-alert"></i></div>
-                <div id="classicCanvasDeprecationTitle" class="classic-canvas-deprecation-title" data-i18n="canvas.classicDeprecationTitle">普通画布即将弃用</div>
-                <div class="classic-canvas-deprecation-message" data-i18n="canvas.classicDeprecationMessage">普通画布未来将会弃用，现在仅支持打开用于数据保存迁移，如需使用AI请创建智能画布</div>
-                <div class="classic-canvas-deprecation-actions">
-                    <button class="classic-canvas-deprecation-confirm" type="button" onclick="closeClassicCanvasDeprecationModal()" data-i18n="canvas.classicDeprecationConfirm">我知道了</button>
-                </div>
-            </div>
-        </div>
+        <div id="mentionPreview" class="mention-preview"><img alt="preview"></div>
     </div>
-
-    <script src="/static/js/ltx-director-timeline.js"></script>
     <script src="/static/js/upload-quota-dialog.js"></script>
-    <script src="/static/js/canvas.js"></script>
+    <script src="/static/dist/canvas/state.js"></script>
+    <script src="/static/dist/canvas/utils.js"></script>
+    <script src="/static/dist/canvas/loop-node.js"></script>
+    <script src="/static/dist/canvas/node-layout.js"></script>
+    <script src="/static/dist/canvas/node-model.js"></script>
+    <script src="/static/dist/canvas/connections.js"></script>
+    <script src="/static/dist/canvas/cascade-run.js"></script>
+    <script src="/static/dist/canvas/upload.js"></script>
+    <script src="/static/dist/canvas/media-display.js"></script>
+    <script src="/static/dist/canvas/candidate-pool.js"></script>
+    <script src="/static/dist/canvas/clipboard.js"></script>
+    <script src="/static/dist/canvas/node-context-ui.js"></script>
+    <script src="/static/dist/canvas/workflow-transfer.js"></script>
+    <script src="/static/dist/canvas/canvas-sync.js"></script>
+    <script src="/static/dist/canvas/prompt-templates.js"></script>
+    <script src="/static/dist/canvas/prompt-task-rules.js"></script>
+    <script src="/static/dist/canvas/mention-composer.js"></script>
+    <script src="/static/dist/canvas/canvas-render.js"></script>
+    <script src="/static/dist/canvas/image-editor.js"></script>
+    <script src="/static/dist/canvas/asset-library.js"></script>
+    <script src="/static/dist/canvas/generation-settings.js"></script>
+    <script src="/static/dist/canvas/main.js"></script>
+    <script>
+    /* 访问控制：按当前用户权限限制画布「AI生成」引擎（engine=api）下可选的模型。
+       - 暴露 window.__canvasAllowedModels（Set<"provider_id::model"> 或 null=全部放开）。
+       - canvas.js 的 imageProviders()/providerImageModels()/videoApiProviders()/
+         providerVideoModels() 会读取该 Set 过滤掉不允许的 provider/模型。
+       - 真正的强制生效点在后端 /api/canvas-image-tasks、/api/canvas-video（403 拦截），
+         这里只是同步隐藏 UI，避免用户看到选不了/选了也会被拒绝的模型。 */
+    (function () {
+        async function applyCanvasAccessControl() {
+            var me;
+            try {
+                var res = await fetch('/api/access-control/me', { credentials: 'same-origin' });
+                if (!res.ok) return;
+                me = await res.json();
+            } catch (e) { return; }
+            if (!me || me.is_admin) {
+                window.__canvasAllowedModels = null;   // 全部放开
+                return;
+            }
+            window.__canvasAllowedModels = new Set(Array.isArray(me.nodes) ? me.nodes : []);
+            try { if (typeof window.renderDynamicParams === 'function') window.renderDynamicParams(); } catch (e) {}
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', applyCanvasAccessControl, { once: true });
+        } else {
+            applyCanvasAccessControl();
+        }
+    })();
+    </script>
 </body>
 </html>

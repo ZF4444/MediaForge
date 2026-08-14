@@ -1,5 +1,5 @@
 const params = new URLSearchParams(location.search);
-const canvasId = params.get('id') || '';
+let canvasId = params.get('id') || '';
 const shell = document.getElementById('shell');
 const bootLoadingOverlay = document.getElementById('bootLoadingOverlay');
 const bootLoadingRingProgress = document.getElementById('bootLoadingRingProgress');
@@ -34,15 +34,15 @@ const inputPromptPreview = document.getElementById('inputPromptPreview');
 const minimap = document.getElementById('minimap');
 const minimapContent = document.getElementById('minimapContent');
 const imageEditModal = document.getElementById('imageEditModal');
-const smartLogModal = document.getElementById('smartLogModal');
-const smartLogList = document.getElementById('smartLogList');
-const smartShortcutModal = document.getElementById('smartShortcutModal');
-const smartWorkflowToggle = document.getElementById('smartWorkflowToggle');
-const smartWorkflowTransferModal = document.getElementById('smartWorkflowTransferModal');
-const smartWorkflowTransferSub = document.getElementById('smartWorkflowTransferSub');
-const smartWorkflowExportMeta = document.getElementById('smartWorkflowExportMeta');
-const smartWorkflowImportInput = document.getElementById('smartWorkflowImportInput');
-const smartWorkflowImportDropZone = document.getElementById('smartWorkflowImportDropZone');
+const canvasLogModal = document.getElementById('canvasLogModal');
+const canvasLogList = document.getElementById('canvasLogList');
+const canvasShortcutModal = document.getElementById('canvasShortcutModal');
+const canvasWorkflowToggle = document.getElementById('canvasWorkflowToggle');
+const canvasWorkflowTransferModal = document.getElementById('canvasWorkflowTransferModal');
+const canvasWorkflowTransferSub = document.getElementById('canvasWorkflowTransferSub');
+const canvasWorkflowExportMeta = document.getElementById('canvasWorkflowExportMeta');
+const canvasWorkflowImportInput = document.getElementById('canvasWorkflowImportInput');
+const canvasWorkflowImportDropZone = document.getElementById('canvasWorkflowImportDropZone');
 const selectionBox = document.getElementById('selectionBox');
 const selectionActions = document.getElementById('selectionActions');
 const assetToggle = document.getElementById('assetToggle');
@@ -220,7 +220,7 @@ async function waitForVisibleBootMedia(timeoutMs=2500, startPercent=0, endPercen
 }
 let minimapViewport = document.getElementById('minimapViewport');
 // M22 拆分：canvas / nodes / selectedId / selectedIds / selectedImage / viewport
-// 核心状态变量已迁移到 frontend/src/smart-canvas/state.js（经典 <script>，
+// 核心状态变量已迁移到 frontend/src/canvas/state.js（经典 <script>，
 // 排在最前面加载，非 ES module，原因同 M1-M21）。
 let dragState = null;
 let loopInsertPreview = null;
@@ -450,7 +450,7 @@ let panoramaState = {
     loadedSrc:'',
     loadToken:0
 };
-window.__smartCanvasPanoramaState = panoramaState;
+window.__canvasPanoramaState = panoramaState;
 let settings = {
     engine:'api',
     apiKind:'image',
@@ -512,7 +512,7 @@ const SIZE_MAP = {
 const RES_LONG_SIDE = { '1k':1024, '2k':2048, '4k':3840 };
 const RES_PIXEL_LIMIT = { '1k':2359296, '2k':4194304, '4k':8294400 };
 // M1 拆分：tr/trf/refreshIcons/uid/escapeHtml/escapeAttr 已迁移到
-// frontend/src/smart-canvas/utils.js（经典 <script>，非 ES module，
+// frontend/src/canvas/utils.js（经典 <script>，非 ES module，
 // 顶层声明仍挂到 window，构建产物里通过 <script src> 排在本文件之前
 // 加载，此处调用方式不变，无需 import）。
 function cloneSmartSettings(source=settings){
@@ -573,8 +573,8 @@ function canvasForStorage(){
     return clean;
 }
 // M15 拆分：工作流导入导出全部逻辑（apiErrorMessage 到
-// importSmartWorkflowFile，约200行）已迁移到
-// frontend/src/smart-canvas/workflow-transfer.js（经典 <script>，非 ES
+// importCanvasWorkflowFile，约200行）已迁移到
+// frontend/src/canvas/workflow-transfer.js（经典 <script>，非 ES
 // module，原因同 M1-M14）。
 const RECENT_SMART_SETTINGS_KEY = 'smart_canvas_recent_run_settings_v1';
 const initialSmartSettings = cloneSmartSettings(settings);
@@ -713,7 +713,7 @@ function isUploadedImageOnlyNode(node){
 }
 // M12 拆分：候选图池全部逻辑（normalizeGeneratedCandidateImage 到
 // expandedCandidateGridHtml，约260行）已迁移到
-// frontend/src/smart-canvas/candidate-pool.js（经典 <script>，非 ES
+// frontend/src/canvas/candidate-pool.js（经典 <script>，非 ES
 // module，原因同 M1-M11）。
 function isSmartGroupNode(node){
     return Boolean(node && node.type === 'smart-group');
@@ -735,7 +735,7 @@ function smartImageUsesWorkflowInput(node, ctx=smartLoopContext){
     return Boolean(isSmartImageNode(node) && ctx?.forceWorkflow);
 }
 // M3 拆分：normalizeLegacySmartNode 已迁移到
-// frontend/src/smart-canvas/node-model.js（经典 <script>，同上）。
+// frontend/src/canvas/node-model.js（经典 <script>，同上）。
 function validOutpaintSize(node){
     const w = Math.round(Number(node?.outpaintSize?.width || 0));
     const h = Math.round(Number(node?.outpaintSize?.height || 0));
@@ -845,7 +845,6 @@ function persistActiveSmartSettings(){
     subject.runSettings = settingsForStorage(settings);
     rememberRecentSmartSettings(settings, subject);
 }
-function backToCanvasList(){ savePromptDraftForCurrent(); window.location.href = '/static/canvas.html?v=2026.05.22.1'; }
 function promptPlainText(){
     return promptInput.innerText.replace(/\u00a0/g, ' ').trim();
 }
@@ -978,9 +977,9 @@ function isEditableTarget(target){
     return !!el?.closest?.('input, textarea, select, option, [contenteditable="true"], .prompt-node-control, .prompt-input');
 }
 // M3 拆分：safeScale / nodeScale / mediaNodeDefaultScale 已迁移到
-// frontend/src/smart-canvas/node-layout.js（经典 <script>，同上）。
-// M3 拆分：createImageNodeAt 已迁移到 frontend/src/smart-canvas/node-model.js；
-// smartGroupLayoutSize 已迁移到 frontend/src/smart-canvas/node-layout.js
+// frontend/src/canvas/node-layout.js（经典 <script>，同上）。
+// M3 拆分：createImageNodeAt 已迁移到 frontend/src/canvas/node-model.js；
+// smartGroupLayoutSize 已迁移到 frontend/src/canvas/node-layout.js
 // （均为经典 <script>，非 ES module，原因同 M1/M2）。
 const MEDIA_NODE_DEFAULT_SCALE = 2;
 const MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE = 1.6;
@@ -1081,7 +1080,7 @@ function smartGroupImageRefs(group){
     return refs;
 }
 // M3 拆分：smartGroupThumbLayout 已迁移到
-// frontend/src/smart-canvas/node-layout.js（经典 <script>，同上）。
+// frontend/src/canvas/node-layout.js（经典 <script>，同上）。
 const SMART_GROUP_ARRANGE_PADDING = 18;
 const SMART_GROUP_ARRANGE_GAP = 16;
 const SMART_GROUP_ARRANGE_HEADER = 44;
@@ -1172,15 +1171,15 @@ function arrangeSmartGroupMembers(group, options={}){
     return true;
 }
 // M3 拆分：singleImageLayout / groupImageGridLayout 已迁移到
-// frontend/src/smart-canvas/node-layout.js（经典 <script>，同上）。
+// frontend/src/canvas/node-layout.js（经典 <script>，同上）。
 // M3 拆分：smartNodeInputThumbRows / smartNodeInputThumbsHeight /
-// smartNodeInputThumbsHtml 已迁移到 frontend/src/smart-canvas/node-layout.js
+// smartNodeInputThumbsHtml 已迁移到 frontend/src/canvas/node-layout.js
 // （经典 <script>，同上）。
 // M3 拆分：promptNodeLayoutSize / imageLayout 已迁移到
-// frontend/src/smart-canvas/node-layout.js（经典 <script>，同上）。
+// frontend/src/canvas/node-layout.js（经典 <script>，同上）。
 // M2 拆分：smartLoopCount / smartLoopWidth / smartLoopHeight / fitSmartLoopNode
-// 已迁移到 frontend/src/smart-canvas/loop-node.js（经典 <script>，同上）。
-// M3 拆分：nodeRect 已迁移到 frontend/src/smart-canvas/node-layout.js
+// 已迁移到 frontend/src/canvas/loop-node.js（经典 <script>，同上）。
+// M3 拆分：nodeRect 已迁移到 frontend/src/canvas/node-layout.js
 // （经典 <script>，非 ES module，原因同 M1/M2）。
 function applyViewport(){
     world.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
@@ -1235,7 +1234,7 @@ function renderMinimap(){
         return `<div class="minimap-node" style="left:${p.left}px;top:${p.top}px;width:${p.width}px;height:${p.height}px"></div>`;
     }).join('');
     const view = project({x:viewX, y:viewY, width:viewW, height:viewH});
-    minimapContent.innerHTML = `${nodeHtml}<div id="minimapViewport" class="smart-minimap-viewport" style="left:${view.left}px;top:${view.top}px;width:${view.width}px;height:${view.height}px"></div>`;
+    minimapContent.innerHTML = `${nodeHtml}<div id="minimapViewport" class="canvas-minimap-viewport" style="left:${view.left}px;top:${view.top}px;width:${view.width}px;height:${view.height}px"></div>`;
     minimapViewport = document.getElementById('minimapViewport');
 }
 function requestRenderMinimap(){
@@ -1354,7 +1353,7 @@ function toggleZoomPreview(){
 }
 // M10 拆分：生成参数设置面板全部逻辑（syncEngineOptionsVisibility 到
 // refreshSmartConfigFromSettings，约1600行）已迁移到
-// frontend/src/smart-canvas/generation-settings.js（经典 <script>，
+// frontend/src/canvas/generation-settings.js（经典 <script>，
 // 非 ES module，原因同 M1-M9）。
 // M17 拆分：loadPromptPresets / savePromptPresets / defaultPromptTemplateGroups /
 // loadPromptTemplateGroups / savePromptTemplateGroups / loadPromptTemplateOverrides /
@@ -1372,19 +1371,19 @@ function toggleZoomPreview(){
 // createBlankPromptTemplate / savePromptTemplateEdit / deletePromptTemplate /
 // createPromptTemplateGroup / renamePromptTemplateGroup / deletePromptTemplateGroup /
 // editPromptPresetForNode 已迁移到
-// frontend/src/smart-canvas/prompt-templates.js（经典 <script>，非 ES module，
+// frontend/src/canvas/prompt-templates.js（经典 <script>，非 ES module，
 // 原因同 M1-M16）。状态变量（promptPresets/promptLibraries/promptTemplateCategory
 // 等）及 selectedId/selectedIds/selectedImage 刻意留在这里，原因同 M16。
 // M9 拆分：assetCategories / assetLibraries / activeAssetLibrary / activeAssetCategory /
 // assetCategoriesForLibrary 已迁移到
-// frontend/src/smart-canvas/asset-library.js（经典 <script>，非 ES module，
+// frontend/src/canvas/asset-library.js（经典 <script>，非 ES module，
 // 原因同 M1-M8）。
 // M14 拆分：节点悬浮快捷栏 + 右键菜单全部逻辑（nodeShortcutTargetFor
 // 到 triggerNodeShortcutAction，约320行）已迁移到
-// frontend/src/smart-canvas/node-context-ui.js（经典 <script>，非 ES
+// frontend/src/canvas/node-context-ui.js（经典 <script>，非 ES
 // module，原因同 M1-M13）。
 // M9 拆分：loadAssetLibrary 已迁移到
-// frontend/src/smart-canvas/asset-library.js（经典 <script>，非 ES module，
+// frontend/src/canvas/asset-library.js（经典 <script>，非 ES module，
 // 原因同 M1-M8）。
 function refreshAssetLibrarySoon(delay=120){
     clearTimeout(assetLibraryRefreshTimer);
@@ -1409,7 +1408,7 @@ let canvasMetaPollTimer = null;
 // M16 拆分：mergeSmartImageLists / smartNodeInFlight / mergeSmartNode /
 // mergeSmartNodeLists / mergeSmartConnections / applyMergedServerCanvas /
 // mergeReloadCanvasNow / scheduleCanvasMergeReload / handleCanvasUpdatedMessage /
-// startCanvasMetaPoll 已迁移到 frontend/src/smart-canvas/canvas-sync.js
+// startCanvasMetaPoll 已迁移到 frontend/src/canvas/canvas-sync.js
 // （经典 <script>，非 ES module，原因同 M1-M15）。
 // smartClientId 常量及 canvasSyncInFlight/canvasSaveDirty/canvasSaveAgain/
 // canvasSyncTimer/canvasMetaPollTimer 这几个可变状态变量刻意留在这里
@@ -1455,20 +1454,31 @@ function connectAssetLibrarySyncSocket(){
 // positionAssetHoverPreview / showAssetHoverPreview / hideAssetHoverPreview /
 // beginAssetInlineRename / bindAssetItemEvents / addFileToAssetLibrary /
 // canvasImageDragPayload 已迁移到
-// frontend/src/smart-canvas/asset-library.js（经典 <script>，非 ES module，
+// frontend/src/canvas/asset-library.js（经典 <script>，非 ES module，
 // 原因同 M1-M8）。
 async function loadCanvas({renderCanvas=true}={}){
-    if(!canvasId) return;
     try {
+        if(!canvasId){
+            const response = await fetch('/api/canvases', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({title:tr('canvas.title'), icon:'sparkles'})
+            });
+            if(!response.ok) throw new Error(await smartResponseErrorMessage(response, tr('canvas.toastLoadFail')));
+            const data = await response.json();
+            canvasId = data.canvas?.id || '';
+            if(!canvasId) throw new Error(tr('canvas.toastLoadFail'));
+            history.replaceState(null, '', `/static/canvas.html?id=${encodeURIComponent(canvasId)}`);
+        }
         clearTimeout(suppressAutoSaveReleaseTimer);
         suppressAutoSave = true;
         deferredAutoSaveNeeded = false;
         const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
-        if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.toastCanvasFail')));
+        if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('canvas.toastLoadFail')));
         const data = await res.json();
         canvas = data.canvas;
-        document.title = canvas.title || tr('canvas.smartCanvas');
-        document.getElementById('smartTitle').textContent = canvas.title || tr('canvas.smartCanvas');
+        document.title = canvas.title || tr('canvas.title');
+        document.getElementById('canvasTitle').textContent = canvas.title || tr('canvas.title');
         nodes = (Array.isArray(canvas.nodes) ? canvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
         nodes.forEach(n => {
             const pendingTasks = smartPendingTasks(n);
@@ -1511,7 +1521,7 @@ async function loadCanvas({renderCanvas=true}={}){
         suppressAutoSaveReleaseTimer = null;
         suppressAutoSave = false;
         deferredAutoSaveNeeded = false;
-        toast(e.message || tr('smart.toastCanvasFail'));
+        toast(e.message || tr('canvas.toastLoadFail'));
         return false;
     }
 }
@@ -1556,7 +1566,7 @@ async function saveCanvas(){
             method:'PUT',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
-                title:storageCanvas.title || tr('smart.title'),
+                title:storageCanvas.title || tr('canvas.title'),
                 icon:storageCanvas.icon || 'sparkles',
                 nodes:storageCanvas.nodes || [],
                 connections:storageCanvas.connections || [],
@@ -1609,15 +1619,15 @@ function applyNodeMetaToImage(image, node){
     return stripImageGenerationMeta(image);
 }
 // M3 拆分：inheritNodeMetaFromImage / createNode 已迁移到
-// frontend/src/smart-canvas/node-model.js（经典 <script>，同上）。
-// M3 拆分：createPromptNode 已迁移到 frontend/src/smart-canvas/node-model.js。
-// M2 拆分：createLoopNode 已迁移到 frontend/src/smart-canvas/loop-node.js。
-// M3 拆分：createSmartGroupNode 已迁移到 frontend/src/smart-canvas/node-model.js。
-// M3 拆分：cloneSmartNode 已迁移到 frontend/src/smart-canvas/node-model.js
+// frontend/src/canvas/node-model.js（经典 <script>，同上）。
+// M3 拆分：createPromptNode 已迁移到 frontend/src/canvas/node-model.js。
+// M2 拆分：createLoopNode 已迁移到 frontend/src/canvas/loop-node.js。
+// M3 拆分：createSmartGroupNode 已迁移到 frontend/src/canvas/node-model.js。
+// M3 拆分：cloneSmartNode 已迁移到 frontend/src/canvas/node-model.js
 // （经典 <script>，非 ES module，原因同 M1/M2）。
 // M13 拆分：节点复制/粘贴 + 系统剪贴板媒体粘贴全部逻辑
 // （copySelectedNodes 到 pasteFromContextMenu，约160行）已迁移到
-// frontend/src/smart-canvas/clipboard.js（经典 <script>，非 ES
+// frontend/src/canvas/clipboard.js（经典 <script>，非 ES
 // module，原因同 M1-M12）。
 function duplicateForAltDrag(node){
     const ids = (isNodeSelected(node.id) ? selectedNodeIds() : [node.id]);
@@ -1671,7 +1681,7 @@ function shellPoint(event){
 // M4 拆分：connectionGeometry / renderConnections /
 // updateConnectionGeometryInPlace / refreshConnectionLayer /
 // requestRefreshConnectionLayer 已迁移到
-// frontend/src/smart-canvas/connections.js（经典 <script>，同上）。
+// frontend/src/canvas/connections.js（经典 <script>，同上）。
 function moveNodeElementsDuringDrag(){
     if(!dragState) return;
     const groupItems = dragState.group || [{id:dragState.id}];
@@ -1748,7 +1758,7 @@ function updateNodeElementDuringResize(node){
 }
 // M11 拆分：媒体展示/下载全部逻辑（isVideoMediaItem 到
 // downloadGroupNodeImages，约680行）已迁移到
-// frontend/src/smart-canvas/media-display.js（经典 <script>，非 ES
+// frontend/src/canvas/media-display.js（经典 <script>，非 ES
 // module，原因同 M1-M10）。
 function smartRunPlatformLabel(run){
     const s = run?.settings || {};
@@ -1796,7 +1806,7 @@ function addSmartGenerationLog({run, outputs=[], runMs=0, error=''}) {
     canvas.logs = [entry, ...canvas.logs].slice(0, 500);
     scheduleSave();
 }
-function smartLogPreviewNode(url, kind='image'){
+function canvasLogPreviewNode(url, kind='image'){
     if(kind === 'video' || outputUrlLooksVideo(url)){
         window.open(url, '_blank');
         return;
@@ -1812,9 +1822,9 @@ function smartLogPreviewNode(url, kind='image'){
         selectedImage = prevSelectedImage;
     }
 }
-function renderSmartCanvasLog(){
+function renderCanvasLog(){
     const logs = canvas?.logs || [];
-    smartLogList.innerHTML = logs.length ? logs.map(log => {
+    canvasLogList.innerHTML = logs.length ? logs.map(log => {
         const thumbs = (log.outputs || []).slice(0, 8).map(url => {
             const safe = escapeAttr(url);
             const kind = outputUrlLooksVideo(url) ? 'video' : 'image';
@@ -1845,13 +1855,13 @@ function renderSmartCanvasLog(){
             <div class="log-thumbs">${thumbs}</div>
         </div>`;
     }).join('') : `<div class="log-empty">${escapeHtml(tr('canvas.noLogs'))}</div>`;
-    smartLogList.querySelectorAll('[data-url]').forEach(el => {
+    canvasLogList.querySelectorAll('[data-url]').forEach(el => {
         el.onclick = e => {
             e.stopPropagation();
-            smartLogPreviewNode(el.dataset.url, el.dataset.kind || 'image');
+            canvasLogPreviewNode(el.dataset.url, el.dataset.kind || 'image');
         };
     });
-    smartLogList.querySelectorAll('[data-prompt]').forEach(el => {
+    canvasLogList.querySelectorAll('[data-prompt]').forEach(el => {
         el.onclick = e => {
             e.stopPropagation();
             const text = el.dataset.prompt || '';
@@ -1867,20 +1877,20 @@ function renderSmartCanvasLog(){
     });
     refreshIcons();
 }
-function openSmartCanvasLog(){
+function openCanvasLog(){
     if(!canvas) return;
-    renderSmartCanvasLog();
-    smartLogModal.classList.add('open');
+    renderCanvasLog();
+    canvasLogModal.classList.add('open');
 }
-function closeSmartCanvasLog(){
-    smartLogModal.classList.remove('open');
+function closeCanvasLog(){
+    canvasLogModal.classList.remove('open');
 }
-function openSmartCanvasShortcuts(){
-    smartShortcutModal?.classList.add('open');
+function openCanvasShortcuts(){
+    canvasShortcutModal?.classList.add('open');
     refreshIcons();
 }
-function closeSmartCanvasShortcuts(){
-    smartShortcutModal?.classList.remove('open');
+function closeCanvasShortcuts(){
+    canvasShortcutModal?.classList.remove('open');
 }
 function promptNodeBodyHtml(node){
     node.llmProvider = resolveChatProviderId(node.llmProvider || '');
@@ -1896,15 +1906,15 @@ function promptNodeBodyHtml(node){
 }
 // M2 拆分：loopNumberControlHtml / smartLoopTokenLabel / smartLoopTokenChipHtml /
 // smartLoopVariableHtml / smartLoopEditorText / insertSmartLoopToken /
-// smartLoopBodyHtml 已迁移到 frontend/src/smart-canvas/loop-node.js（经典 <script>，同上）。
+// smartLoopBodyHtml 已迁移到 frontend/src/canvas/loop-node.js（经典 <script>，同上）。
 // M7 拆分：smartGroupBodyHtml / jimengPendingBodyHtml / smartRecoverableImageTask /
 // imageTaskRecoverBodyHtml / nodeBodyHtml / formatRunDuration / nodeRunElapsedMs /
 // runTimePillHtml / hideRunTimerForNode / refreshRunTimerPills / render /
-// measureSmartNodeImages 已迁移到 frontend/src/smart-canvas/canvas-render.js
+// measureSmartNodeImages 已迁移到 frontend/src/canvas/canvas-render.js
 // （经典 <script>，非 ES module，原因同 M1-M6）。
 // M4 拆分：bindConnectionEvents / ensurePortDragPathElement /
 // clearPortDragVisual 已迁移到
-// frontend/src/smart-canvas/connections.js（经典 <script>，同上）。
+// frontend/src/canvas/connections.js（经典 <script>，同上）。
 function bindPromptNodeControls(el, node){
     el.querySelectorAll('.prompt-node-control, .prompt-node-pill').forEach(control => {
         control.addEventListener('mousedown', e => e.stopPropagation());
@@ -1947,7 +1957,7 @@ function bindPromptNodeControls(el, node){
         editPromptPresetForNode(node);
     };
 }
-// M2 拆分：bindLoopNodeControls 已迁移到 frontend/src/smart-canvas/loop-node.js。
+// M2 拆分：bindLoopNodeControls 已迁移到 frontend/src/canvas/loop-node.js。
 function bindScrollableText(el){
     if(!el || el.dataset.scrollBound === '1') return;
     el.dataset.scrollBound = '1';
@@ -2015,17 +2025,17 @@ function bindScrollableText(el){
     }, {passive:true});
 }
 // M4 拆分：updatePortDragVisual / handlePortDrop 已迁移到
-// frontend/src/smart-canvas/connections.js（经典 <script>，同上）。
+// frontend/src/canvas/connections.js（经典 <script>，同上）。
 
 /* ─── 拉线释放 → 节点类型选择菜单 ─── */
 // M4 拆分：portDropMenuDrag / portDropMenuScreenPoint（原模块局部状态）/
 // openPortDropMenu / closePortDropMenu / drawPortDropMenuLine /
 // handlePortDropMenuSelect 已迁移到
-// frontend/src/smart-canvas/connections.js（经典 <script>，同上）。
+// frontend/src/canvas/connections.js（经典 <script>，同上）。
 
 // M7 拆分：pickMediaForSmartNode / bindNodeEvents / rectOverlapNode /
 // dragConnectTargetFor / canAutoConnectDraggedNode / restoreDraggedNodePosition
-// 已迁移到 frontend/src/smart-canvas/canvas-render.js（经典 <script>，非 ES module，原因同 M1-M6）。
+// 已迁移到 frontend/src/canvas/canvas-render.js（经典 <script>，非 ES module，原因同 M1-M6）。
 function clearDropHighlight(){
     world.querySelectorAll('.image-node.drop-target').forEach(el => el.classList.remove('drop-target'));
 }
@@ -2093,8 +2103,8 @@ function deleteNodeFromButton(id){
 }
 // M4 拆分：disconnectConnection / connectionMidpoint /
 // insertionConnectionForNode 已迁移到
-// frontend/src/smart-canvas/connections.js（经典 <script>，同上）。
-// M2 拆分：insertLoopNodeIntoConnection 已迁移到 frontend/src/smart-canvas/loop-node.js。
+// frontend/src/canvas/connections.js（经典 <script>，同上）。
+// M2 拆分：insertLoopNodeIntoConnection 已迁移到 frontend/src/canvas/loop-node.js。
 function updateLoopInsertPreview(){
     const node = dragState ? nodes.find(n => n.id === dragState.id) : null;
     const next = node?.type === 'smart-loop' && dragState.ctrlGroup && (dragState.group || []).length <= 1
@@ -2109,7 +2119,7 @@ function updateLoopInsertPreview(){
 // M8 拆分：图片编辑器全部功能（currentEditImage 到 applyImageEdit，
 // 共约90个函数：裁剪/智能扩图/蒙版画笔/网格拼接拆分/文字工具/全景图预览/
 // 视频帧导出/预览对比面板/弹窗生命周期）已迁移到
-// frontend/src/smart-canvas/image-editor.js（经典 <script>，非 ES module，
+// frontend/src/canvas/image-editor.js（经典 <script>，非 ES module，
 // 原因同 M1-M7）。
 let lastComposerNodeId = '';
 let activeComposerSubject = null;
@@ -2226,7 +2236,7 @@ function updateComposer(){
 // renderPromptComposerThumbs / renderPromptComposerInputPreview / bindInputThumbsDrag /
 // inputThumbDropPlacement / clearInputThumbDropMarkers / movedBeforeAfterIds /
 // sameOrderedIds / reorderInputSourceNodes / reorderInputThumb 已迁移到
-// frontend/src/smart-canvas/mention-composer.js（经典 <script>，非 ES module，
+// frontend/src/canvas/mention-composer.js（经典 <script>，非 ES module，
 // 原因同 M1-M20；注意跟 main.js 里仍保留的 updateComposer/
 // positionComposerForNode——操作另一个 DOM 元素 composer，不是这里的
 // promptComposer——是两个不同的面板，不要混淆）。
@@ -2234,7 +2244,7 @@ function updateComposer(){
 // uploadFilesFromDataTransfer / uploadTitleForItems /
 // SMART_IMAGE_DROP_EXT_RE / SMART_IMAGE_DROP_TEXT_TYPES /
 // SMART_IMAGE_DROP_TYPE_HINT_RE / smartImageFilesFromDataTransfer
-// 已迁移到 frontend/src/smart-canvas/upload.js（经典 <script>，同上）。
+// 已迁移到 frontend/src/canvas/upload.js（经典 <script>，同上）。
 // 注意：StorageQuotaSignal / quotaDataFromPayload /
 // checkQuotaWarningFromResult / smartResponseError /
 // smartResponseErrorMessage（紧接在下面）没有跟着搬走，它们是被
@@ -2310,7 +2320,7 @@ async function smartResponseErrorMessage(response, fallback='请求失败', pref
 // hasSmartImageDropData / hasSmartAssetDrag / hasMediaDrawerDrag /
 // hasSmartInputThumbDrag / setSmartDropCopyEffect / uploadFiles /
 // appendImagesToSmartNode / handleFiles / importSmartLocalImages /
-// handleSmartImageDropPayload 已迁移到 frontend/src/smart-canvas/upload.js
+// handleSmartImageDropPayload 已迁移到 frontend/src/canvas/upload.js
 // （经典 <script>，非 ES module，原因同 M1-M5）。
 function sizeForRun(sourceSettings=settings){
     return apiImageSize(sourceSettings.ratio || 'square', sourceSettings.resolution || '1k', sourceSettings.customRatio || '', sourceSettings.customSize || '', sourceSettings.ratioMatched || '') || '1024x1024';
@@ -2418,10 +2428,10 @@ function pendingBoxSize(count, options={}){
 // textBeforeCaret / renderMentionPicker / showMentionPicker /
 // positionMentionPickerAtCaret / maybeOpenMentionPicker / insertMentionToken /
 // collectPromptParts / originalPromptTextFromParts / buildPromptRequest 已迁移到
-// frontend/src/smart-canvas/mention-composer.js（经典 <script>，非 ES module，
+// frontend/src/canvas/mention-composer.js（经典 <script>，非 ES module，
 // 原因同 M1-M20）。
 // M4 拆分：outgoingConnectionsFor / outgoingInputConnectionsFor 已迁移到
-// frontend/src/smart-canvas/connections.js（经典 <script>，非 ES module，
+// frontend/src/canvas/connections.js（经典 <script>，非 ES module，
 // 原因同 M1/M2/M3）。
 function nextOutputPositionForSource(sourceNode, pendingBox, options={}){
     const sourceRect = nodeRect(sourceNode);
@@ -3179,7 +3189,7 @@ function loadNodePromptDraftToInput(node){
 }
 // M5 拆分（第2批）：createSmartComfyTask / waitSmartComfyTaskResult /
 // runQueuedSmartComfyGenerate / comfyParamsFromWorkflowValues
-// 已迁移到 frontend/src/smart-canvas/cascade-run.js（经典 <script>，同上）。
+// 已迁移到 frontend/src/canvas/cascade-run.js（经典 <script>，同上）。
 function buildPromptRequestForNode(node, defaultImages, ctx=smartLoopContext){
     const oldHtml = promptInput.innerHTML;
     loadNodePromptDraftToInput(node);
@@ -3199,7 +3209,7 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
         const taskResult = await runApiGeneration(prompt, refs, activeSettings);
         const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
         if(taskIds.length){
-            const settled = await Promise.all(taskIds.map(taskId => pollSmartCanvasTask(taskId)));
+            const settled = await Promise.all(taskIds.map(taskId => pollCanvasTask(taskId)));
             const urls = settled.flatMap(result => resultMediaUrls(result?.images || result)).filter(Boolean);
             return {urls, kind:mediaKindForUrls(urls, 'image')};
         }
@@ -3250,7 +3260,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
 // M5 拆分（第3批）：runCascadeStepIntoNode / runLoopRoundIntoSlot /
 // runClonedLoopChain / appendCascadeRefsToReceiver / cascadeRefsFromOutputs /
 // smartCascadeStopText / runSmartCascade / runSmartCascadeFromLoop /
-// runGeneration 已迁移到 frontend/src/smart-canvas/cascade-run.js
+// runGeneration 已迁移到 frontend/src/canvas/cascade-run.js
 // （经典 <script>，非 ES module，原因同 M1-M4）。这是 M5 里体量最大、
 // 嵌套最深的一批，单独逐行核对过字节级一致性。
 async function runPromptLLMNode(nodeId){
@@ -3314,7 +3324,7 @@ async function runPromptLLMNode(nodeId){
 // runRunningHubGeneration / runApiVideoGeneration /
 // runModelscopeGeneration / urlToBase64 / sleep / runComfyGeneration /
 // comfyNameForRef
-// 已迁移到 frontend/src/smart-canvas/cascade-run.js（经典 <script>，
+// 已迁移到 frontend/src/canvas/cascade-run.js（经典 <script>，
 // 非 ES module，原因同 M1-M4）。
 function smartPendingTasks(node){
     if(!node || !Array.isArray(node.pendingTasks)) return [];
@@ -3564,7 +3574,7 @@ function resumeJimengPendingNodes(){
         startJimengPoll(n);
     });
 }
-async function pollSmartCanvasTask(taskId){
+async function pollCanvasTask(taskId){
     if(!taskId) throw new Error(tr('smart.errRunFailed'));
     if(activeSmartTaskPolls.has(taskId)) return activeSmartTaskPolls.get(taskId);
     const promise = (async () => {
@@ -3597,7 +3607,7 @@ async function pollSmartCanvasTask(taskId){
 }
 async function pollSmartPendingTask(task){
     if(isRunningHubPendingTask(task)) return pollRunningHubTask(task.taskId);
-    return pollSmartCanvasTask(task.taskId);
+    return pollCanvasTask(task.taskId);
 }
 function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     if(!node || !taskId) return;
@@ -3798,7 +3808,7 @@ function selectionActionsClickHandler(event){
     event.preventDefault();
     event.stopPropagation();
     if(button.dataset.selectionAction === 'group') groupSelectedNodes();
-    if(button.dataset.selectionAction === 'export') openSmartWorkflowTransferModal();
+    if(button.dataset.selectionAction === 'export') openCanvasWorkflowTransferModal();
     if(button.dataset.selectionAction === 'download-all') void downloadSelectedNodesImages();
     if(button.dataset.selectionAction === 'save'){
         openSelectionAssetSaveModal().catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
@@ -4057,7 +4067,7 @@ function documentClickHandler(event){
 }
 document.addEventListener('click', documentClickHandler, true);
 function spacePanBlockedTarget(target){
-    return Boolean(target?.closest?.('button,input,textarea,select,[contenteditable="true"],.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.port-drop-menu,.smart-minimap,.selection-actions,.node-context-menu'));
+    return Boolean(target?.closest?.('button,input,textarea,select,[contenteditable="true"],.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.port-drop-menu,.canvas-minimap,.selection-actions,.node-context-menu'));
 }
 function shellMousedownHandler(e){
     if(e.button !== 0 || !spacePanActive || spacePanBlockedTarget(e.target)) return;
@@ -4076,7 +4086,7 @@ shell.addEventListener('mousedown', shellMousedownHandler, true);
 function shellMousedownHandler2(e){
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
-    if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
 }
@@ -4085,7 +4095,7 @@ function shellClickHandler(e){
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
     if(didPan){ e.preventDefault(); e.stopPropagation(); return; }
-    if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
     const nodeEl = e.target.closest('.image-node');
@@ -4095,7 +4105,7 @@ function shellClickHandler(e){
 shell.addEventListener('click', shellClickHandler, true);
 function shellPointerdownHandler(e){
     if(e.button !== 2) return;
-    if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     closeCreateMenu();
     didPan = false;
     rightMouseDownPoint = {x:e.clientX, y:e.clientY};
@@ -4104,9 +4114,9 @@ function shellPointerdownHandler(e){
 }
 shell.addEventListener('pointerdown', shellPointerdownHandler);
 function shellMousedownHandler3(e){
-    if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+    if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     if(e.button === 2){
-        if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
+        if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
         e.preventDefault();
         if(!rightMouseDownPoint){
             closeCreateMenu();
@@ -4118,7 +4128,7 @@ function shellMousedownHandler3(e){
     }
     // 中键按下时，即使指针落在图片节点上也允许拖拽画布；
     // 但落在底部输入栏/小地图/弹层等真正的交互 UI 上时不平移。
-    if(e.button === 1 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')){
+    if(e.button === 1 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')){
         e.preventDefault();
         closeCreateMenu();
         didPan = false;
@@ -4126,7 +4136,7 @@ function shellMousedownHandler3(e){
         shell.classList.add('panning');
         return;
     }
-    if(e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.create-menu,.smart-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     closeCreateMenu();
     if(e.button === 0){
         e.preventDefault();
@@ -4138,14 +4148,14 @@ function shellMousedownHandler3(e){
 }
 shell.onmousedown = shellMousedownHandler3;
 function shellContextmenuHandler(e){
-    if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
 }
 shell.oncontextmenu = shellContextmenuHandler;
 function shellDblclickHandler(e){
-    if(didPan || e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
+    if(didPan || e.target.closest('.image-node,.composer,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     openCreateMenu(e);
@@ -4153,7 +4163,7 @@ function shellDblclickHandler(e){
 shell.ondblclick = shellDblclickHandler;
 function shellClickHandler2(e){
     if(selectionJustFinished) return;
-    if(didPan || e.target.closest('.image-node,.composer,.smart-back,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
+    if(didPan || e.target.closest('.image-node,.composer,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     closeCreateMenu();
     clearSelection();
@@ -4208,7 +4218,7 @@ shell.addEventListener('pointermove', shellPointermoveHandler);
 // finishCanvasRightClick / cancelCanvasRightClick /
 // window.addEventListener('pointerup'/'pointercancel', ...) /
 // handleWindowMouseUp / window.onmouseup 赋值 已迁移到
-// frontend/src/smart-canvas/canvas-render.js（追加在文件末尾，经典
+// frontend/src/canvas/canvas-render.js（追加在文件末尾，经典
 // <script>，非 ES module，原因同 M1-M18）。M18 先把这两个函数从匿名
 // 箭头函数改成具名函数声明，M19 完成真正的物理搬移。依赖的15+个交互
 // 状态变量（dragState/panState/cropDrag/portDragState 等）刻意留在
@@ -4220,7 +4230,7 @@ function shellWheelHandler(e){
         e.stopPropagation();
         return;
     }
-    if(e.target.closest('.composer,.smart-back,.image-edit-modal,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal')) return;
+    if(e.target.closest('.composer,.image-edit-modal,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal')) return;
     e.preventDefault();
     viewportInteractionActive = true;
     const rect = shell.getBoundingClientRect();
@@ -4452,78 +4462,78 @@ function fileInputChangeHandler(){
 fileInput.onchange = fileInputChangeHandler;
 if(assetToggle) assetToggle.onclick = () => toggleAssetLibrary();
 if(assetCloseBtn) assetCloseBtn.onclick = () => toggleAssetLibrary(false);
-if(smartWorkflowToggle) smartWorkflowToggle.onclick = event => {
+if(canvasWorkflowToggle) canvasWorkflowToggle.onclick = event => {
     event.preventDefault();
     event.stopPropagation();
-    if(smartWorkflowTransferModal?.classList.contains('open')) closeSmartWorkflowTransferModal();
-    else openSmartWorkflowTransferModal();
+    if(canvasWorkflowTransferModal?.classList.contains('open')) closeCanvasWorkflowTransferModal();
+    else openCanvasWorkflowTransferModal();
 };
-function smartWorkflowImportInputChangeHandler(event){
+function canvasWorkflowImportInputChangeHandler(event){
     const file = event.target.files?.[0];
-    if(file) importSmartWorkflowFile(file);
+    if(file) importCanvasWorkflowFile(file);
     event.target.value = '';
 }
-smartWorkflowImportInput?.addEventListener('change', smartWorkflowImportInputChangeHandler);
-smartWorkflowImportDropZone?.addEventListener('click', () => smartWorkflowImportInput?.click());
-function smartWorkflowImportDropZoneDragenterHandler(event){
+canvasWorkflowImportInput?.addEventListener('change', canvasWorkflowImportInputChangeHandler);
+canvasWorkflowImportDropZone?.addEventListener('click', () => canvasWorkflowImportInput?.click());
+function canvasWorkflowImportDropZoneDragenterHandler(event){
     event.preventDefault();
     event.stopPropagation();
-    smartWorkflowImportDropZone.classList.add('drag-over');
+    canvasWorkflowImportDropZone.classList.add('drag-over');
 }
-smartWorkflowImportDropZone?.addEventListener('dragenter', smartWorkflowImportDropZoneDragenterHandler);
-function smartWorkflowImportDropZoneDragoverHandler(event){
+canvasWorkflowImportDropZone?.addEventListener('dragenter', canvasWorkflowImportDropZoneDragenterHandler);
+function canvasWorkflowImportDropZoneDragoverHandler(event){
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'copy';
-    smartWorkflowImportDropZone.classList.add('drag-over');
+    canvasWorkflowImportDropZone.classList.add('drag-over');
 }
-smartWorkflowImportDropZone?.addEventListener('dragover', smartWorkflowImportDropZoneDragoverHandler);
-function smartWorkflowImportDropZoneDragleaveHandler(event){
+canvasWorkflowImportDropZone?.addEventListener('dragover', canvasWorkflowImportDropZoneDragoverHandler);
+function canvasWorkflowImportDropZoneDragleaveHandler(event){
     event.preventDefault();
     event.stopPropagation();
-    if(!smartWorkflowImportDropZone.contains(event.relatedTarget)) smartWorkflowImportDropZone.classList.remove('drag-over');
+    if(!canvasWorkflowImportDropZone.contains(event.relatedTarget)) canvasWorkflowImportDropZone.classList.remove('drag-over');
 }
-smartWorkflowImportDropZone?.addEventListener('dragleave', smartWorkflowImportDropZoneDragleaveHandler);
-function smartWorkflowImportDropZoneDropHandler(event){
+canvasWorkflowImportDropZone?.addEventListener('dragleave', canvasWorkflowImportDropZoneDragleaveHandler);
+function canvasWorkflowImportDropZoneDropHandler(event){
     event.preventDefault();
     event.stopPropagation();
-    smartWorkflowImportDropZone.classList.remove('drag-over');
+    canvasWorkflowImportDropZone.classList.remove('drag-over');
     const file = [...(event.dataTransfer?.files || [])].find(item => /\.(json|zip)$/i.test(item.name || ''));
-    if(file) importSmartWorkflowFile(file);
+    if(file) importCanvasWorkflowFile(file);
     else toast('请拖入 JSON 或 ZIP 模板文件');
 }
-smartWorkflowImportDropZone?.addEventListener('drop', smartWorkflowImportDropZoneDropHandler);
-smartWorkflowTransferModal?.addEventListener('pointerdown', e => e.stopPropagation());
-smartWorkflowTransferModal?.addEventListener('mousedown', e => e.stopPropagation());
-smartWorkflowTransferModal?.addEventListener('click', e => e.stopPropagation());
-function smartWorkflowTransferModalWheelHandler(event){
+canvasWorkflowImportDropZone?.addEventListener('drop', canvasWorkflowImportDropZoneDropHandler);
+canvasWorkflowTransferModal?.addEventListener('pointerdown', e => e.stopPropagation());
+canvasWorkflowTransferModal?.addEventListener('mousedown', e => e.stopPropagation());
+canvasWorkflowTransferModal?.addEventListener('click', e => e.stopPropagation());
+function canvasWorkflowTransferModalWheelHandler(event){
     event.stopPropagation();
 }
-smartWorkflowTransferModal?.addEventListener('wheel', smartWorkflowTransferModalWheelHandler, {passive:true, capture:true});
-function smartWorkflowTransferModalDragoverHandler(event){
+canvasWorkflowTransferModal?.addEventListener('wheel', canvasWorkflowTransferModalWheelHandler, {passive:true, capture:true});
+function canvasWorkflowTransferModalDragoverHandler(event){
     event.preventDefault();
     event.stopPropagation();
-    if(smartWorkflowImportDropZone){
+    if(canvasWorkflowImportDropZone){
         event.dataTransfer.dropEffect = 'copy';
-        smartWorkflowImportDropZone.classList.add('drag-over');
+        canvasWorkflowImportDropZone.classList.add('drag-over');
     }
 }
-smartWorkflowTransferModal?.addEventListener('dragover', smartWorkflowTransferModalDragoverHandler);
-function smartWorkflowTransferModalDragleaveHandler(event){
+canvasWorkflowTransferModal?.addEventListener('dragover', canvasWorkflowTransferModalDragoverHandler);
+function canvasWorkflowTransferModalDragleaveHandler(event){
     event.preventDefault();
     event.stopPropagation();
-    if(!smartWorkflowTransferModal.contains(event.relatedTarget)) smartWorkflowImportDropZone?.classList.remove('drag-over');
+    if(!canvasWorkflowTransferModal.contains(event.relatedTarget)) canvasWorkflowImportDropZone?.classList.remove('drag-over');
 }
-smartWorkflowTransferModal?.addEventListener('dragleave', smartWorkflowTransferModalDragleaveHandler);
-function smartWorkflowTransferModalDropHandler(event){
+canvasWorkflowTransferModal?.addEventListener('dragleave', canvasWorkflowTransferModalDragleaveHandler);
+function canvasWorkflowTransferModalDropHandler(event){
     event.preventDefault();
     event.stopPropagation();
-    smartWorkflowImportDropZone?.classList.remove('drag-over');
+    canvasWorkflowImportDropZone?.classList.remove('drag-over');
     const file = [...(event.dataTransfer?.files || [])].find(item => /\.(json|zip)$/i.test(item.name || ''));
-    if(file) importSmartWorkflowFile(file);
+    if(file) importCanvasWorkflowFile(file);
     else toast('请拖入 JSON 或 ZIP 模板文件');
 }
-smartWorkflowTransferModal?.addEventListener('drop', smartWorkflowTransferModalDropHandler);
+canvasWorkflowTransferModal?.addEventListener('drop', canvasWorkflowTransferModalDropHandler);
 assetPanel?.addEventListener('pointerdown', e => e.stopPropagation());
 assetPanel?.addEventListener('mousedown', e => e.stopPropagation());
 assetPanel?.addEventListener('click', e => e.stopPropagation());
@@ -4697,7 +4707,7 @@ if(assetRenameCategoryBtn) assetRenameCategoryBtn.onclick = async () => {
     setAssetLibraryFromResponse(data);
 };
 function hasCanvasImageDrag(event){
-    return Array.from(event.dataTransfer?.types || []).includes('application/x-smart-canvas-image');
+    return Array.from(event.dataTransfer?.types || []).includes('application/x-canvas-image');
 }
 function setAssetDragOver(active){
     if(!assetDropZone || !assetPanel) return;
@@ -4717,7 +4727,7 @@ async function handleAssetPanelDrop(e){
     e.preventDefault();
     e.stopPropagation();
     setAssetDragOver(false);
-    const raw = e.dataTransfer.getData('application/x-smart-canvas-image');
+    const raw = e.dataTransfer.getData('application/x-canvas-image');
     if(raw){
         try {
             const payload = JSON.parse(raw);
@@ -4953,7 +4963,7 @@ function documentClickHandler2(event){
 }
 document.addEventListener('click', documentClickHandler2);
 function documentKeydownHandler(event){
-    if(event.key === 'Escape') { closeAllSmartPopovers(); closeCreateMenu(); closePortDropMenu(); closeSmartCanvasLog(); closeSmartCanvasShortcuts(); closePromptPresetPanel(); closePromptTemplatePanel(); closeNodeAssetSaveModal(); }
+    if(event.key === 'Escape') { closeAllSmartPopovers(); closeCreateMenu(); closePortDropMenu(); closeCanvasLog(); closeCanvasShortcuts(); closePromptPresetPanel(); closePromptTemplatePanel(); closeNodeAssetSaveModal(); }
 }
 document.addEventListener('keydown', documentKeydownHandler);
 document.getElementById('cropBox').addEventListener('mousedown', event => beginCropDrag(event, 'move'));

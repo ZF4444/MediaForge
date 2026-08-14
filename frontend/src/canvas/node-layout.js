@@ -1,14 +1,14 @@
-// 从 static/js/smart-canvas.js 剪切出的节点布局计算逻辑（M3 拆分批次）。
+// 从 static/js/canvas.js 剪切出的节点布局计算逻辑（M3 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1 utils.js / M2 loop-node.js
-// 同一个原因）：smart-canvas.js 依赖经典 <script> 的全局作用域语义（顶层
-// 声明自动挂到 window），static/smart-canvas.html 里 57 处内联
+// 同一个原因）：canvas.js 依赖经典 <script> 的全局作用域语义（顶层
+// 声明自动挂到 window），static/canvas.html 里 57 处内联
 // onclick="xxx()" 都依赖这一点。所以这里同样只做"物理文件拆分"：
 // node-layout.js 保持经典脚本语法，通过 <script src="node-layout.js">
 // 排在 loop-node.js 之后、node-model.js 和 main.js 之前加载。
 //
-// 依赖的外部全局（都还留在 static/js/smart-canvas.js / main.js 里，
+// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   类型判断：isSmartImageNode（node-layout.js 里多处用来判断是否走
 //     "显式尺寸"分支，本身是节点类型判断，留在 main.js）

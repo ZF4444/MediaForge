@@ -2,10 +2,10 @@
 
 多个前端页面模块化重构的源码目录，对应 `docs/前端重构计划.md`。
 
-**范围**：目前覆盖五个页面——`smart-canvas`（智能画布，M1-M22，见下方
+**范围**：目前覆盖五个页面——`canvas`（画布，M1-M22，见下方
 主体章节）、`api-settings`（API 设置页）、`asset-manager`（素材库管理
 页）、`comfyui-settings`（ComfyUI 设置页）、`index`（应用外壳，见文末
-对应章节）。**`static/js/canvas.js`（普通画布/无限画布）明确不在
+对应章节）。**`static/js/canvas.js`（旧画布/无限画布）明确不在
 范围内**——已确认未来会弃用，只需保证能打开旧画布，不值得投入模块化
 重构的精力，保持现状手写单文件即可。`static/js/ltx-director-timeline.js`
 （4111 行）也暂不纳入范围——这是一个 ComfyUI 自定义节点的前端 widget
@@ -18,7 +18,7 @@ mixin 模式），风险收益比跟目前这几个页面不一样，值得单�
 一个脚本通过页面注册表驱动全部页面的构建），但各自的模块拆分是独立
 进行的，互不依赖。
 
-## 智能画布（smart-canvas）
+## 画布（canvas）
 
 ## 当前状态：M2（部分完成，同 M1 的范围原则）
 
@@ -26,9 +26,9 @@ M2 原计划是拆 `loop-node.js` + 建立布局快照测试。已完成，但�
 经典脚本方案（原因见下方），且严格排除了跟级联执行调度耦合的函数。
 
 - **唯一源码分成三部分**：
-  - `static/js/smart-canvas.js`：主体代码，改动依然很频繁。
-  - `frontend/src/smart-canvas/utils.js`：M1 拆出的 7 个无状态工具函数。
-  - `frontend/src/smart-canvas/loop-node.js`：M2 拆出的循环节点
+  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/utils.js`：M1 拆出的 7 个无状态工具函数。
+  - `frontend/src/canvas/loop-node.js`：M2 拆出的循环节点
     （`smart-loop`）专属逻辑，约 30 个函数/常量，包括
     `smartLoopCount`/`smartLoopWidth`/`smartLoopHeight`/`fitSmartLoopNode`/
     `createLoopNode`/循环节点 UI 渲染与绑定（`smartLoopBodyHtml`/
@@ -38,7 +38,7 @@ M2 原计划是拆 `loop-node.js` + 建立布局快照测试。已完成，但�
     `smartLoopPreviewImages`）/循环链路克隆
     （`collectLoopChainSubgraph`/`cloneLoopChainForRound`）。
 - **同样不是真正的 ES module**：原因跟 `utils.js` 完全一致——一旦用
-  `export`/`import`，`smart-canvas.js` 就要整体转 `type="module"`，
+  `export`/`import`，`canvas.js` 就要整体转 `type="module"`，
   破坏 57 处内联 `onclick`。另外 `loop-node.js` 里有对 `nodes`/`selectedId`
   的直接重新赋值（如 `createLoopNode` 里的 `selectedId = node.id`），
   这类赋值必须靠经典脚本共享全局作用域才能工作——ES module 具名 import
@@ -71,16 +71,16 @@ M3 拆了 `node-layout.js`（节点布局计算）和 `node-model.js`（节点�
 同样沿用经典脚本方案。
 
 - **唯一源码分成五部分**：
-  - `static/js/smart-canvas.js`：主体代码，改动依然很频繁。
-  - `frontend/src/smart-canvas/utils.js`（M1）：7 个无状态工具函数。
-  - `frontend/src/smart-canvas/loop-node.js`（M2）：循环节点专属逻辑。
-  - `frontend/src/smart-canvas/node-layout.js`（M3）：节点布局计算，
+  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/utils.js`（M1）：7 个无状态工具函数。
+  - `frontend/src/canvas/loop-node.js`（M2）：循环节点专属逻辑。
+  - `frontend/src/canvas/node-layout.js`（M3）：节点布局计算，
     包括 `safeScale`/`nodeScale`/`mediaNodeDefaultScale`/
     `smartGroupLayoutSize`/`smartGroupThumbLayout`/`singleImageLayout`/
     `groupImageGridLayout`/`smartNodeInputThumbRows`/
     `smartNodeInputThumbsHeight`/`smartNodeInputThumbsHtml`/
     `promptNodeLayoutSize`/`imageLayout`/`nodeRect`。
-  - `frontend/src/smart-canvas/node-model.js`（M3）：节点数据模型的
+  - `frontend/src/canvas/node-model.js`（M3）：节点数据模型的
     创建/克隆/规范化，包括 `normalizeLegacySmartNode`/
     `createImageNodeAt`/`inheritNodeMetaFromImage`/`createNode`/
     `createPromptNode`/`createSmartGroupNode`/`cloneSmartNode`。
@@ -112,11 +112,11 @@ M3 拆了 `node-layout.js`（节点布局计算）和 `node-model.js`（节点�
 M4 拆了 `connections.js`（连线数据与渲染），同样沿用经典脚本方案。
 
 - **唯一源码分成六部分**：
-  - `static/js/smart-canvas.js`：主体代码，改动依然很频繁。
-  - `frontend/src/smart-canvas/utils.js`（M1）。
-  - `frontend/src/smart-canvas/loop-node.js`（M2）。
-  - `frontend/src/smart-canvas/node-layout.js` + `node-model.js`（M3）。
-  - `frontend/src/smart-canvas/connections.js`（M4）：连线数据操作
+  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/utils.js`（M1）。
+  - `frontend/src/canvas/loop-node.js`（M2）。
+  - `frontend/src/canvas/node-layout.js` + `node-model.js`（M3）。
+  - `frontend/src/canvas/connections.js`（M4）：连线数据操作
     （`addConnection`/`connectInputNode`/`disconnectConnection`/
     `outgoingConnectionsFor`/`outgoingInputConnectionsFor`/
     `connectionMidpoint`/`insertionConnectionForNode`）+ 连线渲染与端口
@@ -159,10 +159,10 @@ M5 拆了 `cascade-run.js`（一键运行/级联生成调度），是体量最�
 单独验证，不一次性全部完成。
 
 - **唯一源码分成七部分**：
-  - `static/js/smart-canvas.js`：主体代码，改动依然很频繁。
-  - `frontend/src/smart-canvas/{utils,loop-node,node-layout,node-model,connections}.js`
+  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/{utils,loop-node,node-layout,node-model,connections}.js`
     （M1-M4）。
-  - `frontend/src/smart-canvas/cascade-run.js`（M5）：共 32 个函数，
+  - `frontend/src/canvas/cascade-run.js`（M5）：共 32 个函数，
     分三批拆出：
     - **第1批**（最小风险的独立小函数）：`smartCascadeAbortError`/
       `throwIfSmartCascadeStopRequested`/`requestSmartCascadeStop`/
@@ -209,10 +209,10 @@ M5 拆了 `cascade-run.js`（一键运行/级联生成调度），是体量最�
 M6 拆了 `upload.js`（上传/拖拽/配额弹窗），共 28 个函数。
 
 - **唯一源码分成八部分**：
-  - `static/js/smart-canvas.js`：主体代码，改动依然很频繁。
-  - `frontend/src/smart-canvas/{utils,loop-node,node-layout,node-model,connections,cascade-run}.js`
+  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/{utils,loop-node,node-layout,node-model,connections,cascade-run}.js`
     （M1-M5）。
-  - `frontend/src/smart-canvas/upload.js`（M6）：拖拽数据解析
+  - `frontend/src/canvas/upload.js`（M6）：拖拽数据解析
     （`dataTransferItemEntry`/`filesFromEntry`/`smartDropDataTypes`/
     `smartImageDropPayload`/`resolveSmartImageDropPayload`/
     `hasSmartImageDropData`/`hasSmartAssetDrag` 等）+ 文件上传
@@ -237,7 +237,7 @@ M6 拆了 `upload.js`（上传/拖拽/配额弹窗），共 28 个函数。
   结束行、`smartResponseErrorMessage` 的真实结束行都跟最初设想的差
   1 行）。这次直接先用 `grep -n "^}"` 配合行号范围筛选，一次性拿到
   所有顶层函数的真实结束行号，再做切割，避免了 M5 那种来回试错。
-  另外发现 `frontend/src/smart-canvas/upload.js` 里 `hasSmartAssetDrag`
+  另外发现 `frontend/src/canvas/upload.js` 里 `hasSmartAssetDrag`
   一开始被我误写成了跟源文件不一致的格式（多余的换行被我"修正"掉了，
   但源文件本身就是不规范的单行格式），字节级 diff 揪出了这个问题，
   照抄源文件原样改回。
@@ -255,7 +255,7 @@ M7 拆了 `canvas-render.js`（主渲染循环 + 节点事件绑定），共 18 
 是目前耦合度最高的一批。
 
 - **唯一源码分成九部分**：新增
-  `frontend/src/smart-canvas/canvas-render.js`（M7），排在 `upload.js`
+  `frontend/src/canvas/canvas-render.js`（M7），排在 `upload.js`
   之后、`main.js` 之前加载。包含两类函数：
   - 节点卡片 HTML 构建：`smartGroupBodyHtml`/`jimengPendingBodyHtml`/
     `smartRecoverableImageTask`/`imageTaskRecoverBodyHtml`/`nodeBodyHtml`。
@@ -338,7 +338,7 @@ M8 拆了 `image-editor.js`，共约90个函数，是目前拆出的最大单个
 （约2440行源码）。
 
 - **唯一源码分成十部分**：新增
-  `frontend/src/smart-canvas/image-editor.js`（M8），排在
+  `frontend/src/canvas/image-editor.js`（M8），排在
   `canvas-render.js` 之后、`main.js` 之前加载。覆盖：
   - 编辑源图片读取：`currentEditImage`/`previewSourceImages`/
     `cropImageDisplaySize`/`cropBounds` 等。
@@ -391,7 +391,7 @@ M8 拆了 `image-editor.js`，共约90个函数，是目前拆出的最大单个
 M9 拆了 `asset-library.js`，共26个函数。
 
 - **唯一源码分成十一部分**：新增
-  `frontend/src/smart-canvas/asset-library.js`（M9），排在
+  `frontend/src/canvas/asset-library.js`（M9），排在
   `image-editor.js` 之后、`main.js` 之前加载。覆盖：
   1. 资产库/分类数据访问：`assetCategories`/`assetLibraries`/
      `activeAssetLibrary`/`activeAssetCategory`/`assetCategoriesForLibrary`。
@@ -415,7 +415,7 @@ M9 拆了 `asset-library.js`，共26个函数。
     函数，只是其中一个分支会调用 `openNodeAssetSaveModal`，本身横跨
     下载/取消分组/全屏预览/图片编辑器等一堆跟资产库无关的动作。
   - `connectAssetLibrarySyncSocket`：名字像资产库同步，但实际是
-    smart-canvas 多人协作用的**唯一** WebSocket 连接，`onmessage` 里
+    canvas 多人协作用的**唯一** WebSocket 连接，`onmessage` 里
     同时分发 `asset_library_updated`（资产库同步，调用本文件的
     `handleAssetLibraryUpdatedMessage`）和 `canvas_updated`（canvas
     文档多人合并同步，调用 `main.js` 里的 `handleCanvasUpdatedMessage`）
@@ -455,7 +455,7 @@ M9 之后重新评估剩余候选，发现"生成参数设置面板"（底部 co
 M10 拆了 `generation-settings.js`，共135个函数。
 
 - **唯一源码分成十二部分**：新增
-  `frontend/src/smart-canvas/generation-settings.js`（M10），排在
+  `frontend/src/canvas/generation-settings.js`（M10），排在
   `asset-library.js` 之后、`main.js` 之前加载。物理上是连续的一整块
   （原文件 1753-3365 行区间），覆盖：
   1. 引擎/模型可用性判断：`syncEngineOptionsVisibility`/
@@ -514,7 +514,7 @@ M10 之后继续评估剩余候选，发现"媒体展示/下载"是另一块干�
 M11 拆了 `media-display.js`，共59个函数。
 
 - **唯一源码分成十三部分**：新增
-  `frontend/src/smart-canvas/media-display.js`（M11）。这是本文件里
+  `frontend/src/canvas/media-display.js`（M11）。这是本文件里
   少数几个基础工具类模块（跟 utils.js/node-layout.js 类似），被
   `canvas-render.js`/`image-editor.js`/`cascade-run.js`/`loop-node.js`/
   `node-layout.js`/`upload.js`/`node-model.js` 等多个模块调用，因此排在
@@ -588,7 +588,7 @@ M11 之后继续评估剩余候选，发现"候选图池"（同一图片节点�
 M12 拆了 `candidate-pool.js`，共25个函数。
 
 - **唯一源码分成十四部分**：新增
-  `frontend/src/smart-canvas/candidate-pool.js`（M12），排在
+  `frontend/src/canvas/candidate-pool.js`（M12），排在
   `media-display.js` 之后、`canvas-render.js` 之前加载。覆盖：
   1. 候选图片的归一化/合并：`normalizeGeneratedCandidateImage`/
      `candidateImageKey`/`candidateImageHasRunMeta`/
@@ -636,7 +636,7 @@ M12 之后继续评估剩余候选，发现"节点复制/粘贴 + 系统剪贴�
 M13 拆了 `clipboard.js`，共8个函数。
 
 - **唯一源码分成十五部分**：新增
-  `frontend/src/smart-canvas/clipboard.js`（M13），排在
+  `frontend/src/canvas/clipboard.js`（M13），排在
   `candidate-pool.js` 之后、`canvas-render.js` 之前加载。覆盖：
   1. 节点复制/粘贴：`copySelectedNodes`/`pasteNodes`（复制/粘贴选中的
      节点及其内部连线，按"只保留流入被复制节点的连线"策略处理）。
@@ -676,7 +676,7 @@ M13 之后继续评估剩余候选，发现"节点悬浮快捷栏 + 右键菜单
 M14 拆了 `node-context-ui.js`，共16个函数。
 
 - **唯一源码分成十六部分**：新增
-  `frontend/src/smart-canvas/node-context-ui.js`（M14），排在
+  `frontend/src/canvas/node-context-ui.js`（M14），排在
   `clipboard.js` 之后、`canvas-render.js` 之前加载。覆盖：
   1. 节点悬浮快捷栏（选中单个图片/媒体节点时，节点上方浮现的一排
      快捷按钮：下载/加入资产/全屏/对比/编辑等）：
@@ -723,7 +723,7 @@ M14 之后继续评估剩余候选，发现"工作流导入导出"弹窗是另�
 M15 拆了 `workflow-transfer.js`，共13个函数。
 
 - **唯一源码分成十七部分**：新增
-  `frontend/src/smart-canvas/workflow-transfer.js`（M15），排在
+  `frontend/src/canvas/workflow-transfer.js`（M15），排在
   `node-context-ui.js` 之后、`canvas-render.js` 之前加载。覆盖：
   1. API 错误信息提取（本文件专属，不是 `upload.js`/M6 那套通用配额
      基础设施 `smartResponseErrorMessage`）：`apiErrorMessage`/
@@ -766,7 +766,7 @@ M15 拆了 `workflow-transfer.js`，共13个函数。
 ## 当前状态：M16（完成，同 M1-M15 的范围原则）
 
 修完当天的线上 bug（M3 拆分时手滑漏迁移了 `MEDIA_NODE_DEFAULT_SCALE`
-等 10 个常量声明，导致打开已有画布时卡在"正在载入智能画布"，详见
+等 10 个常量声明，导致打开已有画布时卡在"正在载入画布"，详见
 下方"线上事故复盘"一节）之后，继续评估剩余候选。M9 阶段的架构备注
 里提到"画布多端协作合并系统"是一个尚未拆出的独立子系统（当时因为
 物理上和 asset-library.js 交叠而搁置），现在单独评估发现它是一块
@@ -775,7 +775,7 @@ M15 拆了 `workflow-transfer.js`，共13个函数。
 M16 拆了 `canvas-sync.js`，共10个函数。
 
 - **唯一源码分成十八部分**：新增
-  `frontend/src/smart-canvas/canvas-sync.js`（M16），排在
+  `frontend/src/canvas/canvas-sync.js`（M16），排在
   `workflow-transfer.js` 之后、`canvas-render.js` 之前加载。覆盖多端
   协作场景下，服务器广播 `canvas_updated` 之后如何把远端画布数据和
   本地当前编辑状态合并：
@@ -823,7 +823,7 @@ M16 拆了 `canvas-sync.js`，共10个函数。
 
 ## 线上事故复盘（M3 遗留 bug，2026-08-05 发现并修复）
 
-打开一个此前已存在的画布时，页面卡在"正在载入智能画布"加载动画
+打开一个此前已存在的画布时，页面卡在"正在载入画布"加载动画
 不消失。浏览器控制台报 `ReferenceError: MEDIA_NODE_DEFAULT_SCALE is
 not defined`，报错栈经过 `nodeScale`/`mediaNodeDefaultScale`
 （`node-layout.js`，M3 拆分）→ `nodeRect`/`render`/`renderMinimap`
@@ -837,7 +837,7 @@ not defined`，报错栈经过 `nodeScale`/`mediaNodeDefaultScale`
 `SMART_GROUP_LEGACY_HEIGHT`/`SMART_GROUP_MIN_WIDTH`/
 `SMART_GROUP_MIN_HEIGHT`）——这些常量当时的设计意图是"留在
 main.js"（`node-layout.js` 文件头的注释也确实这样写了），但实际
-删除 `static/js/smart-canvas.js` 里的函数区间时，连带把这 10 行
+删除 `static/js/canvas.js` 里的函数区间时，连带把这 10 行
 常量声明一起删掉了，且从未补回任何地方，变成了"哪个文件都没有
 声明"。因为这些常量只在函数体内部被引用（不是模块顶层立即执行的
 代码），所以当时的 10 步校验流程里的"语法检查"/"vm 交叉模拟"都没
@@ -846,7 +846,7 @@ main.js"（`node-layout.js` 文件头的注释也确实这样写了），但实�
 任何一个模块的单元测试覆盖到，因为那些测试都是用手造的最小化输入
 调用纯函数，不会经过"渲染整个画布"的完整调用链。
 
-**修复**：把这 10 个常量声明原样补回 `static/js/smart-canvas.js`
+**修复**：把这 10 个常量声明原样补回 `static/js/canvas.js`
 里 M3 拆分注释的位置。
 
 **教训**：
@@ -879,7 +879,7 @@ M16 之后重新评估提示词模板/composer 大系统。之前（M8 阶段）
 M17 拆了 `prompt-templates.js`，共45个函数。
 
 - **唯一源码分成十九部分**：新增
-  `frontend/src/smart-canvas/prompt-templates.js`（M17），排在
+  `frontend/src/canvas/prompt-templates.js`（M17），排在
   `canvas-sync.js` 之后、`canvas-render.js` 之前加载。覆盖提示词预设
   （个人保存的提示词片段）和提示词模板库（内置模板 + 远程模板库）的
   完整生命周期：
@@ -887,7 +887,7 @@ M17 拆了 `prompt-templates.js`，共45个函数。
      `loadPromptTemplateGroups`/`savePromptTemplateGroups`/
      `loadPromptTemplateOverrides`/`savePromptTemplateOverrides`。
   2. 模板库加载与选择：`loadPromptTemplates`（从 `/api/prompt-libraries`
-     加载，远程库为空时兜底到旧版 `/api/smart-canvas/prompt-templates`）/
+     加载，远程库为空时兜底到旧版 `/api/canvas/prompt-templates`）/
      `activePromptLibrary`/`renderPromptLibrarySelect`。
   3. 模板数据查询/格式化：`promptTemplateItems`（按当前库汇总内置
      模板+个人预设+远程模板项）/`promptTemplateText`（拼接正向/负向/
@@ -1096,7 +1096,7 @@ M21 拆了 `mention-composer.js`，共79个函数，是仅次于 M8
 `image-editor.js`（约90个函数）的第二大单个模块。
 
 - **唯一源码分成二十部分**：新增
-  `frontend/src/smart-canvas/mention-composer.js`（M21），排在
+  `frontend/src/canvas/mention-composer.js`（M21），排在
   `prompt-templates.js` 之后、`canvas-render.js` 之前加载。覆盖两大
   子系统：
   1. **提示词节点 composer**（`promptComposer` 面板——注意跟 main.js
@@ -1120,7 +1120,7 @@ M21 拆了 `mention-composer.js`，共79个函数，是仅次于 M8
      批函数（`upstreamNodesForKinds`/`inputNodesFor`/`imagesForNode`/
      `runInputRefsForNode`/`defaultReferenceImagesFor`/
      `lineConnectionsFor`/`connectedLineNodeIds` 等三十多个，是整个
-     智能画布最复杂的一套推导逻辑）、@提及选择器候选图片来源汇总
+     画布最复杂的一套推导逻辑）、@提及选择器候选图片来源汇总
      （`inputMentionCandidateImages`/`assetMentionCandidateImages`/
      `mentionCandidateImages`/`referenceImagesFor`）、@提及选择器弹出
      面板本体（`closeMentionPicker`/`renderMentionPicker`/
@@ -1165,7 +1165,7 @@ state.js"其实可以用跟前 21 个里程碑完全一样的方式完成：只�
 M22 拆了 `state.js`，包含 6 个核心状态变量：`canvas`/`nodes`/
 `selectedId`/`selectedIds`/`selectedImage`/`viewport`。
 
-- **唯一源码分成二十一部分**：新增 `frontend/src/smart-canvas/state.js`
+- **唯一源码分成二十一部分**：新增 `frontend/src/canvas/state.js`
   （M22），排在**全部模块最前面**加载（比 `utils.js` 还早）——这是
   本次拆分唯一需要注意加载顺序的地方：确保所有其它模块和 `main.js`
   在自己的函数体内访问这些变量时（永远晚于页面全部脚本加载完毕），
@@ -1201,7 +1201,7 @@ M22 拆了 `state.js`，包含 6 个核心状态变量：`canvas`/`nodes`/
   直接读 `sandbox.nodes`。这也解释了为什么本次会话所有 vm 交叉模拟
   脚本从 M1 开始就一直用 `vm.runInContext(...)` 而不是直接读 sandbox
   属性——不是随手选的写法，是必须这样才能拿到真实的当前值。
-- **效果**：`static/js/smart-canvas.js` 从 16590 行的单体文件，到
+- **效果**：`static/js/canvas.js` 从 16590 行的单体文件，到
   现在物理拆分出 21 个模块（含 `state.js`），本次会话计划的三大
   高风险区块（`window.onmousemove`/`onmouseup` 物理拆分、顶层匿名
   脚本具名化 + @mention/composer 拆分、`state.js` 真正提取）全部
@@ -1214,16 +1214,16 @@ M22 拆了 `state.js`，包含 6 个核心状态变量：`canvas`/`nodes`/
   消息，物理上无法拆分成单一职责模块，这是目前唯一还留在 `main.js`
   里、且明确判断"物理上无法继续拆分"的部分。
 
-## 智能画布：构建 & 测试
+## 画布：构建 & 测试
 
 ```bash
 cd frontend
 npm install
-npm run build   # 生成 ../static/dist/smart-canvas/{state.js,main.js,utils.js,loop-node.js,node-layout.js,node-model.js,connections.js,cascade-run.js,upload.js,media-display.js,candidate-pool.js,clipboard.js,node-context-ui.js,workflow-transfer.js,canvas-sync.js,prompt-templates.js,mention-composer.js,canvas-render.js,image-editor.js,asset-library.js,generation-settings.js}
+npm run build   # 生成 ../static/dist/canvas/{state.js,main.js,utils.js,loop-node.js,node-layout.js,node-model.js,connections.js,cascade-run.js,upload.js,media-display.js,candidate-pool.js,clipboard.js,node-context-ui.js,workflow-transfer.js,canvas-sync.js,prompt-templates.js,mention-composer.js,canvas-render.js,image-editor.js,asset-library.js,generation-settings.js}
 npm test        # 跑全部拆分模块的 Vitest 回归测试（三个页面的测试共用一次 npm test）
 ```
 
-`static/smart-canvas.html` 的加载顺序：
+`static/canvas.html` 的加载顺序：
 `state.js`（M22，必须最先加载）→ `utils.js` → `loop-node.js` →
 `node-layout.js` → `node-model.js` →
 `connections.js` → `cascade-run.js` → `upload.js` → `media-display.js` →
@@ -1234,16 +1234,16 @@ npm test        # 跑全部拆分模块的 Vitest 回归测试（三个页面的
 `<script>`，都走 `/static` 挂载和版本号注入逻辑，main.py 不需要任何
 改动）。
 
-**重要**：每次修改了 `static/js/smart-canvas.js` 或
-`frontend/src/smart-canvas/` 下任何一个手写模块文件之后，必须重新
-运行 `npm run build`，否则 `static/smart-canvas.html` 加载到的会是
+**重要**：每次修改了 `static/js/canvas.js` 或
+`frontend/src/canvas/` 下任何一个手写模块文件之后，必须重新
+运行 `npm run build`，否则 `static/canvas.html` 加载到的会是
 旧版本。这个规则对下面 api-settings/asset-manager 两个页面同样适用。
 
 ## API 设置页（api-settings）
 
-`static/js/api-settings.js` 用跟智能画布完全一样的方法论拆分：不改成
+`static/js/api-settings.js` 用跟画布完全一样的方法论拆分：不改成
 ES module（原因见文首），只做"物理搬移函数到独立文件"，状态变量和
-真正跨子系统共享的核心逻辑留在 `main.js`。这个页面比智能画布小得多
+真正跨子系统共享的核心逻辑留在 `main.js`。这个页面比画布小得多
 （拆分前 2564 行），且拆分前所有顶层函数已经是具名声明（没有 M20 那种
 "顶层匿名脚本"问题），所以直接一步做完整拆分，没有分成多个里程碑。
 
@@ -1274,7 +1274,7 @@ ES module（原因见文首），只做"物理搬移函数到独立文件"，状
   （`VOLCENGINE_*`/`MS_*`/`RH_*`/`JIMENG_*`/`ONBOARDING_GUIDES`/
   `RECOMMENDED_APIS`）。
 - **内联 `onclick` 依赖的验证**：`api-settings.html` 有 40 处内联
-  `onclick`/`onchange` 属性直接引用 window 全局函数（比智能画布的写法
+  `onclick`/`onchange` 属性直接引用 window 全局函数（比画布的写法
   更依赖这个机制），拆分后专门用 vm 模拟验证了这些内联属性引用的函数
   （`toggleRhWorkflowEditorField`/`saveOnboardingRunningHubKey`/
   `updateMsLora` 等）在跨文件加载后依然能通过 `typeof fn === 'function'`
@@ -1291,13 +1291,13 @@ ES module（原因见文首），只做"物理搬移函数到独立文件"，状
 
 ## 素材库管理页（asset-manager）
 
-`static/js/asset-manager.js` 同样用跟智能画布一样的方法论拆分。这是
+`static/js/asset-manager.js` 同样用跟画布一样的方法论拆分。这是
 本次迁移里规模最大的单个文件（拆分前 2715 行，约 150 个函数，67 个
 `let` 状态变量）。跟 api-settings 的一个显著区别：这个页面**零内联
 事件绑定**，所有交互都走一个巨大的 `handleClick` 委托函数（304 行，
 根据 `event.target.closest(...)` 匹配各种 `data-xxx` 属性分发到具体
 操作），`handleClick` 本身跟几乎全部子系统都有耦合，判断为"物理上
-最好留在 main.js"，跟智能画布的 `syncEditor`/`renderEditor` 是同一类
+最好留在 main.js"，跟画布的 `syncEditor`/`renderEditor` 是同一类
 角色——核心调度器，不拆。
 
 - **拆出 6 个模块**（`frontend/src/asset-manager/`，`<script>` 加载
@@ -1343,8 +1343,8 @@ ES module（原因见文首），只做"物理搬移函数到独立文件"，状
   报错，重复定义在浏览器里也不一定马上出问题（后定义的会覆盖前面的，
   可能表现正常但实际上跑的是脚本里更靠后的那份定义）。
 - **`frontend/test/` 目录是所有页面共用的扁平目录，测试文件名需要
-  全局唯一**：智能画布已经有一个 `asset-library.test.js`（M9 模块，
-  智能画布内嵌的资产库面板，跟这次 asset-manager 页面新拆出来的
+  全局唯一**：画布已经有一个 `asset-library.test.js`（M9 模块，
+  画布内嵌的资产库面板，跟这次 asset-manager 页面新拆出来的
   `asset-library.js` 是完全不同的两个模块，只是恰好同名）。这次没有
   给 asset-manager 的 `asset-library.js` 写测试文件所以没有实际冲突，
   但未来如果要补测试，需要用带页面前缀的文件名（比如
@@ -1362,7 +1362,7 @@ ES module（原因见文首），只做"物理搬移函数到独立文件"，状
 - **跳过测试的模块**：`asset-library.js`/`prompt-library.js`/
   `avatar-registration.js`/`provider-onboarding.js`/`recommend-api.js`/
   `jimeng-cli.js` 没有写专门的单元测试——这些模块的函数基本都是
-  DB-CRUD/网络请求为主（跟智能画布 M5/M7/M8 核心批次同类不适合单元
+  DB-CRUD/网络请求为主（跟画布 M5/M7/M8 核心批次同类不适合单元
   测试）或者过于 trivial（如 `openLocalItem` 就是 `window.open` 一行）。
 
 ## ComfyUI 设置页（comfyui-settings）
@@ -1523,12 +1523,12 @@ API 设置/素材库/ComfyUI 设置等）都以 `<iframe>` 形式挂载在这个
 ```bash
 cd frontend
 npm install
-npm run build   # 一次性构建全部五个页面（smart-canvas + api-settings + asset-manager + comfyui-settings + index）
+npm run build   # 一次性构建全部五个页面（canvas + api-settings + asset-manager + comfyui-settings + index）
 npm test        # 跑全部五个页面的 Vitest 回归测试
 ```
 
 `frontend/scripts/build-pages.mjs` 是通用的多页面构建脚本（取代了
-早期只认识智能画布一个页面的 `build-smart-canvas.mjs`），内部维护一份
+早期只认识画布一个页面的 `build-canvas.mjs`），内部维护一份
 `PAGES` 注册表，每个页面登记 `page`（对应 `frontend/src/<page>/` 和
 `static/dist/<page>/`）、`mainSrc`（该页面唯一源码在 `static/js/` 下的
 路径）、`handwrittenFiles`（已拆分模块的文件名列表，顺序即
@@ -1538,7 +1538,7 @@ npm test        # 跑全部五个页面的 Vitest 回归测试
 `static/comfyui-settings.html`、`static/index.html` 的 `<script>` 标签
 已经从直接指向 `/static/js/<page>.js` 改成指向
 `/static/dist/<page>/main.js` + 各拆分模块——**这意味着这几个页面
-现在也需要先跑 `npm run build` 才能生效**，跟智能画布的规则完全一致。
+现在也需要先跑 `npm run build` 才能生效**，跟画布的规则完全一致。
 如果只改了 `static/js/api-settings.js`/`static/js/asset-manager.js`/
 `static/js/comfyui-settings.js`/`static/js/index.js`，忘记
 `npm run build`，页面加载到的会是旧版本代码。

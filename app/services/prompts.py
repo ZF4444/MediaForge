@@ -1,7 +1,7 @@
 """提示词库 / 提示词模板的数据与规范化逻辑。
 
 从 main.py 的「提示词模板解析」与「提示词库」区块原样迁移，行为完全一致。
-被 app/routers/prompts.py 与 app/routers/canvases.py（smart-canvas 模板）复用。
+被 app/routers/prompts.py 与 app/routers/canvases.py（canvas 模板）复用。
 
 依赖：
 - app.config：STATIC_DIR
@@ -351,7 +351,7 @@ def _migrate_legacy_rules(data, kind, rules):
             "id": item_id,
             "name": rule.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
             "category": "custom",
-            "scene": "从普通画布旧规则迁移",
+            "scene": "从旧画布旧规则迁移",
             "positive": rule.get("content") or "",
         }))
         existing_ids.add(item_id)

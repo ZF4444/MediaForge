@@ -1,7 +1,7 @@
 // 测试辅助：把经典 <script>（非 ES module）形式的 loop-node.js / utils.js
 // 加载进一个模拟的全局作用域里，供 vitest 测试用例调用其中定义的函数。
 //
-// 为什么需要这样做而不是直接 import：loop-node.js 依赖 smart-canvas.js
+// 为什么需要这样做而不是直接 import：loop-node.js 依赖 canvas.js
 // 里的全局状态（nodes/selectedId/canvas 等）和一批工具/渲染函数
 // （render/scheduleSave/tr/trf/uid/escapeHtml/nodeRect/imageLayout/
 // cloneSmartNode/addConnection/connectInputNode/inputNodesFor/
@@ -22,11 +22,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 
 const UTILS_SRC = fs.readFileSync(
-    path.resolve(repoRoot, 'frontend/src/smart-canvas/utils.js'),
+    path.resolve(repoRoot, 'frontend/src/canvas/utils.js'),
     'utf8'
 );
 const LOOP_NODE_SRC = fs.readFileSync(
-    path.resolve(repoRoot, 'frontend/src/smart-canvas/loop-node.js'),
+    path.resolve(repoRoot, 'frontend/src/canvas/loop-node.js'),
     'utf8'
 );
 

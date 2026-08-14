@@ -3,11 +3,11 @@
 // 错误信息提取、导入数据结构归一化、导出文件名生成）。原理跟其它
 // xxx-sandbox.js 一致，见 loop-node-sandbox.js 顶部注释。
 //
-// 注意：exportSelectedSmartWorkflow/importSmartWorkflowFile/
-// insertSmartWorkflowIntoCanvas 等函数强依赖真实 DOM/网络请求/node
+// 注意：exportSelectedCanvasWorkflow/importCanvasWorkflowFile/
+// insertCanvasWorkflowIntoCanvas 等函数强依赖真实 DOM/网络请求/node
 // 全局状态，跟 M5/M7/M8 核心批次同类不适合单元测试，因此本 sandbox
-// 只覆盖可独立验证的纯函数：apiErrorMessage / normalizeImportedSmartWorkflow /
-// smartWorkflowFilename。
+// 只覆盖可独立验证的纯函数：apiErrorMessage / normalizeImportedCanvasWorkflow /
+// canvasWorkflowFilename。
 import vm from 'node:vm';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +18,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 
 function readSrc(name) {
     return fs.readFileSync(
-        path.resolve(repoRoot, `frontend/src/smart-canvas/${name}`),
+        path.resolve(repoRoot, `frontend/src/canvas/${name}`),
         'utf8'
     );
 }

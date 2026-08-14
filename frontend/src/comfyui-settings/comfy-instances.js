@@ -7,7 +7,7 @@
 // （saveComfyInstances）。这是页面里唯一跟"工作流编辑"完全解耦的独立
 // 子系统，没有依赖 currentWorkflow/currentConfig 等工作流编辑状态。
 //
-// 经典 <script>，非 ES module：跟智能画布/api-settings/asset-manager
+// 经典 <script>，非 ES module：跟画布/api-settings/asset-manager
 // 同样的方法论（见 frontend/README.md），comfyui-settings.html 里的
 // 内联 onclick 依赖 window 全局函数自动挂载。
 //

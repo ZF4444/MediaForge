@@ -111,7 +111,7 @@ npm ci
 npm run build
 ```
 
-`npm run build` 会一次性构建 `smart-canvas`、`api-settings`、`asset-manager`、`comfyui-settings` 和 `index` 五个页面。
+`npm run build` 会一次性构建 `canvas`、`api-settings`、`asset-manager`、`comfyui-settings` 和 `index` 五个页面。
 
 修改 `frontend/src/` 下的模块，或对应的 `static/js/<page>.js` 后，都要重新执行 `npm run build`。否则页面可能继续加载旧的 `static/dist/` 文件。
 
@@ -163,7 +163,7 @@ uv run python main.py --host 0.0.0.0 --port 3000
 ### 生产模式
 
 ```bash
-uv run uvicorn main:app --host 0.0.0.0 --port 3000 --workers 4
+uv run uvicorn main:app --host 0.0.0.0 --port 3000 --workers 1
 ```
 
 推荐使用 systemd 管理服务：
@@ -182,7 +182,7 @@ Environment=MINIO_ENDPOINT=127.0.0.1:9000
 Environment=MINIO_ACCESS_KEY=minioadmin
 Environment=MINIO_SECRET_KEY=readygo123
 Environment=REDIS_URL=redis://127.0.0.1:6379/0
-ExecStart=/path/to/MediaForge/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 3000 --workers 4
+ExecStart=/path/to/MediaForge/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 3000 --workers 1
 Restart=always
 RestartSec=5
 

@@ -494,11 +494,7 @@
       },
       "icon": {
         "type": "string",
-        "default": "🧩"
-      },
-      "kind": {
-        "type": "string",
-        "default": "classic"
+        "default": "sparkles"
       }
     },
     "required": []

@@ -244,6 +244,8 @@
             if (feedbackAdminNav) feedbackAdminNav.style.display = isAdmin ? '' : 'none';
             const broadcastAdminNav = document.getElementById('nav-broadcast-admin');
             if (broadcastAdminNav) broadcastAdminNav.style.display = isAdmin ? '' : 'none';
+            const apiSettingsNav = document.getElementById('nav-api-settings');
+            if (apiSettingsNav) apiSettingsNav.style.display = isAdmin ? '' : 'none';
             // 仅 admin 显示 online/queue 监控
             const nanoMon = document.getElementById('nano-monitor');
             if (nanoMon) nanoMon.style.display = isAdmin ? '' : 'none';
@@ -297,4 +299,3 @@
                 }
             };
         }
-

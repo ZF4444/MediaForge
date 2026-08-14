@@ -1,16 +1,16 @@
-// 从 static/js/smart-canvas.js 剪切出的节点数据模型逻辑（M3 拆分批次）。
+// 从 static/js/canvas.js 剪切出的节点数据模型逻辑（M3 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1 utils.js / M2 loop-node.js /
-// 本次的 node-layout.js 同一个原因）：smart-canvas.js 依赖经典 <script>
-// 的全局作用域语义，static/smart-canvas.html 里 57 处内联 onclick="xxx()"
+// 本次的 node-layout.js 同一个原因）：canvas.js 依赖经典 <script>
+// 的全局作用域语义，static/canvas.html 里 57 处内联 onclick="xxx()"
 // 都依赖这一点。这里的函数里也有对 nodes/selectedId 等全局状态的直接
 // 读取和重新赋值（例如 createNode 里的 `selectedId = node.id`），必须
 // 靠经典脚本共享全局作用域才能工作。所以 node-model.js 同样是经典脚本，
 // 通过 <script src="node-model.js"> 排在 node-layout.js 之后、main.js
 // 之前加载（createImageNodeAt 依赖 node-layout.js 的 imageLayout）。
 //
-// 依赖的外部全局（都还留在 static/js/smart-canvas.js / main.js 里，
+// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   状态变量：nodes, selectedId
 //   工具函数（M1 已拆到 utils.js）：uid, tr

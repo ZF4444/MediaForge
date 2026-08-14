@@ -54,3 +54,12 @@ groups:
         annotations:
           summary: "MediaForge dependency retries increased"
           description: "At least 10 PostgreSQL or MinIO transient retries occurred in 5 minutes."
+
+      - alert: MediaForgeAIProviderFailures
+        expr: sum by (provider, operation) (increase(mediaforge_ai_provider_requests_total{status=~"failed|rejected"}[5m])) >= 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MediaForge AI provider failures increased"
+          description: "Provider {{ $labels.provider }} has at least 5 failed or rejected {{ $labels.operation }} operations in 5 minutes."

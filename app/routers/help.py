@@ -1,7 +1,7 @@
 """平台帮助文档读取与管理员编辑接口。
 
 每个前端页面拥有独立的帮助内容，通过 `page` 查询参数区分（例如 index、
-smart-canvas、asset-manager 等）。未传或非法的 page 会回退到默认页 "index"。
+canvas、asset-manager 等）。未传或非法的 page 会回退到默认页 "index"。
 """
 from fastapi import APIRouter, HTTPException
 

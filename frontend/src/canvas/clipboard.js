@@ -1,9 +1,9 @@
-// 从 static/js/smart-canvas.js 剪切出的复制/粘贴逻辑（M13 拆分批次）。
+// 从 static/js/canvas.js 剪切出的复制/粘贴逻辑（M13 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M12 同一个原因）：
-// smart-canvas.js 依赖经典 <script> 的全局作用域语义，
-// static/smart-canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
+// canvas.js 依赖经典 <script> 的全局作用域语义，
+// static/canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
 // 所以这里同样只做"物理文件拆分"：clipboard.js 保持经典脚本语法，通过
 // <script src="clipboard.js"> 排在 candidate-pool.js 之后、
 // canvas-render.js 之前加载。

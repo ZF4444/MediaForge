@@ -197,8 +197,7 @@ class ConversationCreateRequest(BaseModel):
 
 class CanvasCreateRequest(BaseModel):
     title: str = "未命名画布"
-    icon: str = "🧩"
-    kind: str = "classic"
+    icon: str = "sparkles"
 
 
 class CanvasMetaUpdate(BaseModel):

@@ -1,9 +1,9 @@
-// 从 static/js/smart-canvas.js 剪切出的生成参数设置面板逻辑（M10 拆分批次）。
+// 从 static/js/canvas.js 剪切出的生成参数设置面板逻辑（M10 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M9 同一个原因）：
-// smart-canvas.js 依赖经典 <script> 的全局作用域语义，
-// static/smart-canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
+// canvas.js 依赖经典 <script> 的全局作用域语义，
+// static/canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
 // 所以这里同样只做"物理文件拆分"：generation-settings.js 保持经典脚本
 // 语法，通过 <script src="generation-settings.js"> 排在 asset-library.js
 // 之后、main.js 之前加载。
@@ -75,10 +75,10 @@ function runningHubStandardImageModels(provider){
     const models = Array.isArray(provider?.image_models) ? provider.image_models : [];
     return models.filter(m => RUNNINGHUB_STANDARD_IMAGE_MODELS.includes(String(m || '').trim()));
 }
-// 访问控制：window.__smartCanvasAllowedModels 为 Set<"provider_id::model"> 时按白名单过滤；
+// 访问控制：window.__canvasAllowedModels 为 Set<"provider_id::model"> 时按白名单过滤；
 // null/未设置（未登录探测失败、admin、或用户未被限制）时视为全部放开。
 function smartModelAllowed(providerId, model){
-    const allowed = window.__smartCanvasAllowedModels;
+    const allowed = window.__canvasAllowedModels;
     if(!allowed) return true;
     return allowed.has(`${providerId}::${model}`);
 }

@@ -1,9 +1,9 @@
-// 从 static/js/smart-canvas.js 剪切出的核心渲染/节点事件绑定逻辑（M7 拆分批次）。
+// 从 static/js/canvas.js 剪切出的核心渲染/节点事件绑定逻辑（M7 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M6 同一个原因）：
-// smart-canvas.js 依赖经典 <script> 的全局作用域语义，
-// static/smart-canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
+// canvas.js 依赖经典 <script> 的全局作用域语义，
+// static/canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
 // 所以这里同样只做"物理文件拆分"：canvas-render.js 保持经典脚本语法，通过
 // <script src="canvas-render.js"> 排在 upload.js 之后、main.js 之前加载。
 //
@@ -16,7 +16,7 @@
 //      bindNodeEvents / rectOverlapNode / dragConnectTargetFor /
 //      canAutoConnectDraggedNode / restoreDraggedNodePosition
 //
-// 这是整个 smart-canvas.js 中耦合度最高的模块：render()/bindNodeEvents() 直接
+// 这是整个 canvas.js 中耦合度最高的模块：render()/bindNodeEvents() 直接
 // 读写几乎所有全局状态（nodes/viewport/selectedId/selectedIds/selectedImage/
 // dragState/portDragState/smartLoopContext 等），并调用其余全部模块导出的函数。
 //
@@ -130,7 +130,7 @@ function imageTaskRecoverBodyHtml(node, task, layout){
         </div>
     </div>`;
 }
-// M1 拆分：nowMs 已迁移到 frontend/src/smart-canvas/utils.js。
+// M1 拆分：nowMs 已迁移到 frontend/src/canvas/utils.js。
 function formatRunDuration(ms){
     const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
     const min = Math.floor(total / 60);
@@ -570,7 +570,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 }
                 e.stopPropagation();
                 e.dataTransfer.effectAllowed = 'copy';
-                e.dataTransfer.setData('application/x-smart-canvas-image', JSON.stringify(latestPayload));
+                e.dataTransfer.setData('application/x-canvas-image', JSON.stringify(latestPayload));
                 e.dataTransfer.setData('text/plain', latestPayload.url || '');
             });
             const hasVideoPreview = Boolean(item.querySelector('[data-video-preview-container="1"]'));
@@ -766,7 +766,7 @@ function restoreDraggedNodePosition(){
 }
 
 // M19 追加：window.onmousemove / window.onmouseup 全局交互状态调度中心
-// + 右键拖拽取消处理。从 static/js/smart-canvas.js 原样剪切，未改动
+// + 右键拖拽取消处理。从 static/js/canvas.js 原样剪切，未改动
 // 任何函数内部逻辑，只做了纯粹的位置搬移，追加到本文件（canvas-render.js）
 // 末尾——它们和上面的 dragConnectTargetFor/rectOverlapNode/
 // canAutoConnectDraggedNode/restoreDraggedNodePosition（M7 已迁移）
@@ -804,7 +804,7 @@ function restoreDraggedNodePosition(){
 //     连接输入"/"合并为图片组"/"连接输入节点"，最后落地判断是否
 //     真的发生了有效变更从而决定 commit 还是 discard 撤销快照）。
 //
-// 依赖的外部全局（刻意留在 static/js/smart-canvas.js / main.js 里，
+// 依赖的外部全局（刻意留在 static/js/canvas.js / main.js 里，
 // 通过共享脚本作用域访问，未随本次搬移迁移，因为被 main.js 里其它
 // 大量代码——尤其是各种 mousedown/pointerdown/dragstart 事件绑定——
 // 同样读写，属于跨文件共享的可变交互状态，风险量级和 state.js 一致，

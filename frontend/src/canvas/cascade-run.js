@@ -1,4 +1,4 @@
-// 从 static/js/smart-canvas.js 剪切出的一键运行/级联生成调度逻辑（M5 拆分批次）。
+// 从 static/js/canvas.js 剪切出的一键运行/级联生成调度逻辑（M5 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // M5 是体量最大、调用链最深的模块（计划里估计约占 15% 行数），采用比
@@ -8,8 +8,8 @@
 // 不一次性全部完成。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M4 同一个原因）：
-// smart-canvas.js 依赖经典 <script> 的全局作用域语义，
-// static/smart-canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
+// canvas.js 依赖经典 <script> 的全局作用域语义，
+// static/canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
 // 所以这里同样只做"物理文件拆分"：cascade-run.js 保持经典脚本语法，
 // 通过 <script src="cascade-run.js"> 排在 connections.js 之后、main.js
 // 之前加载。
@@ -19,7 +19,7 @@
 //   requestSmartCascadeStop / smartCascadeParallelLimit /
 //   runSmartCascadeRoundsWithLimit
 //
-// 依赖的外部全局（都还留在 static/js/smart-canvas.js / main.js 里，
+// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   状态变量：smartCascadeRuns（Map）, smartCascadeActiveLoopId,
 //     smartCascadeRunning, smartCascadeStopRequested, comfyInstanceCount
@@ -95,7 +95,7 @@ async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runSt
 // （经典脚本按声明顺序执行 top-level 代码，这些都是纯函数声明，声明顺序
 // 本身不影响后续调用）。
 //
-// 依赖的外部全局（都还留在 static/js/smart-canvas.js / main.js 里）：
+// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里）：
 //   状态变量：settings, comfyWorkflows, smartClientId, activeRunningHubTaskPolls
 //   工具函数（M1 已拆到 utils.js）：tr
 //   媒体判断：imageRefsOnly, videoRefsOnly, audioRefsOnly, resultMediaUrls,
@@ -399,7 +399,7 @@ async function comfyNameForRef(ref){
 //   lastComposerNodeId, undoSuppressed, nodes, candidatePanelNodeId,
 //   candidatePanelIndex, canvas
 //
-// 依赖的外部全局（都还留在 static/js/smart-canvas.js / main.js 里）：
+// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里）：
 //   DOM 元素：promptInput, composer, runBtn, cascadeRunBtn
 //   循环节点（M2 已拆到 loop-node.js）：collectLoopChainSubgraph,
 //     cloneLoopChainForRound, fitSmartLoopNode（间接）

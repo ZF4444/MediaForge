@@ -8,7 +8,7 @@
 // （captureRhEditorScrollState/restoreRhEditorScrollState，用于重渲染后
 // 保持用户的滚动位置和已展开的弹层，避免每次编辑一个字段就跳到顶部）。
 //
-// 经典 <script>，非 ES module：跟智能画布重构方法论一致（见
+// 经典 <script>，非 ES module：跟画布重构方法论一致（见
 // frontend/README.md）。api-settings.html 有 40 处内联 onclick/onchange
 // 依赖 window 全局函数（本模块的 toggleRhWorkflowEditorField/
 // updateRhWorkflowEditorField/openRhAppFieldPopover/pickRhThumbnail/
@@ -18,7 +18,7 @@
 //
 // 状态变量 rhWorkflowEditorState（工作流编辑器的全部可变状态：是否打开、
 // 当前编辑的应用条目、拉取到的字段配置、预览参数等）刻意留在 main.js，
-// 本模块的函数直接读写这个共享变量——跟智能画布 M1-M22 建立的模式一致：
+// 本模块的函数直接读写这个共享变量——跟画布 M1-M22 建立的模式一致：
 // classic script 顶层 let 声明处于所有 <script> 标签共享的顶层作用域，
 // 跨文件读写不需要改成 getter/setter。同样留在 main.js 的还有：
 // provider()/providers/selectedId（供应商核心状态）、saveProviders()

@@ -1,10 +1,10 @@
-// 从 static/js/smart-canvas.js 剪切出的节点悬浮快捷栏 + 右键菜单逻辑
+// 从 static/js/canvas.js 剪切出的节点悬浮快捷栏 + 右键菜单逻辑
 // （M14 拆分批次）。剪切时未改动任何函数签名/内部逻辑，只做了纯粹的
 // 位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M13 同一个原因）：
-// smart-canvas.js 依赖经典 <script> 的全局作用域语义，
-// static/smart-canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
+// canvas.js 依赖经典 <script> 的全局作用域语义，
+// static/canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
 // 所以这里同样只做"物理文件拆分"：node-context-ui.js 保持经典脚本
 // 语法，通过 <script src="node-context-ui.js"> 排在 clipboard.js 之后、
 // canvas-render.js 之前加载。
@@ -322,7 +322,7 @@ function bindNodeContextMenuEvents(){
 // M9 拆分：renderNodeAssetSaveModal / closeNodeAssetSaveModal / openNodeAssetSaveModal /
 // selectedAssetSaveItems / openSelectionAssetSaveModal /
 // saveFileToAssetLibrarySelection 已迁移到
-// frontend/src/smart-canvas/asset-library.js（经典 <script>，非 ES module，
+// frontend/src/canvas/asset-library.js（经典 <script>，非 ES module，
 // 原因同 M1-M8）。
 function triggerNodeShortcutAction(action, nodeId=''){
     const node = nodes.find(entry => entry.id === (nodeId || selectedId)) || selectedNode();

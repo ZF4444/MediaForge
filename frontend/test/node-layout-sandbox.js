@@ -20,15 +20,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 
 const UTILS_SRC = fs.readFileSync(
-    path.resolve(repoRoot, 'frontend/src/smart-canvas/utils.js'),
+    path.resolve(repoRoot, 'frontend/src/canvas/utils.js'),
     'utf8'
 );
 const LOOP_NODE_SRC = fs.readFileSync(
-    path.resolve(repoRoot, 'frontend/src/smart-canvas/loop-node.js'),
+    path.resolve(repoRoot, 'frontend/src/canvas/loop-node.js'),
     'utf8'
 );
 const NODE_LAYOUT_SRC = fs.readFileSync(
-    path.resolve(repoRoot, 'frontend/src/smart-canvas/node-layout.js'),
+    path.resolve(repoRoot, 'frontend/src/canvas/node-layout.js'),
     'utf8'
 );
 

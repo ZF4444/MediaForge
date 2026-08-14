@@ -20,7 +20,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 
 function readSrc(name) {
     return fs.readFileSync(
-        path.resolve(repoRoot, `frontend/src/smart-canvas/${name}`),
+        path.resolve(repoRoot, `frontend/src/canvas/${name}`),
         'utf8'
     );
 }

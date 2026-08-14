@@ -1,7 +1,6 @@
 (function(){
     if(!window.StudioI18n) return;
     window.StudioI18n.register({
-        "smart.title": { zh: "智能画布", en: "Smart Canvas" },
         "smart.engineApi": { zh: "AI生成", en: "AI Generate" },
         "smart.engineVolcengine": { zh: "火山引擎", en: "Volcengine" },
         "smart.engineMs": { zh: "Modelscope生成", en: "Modelscope" },
@@ -203,7 +202,7 @@
         "smart.promptLlmFailed": { zh: "LLM 运行失败", en: "LLM run failed" },
         "smart.loopPromptHintFound": { zh: "识别到 {n} 条提示词，按计数轮流输出", en: "Found {n} prompt(s); outputs rotate by count" },
         "smart.loopPromptHintVariable": { zh: "可使用 [计数] 作为变量", en: "Use [Count] as a variable" },
-        "smart.loopParallelTip": { zh: "智能画布会按轮落盘，避免覆盖同一目标节点", en: "Smart Canvas saves each round separately to avoid overwriting the same target node" },
+        "smart.loopParallelTip": { zh: "画布会按轮落盘，避免覆盖同一目标节点", en: "Canvas saves each round separately to avoid overwriting the same target node" },
         "smart.loopDefaultPrompt": { zh: "现在生成第《计数》张卖点图片", en: "Generate selling-point image 《计数》" },
         "smart.loopRunAll": { zh: "运行链路", en: "Run chain" },
         "smart.loopNoChain": { zh: "没有可运行的上游链路", en: "No upstream chain to run" },
@@ -221,7 +220,6 @@
         "smart.uploadProgressSingle": { zh: "正在上传素材…", en: "Uploading media…" },
         "smart.uploadProgressMulti": { zh: "正在上传 {total} 个素材…", en: "Uploading {total} files…" },
         "smart.toastApiSettingsFail": { zh: "API 设置加载失败", en: "Failed to load API settings" },
-        "smart.toastCanvasFail": { zh: "智能画布加载失败", en: "Failed to load smart canvas" },
         "smart.errNoApiModel": { zh: "请先选择可用的 API 生图模型", en: "Please select an available API image model" },
         "smart.errNoVideoModel": { zh: "请先选择视频模型", en: "Please select a video model" },
         "smart.errNoOutImages": { zh: "没有返回图片", en: "No images returned" },

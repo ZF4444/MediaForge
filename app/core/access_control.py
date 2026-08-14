@@ -12,7 +12,7 @@
     * 未在配置中出现的用户，默认拥有全部页面与节点（向后兼容）。
     * 出现在配置中的用户，仅拥有其 pages/nodes 列表中列出的项。
     * 校验/保存时会过滤掉不在全集清单中的非法 id。
-    * "节点"（nodes）特指智能画布「AI生成」引擎（engine=api）下可选的具体模型，
+    * "节点"（nodes）特指画布「AI生成」引擎（engine=api）下可选的具体模型，
       id 格式为 "<provider_id>::<model>"，随 API 设置里的 provider/模型配置动态变化。
 
 依赖：PostgreSQL app_settings 与用户注册表。
@@ -113,9 +113,9 @@ def all_pages() -> List[Dict[str, str]]:
 def all_page_ids() -> List[str]:
     return [p["id"] for p in all_pages()]
 
-# --- 无限画布可用「节点」：动态感知智能画布 AI 生成引擎下的全部模型 ---
+# --- 无限画布可用「节点」：动态感知画布 AI 生成引擎下的全部模型 ---
 # 不再使用固定的节点类型清单（image/prompt/loop/... 已废弃），改为按
-# "provider_id::model" 枚举智能画布「AI生成」引擎（engine=api）下可选的图片模型 + 视频模型。
+# "provider_id::model" 枚举画布「AI生成」引擎（engine=api）下可选的图片模型 + 视频模型。
 # 数据来源由 main.py 通过 set_image_models_provider() 注入 load_api_providers，
 # 避免 core 模块反向依赖 main.py 造成循环引用。
 _image_models_provider = None  # Callable[[], List[dict]]，返回值形如 load_api_providers() 的 provider 列表
@@ -132,7 +132,7 @@ def _provider_display_name(provider: Dict[str, Any]) -> str:
 
 
 def all_nodes() -> List[Dict[str, str]]:
-    """动态枚举智能画布「AI生成」引擎（engine=api）下可选的全部模型。
+    """动态枚举画布「AI生成」引擎（engine=api）下可选的全部模型。
 
     id 格式："<provider_id>::<model>"，覆盖该引擎下的图片模型（image_models）与
     视频模型（video_models）。provider 未启用（enabled=False）时跳过。

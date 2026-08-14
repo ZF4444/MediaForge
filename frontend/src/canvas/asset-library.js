@@ -1,9 +1,9 @@
-// 从 static/js/smart-canvas.js 剪切出的资产库逻辑（M9 拆分批次）。
+// 从 static/js/canvas.js 剪切出的资产库逻辑（M9 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M8 同一个原因）：
-// smart-canvas.js 依赖经典 <script> 的全局作用域语义，
-// static/smart-canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
+// canvas.js 依赖经典 <script> 的全局作用域语义，
+// static/canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
 // 所以这里同样只做"物理文件拆分"：asset-library.js 保持经典脚本语法，通过
 // <script src="asset-library.js"> 排在 image-editor.js 之后、main.js 之前
 // 加载。
@@ -34,7 +34,7 @@
 //     只是其中一个分支会调用 openNodeAssetSaveModal，本身横跨下载/
 //     取消分组/全屏预览/图片编辑器等一堆跟资产库无关的动作。
 //   - connectAssetLibrarySyncSocket：名字像资产库同步，但实际是
-//     smart-canvas 多人协作用的唯一 WebSocket 连接，onmessage 里同时
+//     canvas 多人协作用的唯一 WebSocket 连接，onmessage 里同时
 //     分发 asset_library_updated（资产库同步，调用本文件的
 //     handleAssetLibraryUpdatedMessage）和 canvas_updated（canvas 文档
 //     多人合并同步，调用 main.js 里的 handleCanvasUpdatedMessage）两类

@@ -1,9 +1,9 @@
-// 从 static/js/smart-canvas.js 剪切出的工作流导入导出逻辑（M15 拆分批次）。
+// 从 static/js/canvas.js 剪切出的工作流导入导出逻辑（M15 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M14 同一个原因）：
-// smart-canvas.js 依赖经典 <script> 的全局作用域语义，
-// static/smart-canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
+// canvas.js 依赖经典 <script> 的全局作用域语义，
+// static/canvas.html 里 57 处内联 onclick="xxx()" 都依赖这一点。
 // 所以这里同样只做"物理文件拆分"：workflow-transfer.js 保持经典脚本
 // 语法，通过 <script src="workflow-transfer.js"> 排在 node-context-ui.js
 // 之后、canvas-render.js 之前加载。
@@ -14,17 +14,17 @@
 //   1. API 错误信息提取（本文件专属，不是 upload.js/M6 那套通用配额
 //      基础设施 smartResponseErrorMessage）：apiErrorMessage/
 //      responseErrorMessage
-//   2. 下载与文件命名：downloadBlob/smartWorkflowFilename
+//   2. 下载与文件命名：downloadBlob/canvasWorkflowFilename
 //   3. 序列化/反序列化：serializableSmartNode（清空运行态字段，只留
-//      可复用的节点配置）/selectedSmartWorkflowPayload（打包当前选中
-//      节点+内部连线）/normalizeImportedSmartWorkflow（兼容三种可能的
+//      可复用的节点配置）/selectedCanvasWorkflowPayload（打包当前选中
+//      节点+内部连线）/normalizeImportedCanvasWorkflow（兼容三种可能的
 //      导入 JSON 结构：数组/{nodes,connections}/{workflow:{...}}）
-//   4. 弹窗生命周期：openSmartWorkflowTransferModal/
-//      closeSmartWorkflowTransferModal/updateSmartWorkflowTransferMeta
-//   5. 导出/导入动作：exportSelectedSmartWorkflow（纯 JSON 或带资源的
+//   4. 弹窗生命周期：openCanvasWorkflowTransferModal/
+//      closeCanvasWorkflowTransferModal/updateCanvasWorkflowTransferMeta
+//   5. 导出/导入动作：exportSelectedCanvasWorkflow（纯 JSON 或带资源的
 //      zip 包，调用 /api/canvas-workflows/export）/
-//      insertSmartWorkflowIntoCanvas（把导入的节点重新分配 id、平移到
-//      视口中心、重建连线映射后插入画布）/importSmartWorkflowFile
+//      insertCanvasWorkflowIntoCanvas（把导入的节点重新分配 id、平移到
+//      视口中心、重建连线映射后插入画布）/importCanvasWorkflowFile
 //      （上传模板文件，调用 /api/canvas-workflows/import）
 //
 // 明确排除、留在 main.js 的内容：
@@ -74,15 +74,15 @@ function downloadBlob(blob, filename){
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = filename || 'smart-canvas-workflow.json';
+    link.download = filename || 'canvas-workflow.json';
     document.body.appendChild(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 800);
 }
-function smartWorkflowFilename(ext='json'){
-    const title = (canvas?.title || document.getElementById('smartTitle')?.textContent || 'smart-canvas').trim();
-    const safe = title.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '-').slice(0, 48) || 'smart-canvas';
+function canvasWorkflowFilename(ext='json'){
+    const title = (canvas?.title || document.getElementById('smartTitle')?.textContent || 'canvas').trim();
+    const safe = title.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '-').slice(0, 48) || 'canvas';
     const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
     return `${safe}-workflow-${stamp}.${ext}`;
 }
@@ -102,7 +102,7 @@ function serializableSmartNode(node){
     delete copy._dom;
     return copy;
 }
-function selectedSmartWorkflowPayload(){
+function selectedCanvasWorkflowPayload(){
     const ids = selectedNodeIds();
     const idSet = new Set(ids);
     const selectedNodes = nodes.filter(node => idSet.has(node.id)).map(serializableSmartNode);
@@ -111,7 +111,7 @@ function selectedSmartWorkflowPayload(){
         .filter(conn => selectedSet.has(conn.from) && selectedSet.has(conn.to))
         .map(conn => JSON.parse(JSON.stringify(conn)));
     return {
-        format:'infinite-smart-canvas-workflow',
+        format:'infinite-canvas-workflow',
         version:1,
         canvas_type:'smart',
         exported_at:Date.now(),
@@ -119,54 +119,54 @@ function selectedSmartWorkflowPayload(){
         connections:selectedConnections
     };
 }
-function normalizeImportedSmartWorkflow(data){
+function normalizeImportedCanvasWorkflow(data){
     if(Array.isArray(data)) return {nodes:data, connections:[]};
     if(Array.isArray(data?.nodes)) return {nodes:data.nodes, connections:Array.isArray(data.connections) ? data.connections : []};
     if(Array.isArray(data?.workflow?.nodes)) return {nodes:data.workflow.nodes, connections:Array.isArray(data.workflow.connections) ? data.workflow.connections : []};
     return {nodes:[], connections:[]};
 }
-function openSmartWorkflowTransferModal(){
+function openCanvasWorkflowTransferModal(){
     if(!canvas){ toast('请先打开画布'); return; }
     toggleAssetLibrary(false);
-    updateSmartWorkflowTransferMeta();
-    if(smartWorkflowTransferModal) smartWorkflowTransferModal.hidden = false;
-    smartWorkflowTransferModal?.classList.add('open');
-    smartWorkflowToggle?.classList.add('active');
+    updateCanvasWorkflowTransferMeta();
+    if(canvasWorkflowTransferModal) canvasWorkflowTransferModal.hidden = false;
+    canvasWorkflowTransferModal?.classList.add('open');
+    canvasWorkflowToggle?.classList.add('active');
     refreshIcons();
 }
-function closeSmartWorkflowTransferModal(){
-    smartWorkflowTransferModal?.classList.remove('open');
-    if(smartWorkflowTransferModal) smartWorkflowTransferModal.hidden = true;
-    smartWorkflowToggle?.classList.remove('active');
-    smartWorkflowImportDropZone?.classList.remove('drag-over');
+function closeCanvasWorkflowTransferModal(){
+    canvasWorkflowTransferModal?.classList.remove('open');
+    if(canvasWorkflowTransferModal) canvasWorkflowTransferModal.hidden = true;
+    canvasWorkflowToggle?.classList.remove('active');
+    canvasWorkflowImportDropZone?.classList.remove('drag-over');
 }
-function updateSmartWorkflowTransferMeta(){
-    const payload = selectedSmartWorkflowPayload();
+function updateCanvasWorkflowTransferMeta(){
+    const payload = selectedCanvasWorkflowPayload();
     const nodeCount = payload.nodes.length;
     const connCount = payload.connections.length;
-    smartWorkflowExportMeta?.classList.remove('busy', 'success');
-    if(smartWorkflowExportMeta) smartWorkflowExportMeta.textContent = nodeCount ? `已选择 ${nodeCount} 个节点，${connCount} 条连线` : '未选择节点，请先选中要导出的组件';
-    if(smartWorkflowTransferSub) smartWorkflowTransferSub.textContent = nodeCount ? '导出当前选中内容，或把模板导入到当前画布' : '请先选中节点再导出；导入会追加到当前画布';
+    canvasWorkflowExportMeta?.classList.remove('busy', 'success');
+    if(canvasWorkflowExportMeta) canvasWorkflowExportMeta.textContent = nodeCount ? `已选择 ${nodeCount} 个节点，${connCount} 条连线` : '未选择节点，请先选中要导出的组件';
+    if(canvasWorkflowTransferSub) canvasWorkflowTransferSub.textContent = nodeCount ? '导出当前选中内容，或把模板导入到当前画布' : '请先选中节点再导出；导入会追加到当前画布';
 }
-async function exportSelectedSmartWorkflow(includeResources=false){
+async function exportSelectedCanvasWorkflow(includeResources=false){
     if(!canvas) return;
-    const payload = selectedSmartWorkflowPayload();
+    const payload = selectedCanvasWorkflowPayload();
     if(!payload.nodes.length){
-        updateSmartWorkflowTransferMeta();
+        updateCanvasWorkflowTransferMeta();
         toast('未选择节点，请先选中要导出的组件');
         return;
     }
     try {
         if(!includeResources){
-            downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'}), smartWorkflowFilename('json'));
-            toast('已导出智能画布模板 JSON');
+            downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'}), canvasWorkflowFilename('json'));
+            toast('已导出画布模板 JSON');
             return;
         }
-        if(smartWorkflowExportMeta){
-            smartWorkflowExportMeta.classList.add('busy');
-            smartWorkflowExportMeta.textContent = '正在打包资源...';
+        if(canvasWorkflowExportMeta){
+            canvasWorkflowExportMeta.classList.add('busy');
+            canvasWorkflowExportMeta.textContent = '正在打包资源...';
         }
-        const filename = smartWorkflowFilename('zip');
+        const filename = canvasWorkflowFilename('zip');
         const res = await fetch('/api/canvas-workflows/export', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
@@ -174,21 +174,21 @@ async function exportSelectedSmartWorkflow(includeResources=false){
         });
         if(!res.ok) throw new Error(await responseErrorMessage(res, '导出模板失败'));
         downloadBlob(await res.blob(), filename);
-        if(smartWorkflowExportMeta){
-            smartWorkflowExportMeta.classList.remove('busy');
-            smartWorkflowExportMeta.classList.add('success');
-            smartWorkflowExportMeta.textContent = `已导出 ${payload.nodes.length} 个节点，包含可找到的本地资源`;
+        if(canvasWorkflowExportMeta){
+            canvasWorkflowExportMeta.classList.remove('busy');
+            canvasWorkflowExportMeta.classList.add('success');
+            canvasWorkflowExportMeta.textContent = `已导出 ${payload.nodes.length} 个节点，包含可找到的本地资源`;
         }
-        toast('已导出包含资源的智能画布模板包');
+        toast('已导出包含资源的画布模板包');
         setTimeout(() => {
-            if(smartWorkflowTransferModal?.classList.contains('open')) updateSmartWorkflowTransferMeta();
+            if(canvasWorkflowTransferModal?.classList.contains('open')) updateCanvasWorkflowTransferMeta();
         }, 1600);
     } catch(err) {
-        smartWorkflowExportMeta?.classList.remove('busy', 'success');
+        canvasWorkflowExportMeta?.classList.remove('busy', 'success');
         toast(err.message || '导出模板失败');
     }
 }
-function insertSmartWorkflowIntoCanvas(imported){
+function insertCanvasWorkflowIntoCanvas(imported){
     const srcNodes = (imported.nodes || []).filter(Boolean);
     const srcConnections = (imported.connections || []).filter(Boolean);
     if(!canvas || !srcNodes.length) throw new Error('模板中没有可导入的节点');
@@ -222,19 +222,19 @@ function insertSmartWorkflowIntoCanvas(imported){
     scheduleSave();
     toast(`已导入 ${newNodes.length} 个节点`);
 }
-async function importSmartWorkflowFile(file){
+async function importCanvasWorkflowFile(file){
     if(!canvas || !file) return;
     try {
-        if(smartWorkflowTransferSub) smartWorkflowTransferSub.textContent = '正在导入模板...';
+        if(canvasWorkflowTransferSub) canvasWorkflowTransferSub.textContent = '正在导入模板...';
         const form = new FormData();
         form.append('file', file);
         const res = await fetch('/api/canvas-workflows/import', {method:'POST', body:form});
         if(!res.ok) throw new Error(await responseErrorMessage(res, '导入模板失败'));
         const data = await res.json();
-        insertSmartWorkflowIntoCanvas(normalizeImportedSmartWorkflow(data));
-        closeSmartWorkflowTransferModal();
+        insertCanvasWorkflowIntoCanvas(normalizeImportedCanvasWorkflow(data));
+        closeCanvasWorkflowTransferModal();
     } catch(err) {
-        if(smartWorkflowTransferModal?.classList.contains('open')) updateSmartWorkflowTransferMeta();
+        if(canvasWorkflowTransferModal?.classList.contains('open')) updateCanvasWorkflowTransferMeta();
         toast(err.message || '导入模板失败');
     }
 }

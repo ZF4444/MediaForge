@@ -76,18 +76,12 @@ def save_canvas_raw(canvas, *, update_timestamp=True):
     save_canvas_payload(current_user_id(), canvas)
 
 
-def normalize_canvas_kind(kind="classic"):
-    return "smart" if str(kind or "").strip().lower() == "smart" else "classic"
-
-
-def new_canvas(title="未命名画布", icon="layers", kind="classic"):
+def new_canvas(title="未命名画布", icon="sparkles"):
     timestamp = now_ms()
-    canvas_kind = normalize_canvas_kind(kind)
     canvas = {
         "id": uuid.uuid4().hex,
-        "title": (title or ("智能画布" if canvas_kind == "smart" else "未命名画布"))[:80],
-        "icon": (icon or ("sparkles" if canvas_kind == "smart" else "🧩"))[:32],
-        "kind": canvas_kind,
+        "title": (title or "未命名画布")[:80],
+        "icon": (icon or "sparkles")[:32],
         "owner": "",
         "color": "",
         "pinned": False,
@@ -128,7 +122,6 @@ def canvas_record(data):
         "id": data.get("id"),
         "title": data.get("title", "未命名画布"),
         "icon": data.get("icon", "🧩"),
-        "kind": normalize_canvas_kind(data.get("kind")),
         "owner": str(data.get("owner") or "")[:40],
         "color": normalize_canvas_color(data.get("color")),
         "pinned": bool(data.get("pinned") or False),
@@ -161,7 +154,7 @@ def canvases():
 
 @router.post("/api/canvases")
 def create_canvas(payload: CanvasCreateRequest):
-    return {"canvas": new_canvas(payload.title, payload.icon, payload.kind)}
+    return {"canvas": new_canvas(payload.title, payload.icon)}
 
 
 @router.get("/api/canvases/{canvas_id}/meta")
@@ -172,7 +165,6 @@ def get_canvas_meta(canvas_id: str):
         "updated_at": canvas.get("updated_at", 0),
         "title": canvas.get("title", "未命名画布"),
         "icon": canvas.get("icon", "layers"),
-        "kind": normalize_canvas_kind(canvas.get("kind")),
     }
 
 
@@ -223,13 +215,10 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
         })
     canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
     canvas["icon"] = (payload.icon or canvas.get("icon") or "layers")[:32]
-    canvas["kind"] = normalize_canvas_kind(canvas.get("kind"))
+    canvas.pop("kind", None)
     canvas["nodes"] = payload.nodes
     canvas["connections"] = payload.connections
-    if canvas["kind"] == "smart":
-        canvas["viewport"] = payload.viewport
-    else:
-        canvas["viewport"] = canvas.get("viewport") or {"x": 0, "y": 0, "scale": 1}
+    canvas["viewport"] = payload.viewport
     canvas["logs"] = payload.logs[-500:]
     canvas["settings"] = payload.settings or {}
     if incoming_client_id:

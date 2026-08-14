@@ -1,4 +1,4 @@
-// M22 拆分：核心画布状态变量。从 static/js/smart-canvas.js 原样剪切，
+// M22 拆分：核心画布状态变量。从 static/js/canvas.js 原样剪切，
 // 声明的初始值一字不改，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M21 同一个原因，
