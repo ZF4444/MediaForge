@@ -7,8 +7,10 @@ data/
 docs/*
 !docs/日志系统说明.md
 !docs/50人使用容量评估与优化建议.md
+!docs/Docker单机生产部署.md
 backups/
 logs/
+.runtime/
 workflows/
 history.json
 scripts/sync_to_remote.sh
@@ -23,4 +25,3 @@ frontend/src/api-settings/main.js
 frontend/src/asset-manager/main.js
 frontend/src/comfyui-settings/main.js
 frontend/src/index/main.js
-

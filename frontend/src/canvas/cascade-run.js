@@ -87,7 +87,7 @@ async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runSt
 //   ComfyUI 具体调用：comfyFieldKind / runComfyGeneration / comfyNameForRef / sleep
 //   其它 provider 调用：runApiGeneration / submitRunningHubGeneration /
 //     pollRunningHubTask / runRunningHubGeneration / runApiVideoGeneration /
-//     runModelscopeGeneration / urlToBase64
+//     urlToBase64
 //
 // 这批函数在原文件里物理上分成两段（中间隔着 runSmartCascade/
 // runSmartCascadeFromLoop/runGeneration 这几个第 3 批才处理的核心编排
@@ -101,15 +101,13 @@ async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runSt
 //   媒体判断：imageRefsOnly, videoRefsOnly, audioRefsOnly, resultMediaUrls,
 //     mediaKindForUrls, fileIdFromUrl, fileDownloadUrl, filePreviewUrl
 //   错误/配额处理：smartResponseError, checkQuotaWarningFromResult,
-//     StorageQuotaSignal, JimengPendingSignal
+//     StorageQuotaSignal
 //   节点操作（M3 已拆到 node-model.js / node-layout.js）：createNode, nodeRect
 //   节点操作：attachRunMeta, addConnection, clearPromptInput, scheduleSave,
 //     finalizePendingNode, selectedNode
 //   RunningHub 相关：selectedRunningHubRef, rhActiveFields, rhMediaForRun,
 //     rhBuildNodeInfoList
 //   视频生成相关：videoGenerationMode
-//   ModelScope 相关：MS_GEN_MODELS, apiImageSize, parseSizeValue,
-//     modelscopeImageModels
 //   随机参数：comfyRandomEnabledField, smartComfyRandomActive, smartComfyRandomValue
 
 async function createSmartComfyTask(payload){
@@ -270,40 +268,8 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(payload)
     }).then(async r => { if(!r.ok) throw await smartResponseError(r, tr('smart.errRunFailed')); return r.json(); });
-    if(result && result.jimeng_pending) throw new JimengPendingSignal({submitId:result.submit_id, kind:result.kind || 'video', queueInfo:result.queue_info, message:result.message});
     checkQuotaWarningFromResult(result);
     return resultMediaUrls(result);
-}
-async function runModelscopeGeneration(prompt, refs, runSettings=settings){
-    refs = imageRefsOnly(refs);
-    const modelKey = runSettings.msgenModel || 'zimage';
-    const msModel = MS_GEN_MODELS[modelKey] || MS_GEN_MODELS.zimage;
-    if(msModel.supportsImage && !refs.length) throw new Error(tr('smart.errMsNeedRefs'));
-    const size = apiImageSize(runSettings.msRatio || 'square', runSettings.msResolution || '1k', runSettings.msCustomRatio || '', runSettings.msCustomSize || '', runSettings.msRatioMatched || '');
-    const parsed = parseSizeValue(size);
-    const width = Number(parsed?.width) || 1024;
-    const height = Number(parsed?.height) || 1024;
-    const imageUrls = [];
-    if(msModel.supportsImage || msModel.acceptsImage){
-        for(const ref of refs.slice(0, 3)){
-            if(ref.url) imageUrls.push(await urlToBase64(ref).catch(() => ref.url));
-        }
-    }
-    const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
-    const submit = async () => {
-        let body;
-        if(modelKey === 'zimage') body = {prompt, resolution:`${width}x${height}`};
-        else if(modelKey === 'qwen_edit') body = {prompt, image_urls:imageUrls, resolution:`${width}x${height}`};
-        else body = {prompt, model:modelKey === 'custom' ? (runSettings.msCustomModel || modelscopeImageModels()[0]) : msModel.modelId, image_urls:imageUrls, width, height, size:`${width}x${height}`};
-        const data = await fetch(msModel.endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then(async r => {
-            if(!r.ok) throw await smartResponseError(r);
-            return r.json();
-        });
-        checkQuotaWarningFromResult(data);
-        return data.url || data.images?.[0] || '';
-    };
-    const results = await Promise.all(Array.from({length:count}, submit));
-    return results.filter(Boolean);
 }
 async function urlToBase64(itemOrUrl){
     const target = typeof itemOrUrl === 'string'
@@ -423,7 +389,7 @@ async function comfyNameForRef(ref){
 //     stripImageGenerationMeta, replaceOutputsToNodeWithHistory,
 //     generateUrlsForCurrentSettings, cleanHistoryImages,
 //     addGeneratedCandidatesToNode, uniqueGeneratedImages,
-//     handleJimengPendingSignal, resumeSmartPendingNode, saveCanvas,
+//     resumeSmartPendingNode, saveCanvas,
 //     isApiLikeEngine, smartImageUsesWorkflowInput, isGeneratedResultNode,
 //     createPendingOutputFromSource, stripRunInputMeta, pendingBoxSize,
 //     attachRunMeta, coolNodeRunningState, coolRunButton,
@@ -521,10 +487,6 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
         return additions;
     } catch(e) {
         settings = previousSettings;
-        if(handleJimengPendingSignal(outputNode, e)){
-            render();
-            return [];
-        }
         outputNode.running = false;
         addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e)});
         render();
@@ -590,10 +552,6 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             render();
             await saveCanvas();
             await resumeSmartPendingNode(outputSlot);
-            if(outputSlot.jimengPending){
-                outputSlot.queued = false;
-                return [];
-            }
             result = {urls:(outputSlot.images || []).map(img => img?.url ? img : null).filter(Boolean), kind:'image'};
         } else {
             result = await generateUrlsForCurrentSettings(outputSlot, prompt, request.refs || [], runSettings);
@@ -619,10 +577,6 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         addSmartGenerationLog({run:{...runLog, kind:result.kind || logKind}, outputs:result.urls, runMs:nowMs() - runLogStart});
         return additions;
     } catch(e) {
-        if(handleJimengPendingSignal(outputSlot, e)){
-            outputSlot.queued = false;
-            return [];
-        }
         outputSlot.queued = false;
         outputSlot.pending = 0;
         outputSlot.running = false;
@@ -1028,7 +982,7 @@ async function runGeneration(){
         : settings.engine === 'comfy'
         ? 1
         : Math.max(1, Math.min(4, Number(settings.count || 1)));
-    const apiConcurrentRun = isApiLikeEngine(settings.engine) || settings.engine === 'runninghub' || settings.engine === 'modelscope';
+    const apiConcurrentRun = isApiLikeEngine(settings.engine) || settings.engine === 'runninghub';
     const nodeHasImages = (node.images || []).some(img => img?.url);
     const workflowModeRun = smartImageUsesWorkflowInput(node, smartLoopContext);
     const rerunInPlace = nodeHasImages && !workflowModeRun && isGeneratedResultNode(node);
@@ -1119,9 +1073,7 @@ async function runGeneration(){
             scheduleSave();
             return;
         }
-        const outImages = settings.engine === 'modelscope'
-            ? await runModelscopeGeneration(prompt, refs)
-            : await runApiGeneration(prompt, refs);
+        const outImages = await runApiGeneration(prompt, refs);
         if(isApiLikeEngine(settings.engine)){
             const taskIds = Array.isArray(outImages?.taskIds) ? outImages.taskIds : [];
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
@@ -1134,13 +1086,6 @@ async function runGeneration(){
             render();
             await saveCanvas();
             await resumeSmartPendingNode(pendingNode);
-            if(pendingNode.jimengPending){
-                if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
-                clearPromptInput({preserveDraft:true});
-                settings = previousSettings;
-                scheduleSave();
-                return;
-            }
             if(!(pendingNode.images || []).length) throw new Error(tr('smart.errNoOutImages'));
             if(outpaintSize) delete node.outpaintSize;
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
@@ -1160,12 +1105,6 @@ async function runGeneration(){
         scheduleSave();
     } catch(e) {
         settings = previousSettings;
-        if(handleJimengPendingSignal(pendingNode, e)){
-            if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
-            delete pendingNode._runMetaTargetId;
-            clearPromptInput({preserveDraft:true});
-            return;
-        }
         pendingNode.pending = 0;
         delete pendingNode.pendingCandidatePool;
         if(branchNode){

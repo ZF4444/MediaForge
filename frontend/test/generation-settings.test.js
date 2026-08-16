@@ -8,7 +8,6 @@
 //   5. parseRatioValue / parseSizeValue：解析用户输入的比例/尺寸字符串。
 //   6. ratioIconClass / videoAspectIconClass：比例值到图标 class 的映射。
 //   7. ratioLabel：当前设置下的比例展示文案。
-//   8. msModelLabel：ModelScope 模型 key 到展示名称的映射。
 //
 // renderDynamicParams/bindDynamicParams/loadConfig 等核心函数强依赖真实
 // DOM 与网络请求，跟 M5/M7/M8 核心批次一样不适合单元测试，不在本文件
@@ -194,19 +193,5 @@ describe('ratioLabel', () => {
             settings: { ratio: 'custom', customRatio: '5:7' },
         });
         expect(ratioLabel()).toBe('5:7');
-    });
-});
-
-describe('msModelLabel', () => {
-    it('custom key 返回国际化的"自定义"文案', () => {
-        const { msModelLabel } = createGenerationSettingsSandbox({
-            fns: { tr: (key) => (key === 'smart.custom' ? '自定义' : key) },
-        });
-        expect(msModelLabel('custom')).toBe('自定义');
-    });
-
-    it('未知 key 时原样返回 key（兜底）', () => {
-        const { msModelLabel } = createGenerationSettingsSandbox();
-        expect(msModelLabel('unknown-model-key')).toBe('unknown-model-key');
     });
 });

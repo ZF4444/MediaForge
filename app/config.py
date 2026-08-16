@@ -41,7 +41,9 @@ DATABASE_SLOW_QUERY_THRESHOLD_MS = float(os.getenv("DATABASE_SLOW_QUERY_THRESHOL
 REDIS_URL = str(os.getenv("REDIS_URL", "")).strip()
 REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "20"))
 REDIS_CONNECT_TIMEOUT_SECONDS = float(os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "1"))
-REDIS_SOCKET_TIMEOUT_SECONDS = float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "1"))
+# Canvas workers use a 1-second Redis Streams long poll. Keep the command
+# timeout comfortably above it so an empty queue is not treated as an outage.
+REDIS_SOCKET_TIMEOUT_SECONDS = float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "5"))
 REDIS_SESSION_PREFIX = str(os.getenv("REDIS_SESSION_PREFIX", "mediaforge:session:")).strip()
 REDIS_LAST_SEEN_WRITE_INTERVAL_SECONDS = int(os.getenv("REDIS_LAST_SEEN_WRITE_INTERVAL_SECONDS", "60"))
 REDIS_LAST_SEEN_FLUSH_INTERVAL_SECONDS = int(os.getenv("REDIS_LAST_SEEN_FLUSH_INTERVAL_SECONDS", "300"))

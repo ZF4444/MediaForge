@@ -18,8 +18,6 @@
     },
     "chat_models": [],
     "video_models": [],
-    "ms_loras": [],
-    "ms_defaults_version": 0,
     "rh_apps": [
       {
         "id": "2058517022748798977",

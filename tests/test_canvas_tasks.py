@@ -16,12 +16,30 @@ class Pipeline:
         self.commands.append(("zadd", key, values, {}))
         return self
 
+    def xadd(self, stream, fields, **kwargs):
+        self.commands.append(("xadd", stream, fields, kwargs))
+        return self
+
+    def xack(self, stream, group, message_id):
+        self.commands.append(("xack", stream, (group, message_id), {}))
+        return self
+
+    def delete(self, key):
+        self.commands.append(("delete", key, None, {}))
+        return self
+
     async def execute(self):
         for command, key, value, kwargs in self.commands:
             if command == "set":
                 await self.redis.set(key, value, **kwargs)
-            else:
+            elif command == "zadd":
                 await self.redis.zadd(key, value)
+            elif command == "xadd":
+                await self.redis.xadd(key, value, **kwargs)
+            elif command == "xack":
+                await self.redis.xack(key, value[0], value[1])
+            else:
+                await self.redis.delete(key)
 
 
 class Redis:
@@ -33,7 +51,6 @@ class Redis:
         self.pending = {}
 
     def pipeline(self, transaction=False):
-        assert transaction is False
         return Pipeline(self)
 
     async def set(self, key, value, nx=False, **_kwargs):
@@ -52,6 +69,23 @@ class Redis:
         return key in self.values
 
     async def eval(self, script, _numkeys, key, worker_id, *_args):
+        if "TASK_UPDATE_IF_STATUS" in script:
+            task_key, index_key = key, worker_id
+            expected_status, changes_json, updated_at, ttl, task_id = _args
+            if task_key not in self.values:
+                return False
+            record = __import__("json").loads(self.values[task_key])
+            if expected_status and record.get("status") != expected_status:
+                return False
+            record.update(__import__("json").loads(changes_json))
+            record["updated_at"] = updated_at
+            record["version"] = int(record.get("version") or 0) + 1
+            self.values[task_key] = __import__("json").dumps(record, separators=(",", ":"))
+            if record.get("status") in {"queued", "running"}:
+                self.sorted_sets.setdefault(index_key, {})[task_id] = updated_at + ttl
+            else:
+                self.sorted_sets.get(index_key, {}).pop(task_id, None)
+            return self.values[task_key]
         if "TASK_UPDATE_IF_CLAIMED" in script:
             task_key, lease_key, index_key = key, worker_id, _args[0]
             lease_token, changes_json, updated_at, _ttl, task_id = _args[1:]
@@ -149,5 +183,7 @@ def test_canvas_tasks_persist_update_claim_and_recover(monkeypatch):
         await canvas_tasks.release_canvas_task_dispatch("task-2")
         assert await canvas_tasks.enqueue_canvas_task("task-2")
         assert redis.acks
+        await canvas_tasks.dead_letter_canvas_task(message_id, "task-2", "upstream failure")
+        assert redis.streams[canvas_tasks._DEAD_LETTER_STREAM][0][1]["task_id"] == "task-2"
 
     asyncio.run(scenario())

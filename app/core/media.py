@@ -111,7 +111,7 @@ def fetch_remote_media_bytes(url: str, timeout: float = 30.0, max_bytes: int = 2
     parsed = urllib.parse.urlparse(text)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return None
-    with requests.get(text, stream=True, timeout=timeout, headers={"User-Agent": "ComfyUI-API-Modelscope/1.0"}) as response:
+    with requests.get(text, stream=True, timeout=timeout, headers={"User-Agent": "MediaForge/1.0"}) as response:
         response.raise_for_status()
         content_type = response.headers.get("content-type") or "application/octet-stream"
         chunks = []

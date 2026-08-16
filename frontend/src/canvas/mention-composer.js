@@ -86,7 +86,6 @@
 //     resolveChatModel/resolveChatProviderId/rhActiveFields/
 //     rhDefaultPromptSuggestion/rhFieldIndexes/rhFieldKind/rhParamKey/
 //     rhRequiresPrompt/smartPromptInputEnabledForSettings/
-//     syncJimengModelPillForRefs/syncJimengVideoModelPillForRefs/
 //     syncRhConfigForRefs（generation-settings.js，M10）、
 //     isAudioMediaItem/isVideoMediaItem/mediaKindForItem/imageForDisplay/
 //     imageRefsOnly/audioRefsOnly/videoRefsOnly/videoPosterHtml/
@@ -314,8 +313,6 @@ function inputThumbItemHtml(img, i, node, typeIndexes){
 }
 function renderInputThumbsRow(node){
     if(!inputThumbsRow) return;
-    syncJimengModelPillForRefs();
-    syncJimengVideoModelPillForRefs();
     syncRhConfigForRefs();
     inputThumbsRow.classList.remove('runninghub-inputs');
     if(settings.engine === 'runninghub') return renderRunningHubInputThumbsRow(node);

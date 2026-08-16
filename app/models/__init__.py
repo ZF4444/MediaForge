@@ -119,15 +119,6 @@ class RunningHubUploadAssetRequest(BaseModel):
     url: str = ""
 
 
-class JimengHelpRequest(BaseModel):
-    command: str = ""
-
-
-class JimengQueryMediaRequest(BaseModel):
-    submit_id: str = ""
-    kind: str = "image"
-
-
 class ApiProviderPayload(BaseModel):
     id: str = ""
     name: str = ""
@@ -142,8 +133,6 @@ class ApiProviderPayload(BaseModel):
     video_models: List[str] = []
     model_protocols: Dict[str, str] = {}
     model_aliases: Dict[str, str] = {}
-    ms_loras: List[Dict[str, Any]] = []
-    ms_defaults_version: int = 0
     rh_apps: List[Dict[str, Any]] = []
     volcengine_project_name: str = VOLCENGINE_DEFAULT_PROJECT_NAME
     volcengine_region: str = VOLCENGINE_DEFAULT_REGION
@@ -165,19 +154,7 @@ class ChatRequest(BaseModel):
     quality: str = "auto"
     reference_images: List[AIReference] = []
     provider: str = "comfly"
-    ms_model: str = ""
 
-
-class MsGenerateRequest(BaseModel):
-    prompt: str
-    api_key: str = ""
-    model: str = "black-forest-labs/FLUX.2-klein-9B"
-    image_urls: List[str] = []
-    width: int = 0
-    height: int = 0
-    size: str = ""
-    loras: Optional[Any] = None
-    client_id: Optional[str] = None
 
 
 class CanvasLLMRequest(BaseModel):
@@ -186,7 +163,6 @@ class CanvasLLMRequest(BaseModel):
     model: str = ""
     messages: List[Dict[str, Any]] = []
     provider: str = "comfly"
-    ms_model: str = ""
     images: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
     videos: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
 

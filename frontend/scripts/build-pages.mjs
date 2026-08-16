@@ -52,7 +52,7 @@ const PAGES = [
     // API 设置页（迁移中，见 frontend/README.md 的 api-settings 章节）
     page: 'api-settings',
     mainSrc: 'static/js/api-settings.js',
-    handwrittenFiles: ['rh-workflow-editor.js', 'provider-onboarding.js', 'recommend-api.js', 'jimeng-cli.js', 'ms-lora.js', 'comfy-instances.js'],
+    handwrittenFiles: ['rh-workflow-editor.js', 'provider-onboarding.js', 'comfy-instances.js'],
   },
   {
     // 素材库管理页（迁移中，见 frontend/README.md 的 asset-manager 章节）

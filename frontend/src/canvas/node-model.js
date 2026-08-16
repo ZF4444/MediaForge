@@ -63,7 +63,7 @@ function normalizeLegacySmartNode(node){
     if(node.type === 'smart-image' && node.historyFor) node.isHistoryGroup = true;
     if(node.type === 'smart-image' || node.type === 'smart-asset-image'){
         delete node.scale;
-        const keepPendingSize = Number(node.pending) > 0 || Boolean(node.queued || node.jimengPending || (Array.isArray(node.pendingTasks) && node.pendingTasks.length));
+        const keepPendingSize = Number(node.pending) > 0 || Boolean(node.queued || (Array.isArray(node.pendingTasks) && node.pendingTasks.length));
         if(!keepPendingSize){
             delete node.w;
             delete node.h;

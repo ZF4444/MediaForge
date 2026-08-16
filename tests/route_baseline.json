@@ -546,55 +546,6 @@
     "APIRoute"
   ],
   [
-    "/api/jimeng/credit",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/jimeng/help",
-    [
-      "POST"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/jimeng/login/start",
-    [
-      "POST"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/jimeng/login/status",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/jimeng/logout",
-    [
-      "POST"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/jimeng/query-media",
-    [
-      "POST"
-    ],
-    "APIRoute"
-  ],
-  [
-    "/api/jimeng/status",
-    [
-      "GET"
-    ],
-    "APIRoute"
-  ],
-  [
     "/api/local-assets",
     [
       "GET"
@@ -1104,5 +1055,26 @@
     "/ws/stats",
     [],
     "APIWebSocketRoute"
+  ],
+  [
+    "/api/admin/canvas-task-dead-letters",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/admin/canvas-task-dead-letters/{entry_id}/retry",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/admin/canvas-task-dead-letters/{entry_id}",
+    [
+      "DELETE"
+    ],
+    "APIRoute"
   ]
 ]

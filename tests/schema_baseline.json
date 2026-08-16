@@ -130,18 +130,6 @@
         "type": "object",
         "default": {}
       },
-      "ms_loras": {
-        "type": "array",
-        "items": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "default": []
-      },
-      "ms_defaults_version": {
-        "type": "integer",
-        "default": 0
-      },
       "rh_apps": {
         "type": "array",
         "items": {
@@ -526,10 +514,6 @@
         "type": "string",
         "default": "comfly"
       },
-      "ms_model": {
-        "type": "string",
-        "default": ""
-      },
       "images": {
         "type": "array",
         "items": {
@@ -806,10 +790,6 @@
       "provider": {
         "type": "string",
         "default": "comfly"
-      },
-      "ms_model": {
-        "type": "string",
-        "default": ""
       }
     },
     "required": [
@@ -1068,28 +1048,6 @@
       "task_id"
     ]
   },
-  "JimengHelpRequest": {
-    "properties": {
-      "command": {
-        "type": "string",
-        "default": ""
-      }
-    },
-    "required": []
-  },
-  "JimengQueryMediaRequest": {
-    "properties": {
-      "submit_id": {
-        "type": "string",
-        "default": ""
-      },
-      "kind": {
-        "type": "string",
-        "default": "image"
-      }
-    },
-    "required": []
-  },
   "LocalImageImportRequest": {
     "properties": {
       "path": {
@@ -1113,61 +1071,6 @@
       }
     },
     "required": []
-  },
-  "MsGenerateRequest": {
-    "properties": {
-      "prompt": {
-        "type": "string"
-      },
-      "api_key": {
-        "type": "string",
-        "default": ""
-      },
-      "model": {
-        "type": "string",
-        "default": "black-forest-labs/FLUX.2-klein-9B"
-      },
-      "image_urls": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        },
-        "default": []
-      },
-      "width": {
-        "type": "integer",
-        "default": 0
-      },
-      "height": {
-        "type": "integer",
-        "default": 0
-      },
-      "size": {
-        "type": "string",
-        "default": ""
-      },
-      "loras": {
-        "anyOf": [
-          {},
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "client_id": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      }
-    },
-    "required": [
-      "prompt"
-    ]
   },
   "OnlineImageRequest": {
     "properties": {

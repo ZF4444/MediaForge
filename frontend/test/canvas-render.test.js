@@ -112,7 +112,6 @@ describe('hideRunTimerForNode', () => {
         expect(sandbox.hideRunTimerForNode({ runTimerHidden: true, runFinishedAt: 1 })).toBe(false);
         expect(sandbox.hideRunTimerForNode({ pending: true, runFinishedAt: 1 })).toBe(false);
         expect(sandbox.hideRunTimerForNode({ running: true, runFinishedAt: 1 })).toBe(false);
-        expect(sandbox.hideRunTimerForNode({ jimengPending: true, runFinishedAt: 1 })).toBe(false);
         expect(sandbox.hideRunTimerForNode({})).toBe(false);
         expect(sandbox.__state.scheduleSaveCalls).toBe(0);
     });

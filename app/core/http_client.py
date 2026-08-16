@@ -1,7 +1,7 @@
 """Shared asynchronous HTTP client lifecycle for outbound provider calls.
 
-Every outbound call to ComfyUI-adjacent cloud providers (ModelScope, APIMart,
-RunningHub, Volcengine, Gemini, jimeng/yuli, etc.) must reuse this single
+Every outbound call to ComfyUI-adjacent cloud providers (RunningHub,
+Volcengine and Gemini.) must reuse this single
 ``httpx.AsyncClient`` instance instead of doing ``async with
 httpx.AsyncClient(...) as client:`` per call. Creating a client per request
 throws away connection pooling and keep-alive, forcing a fresh TCP/TLS

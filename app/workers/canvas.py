@@ -8,6 +8,7 @@ import os
 # These must be set before importing main, which evaluates app.config.
 os.environ["CANVAS_TASK_WORKER_ENABLED"] = "false"
 os.environ["CANVAS_TASK_RECOVERY_ENABLED"] = "true"
+os.environ["RUN_BACKGROUND_MAINTENANCE"] = "false"
 
 from main import canvas_task_worker_loop, shutdown_event, startup_event
 

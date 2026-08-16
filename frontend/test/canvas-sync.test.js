@@ -39,11 +39,10 @@ describe('smartNodeInFlight', () => {
         expect(sandbox.smartNodeInFlight({ running: true })).toBe(true);
     });
 
-    it('pending/queued/jimengPending 任一为真也判定为进行中', () => {
+    it('pending 或 queued 为真时也判定为进行中', () => {
         const sandbox = createCanvasSyncSandbox();
         expect(sandbox.smartNodeInFlight({ pending: 1 })).toBe(true);
         expect(sandbox.smartNodeInFlight({ queued: true })).toBe(true);
-        expect(sandbox.smartNodeInFlight({ jimengPending: true })).toBe(true);
     });
 
     it('有未完成的 pendingTasks 时也判定为进行中', () => {

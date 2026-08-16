@@ -8,6 +8,10 @@ import json
 import os
 
 BASELINE_FILE = os.path.join(os.path.dirname(__file__), "schema_baseline.json")
+RETIRED_SCHEMAS = {
+    "CloudGenRequest",
+    "CloudPollRequest",
+}
 
 
 def _normalize(app):
@@ -31,7 +35,7 @@ def test_model_schema_matches_baseline(app):
         baseline = json.load(f)
     current = _normalize(app)
 
-    base_names = set(baseline)
+    base_names = set(baseline) - RETIRED_SCHEMAS
     cur_names = set(current)
     assert base_names == cur_names, (
         f"模型集合变化:\n  丢失: {sorted(base_names - cur_names)}\n  新增: {sorted(cur_names - base_names)}"

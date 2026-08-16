@@ -10,7 +10,7 @@
 //
 // 本文件是物理上连续的一整块（1753-3365 行区间，约1600行），覆盖底部
 // composer 里"生成参数设置"面板的全部逻辑——不同引擎（api/volcengine/
-// modelscope/comfy/runninghub）的可选模型/尺寸/比例/数量等参数如何渲染
+// comfy/runninghub）的可选模型/尺寸/比例/数量等参数如何渲染
 // 成 UI、如何响应用户操作写回 settings：
 //   1. 引擎/模型可用性判断：syncEngineOptionsVisibility /
 //      runningHubStandardImageModels / smartModelAllowed /
@@ -20,9 +20,6 @@
 //   2. RunningHub 工作流字段解析与渲染：rhFieldKind / rhFieldRole /
 //      rhExtractFieldOptions / rhDefaultValue / rhParamValue /
 //      renderRhSettingField / renderRhConfigControl 等
-//   3. 即梦（Jimeng）模型/视频指令过滤：filterJimengImageModels /
-//      filterJimengVideoModels / jimengImageEditMode / jimengVideoCommand /
-//      syncJimengModelPillForRefs 等
 //   4. 通用参数控件渲染：renderProviderControl / renderModelControl /
 //      renderSizeControls / renderRatioControl / renderResolutionControl /
 //      renderQualityControl / renderCountVisualControl 等
@@ -57,7 +54,6 @@ function syncEngineOptionsVisibility(){
     if(!engineSelect) return;
     const has = id => (apiProviders || []).some(p => p.id === id && p.enabled !== false);
     engineSelect.querySelector('option[value="volcengine"]').hidden = !has('volcengine');
-    engineSelect.querySelector('option[value="modelscope"]').hidden = !has('modelscope');
     engineSelect.querySelector('option[value="runninghub"]').hidden = !has('runninghub');
     // api 引擎：至少有一个非特殊 provider 启用且有 image_models
     const apiHidden = !imageProviders().length;
@@ -103,7 +99,7 @@ function sortProvidersByPermission(providers, kind='image'){
     });
 }
 function imageProviders(){
-    return sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'volcengine'
+    return sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'volcengine'
         && (p.id === 'runninghub' ? runningHubStandardImageModels(p).length : (p.image_models || []).length))
         .map(p => p.id === 'runninghub' ? {...p, image_models: runningHubStandardImageModels(p)} : p), 'image');
 }
@@ -212,80 +208,6 @@ function providerImageModels(providerId){
     if(providerId === 'runninghub') return runningHubStandardImageModels(runningHubProvider());
     return (apiProviders || []).find(p => p.id === providerId)?.image_models || [];
 }
-// 即梦图生图（挂了参考图）不支持 3.0/3.1，此时从模型下拉里隐藏它们。
-const JIMENG_IMAGE2IMAGE_UNSUPPORTED = ['3.0', '3.1'];
-function jimengImageEditMode(){
-    if(settings.provider_id !== 'jimeng') return false;
-    const node = activeComposerNode() || selectedNode();
-    const refs = node ? visibleReferenceImagesFor(node) : [];
-    return refs.length > 0;
-}
-function filterJimengImageModels(models){
-    if(settings.provider_id !== 'jimeng' || !jimengImageEditMode()) return models;
-    return (models || []).filter(m => !JIMENG_IMAGE2IMAGE_UNSUPPORTED.includes(String(m)));
-}
-let _jimengLastEditMode = null;
-let _jimengModelRefreshing = false;
-// 参考图增删导致即梦文生图/图生图切换时，重新渲染参数面板以更新模型下拉。
-function syncJimengModelPillForRefs(){
-    if(_jimengModelRefreshing) return;
-    if(settings.provider_id !== 'jimeng' || settings.engine !== 'api' || settings.apiKind === 'video'){
-        _jimengLastEditMode = null;
-        return;
-    }
-    const mode = jimengImageEditMode();
-    if(mode === _jimengLastEditMode) return;
-    _jimengLastEditMode = mode;
-    _jimengModelRefreshing = true;
-    try { renderDynamicParams(); } finally { _jimengModelRefreshing = false; }
-}
-// 即梦各视频指令支持的模型集合不同，按当前参考素材推断指令并过滤模型下拉。
-const JIMENG_SEEDANCE_VIDEO_MODELS = ['seedance2.0_vip', 'seedance2.0fast_vip', 'seedance2.0', 'seedance2.0fast'];
-const JIMENG_VIDEO_MODELS_BY_COMMAND = {
-    text2video: JIMENG_SEEDANCE_VIDEO_MODELS,
-    multimodal2video: JIMENG_SEEDANCE_VIDEO_MODELS,
-    image2video: ['3.0', '3.0fast', '3.0pro', '3.5pro', ...JIMENG_SEEDANCE_VIDEO_MODELS],
-    frames2video: ['3.0', '3.5pro', ...JIMENG_SEEDANCE_VIDEO_MODELS],
-};
-function jimengVideoCommand(){
-    if(videoGenerationMode() === 'text') return 'text2video';
-    const node = activeComposerNode() || selectedNode();
-    const refs = node ? visibleReferenceImagesFor(node) : [];
-    const imageRefs = imageRefsOnly(refs);
-    const hasVideoRef = videoRefsOnly(refs).length > 0;
-    if(settings.videoMultimodal || hasVideoRef) return 'multimodal2video';
-    if(imageRefs.length >= 2) return settings.videoUseFrameRoles ? 'frames2video' : 'multiframe2video';
-    if(imageRefs.length >= 1) return 'image2video';
-    return 'text2video';
-}
-function videoGenerationMode(sourceSettings=settings){
-    if(sourceSettings?.videoUseFrameRoles) return 'frames';
-    if(sourceSettings?.videoMultimodal) return 'multimodal';
-    return 'text';
-}
-function setVideoGenerationMode(mode){
-    settings.videoUseFrameRoles = mode === 'frames';
-    settings.videoMultimodal = mode === 'multimodal';
-}
-function filterJimengVideoModels(models){
-    if(settings.videoProvider !== 'jimeng') return models;
-    const allowed = JIMENG_VIDEO_MODELS_BY_COMMAND[jimengVideoCommand()];
-    if(!allowed) return models; // multiframe2video 等：官方规格未知，不过滤
-    return (models || []).filter(m => allowed.includes(String(m)));
-}
-let _jimengLastVideoCommand = null;
-function syncJimengVideoModelPillForRefs(){
-    if(_jimengModelRefreshing) return;
-    if(settings.videoProvider !== 'jimeng' || settings.engine !== 'api' || settings.apiKind !== 'video'){
-        _jimengLastVideoCommand = null;
-        return;
-    }
-    const command = jimengVideoCommand();
-    if(command === _jimengLastVideoCommand) return;
-    _jimengLastVideoCommand = command;
-    _jimengModelRefreshing = true;
-    try { renderDynamicParams(); } finally { _jimengModelRefreshing = false; }
-}
 let _rhLastAttachedKindsKey = null;
 // 接入素材的类型（图片/视频/音频）变化时，重新渲染 RunningHub AI 应用选择列表，
 // 以便按新的素材类型过滤掉不支持的条目。
@@ -321,13 +243,7 @@ function sanitizeSmartApiSelection(target=settings){
     }
     return target;
 }
-function modelscopeProvider(){
-    return (apiProviders || []).find(p => p.id === 'modelscope' && p.enabled !== false) || null;
-}
-function modelscopeImageModels(){
-    return modelscopeProvider()?.image_models || ['Tongyi-MAI/Z-Image-Turbo'];
-}
-const DEFAULT_VIDEO_MODELS = ['veo3-fast','veo3','sora','runway','kling','pika','minimax-video','wan-v2','seedance-1.0-pro','jimeng-vide-3.0','jimeng-video-3.0-pro'];
+const DEFAULT_VIDEO_MODELS = ['veo3-fast','veo3','sora','runway','kling','pika','minimax-video','wan-v2','seedance-1.0-pro'];
 function videoApiProviders(){
     const fromConfig = sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && p.id !== 'volcengine' && (p.video_models || []).length), 'video');
     if(fromConfig.length) return fromConfig;
@@ -518,7 +434,7 @@ function renderDynamicParams(){
     const node = activeSettingsSubject();
     const allowedEngines = allowedEnginesForNode(node);
     const unifiedWorkflowNode = ['image','video','workflow'].includes(node?.genKind);
-    settings.engine = ['api','volcengine','modelscope','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
+    settings.engine = ['api','volcengine','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
     // 定型生成节点：强制引擎落在允许列表内，避免继承到画布默认/最近使用的错误引擎（如图片节点误用工作流配置框）
     if(allowedEngines && !allowedEngines.includes(settings.engine)){
         settings.engine = allowedEngines.includes(defaultEngineForGenKind(node?.genKind)) ? defaultEngineForGenKind(node?.genKind) : allowedEngines[0];
@@ -564,7 +480,6 @@ function renderDynamicParams(){
         if(settings.apiKind === 'video') renderVolcengineVideoParams();
         else renderVolcengineParams();
     }
-    else if(settings.engine === 'modelscope') renderMsParams();
     else if(settings.engine === 'runninghub') renderRunningHubParams();
     else renderComfyParams();
     bindDynamicParams();
@@ -585,7 +500,7 @@ function renderApiParams(){
     const preferredProvider = providers.find(providerHasAllowedImageModel) || providers[0] || null;
     if(!settings.provider_id || !providers.some(p => p.id === settings.provider_id)) settings.provider_id = preferredProvider?.id || '';
     else if(!providerHasAllowedImageModel(providers.find(p => p.id === settings.provider_id)) && preferredProvider) settings.provider_id = preferredProvider.id;
-    const models = filterJimengImageModels(providerImageModels(settings.provider_id));
+    const models = providerImageModels(settings.provider_id);
     if(!settings.model || !models.includes(settings.model)) settings.model = models[0] || '';
     normalizeApiSizeSettings('');
     const outpaintLocked = settings.outpaintResolutionLocked === true;
@@ -603,7 +518,7 @@ function renderApiVideoParams(){
     const preferredProvider = providers.find(providerHasAllowedVideoModel) || providers[0] || null;
     if(!settings.videoProvider || !providers.some(p => p.id === settings.videoProvider)) settings.videoProvider = preferredProvider?.id || 'comfly';
     else if(!providerHasAllowedVideoModel(providers.find(p => p.id === settings.videoProvider)) && preferredProvider) settings.videoProvider = preferredProvider.id;
-    const models = filterJimengVideoModels(providerVideoModels(settings.videoProvider));
+    const models = providerVideoModels(settings.videoProvider);
     if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || 'veo3-fast';
     dynamicParams.innerHTML = `
         ${renderVideoModelSelector(providers, models, true)}
@@ -719,20 +634,6 @@ function renderRhMachineControl(){
             </div>
         </div>
     </div>`;
-}
-function renderMsParams(){
-    settings.msgenModel = MS_GEN_MODELS[settings.msgenModel] ? settings.msgenModel : 'zimage';
-    if(!settings.msCustomModel) settings.msCustomModel = modelscopeImageModels()[0] || 'Tongyi-MAI/Z-Image-Turbo';
-    normalizeApiSizeSettings('ms');
-    dynamicParams.innerHTML = `
-        ${renderMsFunctionControl()}
-        ${renderMsCustomModelPill()}
-        ${renderResolutionControl('ms')}
-        ${renderRatioControl('ms', false)}
-        ${renderInlineCustomSizeFields('ms')}
-        ${renderInlineCustomRatioFields('ms')}
-        ${renderCountVisualControl()}
-    `;
 }
 function renderComfyParams(){
     if(!settings.comfyWorkflow || !comfyWorkflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
@@ -951,35 +852,6 @@ function renderModelControl(models, restricted){
                     const locked = restricted && !smartModelAllowed(settings.provider_id, m);
                     return `<button type="button" class="direct-option ${m === settings.model ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="model" data-smart-value="${escapeHtml(m)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(modelDisplayName(m, settings.provider_id))}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
                 }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noImageModel'))}</div>`}
-            </div>
-        </div>
-    </div>`;
-}
-function msModelLabel(key){
-    if(key === 'custom') return tr('smart.custom');
-    return MS_GEN_MODELS[key]?.label || key;
-}
-function renderMsFunctionControl(){
-    return `<div class="smart-control provider-control">
-        <button class="smart-pill" type="button"><i data-lucide="sparkles"></i><span class="sub">${escapeHtml(msModelLabel(settings.msgenModel) || 'Modelscope')}</span></button>
-        <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.msFunction'))}</div>
-            <div class="model-list">
-                ${Object.entries(MS_GEN_MODELS).map(([key]) => `<button type="button" class="direct-option ${key === settings.msgenModel ? 'active' : ''}" data-smart-param="msgenModel" data-smart-value="${escapeHtml(key)}"><span>${escapeHtml(msModelLabel(key))}</span></button>`).join('')}
-            </div>
-        </div>
-    </div>`;
-}
-function renderMsCustomModelPill(){
-    if(settings.msgenModel !== 'custom') return '';
-    const models = modelscopeImageModels();
-    const label = settings.msCustomModel || tr('smart.customModel');
-    return `<div class="smart-control model-control">
-        <button class="smart-pill" type="button"><i data-lucide="boxes"></i><span class="sub">${escapeHtml(label)}</span></button>
-        <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.msCustomModel'))}</div>
-            <div class="model-list">
-                ${models.map(m => `<button type="button" class="direct-option ${m === settings.msCustomModel ? 'active' : ''}" data-smart-param="msCustomModel" data-smart-value="${escapeHtml(m)}"><span>${escapeHtml(modelDisplayName(m, 'modelscope'))}</span></button>`).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noMsModel'))}</div>`}
             </div>
         </div>
     </div>`;

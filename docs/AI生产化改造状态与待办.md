@@ -1,6 +1,6 @@
 # MediaForge AI 生产化改造状态与待办
 
-更新日期：2026-08-14
+更新日期：2026-08-16
 
 ## 1. 当前结论
 
@@ -15,7 +15,7 @@ AI 接入、统一画布、PostgreSQL、Redis 和 MinIO 已具备可运行的生
 ### 访问控制与出站安全
 
 - Provider 的读取、保存、连通性测试和模型拉取均要求管理员权限。
-- `/api/config/token` 只返回是否配置，不返回完整密钥。
+- ModelScope 与即梦已从 Provider 装配、公开路由和设置页移除；历史配置会在加载时过滤。
 - Provider 与外部媒体 URL 只允许 HTTP(S) 和公网可路由地址，拒绝回环、私网、链路本地及保留地址。
 - 出站 HTTP transport 在每次 TCP 连接时解析并固定目标 IP，避免“先校验域名、后再次解析”的 DNS
   重绑定窗口；新建重试连接同样使用该 transport。
@@ -39,6 +39,9 @@ AI 接入、统一画布、PostgreSQL、Redis 和 MinIO 已具备可运行的生
   只有持有当前 token 的 worker 可以原子写入状态或结果，旧 worker 无法覆盖接管者。
 - 对没有可恢复上游任务 ID 的 `running` 任务，worker 失联后标记为 `interrupted`，不自动重投，
   以避免二次生成和计费。
+- 非租约更新使用 Redis Lua 原子状态迁移；恢复器仅可将仍为 `running` 的任务标记为 `interrupted`。
+- 独立 Canvas worker 默认关闭存储清理、会话刷新与 WebSocket Pub/Sub 等维护循环，避免与 API
+  副本重复执行。
 
 ### 多副本一致性与可观测性
 
@@ -47,19 +50,30 @@ AI 接入、统一画布、PostgreSQL、Redis 和 MinIO 已具备可运行的生
   并发管理员保存会返回 `409`，未携带版本返回 `428`，避免静默覆盖。
 - 共享 HTTP Client、脱敏结构化日志、PostgreSQL 连接池、Redis/MinIO 健康检查和 Prometheus 指标
   已纳入基础设施。
+- Gateway 已增加 Redis 集群级 Provider/操作并发槽位；进程内 Semaphore 作为本地快速拒绝层保留。
+- 模型发现请求统一进入 Gateway，在线生图单请求数量默认限制为 4，可通过
+  `AI_ONLINE_IMAGE_MAX_COUNT` 调整。
+- 配置了 `APP_SECRET_KEY` 的部署使用 PostgreSQL `pgcrypto` 加密保存 Provider 密钥；密钥不会再写回
+  节点 `.env`。未配置该键的旧部署仍走兼容 `.env` 模式，必须在生产上线前迁移。
+- `.env` 兼容模式的配置写入增加跨进程文件锁、临时文件 `fsync` 和原子替换。
+- Canvas Redis Stream 执行失败会进入死信 Stream，终态任务归档 PostgreSQL，避免 TTL 和 Stream 裁剪
+  删除必要的运维记录。
+- 管理员可通过 `/api/admin/canvas-task-dead-letters` 查询死信，并可重试或取消指定死信任务。
+- 启用 `APP_SECRET_KEY` 后启动期会将现有 Provider 环境变量导入加密表；之后运行期不会再回退读取
+  `.env` 中的 Provider 密钥。
 
 ## 3. 仍需完善的内容
 
 | 优先级 | 项目 | 当前风险 | 完成标准 |
 | --- | --- | --- | --- |
-| P0 | Provider 密钥迁移 | API Key 仍由本机环境文件保存和读取，节点间无法一致轮换 | 密钥进入 Secret Manager 或 PostgreSQL 加密字段；支持密钥版本、轮换、最小权限和审计 |
-| P1 | 分布式任务治理 | Gateway 限流和并发能力仍缺少按组织的预算、队列长度与全局执行容量 | Redis 分布式令牌桶、组织/用户配额、每类任务并发上限、排队拒绝或等待策略 |
+| P0 | Provider 密钥迁移 | 已支持 PostgreSQL 加密字段；旧部署仍可能使用 `.env`，且密钥轮换审计尚未完成 | 强制 `APP_SECRET_KEY`，迁移存量密钥，支持密钥版本、轮换、最小权限和审计 |
+| P1 | 分布式任务治理 | 已有 Redis Provider 并发槽位，但仍缺少按组织的预算、队列长度与任务级背压 | Redis 分布式令牌桶、组织/用户配额、每类任务并发上限、排队拒绝或等待策略 |
 | P1 | 上游任务恢复 | 仅能安全恢复 queued；部分 Provider 不支持可靠的上游任务轮询 | Adapter 声明幂等能力和上游任务查询能力；可轮询的任务按上游 ID 恢复 |
 | P1 | Adapter 模块化 | Provider 协议分支仍主要位于 `main.py` | 图片、视频、聊天、模型发现各自实现 ProviderAdapter；路由只负责验证和调用 Gateway |
 | P1 | 配置事务边界 | Provider 元数据 CAS 与环境文件密钥写入并非同一事务 | 元数据和密钥使用同一个版本化配置仓库；失败可回滚，不出现半更新 |
 | P2 | 成本与审计 | 无 Token/图片/视频成本归集和预算告警 | 按组织、用户、Provider、模型记录用量，接入预算阈值与告警 |
 | P2 | 熔断与告警 | 有基础熔断指标，但缺少告警规则和运行手册 | Provider 错误率、429、超时、熔断状态、队列滞留进入监控与告警 |
-| P2 | 任务生命周期 | 取消、人工重试、死信分析和保留策略不完整 | 明确状态机、取消语义、死信队列、管理员重试和审计记录 |
+| P2 | 任务生命周期 | 已有死信 Stream 和终态 PostgreSQL 归档；取消、人工重试和死信处理界面仍不完整 | 明确状态机、取消语义、管理员死信重试和审计查询界面 |
 | P2 | 负载验证 | 未用模拟上游和真实依赖完成容量压测 | 完成混合负载、故障注入、恢复和安全隔离压测，并以指标确定容量 |
 
 ## 4. 推荐目标结构
@@ -67,7 +81,7 @@ AI 接入、统一画布、PostgreSQL、Redis 和 MinIO 已具备可运行的生
 ```text
 app/ai/
   domain/       # 请求、媒体引用、用量、任务结果
-  providers/    # OpenAI、Gemini、ModelScope、RunningHub、Ark 等 Adapter
+  providers/    # OpenAI、Gemini、RunningHub、Ark 等 Adapter
   registry.py   # Provider 配置与 Adapter 装配
   gateway.py    # 授权、限流、预算、审计、熔断、统一错误映射
   tasks.py      # 持久任务状态、投递、轮询恢复
@@ -101,5 +115,5 @@ app/ai/
 ## 7. 验证基线
 
 本轮针对 AI Gateway、Provider 出站安全、Redis 画布任务、Provider 配置版本、HTTP Client、
-重试、WebSocket 和路由快照的回归测试均通过。完整测试套件在当前执行环境中曾于
-`test_health` 后输出截断，不能据此声称全量测试已完整通过；部署前应在 CI 中执行并保留完整报告。
+重试、WebSocket 和路由快照的回归测试均通过。完整测试结果为 `140 passed, 1 failed`；唯一失败是
+缺失 `custom/Sam3DBody.json` 工作流文件导致的 Pose Studio 固定资产测试，与本轮 AI 改造无关。

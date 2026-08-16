@@ -8,7 +8,7 @@
 // <script src="canvas-render.js"> 排在 upload.js 之后、main.js 之前加载。
 //
 // 本文件包含两类东西：
-//   1. 节点卡片 HTML 构建：smartGroupBodyHtml / jimengPendingBodyHtml /
+//   1. 节点卡片 HTML 构建：smartGroupBodyHtml /
 //      smartRecoverableImageTask / imageTaskRecoverBodyHtml / nodeBodyHtml
 //   2. 主渲染循环与节点事件绑定：formatRunDuration / nodeRunElapsedMs /
 //      runTimePillHtml / hideRunTimerForNode / refreshRunTimerPills /
@@ -68,14 +68,14 @@ function smartGroupBodyHtml(node){
         ${members.length ? '' : `<div class="smart-group-empty"><i data-lucide="plus"></i><span>拖入图片自动收进分组</span></div>`}
     </div>`;
 }
+function smartRecoverableImageTask(node){
+    return smartPendingTasks(node).find(task => task.failed && task.recoverTaskId) || null;
+}
 function nodeBodyHtml(node, layout){
     if(node.type === 'smart-group') return smartGroupBodyHtml(node);
     if(node.type === 'smart-prompt') return promptNodeBodyHtml(node);
     if(node.type === 'smart-loop') return smartLoopBodyHtml(node);
     const imgs = (node.images || []).map(imageForDisplay);
-    if(node.jimengPending && node.jimengPending.submitId && imgs.length === 0){
-        return jimengPendingBodyHtml(node, layout);
-    }
     const recoverTask = smartRecoverableImageTask(node);
     if(recoverTask && imgs.length === 0){
         return imageTaskRecoverBodyHtml(node, recoverTask, layout);
@@ -100,33 +100,17 @@ function nodeBodyHtml(node, layout){
         </button>
     </div>`;
 }
-function jimengPendingBodyHtml(node, layout){
-    const jp = node.jimengPending || {};
-    const querying = Boolean(jp.querying);
-    const queueText = jimengQueueText(jp.queueInfo);
-    return `<div class="jimeng-pending-cell loading-cell single" style="width:${layout.width}px;height:${layout.height}px">
-        <div class="jimeng-pending-overlay">
-            <div class="jimeng-pending-spinner"><i data-lucide="loader-2"></i></div>
-            <div class="jimeng-pending-text">${escapeHtml(queueText)}</div>
-            <div class="jimeng-pending-sub">任务未丢失，可继续等待或手动查询</div>
-            <button class="jimeng-pending-query" type="button" data-jimeng-query="${escapeAttr(node.id)}" ${querying ? 'disabled' : ''}><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i><span>${querying ? '查询中…' : '查询结果'}</span></button>
-        </div>
-    </div>`;
-}
-function smartRecoverableImageTask(node){
-    return smartPendingTasks(node).find(task => task.failed && task.recoverTaskId) || null;
-}
 function imageTaskRecoverBodyHtml(node, task, layout){
     const querying = Boolean(task.querying);
     const failedCount = smartPendingTasks(node).filter(item => item.failed && item.recoverTaskId).length;
     const title = querying ? '查询中' : '任务未丢失';
     const sub = failedCount > 1 ? `还有 ${failedCount} 个任务可查询` : `任务 ID：${task.recoverTaskId || ''}`;
-    return `<div class="jimeng-pending-cell loading-cell single" style="width:${layout.width}px;height:${layout.height}px">
-        <div class="jimeng-pending-overlay">
-            <div class="jimeng-pending-spinner"><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i></div>
-            <div class="jimeng-pending-text">${escapeHtml(title)}</div>
-            <div class="jimeng-pending-sub">${escapeHtml(sub)}</div>
-            <button class="jimeng-pending-query" type="button" data-image-task-query="${escapeAttr(node.id)}" data-task-id="${escapeAttr(task.taskId)}" ${querying ? 'disabled' : ''}><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i><span>${querying ? '查询中…' : '查询结果'}</span></button>
+    return `<div class="task-recover-cell loading-cell single" style="width:${layout.width}px;height:${layout.height}px">
+        <div class="task-recover-overlay">
+            <div class="task-recover-spinner"><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i></div>
+            <div class="task-recover-text">${escapeHtml(title)}</div>
+            <div class="task-recover-sub">${escapeHtml(sub)}</div>
+            <button class="task-recover-query" type="button" data-image-task-query="${escapeAttr(node.id)}" data-task-id="${escapeAttr(task.taskId)}" ${querying ? 'disabled' : ''}><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i><span>${querying ? '查询中…' : '查询结果'}</span></button>
         </div>
     </div>`;
 }
@@ -145,19 +129,19 @@ function nodeRunElapsedMs(node){
 }
 function runTimePillHtml(node){
     if(!node || node.runTimerHidden || node.type === 'smart-prompt') return '';
-    const running = Boolean(node.pending || node.running || node.jimengPending);
+    const running = Boolean(node.pending || node.running);
     if(!running && !node.runFinishedAt) return '';
     const cls = running ? '' : ' done';
     return `<span class="run-time-pill${cls}" data-run-timer="${escapeHtml(node.id)}">${formatRunDuration(nodeRunElapsedMs(node))}</span>`;
 }
 function hideRunTimerForNode(node){
-    if(!node || node.runTimerHidden || node.pending || node.running || node.jimengPending || !node.runFinishedAt) return false;
+    if(!node || node.runTimerHidden || node.pending || node.running || !node.runFinishedAt) return false;
     node.runTimerHidden = true;
     scheduleSave();
     return true;
 }
 function refreshRunTimerPills(){
-    const active = nodes.some(n => n.type !== 'smart-prompt' && !n.runTimerHidden && (n.pending || n.running || n.jimengPending || n.runFinishedAt));
+    const active = nodes.some(n => n.type !== 'smart-prompt' && !n.runTimerHidden && (n.pending || n.running || n.runFinishedAt));
     document.querySelectorAll('[data-run-timer]').forEach(el => {
         const node = nodes.find(n => n.id === el.dataset.runTimer);
         if(!node || node.runTimerHidden || node.type === 'smart-prompt') {
@@ -165,7 +149,7 @@ function refreshRunTimerPills(){
             return;
         }
         el.textContent = formatRunDuration(nodeRunElapsedMs(node));
-        el.classList.toggle('done', Boolean(!node.pending && !node.running && !node.jimengPending && node.runFinishedAt));
+        el.classList.toggle('done', Boolean(!node.pending && !node.running && node.runFinishedAt));
     });
     if(active && !runTimerInterval) runTimerInterval = setInterval(refreshRunTimerPills, 1000);
     if(!active && runTimerInterval){ clearInterval(runTimerInterval); runTimerInterval = null; }
@@ -181,12 +165,11 @@ function smartNodeHtmlEntry(node){
         const isSmartGroup = node.type === 'smart-group';
         const isCompactMember = isSmartGroupCompactMember(node);
         const isImageNode = node.type === 'smart-image' || !node.type;
-        const isJimengPending = Boolean(node.jimengPending && node.jimengPending.submitId && imgs.length === 0);
-        const isQueued = Boolean(node.queued && imgs.length === 0 && !node.pending && !isJimengPending);
-        const isEmpty = isImageNode && imgs.length === 0 && !node.pending && !isQueued && !isJimengPending;
+        const isQueued = Boolean(node.queued && imgs.length === 0 && !node.pending);
+        const isEmpty = isImageNode && imgs.length === 0 && !node.pending && !isQueued;
         const isHistory = isHistoryGroupNode(node);
         const isGroup = isImageNode && imgs.length > 1;
-        const isPending = ((node.pending || isQueued || isJimengPending) && imgs.length === 0);
+        const isPending = ((node.pending || isQueued) && imgs.length === 0);
         const body = nodeBodyHtml(node, layout);
         const hint = isSmartGroup ? '拖入图片、提示词或循环节点' : isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(node.genKind === 'video' ? '支持视频 / 音频，也可直接文生视频' : node.genKind === 'workflow' ? '支持图片 / 视频 / 音频，ComfyUI 工作流生成' : '支持图片 / 视频 / 音频，也可直接文生图'));
         const floatingActions = candidateControlHtml(node);
@@ -539,13 +522,6 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 setNodeMainCandidate(node, Number(item.dataset.candidateGridItem) || 0);
                 render();
                 scheduleSave();
-            });
-        });
-        el.querySelectorAll('[data-jimeng-query]').forEach(btn => {
-            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
-            btn.addEventListener('click', e => {
-                e.preventDefault(); e.stopPropagation();
-                queryJimengNow(btn.dataset.jimengQuery);
             });
         });
         el.querySelectorAll('[data-image-task-query]').forEach(btn => {

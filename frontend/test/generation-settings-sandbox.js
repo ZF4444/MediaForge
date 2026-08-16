@@ -41,10 +41,8 @@ export function createGenerationSettingsSandbox(overrides = {}) {
 
         tr: overrides.fns?.tr || ((key) => key),
 
-        // MS_GEN_MODELS 是在 main.js 更早处定义的模块级常量（ModelScope
         // 模型元数据表），本文件的 msModelLabel 会读取它。sandbox 里用一个
         // 最小的默认值代替，测试用例可通过 overrides.msGenModels 自定义。
-        MS_GEN_MODELS: overrides.msGenModels || {},
 
         __state: state,
     };

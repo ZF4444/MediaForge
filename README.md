@@ -23,6 +23,25 @@
 
 ## 环境搭建
 
+### 一键初始化（推荐）
+
+在 macOS 安装 Homebrew 后，在项目根目录执行：
+
+```bash
+./scripts/setup-dev.sh
+```
+
+脚本会通过 Homebrew 按需安装 `uv`、Node.js、FFmpeg、PostgreSQL 16、Redis 和
+MinIO，创建 `API/.env`，安装 Python/前端依赖，构建前端，并启动本机服务。
+已有的 `API/.env` 会被保留；要按模板
+重新生成，使用 `./scripts/setup-dev.sh --force-env`。
+
+本地基础设施端口为 PostgreSQL `5432`、Redis `6379`、MinIO API `9000`、
+MinIO Console `9001`。初始化后用 `uv run python main.py` 启动应用。可用
+`./scripts/setup-dev.sh --help` 查看跳过基础设施或前端构建等选项。
+要停止本机开发服务，执行 `./scripts/stop-dev-services.sh`。
+仅重新启动或修复本机服务时，执行 `./scripts/setup-dev.sh --only-infra`。
+
 ### 安装 uv
 
 ```bash
@@ -92,7 +111,6 @@ export REDIS_URL=redis://mediaforge:readygo123@127.0.0.1:6379/0
 
 ```dotenv
 COMFLY_API_KEY=sk-xxxxx
-MODELSCOPE_API_KEY=ms-xxxx
 RUNNINGHUB_API_KEY=your-key-here
 COMFYUI_INSTANCES=192.168.80.21:8188
 # 云端网关也可使用无端口 HTTPS 域名，或显式完整 URL
@@ -176,7 +194,7 @@ CANVAS_TASK_WORKER_ENABLED=false CANVAS_TASK_RECOVERY_ENABLED=false \
   uv run uvicorn main:app --host 0.0.0.0 --port 3000 --workers 2
 
 # 独立任务进程：消费 Redis Streams、接管崩溃 worker 的 pending 消息并恢复排队任务
-uv run python -m app.workers.canvas
+RUN_BACKGROUND_MAINTENANCE=false uv run python -m app.workers.canvas
 ```
 
 相关 Redis 参数可通过环境变量调整：`REDIS_CANVAS_TASK_LEASE_SECONDS`、
@@ -264,13 +282,6 @@ python main.py --listen 0.0.0.0 --port 8188
 
 ```dotenv
 COMFYUI_INSTANCES=192.168.80.21:8188,192.168.80.22:8188
-```
-
-使用即梦时：
-
-```bash
-curl -fsSL https://jimeng.jianying.com/cli | bash
-dreamina login
 ```
 
 ## 常见问题

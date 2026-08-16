@@ -23,6 +23,10 @@ import tempfile
 import math
 import shlex
 import functools
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows uses the process lock only.
+    fcntl = None
 from typing import List, Dict, Any, Optional, Tuple
 from threading import Lock, Thread
 
@@ -162,11 +166,13 @@ CANVAS_TASK_WORKER_TASK = None
 WEBSOCKET_PUBSUB_TASK = None
 PROVIDER_CONFIG_SYNC_TASK = None
 APP_VERSION = "2026.05.19"
+RUN_BACKGROUND_MAINTENANCE = os.getenv("RUN_BACKGROUND_MAINTENANCE", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
 from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup, check_storage_quota
-from app.services.business_metadata import initialize_business_metadata
+from app.services.business_metadata import archive_ai_task, initialize_business_metadata
+from app.services.provider_secrets import initialize_provider_secrets, get_provider_secret, set_provider_secret
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
 from app.core.redis_client import RedisUnavailableError, close_redis_client, open_redis_client, redis_readiness_status
 from app.core.metrics import render_metrics
@@ -176,17 +182,22 @@ from app.core.outbound import validate_external_http_url, validate_public_http_u
 from app.core.ws_pubsub import publish_websocket_event, websocket_pubsub_loop
 from app.core.provider_config_events import provider_config_event_loop, publish_provider_config_changed
 from app.ai.gateway import provider_operation
-from app.ai.registry import ImageAdapterRegistry, ImageGenerationRequest
+from app.ai.registry import ImageGenerationRequest
+from app.ai.providers.images import build_image_adapter_registry, select_image_adapter
+from app.ai.providers.runtime import ProviderRuntime
 from app.services.canvas_tasks import (
     acknowledge_canvas_task,
     claim_canvas_task,
     create_canvas_task,
     dequeue_canvas_tasks,
+    dead_letter_canvas_task,
     enqueue_canvas_task,
     ensure_canvas_task_consumer_group,
     get_canvas_task,
     has_canvas_task_claim,
     list_recoverable_canvas_tasks,
+    list_dead_letter_canvas_tasks,
+    remove_dead_letter_canvas_task,
     reclaim_canvas_task_messages,
     release_canvas_task_claim,
     release_canvas_task_dispatch,
@@ -208,20 +219,24 @@ async def startup_event():
         # initialization in startup so new deployments and existing databases are
         # upgraded automatically before serving requests.
         await asyncio.to_thread(initialize_business_metadata)
+        if os.getenv("APP_SECRET_KEY"):
+            await asyncio.to_thread(initialize_provider_secrets)
         await asyncio.to_thread(load_users_registry)
         await asyncio.to_thread(load_sessions)
         await asyncio.to_thread(refresh_api_providers_cache)
+        if os.getenv("APP_SECRET_KEY"):
+            await asyncio.to_thread(migrate_provider_secrets_from_legacy_env)
         await asyncio.to_thread(access_control.warm_access_control_cache)
         await asyncio.to_thread(load_storage_quota_config)
         GLOBAL_LOOP = asyncio.get_running_loop()
         shared_state.set_global_loop(GLOBAL_LOOP)
-        if STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
+        if RUN_BACKGROUND_MAINTENANCE and STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
             STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
-        if STORAGE_CACHE_CLEANUP_ENABLED and STORAGE_CACHE_CLEANUP_TASK is None:
+        if RUN_BACKGROUND_MAINTENANCE and STORAGE_CACHE_CLEANUP_ENABLED and STORAGE_CACHE_CLEANUP_TASK is None:
             STORAGE_CACHE_CLEANUP_TASK = asyncio.create_task(storage_cache_cleanup_loop())
-        if SESSION_LAST_SEEN_TASK is None:
+        if RUN_BACKGROUND_MAINTENANCE and SESSION_LAST_SEEN_TASK is None:
             SESSION_LAST_SEEN_TASK = asyncio.create_task(session_last_seen_flush_loop())
-        if WEBSOCKET_PUBSUB_TASK is None:
+        if RUN_BACKGROUND_MAINTENANCE and WEBSOCKET_PUBSUB_TASK is None:
             WEBSOCKET_PUBSUB_TASK = asyncio.create_task(websocket_pubsub_loop(manager))
         if PROVIDER_CONFIG_SYNC_TASK is None:
             PROVIDER_CONFIG_SYNC_TASK = asyncio.create_task(provider_config_event_loop(refresh_api_providers_cache))
@@ -390,47 +405,10 @@ from app.core.auth import (
 )
 
 NEXT_TASK_ID = 1
-JIMENG_LOGIN_SESSION = {
-    "proc": None,
-    "stdout": "",
-    "stderr": "",
-    "started_at": 0.0,
-}
 
 PROVIDER_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{2,40}$")
-SUPPORTED_PROVIDER_PROTOCOLS = {"openai", "apimart", "gemini", "volcengine", "runninghub", "jimeng", "omnilojo"}
+SUPPORTED_PROVIDER_PROTOCOLS = {"openai", "gemini", "volcengine", "runninghub", "omnilojo"}
 RUNNINGHUB_DEFAULT_BASE_URL = "https://www.runninghub.cn"
-JIMENG_DEFAULT_IMAGE_MODELS = [
-    "5.0",
-    "4.6",
-    "4.5",
-    "4.1",
-    "4.0",
-    "3.1",
-    "3.0",
-]
-JIMENG_DEFAULT_VIDEO_MODELS = [
-    "seedance2.0_vip",
-    "seedance2.0fast_vip",
-    "seedance2.0",
-    "seedance2.0fast",
-    "3.5pro",
-    "3.0pro",
-    "3.0",
-    "3.0fast",
-]
-JIMENG_LEGACY_IMAGE_MODELS = {
-    "jimeng-image-2k",
-    "jimeng-image-4k",
-}
-JIMENG_LEGACY_VIDEO_MODELS = {
-    "jimeng-video-720p",
-    "jimeng-video-1080p",
-}
-try:
-    JIMENG_DEFAULT_POLL_SECONDS = max(1, min(3600, int(os.getenv("JIMENG_POLL_SECONDS", "900"))))
-except Exception:
-    JIMENG_DEFAULT_POLL_SECONDS = 900
 VOLCENGINE_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 from app.config import VOLCENGINE_DEFAULT_PROJECT_NAME, VOLCENGINE_DEFAULT_REGION
 VOLCENGINE_DEFAULT_VIDEO_MODELS = [
@@ -562,50 +540,6 @@ AI_BASE_URL = os.getenv("COMFLY_BASE_URL", "https://ai.comfly.chat").rstrip("/")
 AI_API_KEY = os.getenv("COMFLY_API_KEY", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 PUBLIC_MEDIA_BASE_URL = os.getenv("PUBLIC_MEDIA_BASE_URL", "").strip().rstrip("/")
-MODELSCOPE_API_KEY = os.getenv("MODELSCOPE_API_KEY", "")
-MODELSCOPE_CHAT_BASE_URL = "https://api-inference.modelscope.cn/v1"
-MODELSCOPE_DEFAULT_IMAGE_MODELS = [
-    "Tongyi-MAI/Z-Image-Turbo",
-    "Qwen/Qwen-Image-2512",
-    "Qwen/Qwen-Image-Edit-2511",
-    "black-forest-labs/FLUX.2-klein-9B",
-]
-MODELSCOPE_DEFAULT_CHAT_MODELS = [
-    "Qwen/Qwen3-235B-A22B",
-    "Qwen/Qwen3-VL-235B-A22B-Instruct",
-    "MiniMax/MiniMax-M2.7:MiniMax",
-]
-_MODELSCOPE_CONFIGURED_CHAT_MODELS = [m.strip() for m in os.getenv("MODELSCOPE_CHAT_MODELS", "").split(",") if m.strip()]
-MODELSCOPE_CHAT_MODELS = list(dict.fromkeys([m for m in [*MODELSCOPE_DEFAULT_CHAT_MODELS, *_MODELSCOPE_CONFIGURED_CHAT_MODELS] if m]))
-MODELSCOPE_DEFAULT_IMAGE_MODEL = MODELSCOPE_DEFAULT_IMAGE_MODELS[0]
-MODELSCOPE_DEFAULT_CHAT_MODEL = "Qwen/Qwen3-235B-A22B"
-MODELSCOPE_DEFAULT_LORAS = [
-    {
-        "id": "Daniel8152/film",
-        "name": "Z-Image Film",
-        "target_model": "Tongyi-MAI/Z-Image-Turbo",
-        "strength": 0.8,
-        "enabled": True,
-        "note": "",
-    },
-    {
-        "id": "Daniel8152/Qwen-Image-2512-Film",
-        "name": "Qwen Image 2512 Film",
-        "target_model": "Qwen/Qwen-Image-2512",
-        "strength": 0.8,
-        "enabled": True,
-        "note": "",
-    },
-    {
-        "id": "Daniel8152/Klein-enhance",
-        "name": "Klein enhance",
-        "target_model": "black-forest-labs/FLUX.2-klein-9B",
-        "strength": 0.8,
-        "enabled": True,
-        "note": "",
-    },
-]
-MODELSCOPE_DEFAULTS_VERSION = 3
 CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-4o-mini")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
@@ -614,9 +548,6 @@ AI_REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "1800"))
 IMAGE_POLL_INTERVAL = float(os.getenv("IMAGE_POLL_INTERVAL", "2"))
 IMAGE_TASK_TIMEOUT = float(os.getenv("IMAGE_TASK_TIMEOUT", str(AI_REQUEST_TIMEOUT)))
 COMFYUI_HISTORY_TIMEOUT = int(float(os.getenv("COMFYUI_HISTORY_TIMEOUT", "1800")))
-APIMART_IMAGE_TASK_TIMEOUT = float(os.getenv("APIMART_IMAGE_TASK_TIMEOUT", "1800"))
-APIMART_IMAGE_POLL_INTERVAL = float(os.getenv("APIMART_IMAGE_POLL_INTERVAL", "5"))
-APIMART_IMAGE_INITIAL_POLL_DELAY = float(os.getenv("APIMART_IMAGE_INITIAL_POLL_DELAY", "10"))
 VIDEO_POLL_TIMEOUT = float(os.getenv("VIDEO_POLL_TIMEOUT", "1800"))
 ONLINE_IMAGE_PROMPT_MAX_LENGTH = int(os.getenv("ONLINE_IMAGE_PROMPT_MAX_LENGTH", "20000"))
 VIDEO_PROMPT_MAX_LENGTH = int(os.getenv("VIDEO_PROMPT_MAX_LENGTH", "4000"))
@@ -718,9 +649,8 @@ def model_list(env_name, primary, defaults):
 def reload_env_globals():
     """保存 API 设置后，将 os.environ 里最新的值同步回模块级全局变量，
     避免保存后需要重启才能生效。"""
-    global MODELSCOPE_API_KEY, AI_API_KEY, AI_BASE_URL
-    global IMAGE_MODELS, CHAT_MODELS, VIDEO_MODELS, MODELSCOPE_CHAT_MODELS
-    MODELSCOPE_API_KEY = os.getenv("MODELSCOPE_API_KEY", "")
+    global AI_API_KEY, AI_BASE_URL
+    global IMAGE_MODELS, CHAT_MODELS, VIDEO_MODELS
     AI_API_KEY = os.getenv("COMFLY_API_KEY", "")
     AI_BASE_URL = os.getenv("COMFLY_BASE_URL", "https://ai.comfly.chat").rstrip("/")
     IMAGE_MODELS = model_list("IMAGE_MODELS", os.getenv("IMAGE_MODEL", IMAGE_MODEL), ["nano-banana-pro"])
@@ -740,8 +670,6 @@ def reload_env_globals():
         "doubao-seedance-1-0-lite-t2v-250428",
         "doubao-seedance-1-0-lite-i2v-250428",
     ])
-    _configured = [m.strip() for m in os.getenv("MODELSCOPE_CHAT_MODELS", "").split(",") if m.strip()]
-    MODELSCOPE_CHAT_MODELS = list(dict.fromkeys([m for m in [*MODELSCOPE_DEFAULT_CHAT_MODELS, *_configured] if m]))
 
 CHAT_MODELS = model_list("CHAT_MODELS", CHAT_MODEL, ["gpt-4o-mini", "gemini-3.1-flash-image-preview-2k"])
 IMAGE_MODELS = model_list("IMAGE_MODELS", IMAGE_MODEL, ["nano-banana-pro"])
@@ -768,8 +696,6 @@ VIDEO_MODELS = model_list("VIDEO_MODELS", "veo3-fast", [
 def provider_key_env(provider_id):
     if provider_id == "comfly":
         return "COMFLY_API_KEY"
-    if provider_id == "modelscope":
-        return "MODELSCOPE_API_KEY"
     if provider_id == "runninghub":
         return "RUNNINGHUB_API_KEY"
     if provider_id == "volcengine":
@@ -802,20 +728,50 @@ def read_api_env_value(key: str) -> str:
 def provider_env_key_value(provider_id: str) -> str:
     provider_id = str(provider_id or "").strip().lower()
     env_key = provider_key_env(provider_id)
+    if os.getenv("APP_SECRET_KEY"):
+        return get_provider_secret(provider_id, "api_key")
     key = os.getenv(env_key, "") or read_api_env_value(env_key)
     if key:
         return key
-    if provider_id == "modelscope":
-        return MODELSCOPE_API_KEY or ""
     return ""
 
 def volcengine_access_key_value() -> str:
     env_key = volcengine_access_key_env()
+    if os.getenv("APP_SECRET_KEY"):
+        return get_provider_secret("volcengine", "access_key_id")
     return os.getenv(env_key, "") or read_api_env_value(env_key)
 
 def volcengine_secret_key_value() -> str:
     env_key = volcengine_secret_key_env()
+    if os.getenv("APP_SECRET_KEY"):
+        return get_provider_secret("volcengine", "secret_access_key")
     return os.getenv(env_key, "") or read_api_env_value(env_key)
+
+
+def migrate_provider_secrets_from_legacy_env() -> None:
+    """One-way startup import for pre-centralized Provider keys.
+
+    Reads legacy values only during migration. Runtime lookups use PostgreSQL
+    exclusively whenever ``APP_SECRET_KEY`` is configured.
+    """
+    if not os.getenv("APP_SECRET_KEY"):
+        return
+    updates = []
+    for provider in load_api_providers():
+        provider_id = str(provider.get("id") or "").strip().lower()
+        if not provider_id:
+            continue
+        value = os.getenv(provider_key_env(provider_id), "") or read_api_env_value(provider_key_env(provider_id))
+        if value and not get_provider_secret(provider_id, "api_key"):
+            updates.append((provider_id, "api_key", value))
+    for name, env_key in (("access_key_id", volcengine_access_key_env()), ("secret_access_key", volcengine_secret_key_env())):
+        value = os.getenv(env_key, "") or read_api_env_value(env_key)
+        if value and not get_provider_secret("volcengine", name):
+            updates.append(("volcengine", name, value))
+    for provider_id, name, value in updates:
+        set_provider_secret(provider_id, name, value)
+    if updates:
+        audit_event("provider_secrets_migrated", action="migrate", resource_type="provider_secret", resource_id="central_store", after={"count": len(updates)})
 
 def volcengine_provider_api_key(explicit_key: str = "") -> str:
     explicit_key = str(explicit_key or "").strip()
@@ -841,22 +797,19 @@ def bearer_auth_value(value):
     return f"Bearer {token}" if token else ""
 
 def default_api_providers():
-    # 独立入口平台强制保留，其他平台均可自定义增删
     return [
         {
-            "id": "modelscope",
-            "name": "ModelScope",
-            "base_url": MODELSCOPE_CHAT_BASE_URL,
+            "id": "comfyui",
+            "name": "ComfyUI",
+            "base_url": "",
             "protocol": "openai",
             "image_generation_endpoint": "",
             "image_edit_endpoint": "",
             "enabled": True,
             "primary": False,
-            "image_models": MODELSCOPE_DEFAULT_IMAGE_MODELS,
-            "chat_models": MODELSCOPE_CHAT_MODELS,
+            "image_models": [],
+            "chat_models": [],
             "video_models": [],
-            "ms_loras": MODELSCOPE_DEFAULT_LORAS,
-            "ms_defaults_version": MODELSCOPE_DEFAULTS_VERSION,
         },
         {
             "id": "runninghub",
@@ -870,8 +823,6 @@ def default_api_providers():
             "image_models": RUNNINGHUB_DEFAULT_IMAGE_MODELS,
             "chat_models": [],
             "video_models": [],
-            "ms_loras": [],
-            "ms_defaults_version": 0,
             "rh_apps": RUNNINGHUB_DEFAULT_APPS,
             "model_aliases": {RHART_GPT_IMAGE2_MODEL_ID: "GPT-Image2"},
         },
@@ -887,8 +838,6 @@ def default_api_providers():
             "image_models": [],
             "chat_models": [],
             "video_models": VOLCENGINE_DEFAULT_VIDEO_MODELS,
-            "ms_loras": [],
-            "ms_defaults_version": 0,
             "volcengine_project_name": VOLCENGINE_DEFAULT_PROJECT_NAME,
             "volcengine_region": VOLCENGINE_DEFAULT_REGION,
         },
@@ -896,24 +845,6 @@ def default_api_providers():
 
 def merge_default_api_providers(providers):
     merged = [dict(item) for item in providers]
-    # 强制保留独立入口平台（不再强制 comfly）
-    ms_default = next((d for d in default_api_providers() if d["id"] == "modelscope"), None)
-    if ms_default:
-        current = next((item for item in merged if item.get("id") == "modelscope"), None)
-        if not current:
-            merged.append(ms_default)
-        else:
-            if not current.get("base_url"):
-                current["base_url"] = ms_default["base_url"]
-            seeded_version = int(current.get("ms_defaults_version") or 0)
-            if seeded_version < MODELSCOPE_DEFAULTS_VERSION:
-                image_models = model_list_from_values([*MODELSCOPE_DEFAULT_IMAGE_MODELS, *(current.get("image_models") or [])])
-                chat_models = model_list_from_values([*MODELSCOPE_DEFAULT_CHAT_MODELS, *(current.get("chat_models") or [])])
-                loras = normalize_ms_loras([*MODELSCOPE_DEFAULT_LORAS, *(current.get("ms_loras") or [])])
-                current["image_models"] = image_models
-                current["chat_models"] = chat_models
-                current["ms_loras"] = loras
-                current["ms_defaults_version"] = MODELSCOPE_DEFAULTS_VERSION
     rh_default = load_static_runninghub_provider() or next((d for d in default_api_providers() if d["id"] == "runninghub"), None)
     if rh_default:
         current = next((item for item in merged if item.get("id") == "runninghub"), None)
@@ -953,20 +884,18 @@ def merge_default_api_providers(providers):
             current["protocol"] = "volcengine"
             current["volcengine_project_name"] = str(current.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME
             current["volcengine_region"] = str(current.get("volcengine_region") or VOLCENGINE_DEFAULT_REGION).strip() or VOLCENGINE_DEFAULT_REGION
-    # 即梦 CLI 不再是强制保留的默认平台：仅在用户已添加了即梦协议的平台时，规范化其默认模型/地址。
-    for current in merged:
-        if not is_jimeng_provider(current):
-            continue
-        current["protocol"] = "jimeng"
-        current["base_url"] = ""
-        current["image_models"] = model_list_from_values([
-            *[item for item in (current.get("image_models") or []) if str(item or "").strip() not in JIMENG_LEGACY_IMAGE_MODELS],
-            *JIMENG_DEFAULT_IMAGE_MODELS,
-        ])
-        current["video_models"] = model_list_from_values([
-            *[item for item in (current.get("video_models") or []) if str(item or "").strip() not in JIMENG_LEGACY_VIDEO_MODELS],
-            *JIMENG_DEFAULT_VIDEO_MODELS,
-        ])
+    comfy_default = next((d for d in default_api_providers() if d["id"] == "comfyui"), None)
+    if comfy_default:
+        current = next((item for item in merged if item.get("id") == "comfyui"), None)
+        if not current:
+            merged.append(comfy_default)
+        else:
+            current["name"] = "ComfyUI"
+            current["protocol"] = "openai"
+            current["base_url"] = ""
+            current["image_models"] = []
+            current["chat_models"] = []
+            current["video_models"] = []
     return merged
 
 def normalize_model_list(values):
@@ -980,38 +909,6 @@ def model_list_from_values(values):
             selected_model(item, item)
             deduped.append(item)
     return deduped
-
-def normalize_ms_loras(values):
-    normalized = []
-    seen = set()
-    for raw in values or []:
-        if not isinstance(raw, dict):
-            continue
-        lora_id = str(raw.get("id") or "").strip()
-        if not lora_id:
-            continue
-        target_model = str(raw.get("target_model") or raw.get("model") or "").strip()
-        if not target_model:
-            continue
-        key = (target_model, lora_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            strength = float(raw.get("strength", raw.get("default_strength", 0.8)))
-        except Exception:
-            strength = 0.8
-        strength = max(0.0, min(2.0, strength))
-        name = re.sub(r"\s+", " ", str(raw.get("name") or "").strip())[:80]
-        normalized.append({
-            "id": lora_id[:180],
-            "name": name or lora_id,
-            "target_model": target_model[:180],
-            "strength": strength,
-            "enabled": bool(raw.get("enabled", True)),
-            "note": str(raw.get("note") or "").strip()[:300],
-        })
-    return normalized
 
 def normalize_runninghub_entry(raw, kind):
     if not isinstance(raw, dict):
@@ -1236,9 +1133,15 @@ def normalize_provider(item):
         base_url = base_url or VOLCENGINE_DEFAULT_BASE_URL
         volc_project = volc_project or VOLCENGINE_DEFAULT_PROJECT_NAME
         volc_region = volc_region or VOLCENGINE_DEFAULT_REGION
-    if provider_id == "jimeng":
-        protocol = "jimeng"
+    elif provider_id == "runninghub":
+        protocol = "runninghub"
+        base_url = base_url or RUNNINGHUB_DEFAULT_BASE_URL
+    elif provider_id == "comfyui":
+        name = "ComfyUI"
+        protocol = "openai"
         base_url = ""
+    elif protocol not in {"openai", "gemini"}:
+        protocol = "openai"
     return {
         "id": provider_id,
         "name": name,
@@ -1253,8 +1156,6 @@ def normalize_provider(item):
         "video_models": model_list_from_values(item.get("video_models") or []),
         "model_protocols": normalize_model_protocols(item.get("model_protocols")),
         "model_aliases": {str(k).strip(): str(v).strip() for k, v in (item.get("model_aliases") or {}).items() if isinstance(k, str) and isinstance(v, str) and str(k).strip() and str(v).strip()},
-        "ms_loras": normalize_ms_loras(item.get("ms_loras") or []),
-        "ms_defaults_version": int(item.get("ms_defaults_version") or 0),
         "rh_apps": normalize_runninghub_entries(item.get("rh_apps") or [], "app"),
         "volcengine_project_name": volc_project,
         "volcengine_region": volc_region,
@@ -1342,15 +1243,12 @@ def require_model_access(provider_id: str, model: str) -> str:
     return uid
 
 def get_primary_provider_id(providers=None):
-    """返回当前首选 provider 的 id；优先 primary=True 的，否则取第一个非 modelscope 的，再次取第一个。"""
+    """返回当前首选 provider 的 id。"""
     providers = providers if providers is not None else load_api_providers()
     primary = next((p for p in providers if p.get("primary") and p.get("enabled", True)), None)
     if primary:
         return primary["id"]
-    non_ms = next((p for p in providers if p["id"] != "modelscope" and p.get("enabled", True)), None)
-    if non_ms:
-        return non_ms["id"]
-    return providers[0]["id"] if providers else "modelscope"
+    return next((p["id"] for p in providers if p.get("enabled", True)), "")
 
 def get_api_provider(provider_id="comfly"):
     providers = load_api_providers()
@@ -1375,26 +1273,6 @@ def get_api_provider_exact(provider_id: str):
         raise HTTPException(status_code=400, detail=f"API 平台已禁用：{provider.get('name') or target}")
     return provider
 
-def modelscope_provider_config():
-    return get_api_provider_exact("modelscope")
-
-def modelscope_api_key(explicit_key: str = ""):
-    return (
-        strip_auth_scheme(explicit_key, "Bearer")
-        or strip_auth_scheme(provider_env_key_value("modelscope"), "Bearer")
-        or strip_auth_scheme(MODELSCOPE_API_KEY, "Bearer")
-    )
-
-def modelscope_api_root(provider=None):
-    provider = provider or modelscope_provider_config()
-    base_root = str((provider or {}).get("base_url") or MODELSCOPE_CHAT_BASE_URL).strip().rstrip("/")
-    if not base_root:
-        base_root = MODELSCOPE_CHAT_BASE_URL
-    return base_root if base_root.endswith("/v1") else f"{base_root}/v1"
-
-def modelscope_image_api_root():
-    return MODELSCOPE_CHAT_BASE_URL.rstrip("/")
-
 def env_quote(value):
     text = str(value or "")
     if not text or re.search(r"\s|#|['\"]", text):
@@ -1404,37 +1282,48 @@ def env_quote(value):
 def update_env_values(updates):
     with GLOBAL_CONFIG_LOCK:
         os.makedirs(os.path.dirname(API_ENV_FILE), exist_ok=True)
-        lines = []
-        if os.path.exists(API_ENV_FILE):
-            with open(API_ENV_FILE, "r", encoding="utf-8-sig") as f:
-                lines = f.read().splitlines()
-        seen = set()
-        next_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in line:
-                next_lines.append(line)
-                continue
-            key = line.split("=", 1)[0].strip()
-            if key in updates:
-                next_lines.append(f"{key}={env_quote(updates[key])}")
-                os.environ[key] = str(updates[key] or "")
-                seen.add(key)
-            else:
-                next_lines.append(line)
-        for key, value in updates.items():
-            if key not in seen:
-                next_lines.append(f"{key}={env_quote(value)}")
-                os.environ[key] = str(value or "")
-        fd, tmp_path = tempfile.mkstemp(prefix=".env.", dir=os.path.dirname(API_ENV_FILE), text=True)
+        lock_path = f"{API_ENV_FILE}.lock"
+        lock_file = open(lock_path, "a+", encoding="utf-8")
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write("\n".join(next_lines).rstrip() + "\n")
-            os.chmod(tmp_path, 0o600)
-            os.replace(tmp_path, API_ENV_FILE)
+            lines = []
+            if os.path.exists(API_ENV_FILE):
+                with open(API_ENV_FILE, "r", encoding="utf-8-sig") as f:
+                    lines = f.read().splitlines()
+            seen = set()
+            next_lines = []
+            for line in lines:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in line:
+                    next_lines.append(line)
+                    continue
+                key = line.split("=", 1)[0].strip()
+                if key in updates:
+                    next_lines.append(f"{key}={env_quote(updates[key])}")
+                    os.environ[key] = str(updates[key] or "")
+                    seen.add(key)
+                else:
+                    next_lines.append(line)
+            for key, value in updates.items():
+                if key not in seen:
+                    next_lines.append(f"{key}={env_quote(value)}")
+                    os.environ[key] = str(value or "")
+            fd, tmp_path = tempfile.mkstemp(prefix=".env.", dir=os.path.dirname(API_ENV_FILE), text=True)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write("\n".join(next_lines).rstrip() + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.chmod(tmp_path, 0o600)
+                os.replace(tmp_path, API_ENV_FILE)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
         finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
 
 BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 
@@ -1494,9 +1383,6 @@ from app.models import (
     GenerateRequest,
     DeleteHistoryRequest,
     SaveHistoryRequest,
-    TokenRequest,
-    CloudGenRequest,
-    CloudPollRequest,
     AIReference,
     OnlineImageRequest,
     ImageTaskQueryRequest,
@@ -1505,11 +1391,8 @@ from app.models import (
     CloudVideoUploadRequest,
     RunningHubSubmitRequest,
     RunningHubUploadAssetRequest,
-    JimengHelpRequest,
-    JimengQueryMediaRequest,
     ApiProviderPayload,
     ChatRequest,
-    MsGenerateRequest,
     CanvasLLMRequest,
     ConversationCreateRequest,
     CanvasCreateRequest,
@@ -1859,15 +1742,7 @@ def display_title(text):
     title = re.sub(r"\s+", " ", text or "").strip()
     return title[:24] or "新对话"
 
-def resolve_chat_provider(provider: str, model: str, ms_model: str):
-    if provider == "modelscope":
-        clean_token = modelscope_api_key()
-        if not clean_token:
-            raise HTTPException(status_code=400, detail="未配置 ModelScope API Key，请在 API 设置中填写。")
-        base = modelscope_api_root()
-        hdrs = {"Authorization": bearer_auth_value(clean_token), "Content-Type": "application/json"}
-        mdl = selected_model(ms_model or model, MODELSCOPE_CHAT_MODELS[0] if MODELSCOPE_CHAT_MODELS else "MiniMax/MiniMax-M2.7")
-        return base, hdrs, mdl
+def resolve_chat_provider(provider: str, model: str):
     api_provider = get_api_provider(provider or "")
     base_root = (api_provider.get("base_url") or AI_BASE_URL).rstrip("/")
     if not base_root:
@@ -1939,20 +1814,7 @@ def preferred_chat_model(provider):
             return text_like_models[0]
     return models[0]
 
-def modelscope_size(value, fallback="1024x1024"):
-    size = str(value or fallback).strip().lower().replace("*", "x")
-    if re.fullmatch(r"\d{2,5}x\d{2,5}", size):
-        return size
-    raise HTTPException(status_code=400, detail=f"ModelScope size 格式不正确：{value or fallback}，应为 WxH，例如 1024x1024")
-
-def unwrap_apimart_response(raw):
-    """APIMart 将标准 OpenAI 响应包在 {"code":200,"data":{...}} 里；如果检测到就解包。"""
-    if isinstance(raw, dict) and "data" in raw and isinstance(raw.get("data"), dict) and "choices" not in raw:
-        return raw["data"]
-    return raw
-
 def text_from_chat_response(data):
-    data = unwrap_apimart_response(data)
     choices = data.get("choices") or []
     if not choices:
         return ""
@@ -2057,7 +1919,7 @@ def provider_protocol(provider):
 # 单模型可覆盖的协议（仅 OpenAI / Gemini，二者可共用同一站点的 Base URL + Key）
 PER_MODEL_PROTOCOL_OPTIONS = {"openai", "gemini"}
 # 协议固定、不支持单模型覆盖的内置平台
-FIXED_PROTOCOL_PROVIDER_IDS = {"modelscope", "volcengine", "jimeng", "runninghub"}
+FIXED_PROTOCOL_PROVIDER_IDS = {"volcengine", "runninghub"}
 
 def normalize_model_protocols(value):
     """规整 {模型名: 协议} 覆盖表，仅保留 openai/gemini。"""
@@ -2083,10 +1945,6 @@ def effective_protocol(provider, model=""):
             return val
     return base
 
-def is_apimart_provider(provider):
-    base_url = str((provider or {}).get("base_url") or "").lower()
-    return provider_protocol(provider) == "apimart" or "apimart.ai" in base_url
-
 def is_gemini_provider(provider):
     return provider_protocol(provider) == "gemini"
 
@@ -2096,31 +1954,20 @@ def is_volcengine_provider(provider):
 def is_runninghub_provider(provider):
     return provider_protocol(provider) == "runninghub" or str((provider or {}).get("id") or "").strip().lower() == "runninghub"
 
-def is_jimeng_provider(provider):
-    return provider_protocol(provider) == "jimeng" or str((provider or {}).get("id") or "").strip().lower() == "jimeng"
-
 def is_omnilojo_provider(provider):
     # Omnilojo 通过 OpenAI v1/chat/completions 协议返回图片（图片内嵌在聊天回复里）。
     base_url = str((provider or {}).get("base_url") or "").lower()
     return provider_protocol(provider) == "omnilojo" or "omnilojo" in base_url
 
-def is_yuli_provider(provider):
-    # 玉玉API（yuli.host）的视频接口走自有格式（/v1/video/create + /v1/video/query），
-    # 与通用 OpenAI /v1/videos/generations 不同，需单独识别。
-    base_url = str((provider or {}).get("base_url") or "").lower()
-    return "yuli.host" in base_url
-
 # ---- 数字人/真人认证：平台无关分发 ----
 # 认证是一个跨平台功能。每个平台用不同的资产 API 实现，但对外是统一入口。
 # 新增平台时：在 avatar_platform_for_provider 里加一条识别，并把平台键加进
 # AVATAR_SUPPORTED_PLATFORMS，再在 register/avatar-status 端点里补一个分发分支即可。
-AVATAR_SUPPORTED_PLATFORMS = {"apimart", "volcengine"}  # 已接入官方资产 API 的平台
+AVATAR_SUPPORTED_PLATFORMS = {"volcengine"}  # 已接入官方资产 API 的平台
 
 def avatar_platform_for_provider(provider) -> str:
     if not provider:
         return ""
-    if is_apimart_provider(provider):
-        return "apimart"
     if is_volcengine_provider(provider):
         return "volcengine"
     return ""
@@ -2128,776 +1975,12 @@ def avatar_platform_for_provider(provider) -> str:
 def provider_supports_avatar(provider) -> bool:
     return avatar_platform_for_provider(provider) in AVATAR_SUPPORTED_PLATFORMS
 
-def jimeng_env_value(key):
-    return os.getenv(key, "") or read_api_env_value(key)
-
-def jimeng_use_wsl():
-    value = str(jimeng_env_value("JIMENG_USE_WSL") or "").strip().lower()
-    return value in {"1", "true", "yes", "on", "wsl"}
-
-def jimeng_cli_executable():
-    if jimeng_use_wsl():
-        return shutil.which("wsl.exe") or shutil.which("wsl") or "wsl.exe"
-    configured = str(
-        jimeng_env_value("JIMENG_BIN")
-        or jimeng_env_value("DREAMINA_BIN")
-        or ""
-    ).strip()
-    if configured:
-        return configured
-    return shutil.which("dreamina") or shutil.which("dreamina.exe") or shutil.which("dreamina.cmd") or ""
-
-def decode_wsl_output(data: bytes) -> str:
-    data = data or b""
-    if not data:
-        return ""
-    if b"\x00" in data[:200]:
-        try:
-            return data.decode("utf-16le", errors="ignore")
-        except Exception:
-            pass
-    return data.decode("utf-8-sig", errors="ignore")
-
-def jimeng_wsl_base_args(exe="wsl.exe"):
-    configured = str(jimeng_env_value("JIMENG_WSL_DISTRO") or "").strip()
-    names = []
-    try:
-        proc = subprocess.run(
-            [exe, "-l", "-q"],
-            cwd=BASE_DIR,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-            check=False,
-        )
-        names = [
-            line.replace("\x00", "").strip().lstrip("*").strip()
-            for line in decode_wsl_output(proc.stdout).splitlines()
-            if line.replace("\x00", "").strip()
-        ]
-    except Exception:
-        names = []
-    if configured and (not names or configured in names):
-        return ["-d", configured]
-    if configured and names:
-        logger.warning("configured Jimeng WSL distribution unavailable; using fallback", extra={"event": "jimeng_wsl_distro_fallback", "configured_distro": configured, "available_distros": names})
-    try:
-        ubuntu = next((name for name in names if re.match(r"^Ubuntu($|-)", name)), "")
-        if ubuntu:
-            return ["-d", ubuntu]
-    except Exception:
-        pass
-    return []
-
-def jimeng_clean_wsl_stderr(text):
-    lines = []
-    for line in str(text or "").splitlines():
-        clean = line.replace("\x00", "").strip()
-        low = clean.lower()
-        is_proxy_warning = "localhost" in low and "wsl" in low and ("nat" in low or "proxy" in low or "代理" in clean)
-        if clean and not is_proxy_warning:
-            lines.append(clean)
-    return "\n".join(lines).strip()
-
-def windows_path_to_wsl(path):
-    text = str(path or "").replace("\\", "/")
-    match = re.match(r"^([A-Za-z]):/(.*)$", text)
-    if match:
-        return f"/mnt/{match.group(1).lower()}/{match.group(2)}"
-    return text
-
-def wsl_path_to_windows(path):
-    text = str(path or "").strip()
-    match = re.match(r"^/mnt/([A-Za-z])/(.*)$", text)
-    if match:
-        tail = match.group(2).replace("/", "\\")
-        return f"{match.group(1).upper()}:\\{tail}"
-    return text
-
-def jimeng_cli_path_arg(path):
-    return windows_path_to_wsl(path) if jimeng_use_wsl() else path
-
-def jimeng_poll_seconds(default=JIMENG_DEFAULT_POLL_SECONDS):
-    try:
-        return max(1, min(3600, int(os.getenv("JIMENG_POLL_SECONDS", str(default)) or default)))
-    except Exception:
-        return default
-
-def jimeng_extract_json(text):
-    text = str(text or "").strip()
-    if not text:
-        return {}
-    decoder = json.JSONDecoder()
-    parsed = []
-    for i, ch in enumerate(text):
-        if ch not in "[{":
-            continue
-        try:
-            obj, _end = decoder.raw_decode(text[i:])
-            if not text[:i].strip():
-                return obj
-            parsed.append((i, obj))
-        except Exception:
-            continue
-    def score(item):
-        _idx, obj = item
-        if not isinstance(obj, dict):
-            return 1
-        keys = {str(key).lower() for key in obj.keys()}
-        weight = 0
-        for key in ("submit_id", "gen_status", "result_json", "images", "videos", "data", "total_credit"):
-            if key in keys:
-                weight += 10
-        return weight
-    return max(parsed, key=score)[1] if parsed else {"text": text}
-
-async def run_jimeng_cli(args, timeout=120, raw_text=False):
-    exe = jimeng_cli_executable()
-    if not exe:
-        raise HTTPException(status_code=400, detail="未找到 dreamina CLI。请先安装：curl -fsSL https://jimeng.jianying.com/cli | bash，并完成 dreamina login。")
-    clean_args = [str(arg) for arg in args if str(arg) != ""]
-    command = jimeng_command(clean_args, exe)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=BASE_DIR,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError as exc:
-        raise HTTPException(status_code=504, detail=f"即梦 CLI 执行超时：{' '.join(command[:3])}") from exc
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=f"未找到即梦 CLI：{exe}") from exc
-    out_text, clean_err_text = jimeng_decode_cli_output(stdout, stderr)
-    if proc.returncode != 0:
-        message = clean_err_text or out_text or f"exit={proc.returncode}"
-        raise HTTPException(status_code=502, detail=f"即梦 CLI 调用失败：{message[:1000]}")
-    # 帮助等纯文本输出不应被 JSON 提取吞掉（如 [0.5, 8] 会被误判为结果）
-    if raw_text:
-        return {"_stdout": out_text, "_stderr": clean_err_text}
-    raw = jimeng_extract_json(f"{out_text}\n{clean_err_text}".strip())
-    if isinstance(raw, dict):
-        raw.setdefault("_stdout", out_text)
-        if clean_err_text:
-            raw.setdefault("_stderr", clean_err_text)
-    return raw
-
-# 旧版 dreamina CLI 将 submit_id 用 16 位 hex，v1.4.2 起升级为 UUID，
-# 与当前轮询逻辑不兼容。这里做尽力而为的版本探测，失败不阻断主流程。
-JIMENG_MIN_CLI_VERSION = (1, 4, 2)
-
-def jimeng_parse_version(text):
-    match = re.search(r"(\d+)\.(\d+)\.(\d+)", str(text or ""))
-    if not match:
-        return None
-    return tuple(int(part) for part in match.groups())
-
-async def jimeng_cli_version():
-    for flag in ("--version", "-V", "version"):
-        try:
-            raw = await run_jimeng_cli([flag], timeout=15)
-        except HTTPException:
-            continue
-        text = raw if isinstance(raw, str) else (raw.get("_stdout") or raw.get("_stderr") or "" if isinstance(raw, dict) else "")
-        version = jimeng_parse_version(text)
-        if version:
-            return version, str(text).strip()
-    return None, ""
-
-def jimeng_command(clean_args, exe=None):
-    exe = exe or jimeng_cli_executable()
-    if jimeng_use_wsl():
-        shell_line = (
-            ". ~/.profile >/dev/null 2>&1 || true; . ~/.bashrc >/dev/null 2>&1 || true; "
-            "DREAMINA_BIN=$(command -v dreamina || find \"$HOME\" -maxdepth 4 -type f -name dreamina 2>/dev/null | head -n 1); "
-            "if [ -z \"$DREAMINA_BIN\" ]; then echo 'dreamina CLI not found in WSL' >&2; exit 127; fi; "
-            "\"$DREAMINA_BIN\" " + " ".join(shlex.quote(arg) for arg in clean_args)
-        )
-        return [exe, *jimeng_wsl_base_args(exe), "-e", "sh", "-lc", shell_line]
-    return [exe, *clean_args]
-
-def jimeng_decode_cli_output(stdout, stderr):
-    out_text = (decode_wsl_output(stdout) if jimeng_use_wsl() else stdout.decode("utf-8", errors="replace")).strip()
-    err_text = (decode_wsl_output(stderr) if jimeng_use_wsl() else stderr.decode("utf-8", errors="replace")).strip()
-    clean_err_text = jimeng_clean_wsl_stderr(err_text) if jimeng_use_wsl() else err_text
-    return out_text, clean_err_text
-
-def jimeng_login_text():
-    parts = []
-    for key in ("stdout", "stderr"):
-        value = str(JIMENG_LOGIN_SESSION.get(key) or "").strip()
-        if value:
-            parts.append(value)
-    return "\n".join(parts).strip()
-
-def jimeng_login_qr_from_text(text):
-    text = str(text or "")
-    candidates = []
-    patterns = [
-        r"(https?://[^\s\"'<>]+)",
-        r"(dreamina://[^\s\"'<>]+)",
-        r"(data:image/[^\s\"'<>]+)",
-    ]
-    for pattern in patterns:
-        candidates.extend(re.findall(pattern, text))
-    for value in candidates:
-        if "login" in value.lower() or "qr" in value.lower() or value.startswith(("data:image", "dreamina://")):
-            return value
-    return candidates[0] if candidates else ""
-
-async def jimeng_login_reader(proc):
-    async def read_stream(stream, key):
-        while True:
-            chunk = await stream.readline()
-            if not chunk:
-                break
-            text = (decode_wsl_output(chunk) if jimeng_use_wsl() else chunk.decode("utf-8", errors="replace"))
-            if key == "stderr":
-                text = jimeng_clean_wsl_stderr(text)
-            if text:
-                JIMENG_LOGIN_SESSION[key] = str(JIMENG_LOGIN_SESSION.get(key) or "") + text
-    await asyncio.gather(read_stream(proc.stdout, "stdout"), read_stream(proc.stderr, "stderr"))
-
-def jimeng_submit_id(raw):
-    found = []
-    def visit(value):
-        if isinstance(value, dict):
-            for key, item in value.items():
-                if str(key).lower() in {"submit_id", "submitid", "task_id", "taskid"} and item:
-                    found.append(str(item))
-                else:
-                    visit(item)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-    visit(raw)
-    return found[0] if found else ""
-
-class JimengPendingError(Exception):
-    """即梦任务还在云端排队/生成（轮询超时但未失败）。submit_id 可用于后续续查。"""
-    def __init__(self, submit_id, kind="image", queue_info=None, raw=None):
-        self.submit_id = str(submit_id or "")
-        self.kind = kind or "image"
-        self.queue_info = queue_info if isinstance(queue_info, dict) else {}
-        self.raw = raw
-        super().__init__(f"jimeng pending submit_id={self.submit_id}")
-
-def jimeng_queue_info(raw):
-    """从即梦原始返回里就近取出 queue_info（含 queue_idx/queue_length/queue_status）。"""
-    found = []
-    def visit(value):
-        if isinstance(value, dict):
-            qi = value.get("queue_info")
-            if isinstance(qi, dict) and qi:
-                found.append(qi)
-            for item in value.values():
-                if isinstance(item, (dict, list)):
-                    visit(item)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-    visit(raw)
-    return found[0] if found else {}
-
-def jimeng_pending_payload(exc: "JimengPendingError"):
-    qi = exc.queue_info or {}
-    idx = qi.get("queue_idx")
-    length = qi.get("queue_length")
-    if idx is not None and length is not None:
-        msg = f"即梦云端排队中（第 {idx}/{length} 位），任务未丢失，可继续等待或手动查询。submit_id={exc.submit_id}"
-    else:
-        msg = f"即梦任务仍在生成中，任务未丢失。submit_id={exc.submit_id}"
-    return {
-        "jimeng_pending": True,
-        "submit_id": exc.submit_id,
-        "kind": exc.kind,
-        "queue_info": qi,
-        "message": msg,
-    }
-
-@app.exception_handler(JimengPendingError)
-async def jimeng_pending_exception_handler(request: Request, exc: JimengPendingError):
-    # 轮询超时但任务还在云端排队：返回 202 + submit_id，让前端保持「排队中」卡片并续查
-    return JSONResponse(status_code=202, content=jimeng_pending_payload(exc))
-
-def jimeng_failure_reason(raw):
-    found = []
-    def visit(value):
-        if isinstance(value, dict):
-            status = str(value.get("gen_status") or value.get("status") or "").strip().lower()
-            reason = value.get("fail_reason") or value.get("failReason") or value.get("error") or value.get("message") or value.get("msg")
-            if reason and (status in {"fail", "failed", "error"} or "fail" in str(reason).lower() or "invalid param" in str(reason).lower()):
-                found.append(str(reason))
-            for item in value.values():
-                if isinstance(item, (dict, list)):
-                    visit(item)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-    visit(raw)
-    return found[0] if found else ""
-
-def jimeng_collect_media_values(value, outputs):
-    media_ext = re.compile(r"\.(png|jpe?g|webp|gif|bmp|mp4|webm|mov|m4v)(\?|#|$)", re.I)
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return
-        if text.startswith(("http://", "https://", "/api/files/", "file://")) or media_ext.search(text):
-            outputs.append(text)
-        return
-    if isinstance(value, list):
-        for item in value:
-            jimeng_collect_media_values(item, outputs)
-        return
-    if isinstance(value, dict):
-        for key in (
-            "url", "urls", "image", "images", "image_url", "image_urls",
-            "video", "videos", "video_url", "video_urls", "output", "outputs",
-            "result", "results", "file", "files", "path", "paths",
-            "download_url", "download_urls", "downloadUrl", "file_path", "filePath",
-        ):
-            if key in value:
-                jimeng_collect_media_values(value.get(key), outputs)
-        for item in value.values():
-            if isinstance(item, (dict, list)):
-                jimeng_collect_media_values(item, outputs)
-
-def jimeng_output_values(raw):
-    outputs = []
-    jimeng_collect_media_values(raw, outputs)
-    deduped = []
-    for value in outputs:
-        if value not in deduped:
-            deduped.append(value)
-    return deduped
-
-JIMENG_RATIO_CHOICES = [(21, 9), (16, 9), (3, 2), (4, 3), (1, 1), (3, 4), (2, 3), (9, 16)]
-def jimeng_ratio_from_size(size, fallback="1:1"):
-    width, height = parse_size_pair(size)
-    if not width or not height:
-        return fallback
-    ratio = width / max(1, height)
-    left, right = min(JIMENG_RATIO_CHOICES, key=lambda item: abs(ratio - item[0] / item[1]))
-    return f"{left}:{right}"
-
-# 官方 dreamina 支持的图片模型（来自 text2image/image2image -h）。
-# image2image 不支持 3.0/3.1。
-JIMENG_TEXT2IMAGE_MODELS = {"3.0", "3.1", "4.0", "4.1", "4.5", "4.6", "5.0"}
-JIMENG_IMAGE2IMAGE_MODELS = {"4.0", "4.1", "4.5", "4.6", "5.0"}
-
-def jimeng_normalize_image_model(model):
-    match = re.search(r"(\d+\.\d+)", str(model or ""))
-    return match.group(1) if match else ""
-
-def jimeng_image_model_version(model, mode="text2image"):
-    version = jimeng_normalize_image_model(model)
-    allowed = JIMENG_IMAGE2IMAGE_MODELS if mode == "image2image" else JIMENG_TEXT2IMAGE_MODELS
-    return version if version in allowed else ""
-
-def jimeng_image_resolution(model, size, mode="text2image"):
-    text = str(model or "").lower()
-    if "4k" in text:
-        desired = "4k"
-    elif "1k" in text:
-        desired = "1k"
-    elif "2k" in text:
-        desired = "2k"
-    else:
-        width, height = parse_size_pair(size)
-        desired = "4k" if max(width, height) > 2048 else "2k"
-    # 按官方规则收敛到模型允许的分辨率
-    version = jimeng_normalize_image_model(model)
-    if mode == "image2image":
-        # image2image 只支持 2k/4k
-        return "4k" if desired == "4k" else "2k"
-    if version in ("3.0", "3.1"):
-        # 3.0/3.1 只支持 1k/2k
-        return "1k" if desired == "1k" else "2k"
-    # 4.x/5.0 只支持 2k/4k
-    return "4k" if desired == "4k" else "2k"
-
-# 仅 VIP seedance 支持 1080P；其余模型最高 720P（官方无 480P 选项）
-JIMENG_VIDEO_1080P_MODELS = {"seedance2.0_vip", "seedance2.0fast_vip"}
-
-def jimeng_video_resolution(model, resolution):
-    version = jimeng_video_model_version(model)
-    requested = str(resolution or "").strip().upper()
-    if requested not in {"480P", "720P", "1080P"}:
-        text = str(model or "").lower()
-        requested = "1080P" if "1080" in text else "720P"
-    if requested == "1080P" and version in JIMENG_VIDEO_1080P_MODELS:
-        return "1080P"
-    return "720P"
-
-# 各模型支持的时长区间（秒）：3.0 系列 3-10，3.5pro 4-12，seedance 4-15
-def jimeng_video_duration_range(model):
-    version = jimeng_video_model_version(model)
-    if version in ("3.0", "3.0fast", "3.0pro"):
-        return 3, 10
-    if version == "3.5pro":
-        return 4, 12
-    return 4, 15
-
-def jimeng_video_duration(duration, model=None):
-    low, high = jimeng_video_duration_range(model)
-    default = max(low, min(high, 5))
-    try:
-        text = str(duration).strip() if duration is not None else ""
-        value = default if text == "" else int(text)
-    except Exception:
-        value = default
-    return max(low, min(high, value))
-
-def jimeng_transition_duration(total_duration, transition_count):
-    count = max(1, int(transition_count or 1))
-    try:
-        total = float(total_duration or 5)
-    except Exception:
-        total = 5.0
-    return max(0.5, min(8.0, total / count))
-
-def jimeng_video_model_version(model):
-    value = str(model or "").strip()
-    low = value.lower()
-    aliases = {
-        "seedance2.0fast_vip": "seedance2.0fast_vip",
-        "seedance2.0_vip": "seedance2.0_vip",
-        "seedance2.0fast": "seedance2.0fast",
-        "seedance2.0": "seedance2.0",
-        "3.0_fast": "3.0fast",
-        "3.0fast": "3.0fast",
-        "3.0_pro": "3.0pro",
-        "3.0pro": "3.0pro",
-        "3.5_pro": "3.5pro",
-        "3.5pro": "3.5pro",
-        "3.0": "3.0",
-    }
-    for key, mapped in aliases.items():
-        if key in low:
-            return mapped
-    return ""
-
-def jimeng_video_resolution_arg(model, resolution):
-    return jimeng_video_resolution(model, resolution).lower()
-
-def jimeng_video_ratio_arg(aspect_ratio):
-    value = str(aspect_ratio or "").strip()
-    allowed = {"1:1", "3:4", "16:9", "4:3", "9:16", "21:9"}
-    if value in allowed:
-        return value
-    return ""
-
-def jimeng_append_model_resolution_args(args, payload: CanvasVideoRequest, include_model=False):
-    model_version = jimeng_video_model_version(payload.model)
-    if include_model and model_version:
-        args.append(f"--model_version={model_version}")
-    if payload.resolution:
-        args.append(f"--video_resolution={jimeng_video_resolution_arg(payload.model, payload.resolution)}")
-
-def jimeng_video_ref_role(ref):
-    role = getattr(ref, "role", "")
-    if isinstance(ref, dict):
-        role = ref.get("role", role)
-    return str(role or "").lower()
-
-def jimeng_video_ref_url(ref):
-    url = getattr(ref, "url", "")
-    if isinstance(ref, dict):
-        url = ref.get("url", url)
-    return str(url or "").strip()
-
-def jimeng_local_output_url(path, kind="image"):
-    path = os.path.abspath(str(path or ""))
-    if not os.path.isfile(path):
-        return ""
-    ext = os.path.splitext(path)[1].lower()
-    allowed = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".mp4", ".webm", ".mov", ".m4v"}
-    if ext not in allowed:
-        ct = content_type_for_path(path)
-        ext = ".mp4" if ct.startswith("video/") else ".png"
-    prefix = "jimeng_video_" if kind == "video" else "jimeng_"
-    filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
-    with open(path, "rb") as f:
-        return store_generated_media_bytes(f.read(), filename, kind, content_type_for_path(path))
-
-async def jimeng_store_output_value(value, kind="image"):
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    if text.startswith("/output/") or text.startswith("/assets/"):
-        raise HTTPException(status_code=400, detail="本地媒体 URL 已停用；请使用 MinIO file_id")
-    if text.startswith("file://"):
-        text = urllib.parse.unquote(urllib.parse.urlparse(text).path)
-        if os.name == "nt" and re.match(r"^/[A-Za-z]:/", text):
-            text = text[1:]
-    if jimeng_use_wsl() and text.startswith("/mnt/"):
-        text = wsl_path_to_windows(text)
-    if text.startswith(("http://", "https://")):
-        if kind == "video":
-            return await save_remote_video_to_output(text, prefix="jimeng_video_")
-        return await save_ai_image_to_output({"type": "url", "value": text}, prefix="jimeng_")
-    if os.path.isfile(text):
-        try:
-            return jimeng_local_output_url(text, kind)
-        finally:
-            parent = os.path.dirname(os.path.abspath(text))
-            if os.path.basename(parent).startswith("mediaforge_jimeng_output_"):
-                try:
-                    os.remove(text)
-                    os.rmdir(parent)
-                except OSError:
-                    pass
-    return ""
-
-async def jimeng_query_result(submit_id, kind="image"):
-    download_dir = tempfile.mkdtemp(prefix="mediaforge_jimeng_output_")
-    args = [
-        "query_result",
-        f"--submit_id={submit_id}",
-        f"--download_dir={jimeng_cli_path_arg(download_dir)}",
-    ]
-    return await run_jimeng_cli(args, timeout=min(300, jimeng_poll_seconds() + 60))
-
-async def jimeng_store_outputs(raw, kind="image", allow_query=True):
-    failure = jimeng_failure_reason(raw)
-    if failure:
-        raise HTTPException(status_code=502, detail=f"即梦生成失败：{failure}")
-    values = jimeng_output_values(raw)
-    urls = []
-    for value in values:
-        local_url = await jimeng_store_output_value(value, kind)
-        if local_url and local_url not in urls:
-            urls.append(local_url)
-    if urls:
-        return urls
-    submit_id = jimeng_submit_id(raw)
-    if submit_id and allow_query:
-        queried = await jimeng_query_result(submit_id, kind)
-        try:
-            return await jimeng_store_outputs(queried, kind, allow_query=False)
-        except HTTPException as exc:
-            if getattr(exc, "status_code", None) == 502:
-                status_text = json.dumps(queried, ensure_ascii=False)[:800] if isinstance(queried, (dict, list)) else str(queried)[:800]
-                raise HTTPException(status_code=502, detail=f"即梦任务已返回但没有下载到媒体：{status_text}") from exc
-            raise
-    status_text = json.dumps(raw, ensure_ascii=False)[:800] if isinstance(raw, (dict, list)) else str(raw)[:800]
-    if submit_id:
-        raise JimengPendingError(submit_id, kind, jimeng_queue_info(raw), raw)
-    raise HTTPException(status_code=502, detail=f"即梦 CLI 未返回可用媒体结果：{status_text}")
-
-async def jimeng_prepare_local_media(ref_url, kind="image"):
-    text = str(ref_url or "").strip()
-    if not text:
-        return "", []
-    if text.startswith("/api/files/"):
-        path = await run_storage_io(output_file_from_url, text)
-        if path:
-            return path, []
-        raise HTTPException(status_code=404, detail=f"即梦参考素材不存在：{text}")
-    if text.startswith("file://"):
-        path = urllib.parse.unquote(urllib.parse.urlparse(text).path)
-        if os.name == "nt" and re.match(r"^/[A-Za-z]:/", path):
-            path = path[1:]
-        if os.path.isfile(path):
-            return path, []
-    if os.path.isfile(text):
-        return text, []
-    suffix = ".mp4" if kind == "video" else (".mp3" if kind == "audio" else ".png")
-    temp_paths = []
-    if text.startswith("data:"):
-        if ";base64," not in text:
-            raise HTTPException(status_code=400, detail="即梦参考素材 data URL 缺少 base64 数据")
-        header, encoded = text.split(";base64,", 1)
-        mime = header.split(":", 1)[1].split(";", 1)[0] if ":" in header else ""
-        suffix = mimetypes.guess_extension(mime) or suffix
-        fd, path = tempfile.mkstemp(prefix="jimeng_ref_", suffix=suffix)
-        with os.fdopen(fd, "wb") as f:
-            f.write(base64.b64decode(encoded))
-        temp_paths.append(path)
-        return path, temp_paths
-    if text.startswith(("http://", "https://")):
-        remote_url = validate_external_http_url(text, label="即梦参考素材地址")
-        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)) as client:
-            response = await client.get(remote_url)
-            response.raise_for_status()
-            clean_path = urllib.parse.urlparse(text).path
-            suffix = os.path.splitext(clean_path)[1] or mimetypes.guess_extension(response.headers.get("content-type", "")) or suffix
-            fd, path = tempfile.mkstemp(prefix="jimeng_ref_", suffix=suffix)
-            with os.fdopen(fd, "wb") as f:
-                f.write(response.content)
-            temp_paths.append(path)
-            return path, temp_paths
-    raise HTTPException(status_code=400, detail=f"即梦 CLI 只支持本地文件参考素材，无法读取：{text[:120]}")
-
-async def generate_jimeng_provider_image(prompt, size, model, reference_images=None, provider=None):
-    refs = [ref for ref in (reference_images or []) if ref.get("url")]
-    temp_paths = []
-    try:
-        args = []
-        if refs:
-            image_path, created = await jimeng_prepare_local_media(refs[0].get("url"), "image")
-            temp_paths.extend(created)
-            model_version = jimeng_image_model_version(model, "image2image")
-            args = [
-                "image2image",
-                f"--images={jimeng_cli_path_arg(image_path)}",
-                f"--prompt={prompt}",
-                f"--resolution_type={jimeng_image_resolution(model, size, 'image2image')}",
-                f"--poll={jimeng_poll_seconds()}",
-            ]
-            if model_version:
-                args.append(f"--model_version={model_version}")
-        else:
-            model_version = jimeng_image_model_version(model, "text2image")
-            args = [
-                "text2image",
-                f"--prompt={prompt}",
-                f"--ratio={jimeng_ratio_from_size(size)}",
-                f"--resolution_type={jimeng_image_resolution(model, size, 'text2image')}",
-                f"--poll={jimeng_poll_seconds()}",
-            ]
-            if model_version:
-                args.append(f"--model_version={model_version}")
-        raw = await run_jimeng_cli(args, timeout=jimeng_poll_seconds() + 120)
-        urls = await jimeng_store_outputs(raw, "image")
-        return {"type": "url", "value": urls[0]}, raw
-    finally:
-        for path in temp_paths:
-            try:
-                os.remove(path)
-            except Exception:
-                pass
-
-async def generate_jimeng_video(payload: CanvasVideoRequest, provider):
-    image_refs = [ref for ref in (payload.images or []) if jimeng_video_ref_url(ref)]
-    video_refs = [url for url in (payload.videos or []) if str(url or "").strip()]
-    audio_refs = [url for url in (payload.audios or []) if str(url or "").strip()][:3]
-    duration = jimeng_video_duration(payload.duration, payload.model)
-    temp_paths = []
-    try:
-        if payload.multimodal or video_refs or audio_refs:
-            image_paths = []
-            video_paths = []
-            audio_paths = []
-            for ref in image_refs[:9]:
-                image_path, created = await jimeng_prepare_local_media(jimeng_video_ref_url(ref), "image")
-                temp_paths.extend(created)
-                image_paths.append(image_path)
-            for ref_url in video_refs[:3]:
-                video_path, created = await jimeng_prepare_local_media(ref_url, "video")
-                temp_paths.extend(created)
-                video_paths.append(video_path)
-            for ref_url in audio_refs:
-                audio_path, created = await jimeng_prepare_local_media(ref_url, "audio")
-                temp_paths.extend(created)
-                audio_paths.append(audio_path)
-            args = [
-                "multimodal2video",
-                f"--prompt={payload.prompt}",
-                f"--duration={duration}",
-                f"--poll={jimeng_poll_seconds()}",
-            ]
-            ratio = jimeng_video_ratio_arg(payload.aspect_ratio)
-            if ratio:
-                args.append(f"--ratio={ratio}")
-            jimeng_append_model_resolution_args(args, payload, include_model=True)
-            for image_path in image_paths:
-                args.append(f"--image={jimeng_cli_path_arg(image_path)}")
-            for video_path in video_paths:
-                args.append(f"--video={jimeng_cli_path_arg(video_path)}")
-            for audio_path in audio_paths:
-                args.append(f"--audio={jimeng_cli_path_arg(audio_path)}")
-        elif len(image_refs) >= 2:
-            first_frame = next((ref for ref in image_refs if jimeng_video_ref_role(ref) == "first_frame"), None)
-            last_frame = next((ref for ref in image_refs if jimeng_video_ref_role(ref) == "last_frame"), None)
-            if first_frame and last_frame:
-                first_path, created = await jimeng_prepare_local_media(jimeng_video_ref_url(first_frame), "image")
-                temp_paths.extend(created)
-                last_path, created = await jimeng_prepare_local_media(jimeng_video_ref_url(last_frame), "image")
-                temp_paths.extend(created)
-                args = [
-                    "frames2video",
-                    f"--first={jimeng_cli_path_arg(first_path)}",
-                    f"--last={jimeng_cli_path_arg(last_path)}",
-                    f"--prompt={payload.prompt}",
-                    f"--duration={duration}",
-                    f"--poll={jimeng_poll_seconds()}",
-                ]
-                jimeng_append_model_resolution_args(args, payload, include_model=True)
-            else:
-                image_paths = []
-                for ref in image_refs:
-                    image_path, created = await jimeng_prepare_local_media(jimeng_video_ref_url(ref), "image")
-                    temp_paths.extend(created)
-                    image_paths.append(image_path)
-                args = [
-                    "multiframe2video",
-                    f"--images={','.join(jimeng_cli_path_arg(path) for path in image_paths)}",
-                    f"--prompt={payload.prompt}",
-                    f"--duration={duration}",
-                    f"--poll={jimeng_poll_seconds()}",
-                ]
-                jimeng_append_model_resolution_args(args, payload, include_model=True)
-        elif image_refs:
-            image_path, created = await jimeng_prepare_local_media(jimeng_video_ref_url(image_refs[0]), "image")
-            temp_paths.extend(created)
-            ratio = jimeng_video_ratio_arg(payload.aspect_ratio)
-            if ratio:
-                args = [
-                    "multimodal2video",
-                    f"--image={jimeng_cli_path_arg(image_path)}",
-                    f"--prompt={payload.prompt}",
-                    f"--duration={duration}",
-                    f"--ratio={ratio}",
-                    f"--poll={jimeng_poll_seconds()}",
-                ]
-                jimeng_append_model_resolution_args(args, payload, include_model=True)
-            else:
-                args = [
-                    "image2video",
-                    f"--image={jimeng_cli_path_arg(image_path)}",
-                    f"--prompt={payload.prompt}",
-                    f"--duration={duration}",
-                    f"--poll={jimeng_poll_seconds()}",
-                ]
-                jimeng_append_model_resolution_args(args, payload, include_model=True)
-        else:
-            args = [
-                "text2video",
-                f"--prompt={payload.prompt}",
-                f"--duration={duration}",
-                f"--ratio={payload.aspect_ratio or '16:9'}",
-                f"--video_resolution={jimeng_video_resolution(payload.model, payload.resolution)}",
-                f"--poll={jimeng_poll_seconds()}",
-            ]
-            model_version = jimeng_video_model_version(payload.model)
-            if model_version:
-                args.append(f"--model_version={model_version}")
-        raw = await run_jimeng_cli(args, timeout=jimeng_poll_seconds() + 180)
-        urls = await jimeng_store_outputs(raw, "video")
-        video_items = await run_storage_io(media_response_items, urls, "video")
-        return await _attach_quota_warning_async({"videos": urls, "video_items": video_items, "task_id": jimeng_submit_id(raw) or None, "raw": raw})
-    finally:
-        for path in temp_paths:
-            try:
-                os.remove(path)
-            except Exception:
-                pass
-
-IMAGE_TASK_SUCCESS_STATUSES = {"SUCCESS", "SUCCESSFUL", "SUCCEED", "SUCCEEDED", "COMPLETED", "COMPLETE", "DONE", "FINISHED", "OK", "READY"}
-IMAGE_TASK_FAILED_STATUSES = {"FAILURE", "FAILED", "FAIL", "ERROR", "ERRORED", "CANCELED", "CANCELLED", "TIMEOUT", "REJECTED", "EXPIRED"}
-
 def extract_task_id_from_text(text):
     match = re.search(r"(?:task_id|taskId|task id)\s*[=:：]\s*([A-Za-z0-9_.:-]+)", str(text or ""), re.I)
     return match.group(1) if match else ""
 
 def image_task_url_for_provider(provider, task_id):
     base_url = (provider.get("base_url") if provider else AI_BASE_URL).rstrip("/")
-    is_apimart = is_apimart_provider(provider)
-    if is_apimart:
-        return f"{base_url}/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/tasks/{task_id}"
     return f"{base_url}/images/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/images/tasks/{task_id}"
 
 def image_task_data(payload):
@@ -2920,10 +2003,9 @@ async def fetch_image_task_payload(client, task_id, provider=None):
     return response.json()
 
 async def wait_for_image_task(client, task_id, provider=None):
-    is_apimart = is_apimart_provider(provider)
-    timeout = APIMART_IMAGE_TASK_TIMEOUT if is_apimart else IMAGE_TASK_TIMEOUT
-    interval = APIMART_IMAGE_POLL_INTERVAL if is_apimart else IMAGE_POLL_INTERVAL
-    initial_delay = APIMART_IMAGE_INITIAL_POLL_DELAY if is_apimart else 0
+    timeout = IMAGE_TASK_TIMEOUT
+    interval = IMAGE_POLL_INTERVAL
+    initial_delay = 0
     deadline = time.monotonic() + timeout
     last_payload = {}
     while time.monotonic() < deadline:
@@ -3278,13 +2360,6 @@ def compress_data_url_image(value, max_size=1536, jpeg_quality=88):
         logger.warning("data URL compression failed; using original", exc_info=True, extra={"event": "data_url_compression_failed"})
         return value
 
-def modelscope_image_url(value, max_size=1536):
-    if not value:
-        return value
-    if isinstance(value, str) and value.startswith("/api/files/"):
-        return reference_to_data_url({"url": value}, max_size=max_size)
-    return value
-
 def valid_video_image_input(value: str) -> bool:
     if not isinstance(value, str):
         return False
@@ -3295,12 +2370,6 @@ def valid_video_image_input(value: str) -> bool:
         value.startswith("asset://") or
         (value.startswith("data:image/") and ";base64," in value)
     )
-
-def valid_apimart_video_image_input(value: str) -> bool:
-    if not isinstance(value, str):
-        return False
-    value = value.strip()
-    return value.startswith("http://") or value.startswith("https://") or value.startswith("asset://")
 
 def public_base_url() -> str:
     value = (
@@ -3329,426 +2398,11 @@ def local_asset_public_url(value: str) -> str:
         return ""
     return f"{base}{urllib.parse.quote(text, safe='/:?&=%#.-_~')}{public_media_url_suffix()}"
 
-def normalize_apimart_video_reference(value: str) -> str:
-    text = str(value or "").strip()
-    if valid_apimart_video_image_input(text):
-        return text
-    return local_asset_public_url(text)
-
-def apimart_video_reference_error(value: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return "空的视频地址"
-    if text.startswith("/api/files/"):
-        if not output_file_from_url(text):
-            return "这是本地画布文件路径，但后端没有找到对应文件，请重新上传视频后再试。"
-        return (
-            "这是本地画布文件，APIMart 无法访问 127.0.0.1/局域网路径；"
-            "请在 API/.env 配置 PUBLIC_MEDIA_BASE_URL 或 PUBLIC_BASE_URL 为可公网访问的媒体地址（例如内网穿透 HTTPS 地址），"
-            "或改用公网 http/https 视频 URL、审核后的 asset:// 地址。"
-        )
-    if text.startswith("data:") or text.startswith("blob:") or text.startswith("file:"):
-        return (
-            "APIMart 的 video_urls 不支持 data/blob/file 地址；"
-            "请改用公网 http/https 视频 URL，或审核后的 asset:// 地址。"
-        )
-    return "APIMart 的 video_urls 只支持公网 http/https URL 或 asset:// 私域素材 URL。"
-
-def apimart_video_duration(duration) -> int:
-    try:
-        value = int(duration)
-    except Exception:
-        value = 5
-    return max(4, min(15, value))
-
-def apimart_veo31_duration(duration) -> int:
-    try:
-        value = int(duration)
-    except Exception:
-        value = 8
-    # APIMart VEO 3.1 currently accepts a narrower duration window than
-    # the generic UI. Clamp instead of silently forcing every request to 8s.
-    return max(4, min(8, value))
-
-def is_apimart_veo31_model(model: str) -> bool:
-    return str(model or "").strip().lower().startswith("veo3.1")
-
-def apimart_veo31_model(model: str) -> str:
-    value = str(model or "").strip().lower()
-    aliases = {
-        "veo3.1": "veo3.1-fast",
-        "veo3.1-pro": "veo3.1-quality",
-        "veo3.1-preview": "veo3.1-fast",
-    }
-    value = aliases.get(value, value or "veo3.1-fast")
-    allowed = {"veo3.1-fast", "veo3.1-quality", "veo3.1-lite"}
-    return value if value in allowed else "veo3.1-fast"
-
-def apimart_veo31_aspect(aspect: str) -> str:
-    value = str(aspect or "16:9").strip()
-    return value if value in {"16:9", "9:16"} else "16:9"
-
-def apimart_veo31_resolution(resolution: str) -> str:
-    value = str(resolution or "").strip().lower()
-    aliases = {"": "720p", "auto": "720p", "480p": "720p", "780p": "720p", "1080": "1080p", "4k": "4k"}
-    value = aliases.get(value, value)
-    return value if value in {"720p", "1080p", "4k"} else "720p"
-
-def apimart_upload_file_payload(path: str):
-    """Return (filename, bytes, content_type), keeping APIMart VEO images under the documented 10MB limit."""
-    max_bytes = 9_500_000
-    size = os.path.getsize(path)
-    if size <= max_bytes:
-        with open(path, "rb") as fh:
-            return os.path.basename(path), fh.read(), content_type_for_path(path)
-    with Image.open(path) as img:
-        img = img.convert("RGBA")
-        bg = Image.new("RGB", img.size, (255, 255, 255))
-        bg.paste(img, mask=img.split()[-1])
-        quality = 92
-        while quality >= 62:
-            buf = BytesIO()
-            bg.save(buf, format="JPEG", quality=quality, optimize=True)
-            data = buf.getvalue()
-            if len(data) <= max_bytes:
-                name = os.path.splitext(os.path.basename(path))[0] + ".jpg"
-                return name, data, "image/jpeg"
-            quality -= 8
-    raise ValueError("图片超过 10MB，且压缩后仍无法满足 VEO3.1 图片限制")
-
 def invalid_video_image_preview(value: str) -> str:
     text = str(value or "")
     if text.startswith("data:"):
         return text.split(";base64,", 1)[0] + ";base64,..."
     return text[:120]
-
-def extract_apimart_asset_url(payload):
-    if isinstance(payload, list):
-        for item in payload:
-            found = extract_apimart_asset_url(item)
-            if found:
-                return found
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    url_keys = ("url", "asset_url", "assetUrl", "uri", "file_url", "fileUrl")
-    for key in url_keys:
-        value = str(payload.get(key) or "").strip()
-        if valid_apimart_video_image_input(value):
-            return value
-    id_keys = ("asset_id", "assetId", "file_id", "fileId", "id")
-    for key in id_keys:
-        value = str(payload.get(key) or "").strip()
-        if value:
-            return value if value.startswith("asset://") else f"asset://{value}"
-    for key in ("data", "file", "asset", "result"):
-        found = extract_apimart_asset_url(payload.get(key))
-        if found:
-            return found
-    return ""
-
-def apimart_upload_payload_from_bytes(data: bytes, mime: str, name_hint: str = "image"):
-    """把内存中的图片字节按 APIMart 的 10MB 限制压缩为可上传 payload。"""
-    max_bytes = 9_500_000
-    ext = mimetypes.guess_extension(mime or "image/png") or ".png"
-    if len(data) <= max_bytes and (mime or "").lower() in ("image/png", "image/jpeg", "image/webp"):
-        return f"{name_hint}{ext}", data, (mime or "image/png")
-    with Image.open(BytesIO(data)) as img:
-        has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
-        if has_alpha:
-            base = img.convert("RGBA")
-            bg = Image.new("RGB", base.size, (255, 255, 255))
-            bg.paste(base, mask=base.split()[-1])
-            target = bg
-        else:
-            target = img.convert("RGB")
-        quality = 92
-        while quality >= 62:
-            buf = BytesIO()
-            target.save(buf, format="JPEG", quality=quality, optimize=True)
-            payload = buf.getvalue()
-            if len(payload) <= max_bytes:
-                return f"{name_hint}.jpg", payload, "image/jpeg"
-            quality -= 8
-    raise ValueError("data URL 图片超过 10MB，且压缩后仍无法满足 APIMart 限制")
-
-def apimart_upload_raw_file_payload(path: str):
-    with open(path, "rb") as fh:
-        return os.path.basename(path), fh.read(), content_type_for_path(path)
-
-APIMART_UPLOAD_RETRY_ATTEMPTS = 3
-
-def is_transient_tls_error(exc) -> bool:
-    """识别可重试的瞬时 TLS/传输错误，如 SSLV3_ALERT_BAD_RECORD_MAC、EOF occurred 等，
-    这类错误多由连接池中被污染/复用坏掉的 TLS 连接引起，换新连接重试通常即可成功。"""
-    if isinstance(exc, httpx.TransportError):
-        return True
-    msg = f"{type(exc).__name__}: {exc}".upper()
-    return any(token in msg for token in (
-        "SSL", "BAD RECORD MAC", "EOF OCCURRED", "DECRYPTION FAILED", "WRONG VERSION NUMBER",
-    ))
-
-async def apimart_upload_post(client, upload_url, headers, file_tuple, timeout=60):
-    """上传文件到 APIMart，对瞬时 TLS 错误自动重试；重试时改用全新连接，避免复用坏掉的 TLS 连接。
-    file_tuple 形如 (filename, content_bytes, content_type)，content 为已读入内存的 bytes，可跨重试复用。"""
-    last_exc = None
-    for attempt in range(APIMART_UPLOAD_RETRY_ATTEMPTS):
-        files = {"file": file_tuple}
-        try:
-            if attempt == 0:
-                return await client.post(upload_url, headers=headers, files=files, timeout=timeout)
-            async with new_outbound_http_client(timeout=httpx.Timeout(connect=20.0, read=max(120.0, float(timeout)), write=120.0, pool=20.0)) as fresh:
-                return await fresh.post(upload_url, headers=headers, files=files, timeout=timeout)
-        except Exception as e:
-            if not is_transient_tls_error(e) or attempt == APIMART_UPLOAD_RETRY_ATTEMPTS - 1:
-                raise
-            last_exc = e
-            logger.warning("APIMart upload TLS error; retrying", extra={"event": "external_call_retry", "provider": "apimart", "operation": "upload", "retry_count": attempt + 1, "error_type": type(e).__name__})
-            await asyncio.sleep(0.6 * (attempt + 1))
-    if last_exc:
-        raise last_exc
-
-async def upload_image_for_apimart(client, provider, ref_url: str) -> str:
-    """把本地图片转成上游可接受的输入。
-    按 APIMart 文档上传到 /v1/uploads/images，拿到可用于生成接口的 http/https URL。
-    MinIO 文件引用会先物化到临时缓存，再上传给上游。
-    返回上游可用 URL；返回值以 "ERR:" 开头表示具体失败原因（供前端展示）。"""
-    ref_url = str(ref_url or "").strip()
-    if not ref_url:
-        return "ERR:空地址"
-    # 已经是网络 URL 或 asset:// → 直接可用，无需上传
-    if ref_url.startswith("http://") or ref_url.startswith("https://") or ref_url.startswith("asset://"):
-        return ref_url
-    base_url = video_api_root(provider)
-    upload_url = f"{base_url}/v1/uploads/images"
-    # data URL: 解码后直接上传到 APIMart
-    if ref_url.startswith("data:"):
-        try:
-            if ";base64," not in ref_url:
-                return "ERR:不支持的 data URL（缺少 base64 段）"
-            header, encoded = ref_url.split(";base64,", 1)
-            mime = header.split(":", 1)[1].split(";", 1)[0] if ":" in header else "image/png"
-            raw = base64.b64decode(encoded)
-            filename, content, ct = apimart_upload_payload_from_bytes(raw, mime, name_hint="canvas_image")
-            resp = await apimart_upload_post(client, upload_url, api_headers(json_body=False, provider=provider), (filename, content, ct), timeout=60)
-            if resp.status_code in (200, 201):
-                rj = resp.json()
-                url = extract_apimart_asset_url(rj)
-                if valid_apimart_video_image_input(url):
-                    return url
-                logger.warning("APIMart data URL upload response contained no asset URL", extra={"event": "upload_response_invalid", "provider": "apimart", "operation": "upload", "response_excerpt": str(rj)[:300]})
-                return "ERR:APIMart 上传响应未包含可用 URL"
-            logger.error("APIMart data URL upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload", "status_code": resp.status_code, "response_excerpt": resp.text[:300]})
-            return f"ERR:APIMart 上传失败({resp.status_code})"
-        except ValueError as e:
-            return f"ERR:{e}"
-        except Exception as e:
-            logger.exception("APIMart data URL upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload"})
-            return f"ERR:上传异常 {e}"
-    # MinIO file reference: materialize a temporary cache file before upload.
-    if ref_url.startswith("/api/files/"):
-        path = await run_storage_io(output_file_from_url, ref_url)
-        if not path:
-            logger.warning("APIMart upload skipped because local file is missing", extra={"event": "upload_source_missing", "provider": "apimart", "operation": "upload", "media_url": ref_url})
-            return "ERR:本地文件不存在或已被删除"
-        try:
-            filename, content, ct = apimart_upload_file_payload(path)
-            resp = await apimart_upload_post(client, upload_url, api_headers(json_body=False, provider=provider), (filename, content, ct), timeout=60)
-            if resp.status_code in (200, 201):
-                rj = resp.json()
-                url = extract_apimart_asset_url(rj)
-                if valid_apimart_video_image_input(url):
-                    return url
-                logger.warning("APIMart file upload response contained no asset URL", extra={"event": "upload_response_invalid", "provider": "apimart", "operation": "upload", "response_excerpt": str(rj)[:300]})
-                return "ERR:APIMart 上传响应未包含可用 URL"
-            logger.error("APIMart file upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload", "status_code": resp.status_code, "response_excerpt": resp.text[:300]})
-            return f"ERR:APIMart 上传失败({resp.status_code})"
-        except ValueError as e:
-            return f"ERR:{e}"
-        except Exception as e:
-            logger.exception("APIMart file upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "upload"})
-            return f"ERR:上传异常 {e}"
-    return "ERR:不支持的图片来源（仅支持 http/https/asset/data 或 MinIO 文件引用）"
-
-async def upload_video_for_apimart(client, provider, ref_url: str) -> str:
-    """尽力把本地参考视频转换为 APIMart 可接受的 http/https 或 asset:// URL。
-    文档只公开了图片上传；如果视频上传端点不可用，会回退到 PUBLIC_BASE_URL 方案。"""
-    ref_url = str(ref_url or "").strip()
-    if not ref_url:
-        return "ERR:空地址"
-    if valid_apimart_video_image_input(ref_url):
-        return ref_url
-    public_url = await run_storage_io(local_asset_public_url, ref_url)
-    if public_url:
-        return public_url
-    if not ref_url.startswith("/api/files/"):
-        return f"ERR:{await run_storage_io(apimart_video_reference_error, ref_url)}"
-    path = await run_storage_io(output_file_from_url, ref_url)
-    if not path:
-        return "ERR:本地视频不存在或已被删除"
-    ct = content_type_for_path(path)
-    if not ct.startswith("video/"):
-        return "ERR:参考视频不是可识别的视频文件"
-    if str(os.getenv("APIMART_TRY_VIDEO_UPLOAD") or "").strip().lower() not in {"1", "true", "yes", "on"}:
-        return f"ERR:{await run_storage_io(apimart_video_reference_error, ref_url)}"
-    base_url = video_api_root(provider)
-    filename, content, content_type = apimart_upload_raw_file_payload(path)
-    upload_paths = ("/v1/uploads/videos", "/v1/uploads/files", "/v1/uploads/images")
-    last_error = ""
-    for upload_path in upload_paths:
-        upload_url = f"{base_url}{upload_path}"
-        try:
-            files = {"file": (filename, content, content_type)}
-            resp = await client.post(upload_url, headers=api_headers(json_body=False, provider=provider), files=files, timeout=180)
-            if resp.status_code in (200, 201):
-                rj = resp.json()
-                url = extract_apimart_asset_url(rj)
-                if valid_apimart_video_image_input(url):
-                    return url
-                last_error = "上传响应未包含可用 URL"
-                logger.warning("APIMart video upload response contained no asset URL", extra={"event": "upload_response_invalid", "provider": "apimart", "operation": "video_upload", "endpoint": upload_path, "response_excerpt": str(rj)[:300]})
-                continue
-            last_error = f"{upload_path} 返回 {resp.status_code}: {resp.text[:200]}"
-            logger.error("APIMart video upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "video_upload", "endpoint": upload_path, "error_summary": last_error})
-        except Exception as e:
-            last_error = f"{upload_path} 异常：{e}"
-            logger.exception("APIMart video upload failed", extra={"event": "upload_failed", "provider": "apimart", "operation": "video_upload", "endpoint": upload_path})
-    return f"ERR:APIMart 未提供可用的视频文件上传入口（{last_error}）。请配置 PUBLIC_BASE_URL，或使用公网 http/https / asset:// 视频地址。"
-
-async def upload_audio_for_apimart(client, provider, ref_url: str) -> str:
-    """把本地参考音频转换为 APIMart 可接受的 http/https 或 asset:// URL。
-    优先用公网地址（PUBLIC_BASE_URL），否则尝试上传到 APIMart 文件端点。
-    返回值以 "ERR:" 开头表示失败原因。"""
-    ref_url = str(ref_url or "").strip()
-    if not ref_url:
-        return "ERR:空地址"
-    if valid_apimart_video_image_input(ref_url):
-        return ref_url
-    public_url = await run_storage_io(local_asset_public_url, ref_url)
-    if public_url:
-        return public_url
-    base_url = video_api_root(provider)
-    upload_paths = ("/v1/uploads/audios", "/v1/uploads/files", "/v1/uploads/images")
-    last_error = ""
-    if ref_url.startswith("data:"):
-        if ";base64," not in ref_url:
-            return "ERR:不支持的 data URL（缺少 base64 段）"
-        header, encoded = ref_url.split(";base64,", 1)
-        mime = header.split(":", 1)[1].split(";", 1)[0] if ":" in header else "audio/mpeg"
-        try:
-            raw = base64.b64decode(encoded)
-        except Exception as exc:
-            return f"ERR:音频 data URL 解码失败：{exc}"
-        ext = mimetypes.guess_extension(mime) or ".mp3"
-        filename, content, content_type = (f"canvas_audio{ext}", raw, mime or "audio/mpeg")
-    elif ref_url.startswith("/api/files/"):
-        path = await run_storage_io(output_file_from_url, ref_url)
-        if not path:
-            return "ERR:本地音频不存在或已被删除"
-        ct = content_type_for_path(path)
-        if not ct.startswith("audio/"):
-            return "ERR:参考音频不是可识别的音频文件"
-        filename, content, content_type = apimart_upload_raw_file_payload(path)
-    else:
-        return f"ERR:{await run_storage_io(apimart_video_reference_error, ref_url)}"
-    for upload_path in upload_paths:
-        upload_url = f"{base_url}{upload_path}"
-        try:
-            files = {"file": (filename, content, content_type)}
-            resp = await client.post(upload_url, headers=api_headers(json_body=False, provider=provider), files=files, timeout=180)
-            if resp.status_code in (200, 201):
-                rj = resp.json()
-                url = extract_apimart_asset_url(rj)
-                if valid_apimart_video_image_input(url):
-                    return url
-                last_error = "上传响应未包含可用 URL"
-                continue
-            last_error = f"{upload_path} 返回 {resp.status_code}: {resp.text[:200]}"
-        except Exception as exc:
-            last_error = f"{upload_path} 异常：{exc}"
-    return f"ERR:APIMart 未提供可用的音频文件上传入口（{last_error}）。请配置 PUBLIC_BASE_URL，或使用公网 http/https / asset:// 音频地址。"
-
-async def upload_media_for_apimart(client, provider, ref_url: str, kind: str) -> str:
-    """按 kind 分派到对应的 APIMart 上传器，拿回上游可用的 http/https/asset:// URL。"""
-    if kind == "video":
-        return await upload_video_for_apimart(client, provider, ref_url)
-    if kind == "audio":
-        return await upload_audio_for_apimart(client, provider, ref_url)
-    return await upload_image_for_apimart(client, provider, ref_url)
-
-def apimart_avatar_asset_type(kind: str) -> str:
-    return {"video": "Video", "audio": "Audio"}.get(str(kind or "").lower(), "Image")
-
-def extract_apimart_avatar_asset_uri(payload) -> str:
-    """从 /v1/tasks 审核结果里取出 asset://<id> 形式的可信素材 URI。"""
-    if isinstance(payload, list):
-        for item in payload:
-            found = extract_apimart_avatar_asset_uri(item)
-            if found:
-                return found
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    for key in ("asset_url", "assetUrl", "uri", "url"):
-        value = str(payload.get(key) or "").strip()
-        if value.startswith("asset://"):
-            return value
-    for key in ("usable_assets", "assets", "result", "data"):
-        found = extract_apimart_avatar_asset_uri(payload.get(key))
-        if found:
-            return found
-    asset_id = str(payload.get("asset_id") or payload.get("assetId") or "").strip()
-    if asset_id:
-        return f"asset://{asset_id}"
-    return ""
-
-async def submit_apimart_avatar_asset(provider, public_url: str, name: str, kind: str, project_name: str = "default", group_name: str = "") -> str:
-    """把一个公网可访问的素材提交到 APIMart private-avatar 审核，立即返回任务 ID（不阻塞轮询）。"""
-    base_url = video_api_root(provider)
-    if not base_url:
-        raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
-    register_url = f"{base_url}/v1/seedance2/private-avatar"
-    body = {
-        "project_name": str(project_name or "default").strip() or "default",
-        "asset_type": apimart_avatar_asset_type(kind),
-        "group": {"name": (group_name or name or "数字人素材")[:60]},
-        "assets": [{"url": public_url, "name": (name or "asset")[:60]}],
-    }
-    async with shared_http_client(timeout=120) as client:
-        resp = await client.post(register_url, headers=api_headers(provider=provider), json=body, timeout=120)
-        if resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"APIMart 数字人注册失败（{resp.status_code}）：{resp.text[:300]}")
-        data = resp.json()
-        task = data.get("data") if isinstance(data.get("data"), dict) else data
-        task_id = str(task.get("id") or task.get("task_id") or "").strip()
-        if not task_id:
-            raise HTTPException(status_code=502, detail=f"APIMart 数字人注册返回中未找到任务 ID：{str(data)[:300]}")
-        return task_id
-
-AVATAR_TASK_DONE_STATUSES = {"completed", "complete", "succeeded", "success", "active", "done"}
-AVATAR_TASK_FAIL_STATUSES = {"failed", "fail", "error", "rejected", "canceled", "cancelled", "expired"}
-
-async def check_apimart_avatar_task(provider, task_id: str) -> Dict[str, Any]:
-    """查询一次 APIMart 审核任务。返回 {status: Active/Processing/Failed, asset_uri, detail}。"""
-    base_url = video_api_root(provider)
-    if not base_url:
-        raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
-    task_url = f"{base_url}/v1/tasks/{task_id}"
-    async with shared_http_client(timeout=60) as client:
-        resp = await client.get(task_url, headers=api_headers(provider=provider), timeout=60)
-        if resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"查询审核状态失败（{resp.status_code}）：{resp.text[:200]}")
-        payload = resp.json()
-    node = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-    status = str(node.get("status") or "").strip().lower()
-    if status in AVATAR_TASK_DONE_STATUSES:
-        asset_uri = extract_apimart_avatar_asset_uri(payload)
-        if not asset_uri:
-            return {"status": "Failed", "asset_uri": "", "detail": "审核完成，但未返回可用的 asset:// 地址（可能部分素材被拒）。"}
-        return {"status": "Active", "asset_uri": asset_uri, "detail": ""}
-    if status in AVATAR_TASK_FAIL_STATUSES:
-        return {"status": "Failed", "asset_uri": "", "detail": f"审核未通过（{status}）。"}
-    return {"status": "Processing", "asset_uri": "", "detail": "审核中"}
 
 # ---- 火山 Ark 私域素材资产（Assets）API：AK/SK 签名 V4 + CreateAssetGroup/CreateAsset/GetAsset ----
 VOLCENGINE_ARK_ASSET_HOST = "open.volcengineapi.com"
@@ -3854,6 +2508,9 @@ async def volcengine_ensure_asset_group(client, project_name: str, group_name: s
         raise HTTPException(status_code=502, detail=f"火山 CreateAssetGroup 未返回 GroupId：{str(created)[:200]}")
     return gid
 
+def avatar_asset_type(kind: str) -> str:
+    return {"video": "Video", "audio": "Audio"}.get(str(kind or "").lower(), "Image")
+
 async def submit_volcengine_avatar_asset(public_url: str, name: str, kind: str,
                                          project_name: str = "default", group_name: str = "") -> str:
     """把公网可访问素材提交到火山 Ark 私域素材库（异步）。返回 Asset Id 作为任务 ID。"""
@@ -3862,7 +2519,7 @@ async def submit_volcengine_avatar_asset(public_url: str, name: str, kind: str,
         created = await volcengine_ark_asset_call(client, "CreateAsset", {
             "GroupId": group_id,
             "URL": public_url,
-            "AssetType": apimart_avatar_asset_type(kind),
+            "AssetType": avatar_asset_type(kind),
             "Name": (name or "asset")[:60],
             "ProjectName": (project_name or "default").strip() or "default",
         })
@@ -4054,35 +2711,6 @@ def gpt_image_2_size_exceeds_supported(size):
     width, height = parse_size_pair(size)
     return bool(width and height and (max(width, height) > GPT_IMAGE2_MAX_EDGE or width * height > GPT_IMAGE2_MAX_PIXELS))
 
-def apimart_size_resolution(size):
-    width, height = parse_size_pair(size)
-    if not width or not height:
-        raw = str(size or "").strip().lower()
-        if raw in {"1k", "2k", "4k"}:
-            return "1:1", raw
-        if re.fullmatch(r"(auto|\d+\s*:\s*\d+)", raw):
-            return raw.replace(" ", ""), "1k"
-        return "1:1", "1k"
-    long_edge = max(width, height)
-    pixels = width * height
-    if long_edge >= 3000 or pixels > 4_500_000:
-        resolution = "4k"
-    elif long_edge >= 1800 or pixels > 1_800_000:
-        resolution = "2k"
-    else:
-        resolution = "1k"
-    common = [
-        (1, 1, "1:1"), (3, 2, "3:2"), (2, 3, "2:3"), (4, 3, "4:3"), (3, 4, "3:4"),
-        (5, 4, "5:4"), (4, 5, "4:5"), (16, 9, "16:9"), (9, 16, "9:16"),
-        (2, 1, "2:1"), (1, 2, "1:2"), (3, 1, "3:1"), (1, 3, "1:3"),
-        (21, 9, "21:9"), (9, 21, "9:21"),
-    ]
-    ratio = width / height
-    best = min(common, key=lambda item: abs(ratio - item[0] / item[1]))
-    return best[2], resolution
-
-VOLCENGINE_MIN_PIXELS = 3_686_400
-VOLCENGINE_MIN_EDGE = 1536
 VOLCENGINE_MAX_EDGE = 4096
 VOLCENGINE_RATIO_CHOICES = [
     (1, 1, "1:1"),
@@ -4217,791 +2845,6 @@ def friendly_chat_error_detail(text, model="", provider=None):
     if "rate limit" in lower_text or "429" in lower_text:
         return "请求过于频繁，已被上游限流，请稍后再试。"
     return ""
-
-async def generate_modelscope_provider_image(prompt, size, model, reference_images=None, provider=None):
-    clean_token = modelscope_api_key()
-    if not clean_token:
-        raise HTTPException(status_code=400, detail="未配置 ModelScope API Key，请在 API 设置中填写。")
-    width, height = parse_size_pair(size)
-    refs = []
-    for ref in (reference_images or [])[:4]:
-        if not ref.get("url"):
-            continue
-        # 本地参考图转为 data URL；前端已生成的 data URL 保持原样，贴近旧版稳定链路。
-        refs.append(await run_storage_io(modelscope_image_url, ref.get("url", ""), 1536))
-    headers = {
-        "Authorization": f"Bearer {clean_token}",
-        "Content-Type": "application/json",
-        "X-ModelScope-Async-Mode": "true",
-    }
-    payload = {
-        "model": selected_model(model, "Tongyi-MAI/Z-Image-Turbo"),
-        "prompt": prompt.strip(),
-    }
-    if width and height:
-        payload["width"] = width
-        payload["height"] = height
-        payload["size"] = f"{width}x{height}"
-    if refs:
-        payload["image_url"] = refs
-
-    api_root = modelscope_image_api_root()
-    async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
-        submit_res = await client.post(f"{api_root}/images/generations", headers=headers, json=payload)
-        submit_res.raise_for_status()
-        raw = submit_res.json()
-        task_id = raw.get("task_id")
-        if not task_id:
-            try:
-                return extract_image(raw), raw
-            except HTTPException:
-                raise HTTPException(status_code=502, detail=f"ModelScope 未返回 task_id：{raw}")
-
-        deadline = time.monotonic() + AI_REQUEST_TIMEOUT
-        last_payload = raw
-        while time.monotonic() < deadline:
-            await asyncio.sleep(IMAGE_POLL_INTERVAL)
-            result = await client.get(
-                f"{api_root}/tasks/{task_id}",
-                headers={**headers, "X-ModelScope-Task-Type": "image_generation"},
-            )
-            result.raise_for_status()
-            data = result.json()
-            last_payload = data
-            status = str(data.get("task_status") or "").upper()
-            if status == "SUCCEED":
-                images = data.get("output_images") or []
-                if not images:
-                    raise HTTPException(status_code=502, detail=f"ModelScope 成功但没有返回图片：{data}")
-                return {"type": "url", "value": images[0]}, data
-            if status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
-                detail = data.get("error_info") or data.get("message") or data.get("detail") or str(data)
-                raise HTTPException(status_code=502, detail=f"ModelScope 任务失败：{detail}")
-        raise HTTPException(status_code=504, detail=f"ModelScope 生图任务超时：{last_payload}")
-
-def gemini_model_name(model):
-    value = selected_model(model, "gemini-3-pro-image-preview").strip()
-    return value[len("models/"):] if value.startswith("models/") else value
-
-def gemini_endpoint_url(provider, model):
-    model_name = urllib.parse.quote(gemini_model_name(model), safe="")
-    return provider_endpoint_url(provider, "image_generation_endpoint", f"/v1beta/models/{model_name}:generateContent")
-
-def gemini_image_config(size):
-    width, height = parse_size_pair(size)
-    if not width or not height:
-        raw = str(size or "").strip().upper()
-        if raw in {"1K", "2K", "4K"}:
-            return {"aspectRatio": "1:1", "imageSize": raw}
-        if re.fullmatch(r"\d+\s*:\s*\d+", raw):
-            return {"aspectRatio": raw.replace(" ", ""), "imageSize": "1K"}
-        return {"aspectRatio": "1:1", "imageSize": "2K"}
-    aspect_ratio, resolution = apimart_size_resolution(size)
-    return {"aspectRatio": aspect_ratio, "imageSize": resolution.upper()}
-
-def gemini_reference_part(ref):
-    value = reference_to_data_url(ref, max_size=1536)
-    if not value:
-        return None
-    if isinstance(value, str) and value.startswith("data:image/") and ";base64," in value:
-        header, encoded = value.split(";base64,", 1)
-        mime_type = header.replace("data:", "", 1) or "image/png"
-        return {"inlineData": {"mimeType": mime_type, "data": encoded}}
-    if isinstance(value, str) and value.startswith(("http://", "https://")):
-        return {"fileData": {"mimeType": "image/png", "fileUri": value}}
-    return None
-
-async def generate_gemini_provider_image(prompt, size, model, reference_images=None, provider=None):
-    model_name = gemini_model_name(model)
-    endpoint = gemini_endpoint_url(provider, model_name)
-    parts = [{"text": prompt.strip()}]
-    for ref in (reference_images or [])[:16]:
-        part = await run_storage_io(gemini_reference_part, ref)
-        if part:
-            parts.append(part)
-    body = {
-        "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {
-            "responseModalities": ["TEXT", "IMAGE"],
-            "imageConfig": gemini_image_config(size),
-        },
-    }
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0)) as client:
-        response = await client.post(endpoint, headers=api_headers(provider=provider), json=body)
-        response.raise_for_status()
-        raw = response.json()
-        return extract_image(raw), raw
-
-def volcengine_endpoint_url(provider):
-    return provider_endpoint_url(provider, "image_generation_endpoint", "/api/v3/images/generations")
-
-def volcengine_image_payload(ref):
-    value = reference_to_data_url(ref, max_size=1536)
-    if not value:
-        return None
-    return value
-
-async def generate_volcengine_provider_image(prompt, size, model, reference_images=None, provider=None):
-    endpoint = volcengine_endpoint_url(provider)
-    size = normalize_volcengine_size(size, model)
-    body = {
-        "model": model,
-        "prompt": prompt,
-        "size": size,
-        "response_format": "url",
-    }
-    images = [
-        await run_storage_io(volcengine_image_payload, ref)
-        for ref in (reference_images or [])[:10]
-    ]
-    images = [value for value in images if value]
-    if images:
-        body["image"] = images
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0)) as client:
-        response = await client.post(endpoint, headers=api_headers(provider=provider), json=body)
-        response.raise_for_status()
-        raw = response.json()
-        return extract_image(raw), raw
-
-def runninghub_api_headers(provider):
-    api_key = runninghub_api_key(provider)
-    if not api_key:
-        raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
-    return {"Authorization": bearer_auth_value(api_key), "Accept": "application/json", "Content-Type": "application/json"}
-
-def runninghub_provider():
-    return get_api_provider_exact("runninghub")
-
-def runninghub_api_key(provider=None):
-    provider = provider or runninghub_provider()
-    api_key = os.getenv(provider_key_env(provider["id"]), "")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
-    return api_key
-
-def runninghub_app_headers(json_body=True):
-    headers = {}
-    provider = runninghub_provider()
-    if provider:
-        api_key = os.getenv(provider_key_env(provider["id"]), "")
-        if api_key:
-            headers["Authorization"] = bearer_auth_value(api_key)
-    if json_body:
-        headers["Content-Type"] = "application/json"
-    return headers
-
-def runninghub_local_asset_path(url):
-    return output_file_from_url(str(url or "").strip())
-
-RUNNINGHUB_OUTPUT_EXTS = {"png","jpg","jpeg","webp","gif","bmp","mp4","webm","mov","m4v","mkv","mp3","wav","ogg","m4a","flac","aac","zip","gz","tar","rar","7z","ply","splat"}
-RUNNINGHUB_OUTPUT_URL_KEYS = {
-    "url", "urls", "uri", "src", "path",
-    "fileurl", "fileurls", "file_url", "file_urls",
-    "downloadurl", "downloadurls", "download_url", "download_urls",
-    "imageurl", "imageurls", "image_url", "image_urls",
-    "videourl", "videourls", "video_url", "video_urls",
-    "audiourl", "audiourls", "audio_url", "audio_urls",
-    "outputurl", "outputurls", "output_url", "output_urls",
-    "previewurl", "previewurls", "preview_url", "preview_urls",
-    "fileuri", "fileuris", "file_uri", "file_uris",
-    "file_path", "file_paths", "filepath", "filepaths",
-    "filename", "filenames", "file_name", "file_names",
-}
-RUNNINGHUB_OUTPUT_CONTAINER_KEYS = {
-    "data", "outputs", "output", "results", "result", "files", "file",
-    "images", "image", "videos", "video", "audios", "audio",
-    "items", "list", "content", "parts", "media", "resources",
-}
-
-def runninghub_output_ext(remote, content_type=""):
-    tail = str(remote or "").split("?", 1)[0].split("#", 1)[0]
-    ext = os.path.splitext(tail)[1].lower().strip(".")
-    if ext in RUNNINGHUB_OUTPUT_EXTS:
-        return ext
-    ct = str(content_type or "").lower()
-    if "zip" in ct:
-        return "zip"
-    if "x-tar" in ct or "tar" in ct:
-        return "tar"
-    if "x-rar" in ct or "rar" in ct:
-        return "rar"
-    if "7z" in ct:
-        return "7z"
-    if "mp4" in ct:
-        return "mp4"
-    if "webm" in ct:
-        return "webm"
-    if "quicktime" in ct:
-        return "mov"
-    if "mpeg" in ct:
-        return "mp3"
-    if "wav" in ct:
-        return "wav"
-    if "ogg" in ct:
-        return "ogg"
-    if "webp" in ct:
-        return "webp"
-    if "jpeg" in ct:
-        return "jpg"
-    return "png"
-
-def runninghub_output_kind(ext):
-    value = str(ext or "").lower().strip(".")
-    if value in {"mp4", "webm", "mov", "m4v", "mkv"}:
-        return "video"
-    if value in {"mp3", "wav", "ogg", "m4a", "flac", "aac"}:
-        return "audio"
-    if value in {"zip", "gz", "tar", "rar", "7z", "ply", "splat"}:
-        return "file"
-    return "image"
-
-def runninghub_output_candidate(value, allow_filename=False):
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    lower = text.lower()
-    if lower.startswith(("http://", "https://", "data:")) or text.startswith("/"):
-        return text
-    if allow_filename:
-        tail = lower.split("?", 1)[0].split("#", 1)[0]
-        ext = os.path.splitext(tail)[1].lower().strip(".")
-        if ext in RUNNINGHUB_OUTPUT_EXTS:
-            return text
-    return ""
-
-def runninghub_collect_outputs(value, outputs, seen, depth=0, allow_filename=False):
-    if depth > 12 or value is None:
-        return
-    if isinstance(value, str):
-        candidate = runninghub_output_candidate(value, allow_filename)
-        if candidate and candidate not in seen:
-            seen.add(candidate)
-            outputs.append(candidate)
-        return
-    if isinstance(value, (int, float, bool)):
-        return
-    if isinstance(value, list):
-        for item in value:
-            runninghub_collect_outputs(item, outputs, seen, depth + 1, allow_filename)
-        return
-    if not isinstance(value, dict):
-        return
-
-    visited_keys = set()
-    for key, item in value.items():
-        key_norm = str(key or "").replace("-", "_").lower()
-        if key_norm in RUNNINGHUB_OUTPUT_URL_KEYS:
-            visited_keys.add(key)
-            runninghub_collect_outputs(item, outputs, seen, depth + 1, True)
-    for key, item in value.items():
-        key_norm = str(key or "").replace("-", "_").lower()
-        if key_norm in RUNNINGHUB_OUTPUT_CONTAINER_KEYS and key not in visited_keys:
-            visited_keys.add(key)
-            runninghub_collect_outputs(item, outputs, seen, depth + 1, True)
-    for key, item in value.items():
-        if key in visited_keys:
-            continue
-        # Fallback traversal catches node-id keyed output maps while avoiding bare
-        # filenames in request echoes such as nodeInfoList[].fieldValue.
-        runninghub_collect_outputs(item, outputs, seen, depth + 1, False)
-
-def runninghub_extract_outputs(data):
-    outputs = []
-    runninghub_collect_outputs(data, outputs, set(), allow_filename=True)
-    return outputs
-
-async def runninghub_store_remote_output(client, remote):
-    if not str(remote or "").startswith(("http://", "https://")):
-        return remote
-    response = await client.get(validate_external_http_url(remote, label="RunningHub 输出地址"))
-    if not response.is_success:
-        raise HTTPException(status_code=502, detail=f"RunningHub 输出下载失败：HTTP {response.status_code}")
-    content_type = response.headers.get("content-type", "")
-    ext = runninghub_output_ext(remote, content_type)
-    filename = f"rh_{uuid.uuid4().hex[:12]}.{ext}"
-    kind = runninghub_output_kind(ext)
-    stored = await run_storage_io(
-        save_media_bytes,
-        "output",
-        filename,
-        response.content,
-        original_name=filename,
-        content_type=content_type,
-        kind=kind,
-        source="generated",
-    )
-    return stored["url"]
-
-def runninghub_fail_reason(raw):
-    data = raw.get("data") if isinstance(raw, dict) else None
-    values = []
-    if isinstance(data, dict):
-        values.extend([data.get("failedReason"), data.get("failReason"), data.get("message"), data.get("error")])
-    if isinstance(raw, dict):
-        values.extend([raw.get("msg"), raw.get("message"), raw.get("error")])
-    for value in values:
-        if not value:
-            continue
-        if isinstance(value, str):
-            return value
-        if isinstance(value, dict):
-            return value.get("exception_message") or value.get("message") or json.dumps(value, ensure_ascii=False)
-        return str(value)
-    return ""
-
-def runninghub_task_endpoint(provider, model):
-    model_path = str(model or "").strip().strip("/")
-    if not model_path:
-        model_path = RUNNINGHUB_DEFAULT_IMAGE_MODELS[0]
-    if model_path.startswith("/openapi/"):
-        return runninghub_endpoint_url(provider, model_path)
-    if model_path.startswith("openapi/"):
-        return runninghub_endpoint_url(provider, f"/{model_path}")
-    return runninghub_endpoint_url(provider, f"/openapi/v2/{model_path}")
-
-def is_rhart_gpt_image2_model(model):
-    """识别 RunningHub 标准模型 API 的 GPT-Image2（rhart-image-g-2-official）。"""
-    raw = str(model or "").strip().lower()
-    normalized = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
-    compact = re.sub(r"[^a-z0-9]+", "", raw)
-    return (
-        normalized == "rhart-image-g-2-official"
-        or normalized.startswith("rhart-image-g-2-official/")
-        or compact.startswith("rhartimageg2official")
-        or compact == "gptimage2"
-    )
-
-RHART_GPT_IMAGE2_RATIO_CHOICES = [
-    (1, 1, "1:1"), (1, 2, "1:2"), (2, 1, "2:1"), (1, 3, "1:3"), (3, 1, "3:1"),
-    (2, 3, "2:3"), (3, 2, "3:2"), (3, 4, "3:4"), (4, 3, "4:3"), (4, 5, "4:5"),
-    (5, 4, "5:4"), (9, 16, "9:16"), (21, 9, "21:9"), (9, 21, "9:21"), (16, 9, "16:9"),
-]
-
-def rhart_gpt_image2_aspect_resolution(size):
-    """把通用 size（WxH / 1k/2k/4k / auto）换算成 GPT-Image2 接口要求的 aspectRatio + resolution。"""
-    width, height = parse_size_pair(size)
-    if not width or not height:
-        raw = str(size or "").strip().lower()
-        if raw in {"1k", "2k", "4k"}:
-            return "16:9", raw
-        return "16:9", "2k"
-    long_edge = max(width, height)
-    pixels = width * height
-    if long_edge >= 3000 or pixels > 4_500_000:
-        resolution = "4k"
-    elif long_edge >= 1800 or pixels > 1_800_000:
-        resolution = "2k"
-    else:
-        resolution = "1k"
-    ratio = width / height
-    best = min(RHART_GPT_IMAGE2_RATIO_CHOICES, key=lambda item: abs(ratio - item[0] / item[1]))
-    return best[2], resolution
-
-def rhart_gpt_image2_quality(quality):
-    """RunningHub GPT-Image2 仅支持 low/medium/high，auto（或未识别值）映射为 medium。"""
-    value = str(quality or "").strip().lower()
-    if value in {"low", "medium", "high"}:
-        return value
-    return "medium"
-
-def runninghub_query_status(raw):
-    if not isinstance(raw, dict):
-        return ""
-    values = [
-        raw.get("status"),
-        raw.get("state"),
-        raw.get("taskStatus"),
-        raw.get("task_status"),
-    ]
-    data = raw.get("data")
-    if isinstance(data, dict):
-        values.extend([data.get("status"), data.get("state"), data.get("taskStatus"), data.get("task_status")])
-    for value in values:
-        if value is not None:
-            return str(value).lower()
-    return ""
-
-def runninghub_normalized_status(raw, code=None, urls=None):
-    status = runninghub_query_status(raw)
-    if status:
-        compact = status.replace("_", "").replace("-", "").replace(" ", "")
-        if compact in {"success", "succeeded", "completed", "complete", "finish", "finished", "done"}:
-            return "SUCCESS"
-        if compact in {"failed", "fail", "failure", "error", "canceled", "cancelled"}:
-            return "FAILED"
-        if compact in {"running", "processing", "executing", "progress", "wait", "waiting"}:
-            return "RUNNING"
-        if compact in {"queued", "queue", "pending", "created", "submitted"}:
-            return "QUEUED"
-    if code in (804, "804"):
-        return "RUNNING"
-    if code in (813, "813"):
-        return "QUEUED"
-    if code in (805, "805"):
-        return "FAILED"
-    if code in (0, "0"):
-        return "SUCCESS" if urls else "RUNNING"
-    return "UNKNOWN"
-
-def runninghub_extract_task_id(raw):
-    if not isinstance(raw, dict):
-        return ""
-    for key in ("taskId", "task_id", "id"):
-        if raw.get(key):
-            return str(raw[key])
-    data = raw.get("data")
-    if isinstance(data, dict):
-        for key in ("taskId", "task_id", "id"):
-            if data.get(key):
-                return str(data[key])
-    return ""
-
-def runninghub_extract_image(raw):
-    if not isinstance(raw, dict):
-        raise HTTPException(status_code=502, detail="RunningHub 返回格式不是 JSON 对象")
-    containers = [raw]
-    data = raw.get("data")
-    if isinstance(data, dict):
-        containers.append(data)
-    for container in containers:
-        results = container.get("results") or container.get("result") or container.get("outputs") or container.get("output")
-        if isinstance(results, dict):
-            results = [results]
-        if isinstance(results, list):
-            for item in results:
-                if isinstance(item, str) and item.startswith(("http://", "https://")):
-                    return {"type": "url", "value": item}
-                if not isinstance(item, dict):
-                    continue
-                if item.get("type") == "url" and item.get("value"):
-                    return {"type": "url", "value": item["value"]}
-                if item.get("type") == "b64" and item.get("value"):
-                    return {"type": "b64", "value": item["value"], "mime_type": item.get("mime_type") or "image/png"}
-                url = item.get("url") or item.get("fileUrl") or item.get("file_url") or item.get("download_url") or item.get("imageUrl") or item.get("image_url")
-                if isinstance(url, list) and url:
-                    url = url[0]
-                if isinstance(url, str) and url:
-                    return {"type": "url", "value": url}
-    return extract_image(raw)
-
-async def runninghub_upload_reference(client, provider, ref):
-    value = str(ref.get("url", "") or "").strip()
-    if value.startswith("data:image/") and ";base64," in value:
-        header, encoded = value.split(";base64,", 1)
-        mime = header.replace("data:", "", 1) or "image/png"
-        try:
-            content = base64.b64decode(encoded)
-        except Exception:
-            return ""
-        upload_url = runninghub_endpoint_url(provider, "/openapi/v2/media/upload/binary")
-        api_key = os.getenv(provider_key_env(provider["id"]), "")
-        headers = {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
-        ext = (mime.split("/")[-1] or "png").split("+")[0]
-        files = {"file": (f"reference.{ext}", content, mime)}
-        response = await client.post(upload_url, headers=headers, files=files, timeout=120)
-        response.raise_for_status()
-        raw = response.json()
-        data = raw.get("data") if isinstance(raw, dict) else None
-        candidates = [raw, data] if isinstance(data, dict) else [raw]
-        for item in candidates:
-            if not isinstance(item, dict):
-                continue
-            uploaded = item.get("download_url") or item.get("downloadUrl") or item.get("url") or item.get("fileUrl") or item.get("file_url")
-            if uploaded:
-                return str(uploaded)
-        raise HTTPException(status_code=502, detail=f"RunningHub 上传图片未返回 download_url：{raw}")
-    path = await run_storage_io(output_file_from_url, value)
-    if not path:
-        return value if value.startswith(("http://", "https://")) else ""
-    upload_url = runninghub_endpoint_url(provider, "/openapi/v2/media/upload/binary")
-    api_key = os.getenv(provider_key_env(provider["id"]), "")
-    headers = {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
-    with open(path, "rb") as fh:
-        files = {"file": (os.path.basename(path), fh, content_type_for_path(path))}
-        response = await client.post(upload_url, headers=headers, files=files, timeout=120)
-    response.raise_for_status()
-    raw = response.json()
-    data = raw.get("data") if isinstance(raw, dict) else None
-    candidates = [raw, data] if isinstance(data, dict) else [raw]
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        value = item.get("download_url") or item.get("downloadUrl") or item.get("url") or item.get("fileUrl") or item.get("file_url")
-        if value:
-            return str(value)
-    raise HTTPException(status_code=502, detail=f"RunningHub 上传图片未返回 download_url：{raw}")
-
-async def wait_for_runninghub_image_task(client, provider, task_id):
-    query_url = runninghub_endpoint_url(provider, "/openapi/v2/query")
-    deadline = time.monotonic() + 1800
-    last_payload = None
-    while time.monotonic() < deadline:
-        await asyncio.sleep(2)
-        response = await client.post(query_url, headers=runninghub_api_headers(provider), json={"taskId": task_id})
-        response.raise_for_status()
-        raw = response.json()
-        last_payload = raw
-        # 优先判断是否已经有实际结果数据，不完全依赖 status 文案匹配
-        # （不同模型/接口版本返回的 status 措辞可能不一致，只靠字符串匹配容易导致轮询卡死不返回）。
-        try:
-            return {"data": {"results": [runninghub_extract_image(raw)]}}
-        except HTTPException:
-            pass
-        status = runninghub_query_status(raw)
-        if status in {"success", "succeeded", "completed", "complete", "finished", "finish", "done", "3"}:
-            return raw
-        error_message = ""
-        if isinstance(raw, dict):
-            error_message = str(raw.get("errorMessage") or raw.get("error_message") or "").strip()
-            error_code = raw.get("errorCode") or raw.get("error_code")
-            data = raw.get("data")
-            if not error_message and isinstance(data, dict):
-                error_message = str(data.get("errorMessage") or data.get("error_message") or "").strip()
-            if not error_code and isinstance(data, dict):
-                error_code = data.get("errorCode") or data.get("error_code")
-            if error_message or (error_code and str(error_code).strip() not in ("", "0")):
-                raise HTTPException(status_code=502, detail=f"RunningHub 任务失败：{error_message or raw}")
-        if status in {"failed", "fail", "error", "canceled", "cancelled", "4"}:
-            raise HTTPException(status_code=502, detail=f"RunningHub 任务失败：{raw}")
-    raise HTTPException(status_code=504, detail=f"RunningHub 生图任务超时：{last_payload}")
-
-RUNNINGHUB_APP_MODEL_RE = re.compile(r"^app:(.+)$")
-
-def rh_field_kind(field):
-    field = field or {}
-    t = str(field.get("fieldType") or "").strip().upper()
-    if t == "IMAGE":
-        return "image"
-    if t == "VIDEO":
-        return "video"
-    if t == "AUDIO":
-        return "audio"
-    if t == "SLIDER":
-        return "slider"
-    if t in ("NUMBER", "FLOAT", "INTEGER", "INT"):
-        return "number"
-    if t in ("BOOLEAN", "BOOL"):
-        return "boolean"
-    key = f"{field.get('fieldName') or ''} {field.get('fieldValue') or ''}".lower()
-    if re.search(r"\b(image|img|mask|photo|picture)\b", key) or re.search(r"\.(png|jpe?g|webp|gif|bmp)(\?|$)", key, re.I):
-        return "image"
-    if re.search(r"\b(video|movie|mp4)\b", key) or re.search(r"\.(mp4|webm|mov|m4v|mkv)(\?|$)", key, re.I):
-        return "video"
-    if re.search(r"\b(audio|sound|music|voice)\b", key) or re.search(r"\.(mp3|wav|ogg|m4a|flac|aac)(\?|$)", key, re.I):
-        return "audio"
-    return "text"
-
-def rh_field_role(field):
-    kind = rh_field_kind(field)
-    if kind in ("image", "video", "audio", "number", "slider", "boolean"):
-        return kind
-    field = field or {}
-    text = f"{field.get('fieldName') or ''} {field.get('label') or ''} {field.get('group') or ''}".lower()
-    if re.search(r"prompt|positive|negative|text|caption|description|关键词|提示词|正向|负向", text):
-        return "prompt"
-    return "text"
-
-def _rh_natural_cmp(x, y):
-    if x == y:
-        return 0
-    if x.isdigit() and y.isdigit():
-        ix, iy = int(x), int(y)
-        return (ix > iy) - (ix < iy)
-    return (x > y) - (x < y)
-
-def _rh_field_cmp(a, b):
-    ak, bk = rh_field_kind(a), rh_field_kind(b)
-    if ak == "image" and bk == "image":
-        try:
-            ao = int(a.get("imageOrder") or 0) or 9999
-        except Exception:
-            ao = 9999
-        try:
-            bo = int(b.get("imageOrder") or 0) or 9999
-        except Exception:
-            bo = 9999
-        if ao != bo:
-            return ao - bo
-    if ak == "image" and bk != "image":
-        return -1
-    if ak != "image" and bk == "image":
-        return 1
-    node_cmp = _rh_natural_cmp(str(a.get("nodeId") or ""), str(b.get("nodeId") or ""))
-    if node_cmp != 0:
-        return node_cmp
-    fa, fb = str(a.get("fieldName") or ""), str(b.get("fieldName") or "")
-    return (fa > fb) - (fa < fb)
-
-def rh_sort_fields(fields):
-    return sorted(list(fields or []), key=functools.cmp_to_key(_rh_field_cmp))
-
-def rh_field_indexes(fields):
-    counters = {"image": 0, "video": 0, "audio": 0}
-    mapping = {}
-    for field in rh_sort_fields(fields):
-        kind = rh_field_kind(field)
-        if kind in counters:
-            mapping[(str(field.get("nodeId") or ""), str(field.get("fieldName") or ""))] = counters[kind]
-            counters[kind] += 1
-    return mapping
-
-def rh_default_value(field):
-    value = (field or {}).get("fieldValue")
-    if isinstance(value, list):
-        value = value[0] if value else ""
-    if value is None or isinstance(value, dict):
-        return ""
-    return str(value)
-
-def rh_random_field_value(field):
-    def _num(raw, default):
-        try:
-            s = str(raw).strip()
-            if s == "" or s.lower() == "none":
-                return default
-            return float(s)
-        except Exception:
-            return default
-    lo = _num((field or {}).get("min"), 0.0)
-    hi = _num((field or {}).get("max"), 4294967295.0)
-    if hi < lo:
-        lo, hi = hi, lo
-    step = _num((field or {}).get("step"), 1.0)
-    value = random.uniform(lo, hi)
-    if step and step > 0:
-        value = lo + round((value - lo) / step) * step
-    if float(step).is_integer() and float(lo).is_integer() and float(hi).is_integer():
-        return str(int(round(value)))
-    return str(value)
-
-def runninghub_entry_config_from_model(provider, model):
-    """解析 model=app:ID，返回 RunningHub AI 应用配置。"""
-    text = str(model or "").strip()
-    match = RUNNINGHUB_APP_MODEL_RE.match(text)
-    if not match:
-        return None
-    entry_id = match.group(1).strip()
-    if not entry_id:
-        return None
-    entry = next(
-        (e for e in (provider.get("rh_apps") or []) if runninghub_entry_id(e, "app") == entry_id),
-        None,
-    )
-    if not entry:
-        return None
-    return {
-        "id": entry_id,
-        "fields": entry.get("fields") or [],
-    }
-
-async def runninghub_upload_local_to_filename(client, provider, url):
-    """把本地/远程素材上传到 RunningHub /task/openapi/upload，返回 fileName（供 nodeInfoList 使用）。"""
-    text = str(url or "").strip()
-    if not text:
-        return ""
-    path = await run_storage_io(runninghub_local_asset_path, text)
-    if path:
-        filename = os.path.basename(path)
-        content_type = content_type_for_path(path)
-        with open(path, "rb") as fh:
-            content = fh.read()
-    elif text.startswith(("http://", "https://")):
-        response = await client.get(validate_external_http_url(text, label="RunningHub 素材地址"))
-        response.raise_for_status()
-        content = response.content
-        content_type = response.headers.get("content-type") or "application/octet-stream"
-        filename = os.path.basename(urllib.parse.urlsplit(text).path) or "asset.bin"
-    else:
-        return ""
-    if not content:
-        return ""
-    api_key = runninghub_api_key(provider)
-    upload_url = runninghub_endpoint_url(provider, "/task/openapi/upload")
-    files = {"file": (filename, content, content_type)}
-    data = {"apiKey": api_key, "fileType": "input"}
-    response = await client.post(upload_url, headers=runninghub_app_headers(False), data=data, files=files)
-    raw = response.json()
-    if isinstance(raw, dict) and raw.get("code") in (0, "0") and isinstance(raw.get("data"), dict) and raw["data"].get("fileName"):
-        return raw["data"]["fileName"]
-    raise HTTPException(status_code=502, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传素材失败：{raw}")
-
-async def generate_runninghub_app_image(prompt, reference_images, provider, entry):
-    """运行 RunningHub AI 应用并返回首张图片结果。"""
-    entry_id = entry["id"]
-    fields = rh_sort_fields([f for f in (entry.get("fields") or []) if isinstance(f, dict) and f.get("enabled") is True])
-    idx_map = rh_field_indexes(fields)
-    timeout = httpx.Timeout(connect=20.0, read=1800.0, write=240.0, pool=20.0)
-    async with shared_http_client(timeout=timeout) as client:
-        uploaded = []
-        for ref in (reference_images or [])[:10]:
-            ref_url = ref.get("url") if isinstance(ref, dict) else ref
-            if not ref_url:
-                continue
-            file_name = await runninghub_upload_local_to_filename(client, provider, ref_url)
-            if file_name:
-                uploaded.append(file_name)
-
-        node_info_list = []
-        prompt_text = str(prompt or "").strip()
-        for field in fields:
-            node_id = str(field.get("nodeId") or "").strip()
-            field_name = str(field.get("fieldName") or "").strip()
-            if not node_id or not field_name:
-                continue
-            kind_f = rh_field_kind(field)
-            if kind_f in ("image", "video", "audio"):
-                if kind_f != "image":
-                    continue  # 在线生图仅提供图片素材
-                index = idx_map.get((node_id, field_name), 0)
-                value = uploaded[index] if index < len(uploaded) else ""
-                if not value:
-                    # 可选素材无输入时跳过；必填素材回退到配置默认值。
-                    if field.get("required") is True:
-                        value = rh_default_value(field)
-                        if not value:
-                            continue
-                    else:
-                        continue
-                node_info_list.append({"nodeId": node_id, "fieldName": field_name, "fieldValue": value})
-            elif rh_field_role(field) == "prompt":
-                value = prompt_text or rh_default_value(field)
-                node_info_list.append({"nodeId": node_id, "fieldName": field_name, "fieldValue": value})
-            elif kind_f == "number" and field.get("random_enabled") is True:
-                node_info_list.append({"nodeId": node_id, "fieldName": field_name, "fieldValue": rh_random_field_value(field)})
-            else:
-                node_info_list.append({"nodeId": node_id, "fieldName": field_name, "fieldValue": rh_default_value(field)})
-
-        api_key = runninghub_api_key(provider)
-        submit_url = runninghub_endpoint_url(provider, "/task/openapi/ai-app/run")
-        body = {"apiKey": api_key, "webappId": entry_id, "nodeInfoList": node_info_list}
-
-        response = await client.post(submit_url, headers=runninghub_app_headers(True), json=body)
-        raw = response.json()
-        if not (isinstance(raw, dict) and raw.get("code") in (0, "0")):
-            raise HTTPException(status_code=502, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
-        task_id = raw.get("data", {}).get("taskId") if isinstance(raw.get("data"), dict) else ""
-        if not task_id:
-            raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId：{raw}")
-
-        query_url = runninghub_endpoint_url(provider, "/task/openapi/outputs")
-        deadline = time.monotonic() + 1800
-        last_payload = None
-        while time.monotonic() < deadline:
-            await asyncio.sleep(5)
-            query_response = await client.post(query_url, headers=runninghub_app_headers(True), json={"apiKey": api_key, "taskId": task_id})
-            query_raw = query_response.json()
-            last_payload = query_raw
-            code = query_raw.get("code") if isinstance(query_raw, dict) else None
-            if code in (0, "0"):
-                outputs = runninghub_extract_outputs(query_raw.get("data"))
-                for remote in outputs:
-                    if str(remote or "").startswith(("http://", "https://")):
-                        return {"type": "url", "value": str(remote)}, query_raw
-                raise HTTPException(status_code=502, detail=f"RunningHub 任务无图片输出：{query_raw}")
-            if code in (805, "805"):
-                raise HTTPException(status_code=502, detail=f"RunningHub 任务失败：{runninghub_fail_reason(query_raw) or query_raw}")
-            # 804 运行中 / 813 排队中 / 其他状态继续轮询
-        raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{last_payload}")
 
 async def generate_runninghub_provider_image(prompt, size, model, reference_images=None, provider=None, quality=""):
     entry = runninghub_entry_config_from_model(provider, model)
@@ -5153,7 +2996,6 @@ def extract_image_deep(value, depth=0):
 def extract_image_from_chat_response(data):
     """从 OpenAI v1/chat/completions 响应里抽取图片。
     支持：message.images[]、多模态 content 里的 image_url/inlineData、以及正文里的 data URL / markdown 图片链接。"""
-    data = unwrap_apimart_response(data) if isinstance(data, dict) else data
     choices = data.get("choices") if isinstance(data, dict) else None
     text = ''
     if isinstance(choices, list) and choices:
@@ -5192,7 +3034,6 @@ async def generate_omnilojo_provider_image(prompt, size, model, reference_images
 
 async def generate_openai_compatible_provider_image(prompt, size, quality, model, reference_images=None, provider=None):
     is_gpt2 = is_gpt_image_2_model(model)
-    is_apimart = is_apimart_provider(provider)
     quality = str(quality or "").strip().lower()
     if quality not in {"low", "medium", "high"}:
         quality = ""
@@ -5204,7 +3045,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
     refs = [ref for ref in (reference_images or []) if ref.get("url")]
     mask_refs = [ref for ref in refs if str(ref.get("role") or "").strip().lower() == "mask" or str(ref.get("name") or "").lower().endswith("_mask.png")]
     image_refs = [ref for ref in refs if ref not in mask_refs]
-    request_timeout = httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0) if (is_gpt2 or is_apimart) else AI_REQUEST_TIMEOUT
+    request_timeout = httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0) if is_gpt2 else AI_REQUEST_TIMEOUT
     async with shared_http_client(timeout=request_timeout) as client:
         response = None
         async def post_openai_edits(edit_files=None):
@@ -5218,25 +3059,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
                 files=edit_files if edit_files is not None else {},
             )
 
-        if is_apimart:
-            apimart_size, resolution = apimart_size_resolution(size)
-            # APIMart 的 GPT-Image-2 图生图仍走 /images/generations，
-            # 通过 image_urls 传参考图，不使用 OpenAI multipart /images/edits。
-            body = {
-                "model": model,
-                "prompt": prompt,
-                "n": 1,
-                "size": apimart_size,
-                "resolution": resolution,
-                "official_fallback": False,
-            }
-            if image_refs:
-                body["image_urls"] = [
-                    await run_storage_io(reference_to_data_url, ref, 1536)
-                    for ref in image_refs[:16]
-                ]
-            response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-        elif is_gpt2 and not image_refs and not mask_refs:
+        if is_gpt2 and not image_refs and not mask_refs:
             body = {"model": model, "prompt": prompt, "size": size}
             if quality:
                 body["quality"] = quality
@@ -5325,18 +3148,6 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
         return extract_image(task_result), task_result
 
 
-async def _image_adapter_modelscope(request: ImageGenerationRequest):
-    return await generate_modelscope_provider_image(
-        request.prompt, request.size, request.model, request.reference_images, request.provider,
-    )
-
-
-async def _image_adapter_jimeng(request: ImageGenerationRequest):
-    return await generate_jimeng_provider_image(
-        request.prompt, request.size, request.model, request.reference_images, request.provider,
-    )
-
-
 async def _image_adapter_runninghub(request: ImageGenerationRequest):
     return await generate_runninghub_provider_image(
         request.prompt, request.size, request.model, request.reference_images, request.provider, request.quality,
@@ -5367,30 +3178,23 @@ async def _image_adapter_openai(request: ImageGenerationRequest):
     )
 
 
-IMAGE_ADAPTERS = ImageAdapterRegistry()
-IMAGE_ADAPTERS.register("modelscope", _image_adapter_modelscope)
-IMAGE_ADAPTERS.register("jimeng", _image_adapter_jimeng)
-IMAGE_ADAPTERS.register("runninghub", _image_adapter_runninghub)
-IMAGE_ADAPTERS.register("omnilojo", _image_adapter_omnilojo)
-IMAGE_ADAPTERS.register("gemini", _image_adapter_gemini)
-IMAGE_ADAPTERS.register("volcengine", _image_adapter_volcengine)
-IMAGE_ADAPTERS.register("openai", _image_adapter_openai)
+IMAGE_ADAPTERS = build_image_adapter_registry({
+    "runninghub": _image_adapter_runninghub,
+    "omnilojo": _image_adapter_omnilojo,
+    "gemini": _image_adapter_gemini,
+    "volcengine": _image_adapter_volcengine,
+    "openai": _image_adapter_openai,
+})
 
 
 def image_adapter_key(provider, model: str) -> str:
-    if provider.get("id") == "modelscope":
-        return "modelscope"
-    if is_jimeng_provider(provider):
-        return "jimeng"
-    if is_runninghub_provider(provider):
-        return "runninghub"
-    if is_omnilojo_provider(provider):
-        return "omnilojo"
-    if effective_protocol(provider, model) == "gemini":
-        return "gemini"
-    if is_volcengine_provider(provider):
-        return "volcengine"
-    return "openai"
+    return select_image_adapter(
+        provider, model,
+        runninghub=is_runninghub_provider,
+        omnilojo=is_omnilojo_provider,
+        gemini=lambda item, selected: effective_protocol(item, selected) == "gemini",
+        volcengine=is_volcengine_provider,
+    )
 
 
 async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly"):
@@ -5620,6 +3424,7 @@ async def cloud_video_upload(payload: CloudVideoUploadRequest, request: Request)
 
 @app.get("/api/runninghub/app-info")
 async def runninghub_app_info(webappId: str = ""):
+    require_admin()
     webapp_id = str(webappId or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
@@ -5643,6 +3448,7 @@ async def runninghub_app_info(webappId: str = ""):
 
 @app.post("/api/runninghub/submit")
 async def runninghub_submit(payload: RunningHubSubmitRequest):
+    user_id = require_admin()
     webapp_id = str(payload.webappId or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
@@ -5657,12 +3463,13 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     if instance_type:
         body["instanceType"] = instance_type
     url = runninghub_endpoint_url(provider, "/task/openapi/ai-app/run")
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0)) as client:
-        try:
-            response = await client.post(url, headers=runninghub_app_headers(True), json=body)
-            raw = response.json()
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"提交 RunningHub 任务失败：{exc}") from exc
+    async with provider_operation("runninghub", "app_generation", user_id=user_id):
+        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0)) as client:
+            try:
+                response = await client.post(url, headers=runninghub_app_headers(True), json=body)
+                raw = response.json()
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"提交 RunningHub 任务失败：{exc}") from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
     if isinstance(raw, dict) and raw.get("code") in (0, "0"):
@@ -5674,6 +3481,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
 
 @app.get("/api/runninghub/query")
 async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
+    require_admin()
     task_id = str(taskId or "").strip()
     if not task_id:
         raise HTTPException(status_code=400, detail="taskId 必填")
@@ -5717,6 +3525,7 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
 
 @app.post("/api/runninghub/upload-asset")
 async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
+    require_admin()
     source_url = str(payload.url or "").strip()
     if not source_url:
         raise HTTPException(status_code=400, detail="url 必填")
@@ -5770,6 +3579,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
 
 @app.post("/api/runninghub/upload-asset-file")
 async def runninghub_upload_asset_file(file: UploadFile = File(...)):
+    require_admin()
     provider = runninghub_provider()
     api_key = runninghub_api_key(provider)
     filename = os.path.basename(str(file.filename or "").strip()) or "asset.bin"
@@ -5795,155 +3605,6 @@ async def runninghub_upload_asset_file(file: UploadFile = File(...)):
         return {"success": True, "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type}}
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}")
 
-@app.get("/api/jimeng/status")
-async def jimeng_status():
-    exe = jimeng_cli_executable()
-    if not exe:
-        return {"installed": False, "logged_in": False, "message": "未找到 dreamina CLI"}
-    version, version_text = await jimeng_cli_version()
-    version_str = ".".join(str(part) for part in version) if version else None
-    version_ok = version >= JIMENG_MIN_CLI_VERSION if version else None
-    min_version_str = ".".join(str(part) for part in JIMENG_MIN_CLI_VERSION)
-    try:
-        raw = await run_jimeng_cli(["user_credit"], timeout=30)
-        return {
-            "installed": True,
-            "logged_in": True,
-            "raw": raw,
-            "cli_version": version_str,
-            "version_ok": version_ok,
-            "min_version": min_version_str,
-        }
-    except HTTPException as exc:
-        return {
-            "installed": True,
-            "logged_in": False,
-            "message": str(exc.detail),
-            "cli_version": version_str,
-            "version_ok": version_ok,
-            "min_version": min_version_str,
-        }
-
-@app.get("/api/jimeng/credit")
-async def jimeng_credit():
-    raw = await run_jimeng_cli(["user_credit"], timeout=30)
-    return {"success": True, "raw": raw}
-
-@app.post("/api/jimeng/logout")
-async def jimeng_logout():
-    raw = await run_jimeng_cli(["logout"], timeout=30)
-    return {"success": True, "raw": raw}
-
-@app.post("/api/jimeng/login/start")
-async def jimeng_login_start():
-    old_proc = JIMENG_LOGIN_SESSION.get("proc")
-    if old_proc and getattr(old_proc, "returncode", None) is None:
-        try:
-            old_proc.terminate()
-        except Exception:
-            pass
-    exe = jimeng_cli_executable()
-    if not exe:
-        raise HTTPException(status_code=400, detail="未找到 dreamina CLI")
-    JIMENG_LOGIN_SESSION.update({"proc": None, "stdout": "", "stderr": "", "started_at": time.time()})
-    args = ["login", "--headless"]
-    command = jimeng_command(args, exe)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=BASE_DIR,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=f"未找到即梦 CLI：{exe}") from exc
-    JIMENG_LOGIN_SESSION["proc"] = proc
-    asyncio.create_task(jimeng_login_reader(proc))
-    await asyncio.sleep(2)
-    text = jimeng_login_text()
-    if proc.returncode not in (None, 0) and ("unknown" in text.lower() or "no such option" in text.lower()):
-        # 旧版 CLI 可能没有 --headless，退回 debug 输出。
-        JIMENG_LOGIN_SESSION.update({"proc": None, "stdout": "", "stderr": "", "started_at": time.time()})
-        proc = await asyncio.create_subprocess_exec(
-            *jimeng_command(["login", "--debug"], exe),
-            cwd=BASE_DIR,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        JIMENG_LOGIN_SESSION["proc"] = proc
-        asyncio.create_task(jimeng_login_reader(proc))
-        await asyncio.sleep(2)
-        text = jimeng_login_text()
-    return {
-        "success": True,
-        "running": JIMENG_LOGIN_SESSION.get("proc") is not None and JIMENG_LOGIN_SESSION["proc"].returncode is None,
-        "text": text,
-        "qr_url": jimeng_login_qr_from_text(text),
-        "started_at": JIMENG_LOGIN_SESSION.get("started_at") or 0,
-    }
-
-@app.get("/api/jimeng/login/status")
-async def jimeng_login_status():
-    proc = JIMENG_LOGIN_SESSION.get("proc")
-    text = jimeng_login_text()
-    running = proc is not None and getattr(proc, "returncode", None) is None
-    logged_in = False
-    credit_raw = None
-    if not running:
-        try:
-            credit_raw = await run_jimeng_cli(["user_credit"], timeout=20)
-            logged_in = True
-        except HTTPException:
-            logged_in = False
-    return {
-        "success": True,
-        "running": running,
-        "logged_in": logged_in,
-        "text": text,
-        "qr_url": jimeng_login_qr_from_text(text),
-        "raw": credit_raw,
-    }
-
-@app.post("/api/jimeng/help")
-async def jimeng_help(payload: JimengHelpRequest):
-    command = str(payload.command or "").strip()
-    allowed = {"", "login", "logout", "user_credit", "text2image", "image2image", "image_upscale", "text2video", "image2video", "multimodal2video", "frames2video", "multiframe2video", "list_task", "query_result"}
-    if command not in allowed:
-        raise HTTPException(status_code=400, detail="不支持的帮助命令")
-    args = [command, "-h"] if command else ["-h"]
-    raw = await run_jimeng_cli(args, timeout=30, raw_text=True)
-    text = raw.get("_stdout") or ""
-    if raw.get("_stderr"):
-        text = f"{text}\n{raw.get('_stderr')}".strip()
-    return {"success": True, "command": command, "text": text, "raw": raw}
-
-@app.post("/api/jimeng/query-media")
-async def jimeng_query_media(payload: JimengQueryMediaRequest):
-    """按 submit_id 续查即梦任务：出图返回 succeeded+urls；仍排队返回 pending+queue_info；失败返回 failed。
-    供画布「排队中」卡片自动轮询与手动查询复用。"""
-    submit_id = str(payload.submit_id or "").strip()
-    if not submit_id:
-        raise HTTPException(status_code=400, detail="缺少 submit_id")
-    kind = str(payload.kind or "image").strip().lower()
-    if kind not in ("image", "video", "audio"):
-        kind = "image"
-    queried = await jimeng_query_result(submit_id, kind)
-    try:
-        urls = await jimeng_store_outputs(queried, kind, allow_query=False)
-        payload = {"status": "succeeded", "submit_id": submit_id, "kind": kind, "urls": urls}
-        items = await run_storage_io(media_response_items, urls, kind)
-        if kind == "video":
-            payload["video_items"] = items
-        elif kind == "audio":
-            payload["audio_items"] = items
-        else:
-            payload["image_items"] = items
-        return payload
-    except JimengPendingError as exc:
-        return {"status": "pending", "submit_id": submit_id, "kind": kind, "queue_info": exc.queue_info, "message": jimeng_pending_payload(exc)["message"]}
-    except HTTPException as exc:
-        return {"status": "failed", "submit_id": submit_id, "kind": kind, "error": str(getattr(exc, "detail", "") or exc)}
-
 @app.get("/api/config")
 async def ai_config():
     preferred_chat_model = next((m for m in CHAT_MODELS if m == "gpt-5.5"), CHAT_MODELS[0] if CHAT_MODELS else CHAT_MODEL)
@@ -5958,8 +3619,6 @@ async def ai_config():
         "comfy_instances": COMFYUI_INSTANCES,
         "api_providers": providers,
         "has_api_key": bool(AI_API_KEY),
-        "ms_chat_models": MODELSCOPE_CHAT_MODELS,
-        "has_ms_key": bool(modelscope_api_key()),
     }
 
 @app.get("/api/models")
@@ -5969,7 +3628,7 @@ async def ai_models():
 @app.get("/api/providers")
 async def api_providers():
     from app.services.business_metadata import get_app_setting_with_version
-    _value, version = get_app_setting_with_version("api_providers", [])
+    _value, version = await asyncio.to_thread(get_app_setting_with_version, "api_providers", [])
     return {"providers": public_api_providers(include_credentials=access_control.is_admin(current_user_id())), "version": version}
 
 @app.put("/api/providers")
@@ -5985,6 +3644,7 @@ def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = 
         raise HTTPException(status_code=400, detail="If-Match 必须是 Provider 配置版本号")
     providers = []
     env_updates = {}
+    secret_updates = []
     # 收集每个 item 的 primary 字段
     raw_primary_flags = [bool(getattr(item, "primary", False)) for item in payload]
     for item in payload:
@@ -5997,26 +3657,30 @@ def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = 
         key_env = provider_key_env(provider["id"])
         if item.clear_key:
             env_updates[key_env] = ""
+            secret_updates.append((provider["id"], "api_key", ""))
         elif item.api_key is not None and item.api_key.strip():
             env_updates[key_env] = item.api_key.strip()
+            secret_updates.append((provider["id"], "api_key", item.api_key.strip()))
         if provider["id"] == "volcengine":
             ak_env = volcengine_access_key_env()
             sk_env = volcengine_secret_key_env()
             if item.clear_volcengine_access_key_id:
                 env_updates[ak_env] = ""
+                secret_updates.append(("volcengine", "access_key_id", ""))
             elif item.volcengine_access_key_id is not None and item.volcengine_access_key_id.strip():
                 env_updates[ak_env] = item.volcengine_access_key_id.strip()
+                secret_updates.append(("volcengine", "access_key_id", item.volcengine_access_key_id.strip()))
             if item.clear_volcengine_secret_access_key:
                 env_updates[sk_env] = ""
+                secret_updates.append(("volcengine", "secret_access_key", ""))
             elif item.volcengine_secret_access_key is not None and item.volcengine_secret_access_key.strip():
                 env_updates[sk_env] = item.volcengine_secret_access_key.strip()
+                secret_updates.append(("volcengine", "secret_access_key", item.volcengine_secret_access_key.strip()))
         if provider["id"] == "comfly":
             env_updates["COMFLY_BASE_URL"] = provider["base_url"]
             env_updates["IMAGE_MODELS"] = ",".join(provider["image_models"])
             env_updates["CHAT_MODELS"] = ",".join(provider["chat_models"])
             env_updates["VIDEO_MODELS"] = ",".join(provider.get("video_models") or [])
-        if provider["id"] == "modelscope":
-            env_updates["MODELSCOPE_CHAT_MODELS"] = ",".join(provider["chat_models"])
         if provider["id"] == "runninghub":
             provider["protocol"] = "runninghub"
         if provider["id"] == "volcengine":
@@ -6037,9 +3701,12 @@ def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = 
     _API_PROVIDERS_CACHE = merge_default_api_providers([normalize_provider(item) for item in providers])
     if GLOBAL_LOOP and GLOBAL_LOOP.is_running():
         asyncio.run_coroutine_threadsafe(publish_provider_config_changed(), GLOBAL_LOOP)
-    if env_updates:
+    if secret_updates and os.getenv("APP_SECRET_KEY"):
+        for provider_id, secret_name, secret_value in secret_updates:
+            set_provider_secret(provider_id, secret_name, secret_value)
+    if env_updates and not os.getenv("APP_SECRET_KEY"):
         update_env_values(env_updates)
-        reload_env_globals()   # 立即将最新 env 值同步回模块全局变量，无需重启
+        reload_env_globals()
     audit_event(
         "api_providers_updated",
         action="update",
@@ -6048,13 +3715,6 @@ def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = 
         after={"provider_ids": [provider["id"] for provider in providers], "key_fields_changed": len(env_updates)},
     )
     return {"providers": [public_provider(p, include_credentials=True) for p in providers], "version": version}
-
-# --- ModelScope Token (从 env 读取，不再支持通过 UI 修改) ---
-
-@app.get("/api/config/token")
-async def get_global_token():
-    require_admin()
-    return {"configured": bool(modelscope_api_key())}
 
 # --- 在线生图 (COMFLY) ---
 
@@ -6065,8 +3725,6 @@ def protocol_from_payload(payload):
         return "volcengine"
     if provider_id == "runninghub":
         return "runninghub"
-    if provider_id == "jimeng":
-        return "jimeng"
     protocol = str(getattr(payload, "protocol", "") or "openai").strip().lower()
     return protocol if protocol in SUPPORTED_PROVIDER_PROTOCOLS else "openai"
 
@@ -6262,19 +3920,6 @@ async def test_provider_connection(payload: TestConnectionPayload):
     """测试请求地址是否可用：调上游 /v1/models。验证通过时同时把模型清单按类别返回，避免再调一次拉取接口。"""
     require_admin()
     protocol = protocol_from_payload(payload)
-    if protocol == "jimeng":
-        status = await jimeng_status()
-        return {
-            "ok": bool(status.get("installed") and status.get("logged_in")),
-            "status": 200 if status.get("logged_in") else 0,
-            "message": status.get("message") or "即梦 CLI 已登录",
-            "model_count": len(JIMENG_DEFAULT_IMAGE_MODELS) + len(JIMENG_DEFAULT_VIDEO_MODELS),
-            "image_models": JIMENG_DEFAULT_IMAGE_MODELS,
-            "chat_models": [],
-            "video_models": JIMENG_DEFAULT_VIDEO_MODELS,
-            "all": [*JIMENG_DEFAULT_IMAGE_MODELS, *JIMENG_DEFAULT_VIDEO_MODELS],
-            "raw": status.get("raw"),
-        }
     base_url = validate_public_http_url(payload.base_url, label="请求地址")
     api_key = api_key_from_payload(payload, protocol)
     if not api_key:
@@ -6363,48 +4008,8 @@ async def probe_async_endpoint(payload: TestConnectionPayload):
                 }
         except httpx.HTTPError as e:
             raise HTTPException(status_code=502, detail=str(e)[:300])
-    tasks_base = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
-    probe_url = f"{tasks_base}/tasks/healthcheck_probe_do_not_submit"
     try:
         async with shared_http_client(timeout=15) as client:
-            resp = await client.get(probe_url, headers={"Authorization": bearer_auth_value(api_key), "Accept": "application/json"})
-            try:
-                body = resp.json()
-            except Exception:
-                body = resp.text[:500]
-            sc = resp.status_code
-            # 判断结果
-            err_msg = ""
-            if isinstance(body, dict):
-                err = body.get("error") or {}
-                if isinstance(err, dict):
-                    err_msg = str(err.get("message") or "").lower()
-                else:
-                    err_msg = str(err).lower()
-            # 400 + "invalid task id" → 端点存在，Key 有效
-            if sc == 400 and "invalid task id" in err_msg:
-                return {"ok": True, "protocol": "apimart", "status_code": sc, "message": "APIMart 异步任务端点可用，API Key 已通过认证", "raw": body}
-
-            async_probe = {"status": sc, "message": "", "raw": body}
-            if sc in (301, 302, 303, 307, 308):
-                location = resp.headers.get("Location") or resp.headers.get("location") or ""
-                async_probe["message"] = f"/v1/tasks/ 发生跳转{f'：{location}' if location else ''}"
-            elif looks_like_html_response(resp.text):
-                async_probe["message"] = "/v1/tasks/ 返回网页 HTML"
-            elif sc in (401, 403):
-                async_probe["message"] = "/v1/tasks/ 返回鉴权失败"
-            elif sc == 404:
-                async_probe["message"] = "平台不支持 /v1/tasks/ 端点，可能不是 APIMart 异步协议"
-            elif 400 <= sc < 500:
-                async_probe["message"] = f"/v1/tasks/ 返回 {sc}"
-            elif sc < 300:
-                async_probe["message"] = f"/v1/tasks/ 返回 {sc}（意外成功）"
-            else:
-                async_probe["message"] = f"/v1/tasks/ 服务端错误 {sc}"
-
-            if protocol == "apimart":
-                return {"ok": False, "protocol": "apimart", "status_code": sc, "message": async_probe["message"], "raw": body}
-
             openai_ok, openai_probe = await probe_openai_models_endpoint(client, base_url, api_key)
             if not openai_ok and protocol == "openai":
                 detected, volc_probe = await probe_volcengine_auto_detect(client, base_url, api_key)
@@ -6414,14 +4019,14 @@ async def probe_async_endpoint(payload: TestConnectionPayload):
                         "protocol": "volcengine",
                         "status_code": volc_probe.get("status") or openai_probe.get("status") or sc,
                         "message": f"{volc_probe.get('message') or '检测到方舟/Ark 兼容入口'}，已自动切换为方舟/Ark 任务协议",
-                        "raw": {"async_probe": async_probe, "openai_probe": openai_probe.get("raw"), **(volc_probe.get("raw") or {})},
+                        "raw": {"openai_probe": openai_probe.get("raw"), **(volc_probe.get("raw") or {})},
                     }
             return {
                 "ok": openai_ok,
                 "protocol": "openai",
                 "status_code": openai_probe.get("status") or sc,
                 "message": openai_probe.get("message") or "OpenAI 兼容验证完成",
-                "raw": {"async_probe": async_probe, "openai_probe": openai_probe.get("raw")},
+                "raw": {"openai_probe": openai_probe.get("raw")},
                 "model_count": openai_probe.get("model_count") or 0,
                 "image_models": openai_probe.get("image_models") or [],
                 "chat_models": openai_probe.get("chat_models") or [],
@@ -6434,14 +4039,6 @@ async def probe_async_endpoint(payload: TestConnectionPayload):
 async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str = "openai"):
     """从上游模型列表端点拉取模型，并按名称做轻量分类。"""
     protocol = protocol if protocol in SUPPORTED_PROVIDER_PROTOCOLS else "openai"
-    if protocol == "jimeng":
-        return {
-            "total": len(JIMENG_DEFAULT_IMAGE_MODELS) + len(JIMENG_DEFAULT_VIDEO_MODELS),
-            "image_models": JIMENG_DEFAULT_IMAGE_MODELS,
-            "chat_models": [],
-            "video_models": JIMENG_DEFAULT_VIDEO_MODELS,
-            "all": [*JIMENG_DEFAULT_IMAGE_MODELS, *JIMENG_DEFAULT_VIDEO_MODELS],
-        }
     base_url = validate_public_http_url(base_url, label="请求地址")
     api_key = volcengine_provider_api_key(api_key) if protocol == "volcengine" else (api_key or "").strip()
     if not api_key:
@@ -6541,7 +4138,8 @@ async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
     require_admin()
     protocol = protocol_from_payload(payload)
     api_key = api_key_from_payload(payload, protocol)
-    return await fetch_models_from_upstream(payload.base_url, api_key, protocol)
+    async with provider_operation(protocol, "model_discovery", user_id=current_user_id()):
+        return await fetch_models_from_upstream(payload.base_url, api_key, protocol)
 
 @app.get("/api/providers/{provider_id}/fetch-models")
 async def fetch_upstream_models(provider_id: str):
@@ -6551,7 +4149,9 @@ async def fetch_upstream_models(provider_id: str):
     api_key = os.getenv(provider_key_env(provider["id"]), "")
     if not api_key:
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider_id} 未配置 API Key")
-    return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, provider_protocol(provider))
+    protocol = provider_protocol(provider)
+    async with provider_operation(protocol, "model_discovery", user_id=current_user_id()):
+        return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, protocol)
 
 async def build_online_image_result(payload: OnlineImageRequest):
     provider = get_api_provider(payload.provider_id)
@@ -6559,7 +4159,8 @@ async def build_online_image_result(payload: OnlineImageRequest):
     model = selected_model(payload.model, default_model)
     require_model_access(provider["id"], model)
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
-    count = max(1, min(8, int(payload.n or 1)))
+    max_count = max(1, min(8, int(os.getenv("AI_ONLINE_IMAGE_MAX_COUNT", "4"))))
+    count = max(1, min(max_count, int(payload.n or 1)))
     async def generate_one():
         image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, refs, provider["id"])
         local_url = await save_ai_image_to_output(image_data, prefix="online_")
@@ -6711,16 +4312,6 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             "canvas image task completed",
             extra={"event": "task_completed", "provider": payload.provider_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
-    except JimengPendingError as exc:
-        # 即梦云端还在排队：标记为 jimeng_pending，前端据 submit_id 持久续查（任务未丢失）
-        info = jimeng_pending_payload(exc)
-        await update_claimed_canvas_task(task_id, lease_token, status="jimeng_pending", jimeng_pending=True,
-                                 submit_id=exc.submit_id, kind=exc.kind, queue_info=exc.queue_info,
-                                 message=info["message"], error="")
-        task_logger.warning(
-            "canvas image task remains queued upstream",
-            extra={"event": "task_poll_pending", "provider": "jimeng", "operation": "image_generation", "status": "pending", "upstream_task_id": exc.submit_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
-        )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 413 if isinstance(exc, StorageQuotaExceeded) else 500)
@@ -6869,18 +4460,56 @@ async def get_canvas_comfy_task(task_id: str):
     return task
 
 
+@app.get("/api/admin/canvas-task-dead-letters")
+async def admin_list_canvas_task_dead_letters(limit: int = 100):
+    require_admin()
+    return {"items": await list_dead_letter_canvas_tasks(limit)}
+
+
+@app.post("/api/admin/canvas-task-dead-letters/{entry_id}/retry")
+async def admin_retry_canvas_task_dead_letter(entry_id: str):
+    require_admin()
+    entries = await list_dead_letter_canvas_tasks(500)
+    entry = next((item for item in entries if item.get("entry_id") == entry_id), None)
+    if not entry or not entry.get("task_id"):
+        raise HTTPException(status_code=404, detail="死信任务不存在")
+    task = await get_canvas_task(entry["task_id"])
+    if not task or not isinstance(task.get("request"), dict):
+        raise HTTPException(status_code=409, detail="原始任务已过期或缺少可重试请求")
+    await update_canvas_task(task["id"], status="queued", error="", retry_requested_at=time.time())
+    await enqueue_canvas_task(task["id"])
+    await remove_dead_letter_canvas_task(entry_id)
+    audit_event("canvas_task_dead_letter_retried", action="retry", resource_type="canvas_task", resource_id=task["id"])
+    return {"task_id": task["id"], "status": "queued"}
+
+
+@app.delete("/api/admin/canvas-task-dead-letters/{entry_id}")
+async def admin_cancel_canvas_task_dead_letter(entry_id: str):
+    require_admin()
+    entries = await list_dead_letter_canvas_tasks(500)
+    entry = next((item for item in entries if item.get("entry_id") == entry_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="死信任务不存在")
+    task_id = entry.get("task_id") or ""
+    if task_id:
+        await update_canvas_task(task_id, status="cancelled", error="管理员已取消死信任务")
+    await remove_dead_letter_canvas_task(entry_id)
+    audit_event("canvas_task_dead_letter_cancelled", action="delete", resource_type="canvas_task", resource_id=task_id)
+    return {"ok": True}
+
+
 async def recover_canvas_tasks_once():
     for task in await list_recoverable_canvas_tasks():
         if task.get("status") == "running":
             if not await has_canvas_task_claim(task["id"]):
                 await update_canvas_task(
-                    task["id"], status="interrupted",
+                    task["id"], expected_status="running", status="interrupted",
                     error="执行 worker 已失联；为避免重复提交上游任务，未自动重试。",
                 )
             continue
         request = task.get("request")
         if not isinstance(request, dict):
-            await update_canvas_task(task["id"], status="failed", error="任务恢复数据缺失")
+            await update_canvas_task(task["id"], expected_status="queued", status="failed", error="任务恢复数据缺失")
             continue
         try:
             await enqueue_canvas_task(task["id"])
@@ -6905,7 +4534,7 @@ async def execute_canvas_task(task_id: str):
         return
     request = task.get("request")
     if not isinstance(request, dict):
-        await update_canvas_task(task_id, status="failed", error="任务执行数据缺失")
+        await update_canvas_task(task_id, expected_status="queued", status="failed", error="任务执行数据缺失")
         return
     context_token = current_user_var.set(str(task.get("owner_id") or ""))
     try:
@@ -6914,7 +4543,7 @@ async def execute_canvas_task(task_id: str):
         elif task.get("type") == "comfy":
             await run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request))
         else:
-            await update_canvas_task(task_id, status="failed", error="不支持的画布任务类型")
+            await update_canvas_task(task_id, expected_status="queued", status="failed", error="不支持的画布任务类型")
     finally:
         current_user_var.reset(context_token)
 
@@ -6928,10 +4557,14 @@ async def canvas_task_worker_loop():
             for message_id, task_id in messages:
                 try:
                     await execute_canvas_task(task_id)
+                    completed = await get_canvas_task(task_id)
+                    if completed and completed.get("status") in {"succeeded", "failed", "interrupted"}:
+                        await asyncio.to_thread(archive_ai_task, completed)
                     await acknowledge_canvas_task(message_id)
                     await release_canvas_task_dispatch(task_id)
-                except Exception:
+                except Exception as exc:
                     logger.exception("canvas task worker execution failed", extra={"event": "task_worker_failed", "task_id": task_id})
+                    await dead_letter_canvas_task(message_id, task_id, str(exc))
         except RedisUnavailableError:
             logger.exception("canvas task worker storage unavailable", extra={"event": "task_worker_storage_failed"})
             await asyncio.sleep(REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS)
@@ -7026,24 +4659,13 @@ def looks_like_html_response(text: str) -> bool:
     return sample.startswith("<!doctype html") or sample.startswith("<html") or "<head" in sample
 
 def video_submit_url_candidates(provider, base_url):
-    if is_apimart_provider(provider):
-        return [f"{base_url}/videos/generations" if base_url.endswith("/v1") else f"{base_url}/v1/videos/generations"]
     if is_volcengine_provider(provider):
         return [f"{base_url}/api/v3/contents/generations/tasks"]
-    if is_yuli_provider(provider):
-        return [f"{base_url}/v1/video/create"]
     return [f"{base_url}/v1/videos/generations", f"{base_url}/v2/videos/generations"]
 
 def video_task_url_candidates(provider, base_url, task_id, submit_url=""):
-    if is_apimart_provider(provider):
-        task_path = f"{base_url}/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/tasks/{task_id}"
-        return [f"{task_path}?language=zh"]
     if is_volcengine_provider(provider):
         return [f"{base_url}/api/v3/contents/generations/tasks/{task_id}"]
-    if is_yuli_provider(provider):
-        # 玉玉API 两种视频格式：OpenAI（/v1/videos/{id}）与原生（/v1/video/query?id=）。
-        # 两个都试，谁返回成功就用谁，兼容 veo OpenAI 路径与 doubao 原生路径。
-        return [f"{base_url}/v1/videos/{task_id}", f"{base_url}/v1/video/query?id={task_id}"]
     v1_task = f"{base_url}/v1/videos/generations/{task_id}"
     v1_generic_task = f"{base_url}/v1/tasks/{task_id}"
     v2_task = f"{base_url}/v2/videos/generations/{task_id}"
@@ -7116,7 +4738,7 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
         status = str(task_data.get("status") or task_data.get("task_status") or raw.get("status") or raw.get("task_status") or "").upper()
         if status in VIDEO_TASK_SUCCESS_STATUSES:
             return raw
-        # 部分上游（如玉玉API）status 字段非标准或为空，但已经返回了视频 URL ——
+        # 部分上游 status 字段非标准或为空，但已经返回了视频 URL ——
         # 只要不是明确的失败状态，且拿到了真实视频地址，就直接当成功处理。
         if status not in VIDEO_TASK_FAILURE_STATUSES and video_output_urls(raw):
             return raw
@@ -7127,388 +4749,112 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
         delay = min(delay * 1.6, 12)
     raise HTTPException(status_code=504, detail=f"视频生成任务超时：{last_payload or task_id}")
 
-def apimart_video_size(size):
-    value = str(size or "16:9").strip()
-    if value == "keep_ratio":
-        return "adaptive"
-    allowed = {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"}
-    return value if value in allowed else "16:9"
-
-# ---- 玉玉API（yuli.host）OpenAI 视频格式：/v1/videos（multipart，支持 seconds 时长）----
-def _yuli_model_norm(model: str) -> str:
-    return str(model or "").strip().lower().replace("_", "").replace(".", "").replace("-", "")
-
-def yuli_is_veo_openai_model(model: str) -> bool:
-    # OpenAI multipart 格式当前只支持 veo_3_1 和 veo_3_1-fast
-    return _yuli_model_norm(model) in {"veo31", "veo31fast"}
-
-def yuli_openai_model_name(model: str) -> str:
-    return "veo_3_1-fast" if _yuli_model_norm(model) == "veo31fast" else "veo_3_1"
-
-def yuli_openai_size(aspect_ratio: str) -> str:
-    value = str(aspect_ratio or "").strip()
-    if value == "9:16":
-        return "9x16"
-    return "16x9"
-
-def yuli_video_seconds(duration) -> str:
-    try:
-        value = int(duration)
-    except Exception:
-        value = 8
-    if value <= 0:
-        value = 8
-    return str(value)
-
-async def yuli_fetch_reference_bytes(client, ref_url):
-    """把参考图（input_reference 垫图）取成 (filename, bytes, mime)，
-    支持 /output、/assets 本地文件、data URL、http(s) URL。失败返回 None。"""
-    ref_url = str(ref_url or "").strip()
-    if not ref_url:
-        return None
-    if ref_url.startswith("data:"):
-        header, _, b64 = ref_url.partition(",")
-        mime = (header[5:].split(";")[0] or "image/png").strip()
-        try:
-            raw = base64.b64decode(b64)
-        except Exception:
-            return None
-        ext = (mime.split("/")[-1] or "png").split("+")[0]
-        return (f"input_reference.{ext}", raw, mime)
-    path = await run_storage_io(output_file_from_url, ref_url)
-    if path:
-        try:
-            with open(path, "rb") as f:
-                raw = f.read()
-        except Exception:
-            return None
-        mime = content_type_for_path(path)
-        return (os.path.basename(path) or "input_reference", raw, mime)
-    if ref_url.startswith("http://") or ref_url.startswith("https://"):
-        try:
-            resp = await client.get(ref_url)
-            resp.raise_for_status()
-            raw = resp.content
-        except Exception:
-            return None
-        mime = (resp.headers.get("content-type") or "image/png").split(";")[0].strip()
-        ext = (mime.split("/")[-1] or "png").split("+")[0]
-        return (f"input_reference.{ext}", raw, mime)
-    return None
-
-async def generate_yuli_openai_video(client, payload, provider, base_url, requested_model):
-    """玉玉API veo3.1 走 OpenAI multipart 格式 /v1/videos，支持 seconds 时长控制。"""
-    submit_url = f"{base_url}/v1/videos"
-    data = {
-        "model": yuli_openai_model_name(requested_model),
-        "prompt": str(payload.prompt or ""),
-        "seconds": yuli_video_seconds(payload.duration),
-        "size": yuli_openai_size(payload.aspect_ratio),
-    }
-    files = {}
-    for ref in (payload.images or [])[:1]:
-        ref_file = await yuli_fetch_reference_bytes(client, getattr(ref, "url", ""))
-        if ref_file:
-            files["input_reference"] = ref_file
-            break
-    headers = api_headers(json_body=False, provider=provider)
-    if files:
-        response = await client.post(submit_url, headers=headers, data=data, files=files)
-    else:
-        # 文生视频无垫图时，仍以 multipart/form-data 提交（把文本字段作为表单分块），
-        # 避免 httpx 在只有 data 时退化成 application/x-www-form-urlencoded。
-        multipart_fields = {key: (None, value) for key, value in data.items()}
-        response = await client.post(submit_url, headers=headers, files=multipart_fields)
-    response.raise_for_status()
-    try:
-        raw = response.json()
-    except Exception as exc:
-        resp_text = (response.text or "")[:500]
-        raise HTTPException(status_code=502, detail=f"玉玉API 视频接口返回非 JSON 响应（状态 {response.status_code}）：{resp_text}") from exc
-    task_id = raw.get("id") or extract_task_id(raw) or raw.get("task_id")
-    result = raw
-    if task_id and not video_output_urls(raw):
-        result = await wait_for_video_task(client, provider, task_id, submit_url)
-    urls = video_output_urls(result)
-    if not urls:
-        raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
-    local_urls = [await save_remote_video_to_output(url) for url in urls]
-    video_items = await run_storage_io(media_response_items, local_urls, "video")
-    return await _attach_quota_warning_async({"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result})
-
-def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
-    text = str(prompt or "").strip()
-    suffixes = []
-    ratio = str(aspect_ratio or "").strip()
-    if ratio:
-        suffixes.append(f"--ratio {ratio}")
-    if not suffixes:
-        return text
-    suffix_text = " ".join(suffixes)
-    return f"{text} {suffix_text}".strip() if text else suffix_text
-
 async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
-    if is_jimeng_provider(provider):
-        return await generate_jimeng_video(payload, provider)
     base_url = video_api_root(provider)
     if not base_url:
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
     api_key = os.getenv(provider_key_env(provider["id"]), "")
     if not api_key:
         raise HTTPException(status_code=400, detail=f"未配置 {provider.get('name') or provider['id']} 的 API Key，请在 API 设置中填写。")
-    is_apimart = is_apimart_provider(provider)
     is_volcengine = is_volcengine_provider(provider)
-    is_yuli = is_yuli_provider(provider)
     submit_urls = video_submit_url_candidates(provider, base_url)
     submit_url = submit_urls[0]
-    requested_model = selected_model(payload.model, "veo3-fast")
-    is_veo31 = is_apimart and is_apimart_veo31_model(requested_model)
-    # 玉玉API veo3.1 走 OpenAI multipart 格式（支持 seconds 时长）；其余模型（doubao 等）
-    # 沿用下方原生 /v1/video/create JSON 流程。
-    if is_yuli and yuli_is_veo_openai_model(requested_model):
-        try:
-            async with shared_http_client(timeout=VIDEO_POLL_TIMEOUT) as yuli_client:
-                return await generate_yuli_openai_video(yuli_client, payload, provider, base_url, requested_model)
-        except httpx.HTTPStatusError as exc:
-            text = exc.response.text
-            raise HTTPException(status_code=exc.response.status_code, detail=f"上游视频接口错误：{text}") from exc
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
     try:
         async with shared_http_client(timeout=VIDEO_POLL_TIMEOUT) as client:
-            # --- 构造图片载荷 ---
-            if is_apimart:
-                # APIMart 只接受 http/https 或 asset:// URL，先上传本地图片取回网络 URL
-                image_with_roles = []
-                invalid_images = []  # 每项为 (原始 URL, 失败原因)
-                video_payload = []
-                invalid_videos = []
-                for ref_url in payload.videos[:3]:
-                    ref_url = str(ref_url or "").strip()
-                    if not ref_url:
-                        continue
-                    normalized_video_url = await upload_video_for_apimart(client, provider, ref_url)
-                    if valid_apimart_video_image_input(normalized_video_url):
-                        video_payload.append(normalized_video_url)
-                    else:
-                        reason = normalized_video_url[4:] if isinstance(normalized_video_url, str) and normalized_video_url.startswith("ERR:") else apimart_video_reference_error(ref_url)
-                        invalid_videos.append((ref_url, reason))
-                if invalid_videos:
-                    first_url, first_reason = invalid_videos[0]
-                    sample = invalid_video_image_preview(first_url)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"输入视频无法转换为 APIMart 支持的格式：{sample}\n原因：{first_reason}"
-                    )
-                apimart_model = apimart_veo31_model(requested_model) if is_veo31 else ""
-                if apimart_model == "veo3.1-lite" and payload.images:
-                    raise HTTPException(status_code=400, detail="veo3.1-lite 不支持图片输入，请改用 veo3.1-fast 或 veo3.1-quality。")
-                image_limit = 0 if apimart_model == "veo3.1-lite" else (3 if is_veo31 else 9)
-                for ref in payload.images[:image_limit]:
-                    if not ref.url:
-                        continue
-                    role = str(ref.role or "").strip()
-                    if not is_veo31 and role in {"first_frame", "last_frame", "reference_image"}:
-                        up_url = await upload_image_for_apimart(client, provider, ref.url)
-                        if valid_apimart_video_image_input(up_url):
-                            image_with_roles.append({"url": up_url, "role": role})
-                        else:
-                            reason = up_url[4:] if isinstance(up_url, str) and up_url.startswith("ERR:") else "未知错误"
-                            invalid_images.append((ref.url, reason))
-                image_payload = []
-                if not image_with_roles:
-                    for ref in payload.images[:image_limit]:
-                        if not ref.url:
-                            continue
-                        up_url = await upload_image_for_apimart(client, provider, ref.url)
-                        if valid_apimart_video_image_input(up_url):
-                            image_payload.append(up_url)
-                        else:
-                            reason = up_url[4:] if isinstance(up_url, str) and up_url.startswith("ERR:") else "未知错误"
-                            invalid_images.append((ref.url, reason))
-                if payload.images and not image_with_roles and not image_payload:
-                    first_url, first_reason = invalid_images[0] if invalid_images else ("", "未知错误")
-                    sample = invalid_video_image_preview(first_url)
-                    raise HTTPException(status_code=400, detail=f"输入图片无法转换为视频接口支持的格式：{sample}\n原因：{first_reason}\n请确认本地文件存在且不超过 10MB；VEO3.1 需要图片是 APIMart 可访问的 http/https / asset:// / data URL。")
-                # --- APIMart 请求体 ---
-                if is_veo31:
-                    model = apimart_model
-                    body = {
-                        "prompt": payload.prompt,
-                        "model": model,
-                        "duration": apimart_veo31_duration(payload.duration),
-                        "aspect_ratio": apimart_veo31_aspect(payload.aspect_ratio),
-                        "resolution": apimart_veo31_resolution(payload.resolution),
-                    }
-                    if image_payload and model != "veo3.1-lite":
-                        video_images = image_payload[:3]
-                        if model == "veo3.1-quality" and len(video_images) > 2:
-                            video_images = video_images[:2]
-                        body["image_urls"] = video_images
-                        if len(video_images) == 2:
-                            body["generation_type"] = "frame"
-                        elif len(video_images) >= 3 and model != "veo3.1-quality":
-                            body["generation_type"] = "reference"
-                    if model != "veo3.1-lite":
-                        body["official_fallback"] = False
-                else:
-                    body = {
-                        "prompt": payload.prompt,
-                        "model": selected_model(payload.model, "doubao-seedance-2.0"),
-                        "duration": apimart_video_duration(payload.duration),
-                        "size": apimart_video_size(payload.aspect_ratio or payload.size),
-                        "resolution": payload.resolution or "480p",
-                    }
-                    if image_with_roles and video_payload:
-                        raise HTTPException(status_code=400, detail="APIMart Seedance 的 image_with_roles 不能和 video_urls 同时使用，请只保留图片首尾帧或参考视频其中一种。")
-                    if image_with_roles:
-                        body["image_with_roles"] = image_with_roles
-                    elif image_payload:
-                        body["image_urls"] = image_payload[:9]
-                    if video_payload:
-                        body["video_urls"] = video_payload
-                    audio_payload = []
-                    invalid_audios = []
-                    for ref_url in (payload.audios or [])[:3]:
-                        ref_url = str(ref_url or "").strip()
-                        if not ref_url:
-                            continue
-                        normalized_audio_url = await upload_audio_for_apimart(client, provider, ref_url)
-                        if valid_apimart_video_image_input(normalized_audio_url):
-                            audio_payload.append(normalized_audio_url)
-                        else:
-                            reason = normalized_audio_url[4:] if isinstance(normalized_audio_url, str) and normalized_audio_url.startswith("ERR:") else "未知错误"
-                            invalid_audios.append((ref_url, reason))
-                    if invalid_audios:
-                        first_url, first_reason = invalid_audios[0]
-                        raise HTTPException(status_code=400, detail=f"参考音频无法转换为 APIMart 支持的地址：{invalid_video_image_preview(first_url)}\n原因：{first_reason}")
-                    if audio_payload:
-                        body["audio_urls"] = audio_payload
-                    if payload.seed is not None:
-                        body["seed"] = payload.seed
-                    if payload.return_last_frame:
-                        body["return_last_frame"] = True
-                    if payload.generate_audio:
-                        body["generate_audio"] = True
-            else:
-                # 非 APIMart：data URL 方式（OpenAI / ComflyAI 接口）
-                if is_volcengine:
-                    text = str(payload.prompt or "").strip()
-                    volc_model = selected_model(payload.model, "doubao-seedance-2-0-fast-260128")
-                    body = {
-                        "model": volc_model,
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": text,
-                            }
-                        ],
-                    }
-                    # 火山方舟视频接口（含 Seedance 2.0 图生视频）均通过 body 的 duration 字段控制时长；
-                    # 之前对 seedance-2.0 + 参考图的情况省略了 duration，导致接口回退到默认 5s。
-                    body["duration"] = volcengine_video_duration(payload.duration)
-                    if payload.aspect_ratio:
-                        body["ratio"] = payload.aspect_ratio
-                    resolution = volcengine_video_resolution(payload.resolution)
-                    if resolution:
-                        body["resolution"] = resolution
-                    if payload.generate_audio:
-                        body["generate_audio"] = True
-                    image_like_urls = set()
-                    for ref in payload.images[:9]:
-                        url = await run_storage_io(volcengine_media_reference_url, ref.url, 1536)
-                        if not url:
-                            continue
-                        item = {
-                            "type": "image_url",
-                            "image_url": {"url": url},
+                # OpenAI-compatible data URL request
+            if is_volcengine:
+                text = str(payload.prompt or "").strip()
+                volc_model = selected_model(payload.model, "doubao-seedance-2-0-fast-260128")
+                body = {
+                    "model": volc_model,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": text,
                         }
-                        role = volcengine_content_role(ref.role, "image")
-                        if role:
-                            item["role"] = role
-                        body["content"].append(item)
-                        image_like_urls.add(url)
-                    for url in (payload.videos or [])[:3]:
-                        text_url = str(url or "").strip()
-                        if not text_url:
-                            continue
-                        media_url = await run_storage_io(volcengine_media_reference_url, text_url, 1536 if looks_like_image_media_url(text_url) else None)
-                        if not media_url:
-                            continue
-                        if media_url in image_like_urls or looks_like_image_media_url(media_url):
-                            body["content"].append({
-                                "type": "image_url",
-                                "image_url": {"url": media_url},
-                                "role": "reference_image",
-                            })
-                            image_like_urls.add(media_url)
-                            continue
-                        video_items = await volcengine_video_reference_content_items(media_url)
-                        body["content"].extend(video_items)
-                    for url in (payload.audios or [])[:3]:
-                        audio_url = await run_storage_io(volcengine_media_reference_url, url, None)
-                        if not audio_url:
-                            continue
+                    ],
+                }
+                # 火山方舟视频接口（含 Seedance 2.0 图生视频）均通过 body 的 duration 字段控制时长；
+                # 之前对 seedance-2.0 + 参考图的情况省略了 duration，导致接口回退到默认 5s。
+                body["duration"] = volcengine_video_duration(payload.duration)
+                if payload.aspect_ratio:
+                    body["ratio"] = payload.aspect_ratio
+                resolution = volcengine_video_resolution(payload.resolution)
+                if resolution:
+                    body["resolution"] = resolution
+                if payload.generate_audio:
+                    body["generate_audio"] = True
+                image_like_urls = set()
+                for ref in payload.images[:9]:
+                    url = await run_storage_io(volcengine_media_reference_url, ref.url, 1536)
+                    if not url:
+                        continue
+                    item = {
+                        "type": "image_url",
+                        "image_url": {"url": url},
+                    }
+                    role = volcengine_content_role(ref.role, "image")
+                    if role:
+                        item["role"] = role
+                    body["content"].append(item)
+                    image_like_urls.add(url)
+                for url in (payload.videos or [])[:3]:
+                    text_url = str(url or "").strip()
+                    if not text_url:
+                        continue
+                    media_url = await run_storage_io(volcengine_media_reference_url, text_url, 1536 if looks_like_image_media_url(text_url) else None)
+                    if not media_url:
+                        continue
+                    if media_url in image_like_urls or looks_like_image_media_url(media_url):
                         body["content"].append({
-                            "type": "audio_url",
-                            "audio_url": {"url": audio_url},
-                            "role": volcengine_content_role("", "audio"),
+                            "type": "image_url",
+                            "image_url": {"url": media_url},
+                            "role": "reference_image",
                         })
-                    if payload.seed is not None:
-                        body["seed"] = payload.seed
-                elif is_yuli:
-                    # 玉玉API（yuli.host）视频走自有 veo 统一格式：POST /v1/video/create。
-                    # 字段：model / prompt / images[]（http(s) URL）/ aspect_ratio（仅 16:9、9:16）。
-                    # 无 duration 字段，
-                    # 时长由模型本身决定，所以这里不传 duration/seconds。
-                    yuli_images = []
-                    for ref in payload.images[:3]:
-                        ref_url = str(getattr(ref, "url", "") or "").strip()
-                        if not ref_url:
-                            continue
-                        if ref_url.startswith("http://") or ref_url.startswith("https://"):
-                            yuli_images.append(ref_url)
-                        else:
-                            # 本地/dataURL 图片转成 data URL 兜底传递
-                            data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
-                            if data_url:
-                                yuli_images.append(data_url)
-                    body = {
-                        "model": selected_model(payload.model, "veo3.1-fast"),
-                        "prompt": str(payload.prompt or ""),
-                    }
-                    if yuli_images:
-                        body["images"] = yuli_images
-                    ratio = str(payload.aspect_ratio or "").strip()
-                    if ratio in {"16:9", "9:16"}:
-                        body["aspect_ratio"] = ratio
-                else:
-                    image_payload = []
-                    for ref in payload.images[:4]:
-                        if ref.url:
-                            image_payload.append(await run_storage_io(reference_to_data_url, ref.dict(), 1536))
-                    body = {
-                        "prompt": payload.prompt,
-                        "model": selected_model(payload.model, "veo3-fast"),
-                        "duration": payload.duration,
-                    }
-                    if payload.aspect_ratio:
-                        body["aspect_ratio"] = payload.aspect_ratio
-                        body["ratio"] = payload.aspect_ratio
-                    if payload.size:
-                        body["size"] = payload.size
-                    if payload.resolution:
-                        body["resolution"] = payload.resolution
-                    if image_payload:
-                        body["images"] = image_payload
-                    if payload.videos:
-                        body["videos"] = [v for v in payload.videos if v]
-                    if payload.seed is not None:
-                        body["seed"] = payload.seed
-                    if payload.return_last_frame:
-                        body["return_last_frame"] = True
-                    if payload.generate_audio:
-                        body["generate_audio"] = True
+                        image_like_urls.add(media_url)
+                        continue
+                    video_items = await volcengine_video_reference_content_items(media_url)
+                    body["content"].extend(video_items)
+                for url in (payload.audios or [])[:3]:
+                    audio_url = await run_storage_io(volcengine_media_reference_url, url, None)
+                    if not audio_url:
+                        continue
+                    body["content"].append({
+                        "type": "audio_url",
+                        "audio_url": {"url": audio_url},
+                        "role": volcengine_content_role("", "audio"),
+                    })
+                if payload.seed is not None:
+                    body["seed"] = payload.seed
+                if ratio in {"16:9", "9:16"}:
+                    body["aspect_ratio"] = ratio
+            else:
+                image_payload = []
+                for ref in payload.images[:4]:
+                    if ref.url:
+                        image_payload.append(await run_storage_io(reference_to_data_url, ref.dict(), 1536))
+                body = {
+                    "prompt": payload.prompt,
+                    "model": selected_model(payload.model, "veo3-fast"),
+                    "duration": payload.duration,
+                }
+                if payload.aspect_ratio:
+                    body["aspect_ratio"] = payload.aspect_ratio
+                    body["ratio"] = payload.aspect_ratio
+                if payload.size:
+                    body["size"] = payload.size
+                if payload.resolution:
+                    body["resolution"] = payload.resolution
+                if image_payload:
+                    body["images"] = image_payload
+                if payload.videos:
+                    body["videos"] = [v for v in payload.videos if v]
+                if payload.seed is not None:
+                    body["seed"] = payload.seed
+                if payload.return_last_frame:
+                    body["return_last_frame"] = True
+                if payload.generate_audio:
+                    body["generate_audio"] = True
             # --- 发起视频生成请求 ---
             raw = None
             html_response = None
@@ -7604,12 +4950,22 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
         raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
 
 
+AI_PROVIDER_RUNTIME = ProviderRuntime()
+
+
+async def _video_provider_adapter(payload: CanvasVideoRequest, provider: dict):
+    return await _canvas_video_impl(payload, provider)
+
+
+AI_PROVIDER_RUNTIME.register("video_generation", "default", _video_provider_adapter)
+
+
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
     require_model_access(payload.provider_id, payload.model)
     provider = get_api_provider(payload.provider_id)
     async with provider_operation(provider["id"], "video_generation", user_id=current_user_id()):
-        return await _canvas_video_impl(payload, provider)
+        return await AI_PROVIDER_RUNTIME.dispatch("video_generation", provider_protocol(provider), payload, provider)
 
 # --- Caption Rules (per-user) ---
 
@@ -7669,8 +5025,8 @@ def save_expand_rules(payload: dict):
 # --- Canvas LLM ---
 
 async def _canvas_llm_impl(payload: CanvasLLMRequest):
-    chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
-    _llm_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
+    chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model)
+    _llm_provider = get_api_provider(payload.provider)
     system_prompt = (payload.system_prompt or "").strip()
     upstream_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
     for item in payload.messages[-MAX_HISTORY_MESSAGES:]:
@@ -7765,10 +5121,9 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
 
 @app.post("/api/canvas-llm")
 async def canvas_llm(payload: CanvasLLMRequest):
-    _chat_base, _chat_headers, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    _chat_base, _chat_headers, model = resolve_chat_provider(payload.provider, payload.model)
     require_model_access(payload.provider, model)
-    provider_id = payload.provider if payload.provider != "modelscope" else "modelscope"
-    async with provider_operation(provider_id, "llm", user_id=current_user_id()):
+    async with provider_operation(payload.provider, "llm", user_id=current_user_id()):
         return await _canvas_llm_impl(payload)
 
 # --- 对话管理 ---
@@ -8056,22 +5411,11 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
     platform = avatar_platform_for_provider(provider)
     if platform not in AVATAR_SUPPORTED_PLATFORMS:
         name = (provider or {}).get("name") or (provider or {}).get("id") or "该平台"
-        raise HTTPException(status_code=400, detail=f"「{name}」暂不支持数字人/真人认证（目前仅 APIMart 可用，火山等平台待接入官方资产 API）。")
+        raise HTTPException(status_code=400, detail=f"「{name}」暂不支持数字人/真人认证。")
     kind = str(target_item.get("kind") or "image").lower()
     if kind not in ("image", "video", "audio"):
         kind = "image"
-    if platform == "apimart":
-        project_name = str(payload.project_name or "default").strip() or "default"
-        async with shared_http_client(timeout=VIDEO_POLL_TIMEOUT) as client:
-            public_url = await upload_media_for_apimart(client, provider, target_item.get("url") or "", kind)
-        if not valid_apimart_video_image_input(public_url):
-            reason = public_url[4:] if isinstance(public_url, str) and public_url.startswith("ERR:") else "无法获取公网可访问地址"
-            raise HTTPException(status_code=400, detail=f"素材无法提交到 APIMart：{reason}\n请配置 PUBLIC_BASE_URL，或确认本地文件存在。")
-        task_id = await submit_apimart_avatar_asset(
-            provider, public_url, target_item.get("name") or "asset", kind,
-            project_name=project_name, group_name=payload.group_name,
-        )
-    elif platform == "volcengine":
+    if platform == "volcengine":
         # 火山以 API 设置里配置的 ProjectName 为准（必须与视频生成 key 的项目一致）
         project_name = str(provider.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME
         public_url = volcengine_public_asset_url(target_item.get("url") or "")
@@ -8115,9 +5459,7 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
     task_id = str(reg.get("task_id") or "").strip()
     if not task_id:
         raise HTTPException(status_code=400, detail="该素材还没有提交到这个平台的认证审核。")
-    if platform == "apimart":
-        result = await check_apimart_avatar_task(provider, task_id)
-    elif platform == "volcengine":
+    if platform == "volcengine":
         result = await check_volcengine_avatar_task(
             task_id, str(reg.get("project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME,
         )
@@ -8163,7 +5505,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
     await asyncio.to_thread(save_conversation, user_id, conversation)
 
     if payload.mode == "image":
-        image_provider_id = payload.provider if payload.provider not in {"modelscope"} else "comfly"
+        image_provider_id = payload.provider
         provider = get_api_provider(image_provider_id)
         default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
         model = selected_model(payload.image_model or payload.model, default_model)
@@ -8188,10 +5530,9 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
         }
     else:
-        chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+        chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model)
         require_model_access(payload.provider, model)
-        _conv_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
-        _conv_is_apimart = is_apimart_provider(_conv_provider)
+        _conv_provider = get_api_provider(payload.provider)
         history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
         upstream_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for item in history:
@@ -8199,12 +5540,9 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             if msg:
                 upstream_messages.append(msg)
         try:
-            provider_id = payload.provider if payload.provider != "modelscope" else "modelscope"
-            async with provider_operation(provider_id, "llm", user_id=user_id):
+            async with provider_operation(payload.provider, "llm", user_id=user_id):
                 async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
                     conv_req_body = {"model": model, "messages": upstream_messages}
-                    if _conv_is_apimart:
-                        conv_req_body["stream"] = False
                     response = await client.post(
                         f"{chat_base}/chat/completions",
                         headers=chat_hdrs,
@@ -8218,7 +5556,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             raise HTTPException(status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body}") from exc
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"请求上游接口失败：{exc}") from exc
-        raw_data = unwrap_apimart_response(raw) if isinstance(raw, dict) else raw
+        raw_data = raw
         assistant_message = {
             "id": uuid.uuid4().hex,
             "role": "assistant",
@@ -8259,9 +5597,9 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     conversation["updated_at"] = now_ms()
     await asyncio.to_thread(save_conversation, user_id, conversation)
 
-    chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model)
     require_model_access(payload.provider, model)
-    _stream_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
+    _stream_provider = get_api_provider(payload.provider)
     history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
     upstream_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for item in history:
@@ -8274,8 +5612,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         raw_usage = None
         yield sse_event({"type": "meta", "conversation": conversation})
         try:
-            provider_id = payload.provider if payload.provider != "modelscope" else "modelscope"
-            async with provider_operation(provider_id, "llm", user_id=user_id):
+            async with provider_operation(payload.provider, "llm", user_id=user_id):
                 async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
                     async with client.stream(
                         "POST",
@@ -8331,365 +5668,6 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
 
 # --- 历史记录 ---
 # GET /api/history、POST /api/history/save、POST /api/history/delete 路由已迁移至 app/routers/history.py。
-
-# --- ModelScope 角度控制 ---
-
-@app.post("/api/angle/poll_status")
-async def poll_angle_cloud(req: CloudPollRequest):
-    api_root = modelscope_image_api_root()
-    clean_token = modelscope_api_key(req.api_key)
-    if not clean_token:
-        raise HTTPException(status_code=400, detail="未提供 ModelScope API Key")
-
-    headers = {
-        "Authorization": f"Bearer {clean_token}",
-        "Content-Type": "application/json",
-        "X-ModelScope-Async-Mode": "true"
-    }
-    task_id = req.task_id
-    bind_log_context(task_id=task_id)
-    task_logger.info("angle task polling resumed", extra={"event": "task_poll_started", "provider": "modelscope", "operation": "angle_generation", "status": "running"})
-
-    try:
-        async with shared_http_client(timeout=30) as client:
-            for i in range(300):
-                await asyncio.sleep(2)
-                result = await client.get(
-                    f"{api_root}/tasks/{task_id}",
-                    headers={**headers, "X-ModelScope-Task-Type": "image_generation"},
-                )
-                result.raise_for_status()
-                data = result.json()
-                status = str(data.get("task_status") or "").upper()
-
-                if status == "SUCCEED":
-                    img_url = data["output_images"][0]
-                    local_path = ""
-                    try:
-                        async with shared_http_client() as dl_client:
-                            img_res = await dl_client.get(img_url)
-                            if img_res.status_code == 200:
-                                filename = f"cloud_angle_{int(time.time())}.png"
-                                local_path = await run_storage_io(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
-                            else:
-                                raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
-                    except Exception as exc:
-                        raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
-
-                    record = {"timestamp": time.time(), "prompt": f"Resumed {task_id}", "images": [local_path], "type": "angle"}
-                    await asyncio.to_thread(save_to_history, record)
-                    if req.client_id:
-                        await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id, current_user_id())
-                    return await _attach_quota_warning_async(await run_storage_io(media_response_item, local_path, "", "image"))
-
-                elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
-                    if req.client_id:
-                        await manager.send_personal_message({"type": "cloud_status", "status": "FAILED", "task_id": task_id}, req.client_id, current_user_id())
-                    raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
-
-                if i % 5 == 0 and req.client_id:
-                    await manager.send_personal_message({
-                        "type": "cloud_status", "status": f"{status} ({i}/300)",
-                        "task_id": task_id, "progress": i, "total": 300
-                    }, req.client_id, current_user_id())
-
-            if req.client_id:
-                await manager.send_personal_message({"type": "cloud_status", "status": "TIMEOUT", "task_id": task_id}, req.client_id, current_user_id())
-            return {"status": "timeout", "task_id": task_id, "message": "Task still pending"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        task_logger.exception("angle task polling failed", extra={"event": "task_failed", "provider": "modelscope", "operation": "angle_generation", "status": "failed", "error_type": type(e).__name__})
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.post("/api/angle/generate")
-async def generate_angle_cloud(req: CloudGenRequest):
-    api_root = modelscope_image_api_root()
-    clean_token = modelscope_api_key(req.api_key)
-    if not clean_token:
-        raise HTTPException(status_code=400, detail="未提供 ModelScope API Key")
-
-    headers = {
-        "Authorization": f"Bearer {clean_token}",
-        "Content-Type": "application/json",
-        "X-ModelScope-Async-Mode": "true"
-    }
-    model = selected_model(req.model, "Qwen/Qwen-Image-Edit-2511")
-    payload = {
-        "model": model,
-        "prompt": req.prompt.strip(),
-        "image_url": [await run_storage_io(modelscope_image_url, url, 1536) for url in req.image_urls]
-    }
-    if req.resolution:
-        payload["size"] = modelscope_size(req.resolution)
-    if req.loras is not None:
-        payload["loras"] = req.loras
-
-    try:
-        async with shared_http_client(timeout=30) as client:
-            submit_res = await client.post(f"{api_root}/images/generations", headers=headers, json=payload)
-            if submit_res.status_code != 200:
-                try:
-                    detail = submit_res.json()
-                except:
-                    detail = submit_res.text
-                raise HTTPException(status_code=submit_res.status_code, detail=detail)
-
-            task_id = submit_res.json().get("task_id")
-            bind_log_context(task_id=task_id)
-            task_logger.info("angle task submitted", extra={"event": "task_submitted", "provider": "modelscope", "operation": "angle_generation", "status": "queued"})
-
-            for i in range(300):
-                await asyncio.sleep(2)
-                result = await client.get(
-                    f"{api_root}/tasks/{task_id}",
-                    headers={**headers, "X-ModelScope-Task-Type": "image_generation"},
-                )
-                result.raise_for_status()
-                data = result.json()
-                status = str(data.get("task_status") or "").upper()
-
-                if status == "SUCCEED":
-                    img_url = data["output_images"][0]
-                    local_path = ""
-                    try:
-                        async with shared_http_client() as dl_client:
-                            img_res = await dl_client.get(img_url)
-                            if img_res.status_code == 200:
-                                filename = f"cloud_angle_{int(time.time())}.png"
-                                local_path = await run_storage_io(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
-                            else:
-                                raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
-                    except Exception as exc:
-                        raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
-
-                    record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "angle"}
-                    await asyncio.to_thread(save_to_history, record)
-                    if req.client_id:
-                        await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id, current_user_id())
-                    if GLOBAL_LOOP:
-                        asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record, current_user_id()), GLOBAL_LOOP)
-                    item = await run_storage_io(media_response_item, local_path, "", "image")
-                    item["task_id"] = task_id
-                    return await _attach_quota_warning_async(item)
-
-                elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
-                    if req.client_id:
-                        await manager.send_personal_message({"type": "cloud_status", "status": "FAILED", "task_id": task_id}, req.client_id, current_user_id())
-                    raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
-
-                if i % 5 == 0 and req.client_id:
-                    await manager.send_personal_message({
-                        "type": "cloud_status", "status": f"{status} ({i}/300)",
-                        "task_id": task_id, "progress": i, "total": 300
-                    }, req.client_id, current_user_id())
-
-            if req.client_id:
-                await manager.send_personal_message({"type": "cloud_status", "status": "TIMEOUT", "task_id": task_id}, req.client_id, current_user_id())
-            return {"status": "timeout", "task_id": task_id, "message": "Task still pending"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        task_logger.exception("angle generation failed", extra={"event": "task_failed", "provider": "modelscope", "operation": "angle_generation", "status": "failed", "error_type": type(e).__name__})
-        raise HTTPException(status_code=400, detail=str(e))
-
-# --- ModelScope Z-Image 云端生图 ---
-
-@app.post("/generate")
-async def generate_cloud(req: CloudGenRequest):
-    api_root = modelscope_image_api_root()
-    clean_token = modelscope_api_key(req.api_key)
-    if not clean_token:
-        raise HTTPException(status_code=400, detail="未提供 ModelScope API Key")
-
-    headers = {
-        "Authorization": f"Bearer {clean_token}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": "Tongyi-MAI/Z-Image-Turbo",
-        "prompt": req.prompt.strip(),
-        "size": modelscope_size(req.resolution),
-        "n": 1
-    }
-    if req.loras is not None:
-        payload["loras"] = req.loras
-
-    try:
-        async with shared_http_client(timeout=30) as client:
-            submit_res = await client.post(
-                f"{api_root}/images/generations",
-                headers={**headers, "X-ModelScope-Async-Mode": "true"},
-                json=payload
-            )
-            if submit_res.status_code != 200:
-                try:
-                    detail = submit_res.json()
-                except:
-                    detail = submit_res.text
-                raise HTTPException(status_code=submit_res.status_code, detail=detail)
-
-            task_id = submit_res.json().get("task_id")
-            bind_log_context(task_id=task_id)
-            task_logger.info("Z-Image task submitted", extra={"event": "task_submitted", "provider": "modelscope", "operation": "image_generation", "status": "queued"})
-
-            for i in range(200):
-                await asyncio.sleep(3)
-                result = await client.get(
-                    f"{api_root}/tasks/{task_id}",
-                    headers={**headers, "X-ModelScope-Task-Type": "image_generation"},
-                )
-                result.raise_for_status()
-                data = result.json()
-                status = str(data.get("task_status") or "").upper()
-
-                if i % 5 == 0:
-                    task_logger.debug("Z-Image task polled", extra={"event": "task_poll", "provider": "modelscope", "operation": "image_generation", "status": status, "retry_count": i})
-
-                if status == "SUCCEED":
-                    img_url = data["output_images"][0]
-                    local_path = ""
-                    try:
-                        async with shared_http_client() as dl_client:
-                            img_res = await dl_client.get(img_url)
-                            if img_res.status_code == 200:
-                                filename = f"cloud_{int(time.time())}.png"
-                                local_path = await run_storage_io(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
-                            else:
-                                raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
-                    except Exception as exc:
-                        logger.exception("ModelScope output download failed", extra={"event": "image_download_failed", "provider": "modelscope", "operation": "download"})
-                        raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
-
-                    record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "cloud"}
-                    await asyncio.to_thread(save_to_history, record)
-                    try:
-                        await manager.broadcast_new_image(record, current_user_id())
-                    except Exception:
-                        pass
-                    return await _attach_quota_warning_async(await run_storage_io(media_response_item, local_path, "", "image"))
-
-                elif status in {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}:
-                    raise HTTPException(status_code=502, detail=f"ModelScope task failed: {data}")
-
-            raise Exception("Cloud generation timeout")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        task_logger.exception("cloud generation failed", extra={"event": "task_failed", "provider": "modelscope", "operation": "image_generation", "status": "failed", "error_type": type(e).__name__})
-        raise HTTPException(status_code=400, detail=str(e))
-
-# --- ModelScope 通用图片生成（支持图生图） ---
-
-@app.post("/api/ms/generate")
-async def ms_generate(req: MsGenerateRequest):
-    api_root = modelscope_image_api_root()
-    clean_token = modelscope_api_key(req.api_key)
-    if not clean_token:
-        raise HTTPException(status_code=400, detail="未配置 ModelScope API Key，请在 API 设置中填写，或重新保存 ModelScope Token。")
-
-    headers = {
-        "Authorization": f"Bearer {clean_token}",
-        "Content-Type": "application/json",
-        "X-ModelScope-Async-Mode": "true"
-    }
-    payload = {
-        "model": req.model,
-        "prompt": req.prompt.strip(),
-    }
-    if req.width and req.height:
-        payload["width"] = req.width
-        payload["height"] = req.height
-        payload["size"] = modelscope_size(req.size or f"{req.width}x{req.height}")
-    elif req.size:
-        payload["size"] = modelscope_size(req.size)
-    if req.image_urls:
-        payload["image_url"] = [
-            await run_storage_io(modelscope_image_url, url, 1536)
-            for url in req.image_urls
-        ]
-    if req.loras is not None:
-        payload["loras"] = req.loras
-
-    try:
-        async with shared_http_client(timeout=30) as client:
-            submit_res = await client.post(
-                f"{api_root}/images/generations",
-                headers=headers,
-                json=payload
-            )
-            if submit_res.status_code != 200:
-                try:
-                    detail = submit_res.json()
-                except:
-                    detail = submit_res.text
-                raise HTTPException(status_code=submit_res.status_code, detail=detail)
-
-            task_id = submit_res.json().get("task_id")
-            bind_log_context(task_id=task_id)
-            task_logger.info("ModelScope generation task submitted", extra={"event": "task_submitted", "provider": "modelscope", "operation": "image_generation", "status": "queued", "model": req.model})
-
-            TERMINAL_FAILED_STATUSES = {"FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REVOKED"}
-
-            for i in range(300):
-                await asyncio.sleep(2)
-                try:
-                    result = await client.get(
-                        f"{api_root}/tasks/{task_id}",
-                        headers={**headers, "X-ModelScope-Task-Type": "image_generation"},
-                    )
-                    data = result.json()
-                    status = data.get("task_status")
-                    task_logger.debug("ModelScope task polled", extra={"event": "task_poll", "provider": "modelscope", "operation": "image_generation", "status": status, "retry_count": i})
-
-                    if status == "SUCCEED":
-                        img_url = data["output_images"][0]
-                        local_path = ""
-                        try:
-                            async with shared_http_client() as dl_client:
-                                img_res = await dl_client.get(img_url)
-                                if img_res.status_code == 200:
-                                    filename = f"ms_{req.model.replace('/', '_').replace(':', '_')}_{int(time.time())}.png"
-                                    local_path = await run_storage_io(store_generated_media_bytes, img_res.content, filename, "image", img_res.headers.get("content-type", ""))
-                                else:
-                                    raise HTTPException(status_code=502, detail="ModelScope 图片下载失败")
-                        except Exception as exc:
-                            raise HTTPException(status_code=502, detail=f"ModelScope 图片写入 MinIO 失败：{exc}") from exc
-
-                        record = {
-                            "timestamp": time.time(),
-                            "prompt": req.prompt,
-                            "images": [local_path],
-                            "type": "klein",
-                            "model": req.model,
-                        }
-                        await asyncio.to_thread(save_to_history, record)
-                        if GLOBAL_LOOP:
-                            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record, current_user_id()), GLOBAL_LOOP)
-                        item = await run_storage_io(media_response_item, local_path, "", "image")
-                        item["task_id"] = task_id
-                        return await _attach_quota_warning_async(item)
-
-                    elif status in TERMINAL_FAILED_STATUSES:
-                        error_info = data.get("error_info") or data.get("message") or data.get("detail") or str(data)
-                        raise HTTPException(status_code=502, detail=f"MS task {status}: {error_info}")
-
-                except HTTPException:
-                    raise
-                except Exception as loop_e:
-                    task_logger.warning("ModelScope polling attempt failed", exc_info=True, extra={"event": "task_poll_retry", "provider": "modelscope", "operation": "image_generation", "status": "retrying", "retry_count": i, "error_type": type(loop_e).__name__})
-                    continue
-
-            raise HTTPException(status_code=504, detail="MS 生图超时")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        task_logger.exception("ModelScope generation failed", extra={"event": "task_failed", "provider": "modelscope", "operation": "image_generation", "status": "failed", "error_type": type(e).__name__})
-        raise HTTPException(status_code=400, detail=str(e))
 
 # --- 本地 ComfyUI 生图 ---
 
@@ -9076,7 +6054,6 @@ app.include_router(feedback_router.router)
 app.include_router(help_router.router)
 app.include_router(announcement_router.router)
 app.include_router(storage_management_router.router)
-
 
 if __name__ == "__main__":
     import argparse, uvicorn

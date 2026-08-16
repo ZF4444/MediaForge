@@ -27,7 +27,7 @@ def test_json_formatter_adds_context_and_redacts_secrets():
         record = logging.LogRecord("aistudio.app.test", logging.INFO, __file__, 1, "provider called", (), None)
         record.event = "provider_called"
         record.api_key = "abcd1234567890wxyz"
-        record.provider = "modelscope"
+        record.provider = "runninghub"
         payload = json.loads(JsonFormatter().format(record))
     finally:
         reset_log_context(token)
@@ -35,7 +35,7 @@ def test_json_formatter_adds_context_and_redacts_secrets():
     assert payload["event"] == "provider_called"
     assert payload["request_id"] == "req_test123"
     assert payload["user_id"] == "alice"
-    assert payload["provider"] == "modelscope"
+    assert payload["provider"] == "runninghub"
     assert payload["api_key"] == "abcd***wxyz"
     assert redact({"path": "/api/providers", "request_id": "req_123456789012345678901234"}) == {
         "path": "/api/providers",

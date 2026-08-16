@@ -531,8 +531,6 @@
         };
         const PROTOCOL_LABEL = {
             api:'API',
-            apimart:'API',
-            jimeng:'即梦',
             volcengine:'火山',
             gemini:'Gemini'
         };
@@ -573,7 +571,7 @@
             )).filter(p => {
                 const proto = String(p.protocol || '').toLowerCase();
                 const pid = String(p.id || '').toLowerCase();
-                return proto !== 'modelscope' && proto !== 'runninghub' && pid !== 'modelscope' && pid !== 'runninghub';
+                return proto !== 'runninghub' && pid !== 'runninghub';
             });
             return list.length ? list : [{ id:'comfly', name:'Comfly', image_models:[models.gpt, models.nano] }];
         }
@@ -588,10 +586,8 @@
             const proto = String(p.protocol || '').toLowerCase();
             const pid = String(p.id || '').toLowerCase();
             const base = String(p.base_url || '').toLowerCase();
-            if(proto === 'jimeng' || pid === 'jimeng') return 'jimeng';
             if(proto === 'volcengine' || pid === 'volcengine') return 'volcengine';
             if(proto === 'gemini') return 'gemini';
-            if(proto === 'apimart' || base.includes('apimart.ai')) return 'apimart';
             return 'api';
         }
         function renderProviderControls(){
@@ -913,7 +909,7 @@
                     n:1,
                     reference_images:refs
                 };
-                if(providerProtocol(selectedProvider) === 'api' || providerProtocol(selectedProvider) === 'apimart') body.quality = 'auto';
+                if(providerProtocol(selectedProvider) === 'api') body.quality = 'auto';
                 const res = await fetch('/api/online-image', {
                     method:'POST',
                     headers:{ 'Content-Type':'application/json' },

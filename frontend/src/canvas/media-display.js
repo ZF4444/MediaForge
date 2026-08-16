@@ -487,9 +487,6 @@ function smartRunTaskLabel(run){
     const s = run?.settings || {};
     if(run?.kind === 'video') return s.videoModel || 'Video';
     if(s.engine === 'comfy') return s.comfyWorkflow || 'ComfyUI';
-    if(s.engine === 'modelscope'){
-        return s.msgenModel === 'custom' ? (s.msCustomModel || 'Modelscope') : (MS_GEN_MODELS[s.msgenModel]?.label || s.msgenModel || 'Modelscope');
-    }
     return s.model || 'API Image';
 }
 function outputUrlLooksVideo(url){

@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS app_settings (
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL DEFAULT 1
 );
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS ai_task_archive (
+    task_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT '',
+    provider_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+    created_at DOUBLE PRECISION NOT NULL, completed_at DOUBLE PRECISION NOT NULL,
+    upstream_task_id TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', payload_json JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_ai_task_archive_owner_created ON ai_task_archive(owner_id, completed_at DESC);
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id TEXT NOT NULL, key TEXT NOT NULL, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id, key)
@@ -221,6 +228,25 @@ def set_app_setting_if_version(key: str, value: Any, expected_version: int) -> i
         )
         row = cur.fetchone()
     return int(row["version"]) if row else None
+
+
+def archive_ai_task(task: Dict[str, Any]) -> None:
+    """Persist a terminal task once so Redis expiration does not erase its audit trail."""
+    from app.core.utils import now_ms
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return
+    payload = {key: value for key, value in task.items() if key not in {"request", "result"}}
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO ai_task_archive(task_id,owner_id,task_type,provider_id,model,status,created_at,completed_at,upstream_task_id,error,payload_json)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT(task_id) DO UPDATE SET status=EXCLUDED.status, completed_at=EXCLUDED.completed_at,
+                 upstream_task_id=EXCLUDED.upstream_task_id, error=EXCLUDED.error, payload_json=EXCLUDED.payload_json""",
+            (task_id, str(task.get("owner_id") or ""), str(task.get("type") or ""), str(task.get("provider_id") or ""),
+             str(task.get("model") or ""), str(task.get("status") or ""), float(task.get("created_at") or now_ms() / 1000),
+             float(task.get("updated_at") or now_ms() / 1000), str(task.get("upstream_task_id") or ""), str(task.get("error") or ""), json_value(payload)),
+        )
 
 
 def get_user_setting(user_id: str, key: str, default: Any = None) -> Any:

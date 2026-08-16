@@ -553,7 +553,7 @@ function mediaItemForStorage(item){
 function stripNodeScaleFieldsForStorage(node){
     if(!isSmartImageNode(node)) return;
     delete node.scale;
-    const keepPendingSize = Number(node.pending) > 0 || Boolean(node.queued || node.jimengPending || (Array.isArray(node.pendingTasks) && node.pendingTasks.length));
+    const keepPendingSize = Number(node.pending) > 0 || Boolean(node.queued || (Array.isArray(node.pendingTasks) && node.pendingTasks.length));
     if(!keepPendingSize){
         delete node.w;
         delete node.h;
@@ -581,12 +581,12 @@ const initialSmartSettings = cloneSmartSettings(settings);
 let canvasDefaultSmartSettings = cloneSmartSettings(settings);
 let recentSmartSettingsByMode = {};
 function smartSettingsModeKey(source=settings){
-    const engine = ['api','volcengine','modelscope','comfy','runninghub'].includes(source?.engine) ? source.engine : 'api';
+    const engine = ['api','volcengine','comfy','runninghub'].includes(source?.engine) ? source.engine : 'api';
     if(engine === 'api') return `api:${source?.apiKind === 'video' ? 'video' : 'image'}`;
     if(engine === 'volcengine') return `volcengine:${source?.apiKind === 'video' ? 'video' : 'image'}`;
     if(engine === 'comfy') return 'comfy';
     if(engine === 'runninghub') return 'runninghub';
-    return 'modelscope';
+    return 'api';
 }
 function loadRecentSmartSettings(){
     try {
@@ -621,7 +621,7 @@ function rememberRecentSmartSettings(source=settings, node=null){
     saveRecentSmartSettings();
 }
 function applyRecentSmartSettingsForCurrentMode(){
-    const requestedEngine = ['api','volcengine','modelscope','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
+    const requestedEngine = ['api','volcengine','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
     const requestedApiKind = settings.apiKind === 'video' ? 'video' : 'image';
     const key = smartSettingsModeKey(settings);
     const saved = recentSmartSettingsForMode(key);
@@ -659,7 +659,6 @@ function genKindIcon(node){
 /* 各类生成节点允许的引擎：
    图片生成 / 视频生成 → AI生成(api)、ComfyUI 工作流(comfy) 与 RH 应用(runninghub)；
    工作流生成 → ComfyUI 工作流(comfy) 与 RH 应用(runninghub)。
-   已移除火山引擎(volcengine)、MS生成(modelscope)选项。
    返回 null 表示不限制（非定型节点，保留全部引擎）。 */
 function allowedEnginesForNode(node){
     if(node?.genKind === 'image') return ['api','comfy','runninghub'];
@@ -704,7 +703,7 @@ function isUploadedImageOnlyNode(node){
     if(!isSmartImageNode(node) || isHistoryGroupNode(node)) return false;
     if(isSmartAssetImageNode(node)) return true;
     const images = (node.images || []).filter(img => img?.url);
-    if(!images.length || node.pending || node.running || node.queued || node.jimengPending) return false;
+    if(!images.length || node.pending || node.running || node.queued) return false;
     if(node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt || node.runFinishedAt || node.runElapsedMs) return false;
     if((node.inputNodeIds || []).length) return false;
     if((node.runPromptRefs || []).length || (node.runInputRefs || []).length) return false;
@@ -766,7 +765,7 @@ function exceedsFourKStandard(width, height){
 function withOutpaintDisplaySettings(node, baseSettings){
     const size = validOutpaintSize(node);
     if(!size) return baseSettings;
-    const engine = ['api','volcengine','modelscope','comfy','runninghub'].includes(baseSettings?.engine) ? baseSettings.engine : 'api';
+    const engine = ['api','volcengine','comfy','runninghub'].includes(baseSettings?.engine) ? baseSettings.engine : 'api';
     const next = {
         ...baseSettings,
         resolution:'custom',
@@ -777,13 +776,6 @@ function withOutpaintDisplaySettings(node, baseSettings){
         outpaintResolutionLocked:true
     };
     if(isApiLikeEngine(engine)) next.apiKind = 'image';
-    if(engine === 'modelscope'){
-        next.msResolution = 'custom';
-        next.msRatio = '';
-        next.msCustomWidth = size.width;
-        next.msCustomHeight = size.height;
-        next.msCustomSize = `${size.width}x${size.height}`;
-    }
     if(engine === 'comfy'){
         next.width = size.width;
         next.height = size.height;
@@ -1504,7 +1496,6 @@ async function loadCanvas({renderCanvas=true}={}){
         if(renderCanvas){
             render();
             resumeSmartPendingTasks();
-            resumeJimengPendingNodes();
             startCanvasMetaPoll();
         }
         suppressAutoSaveReleaseTimer = setTimeout(() => {
@@ -1763,14 +1754,12 @@ function updateNodeElementDuringResize(node){
 function smartRunPlatformLabel(run){
     const s = run?.settings || {};
     if(s.engine === 'comfy') return 'ComfyUI';
-    if(s.engine === 'modelscope') return 'Modelscope';
     if(run?.kind === 'video') return videoProviderById(s.videoProvider || '')?.name || s.videoProvider || 'Video';
     return apiProviderById(s.provider_id || '')?.name || s.provider_id || 'API';
 }
 function smartRunRequestMeta(run){
     const s = run?.settings || {};
     if(s.engine === 'comfy') return {workflow_json:s.comfyWorkflow || ''};
-    if(s.engine === 'modelscope') return {backend:'Modelscope', model:s.msgenModel || '', custom_model:s.msCustomModel || ''};
     if(run?.kind === 'video') return {provider_id:s.videoProvider || '', model:s.videoModel || '', duration:s.videoDuration || '', aspect_ratio:s.videoAspect || '', resolution:s.videoResolution || ''};
     return {provider_id:s.provider_id || '', model:s.model || '', size:run?.size || '', quality:s.quality || '', n:s.count || 1};
 }
@@ -1907,7 +1896,7 @@ function promptNodeBodyHtml(node){
 // M2 拆分：loopNumberControlHtml / smartLoopTokenLabel / smartLoopTokenChipHtml /
 // smartLoopVariableHtml / smartLoopEditorText / insertSmartLoopToken /
 // smartLoopBodyHtml 已迁移到 frontend/src/canvas/loop-node.js（经典 <script>，同上）。
-// M7 拆分：smartGroupBodyHtml / jimengPendingBodyHtml / smartRecoverableImageTask /
+// M7 拆分：smartGroupBodyHtml / smartRecoverableImageTask /
 // imageTaskRecoverBodyHtml / nodeBodyHtml / formatRunDuration / nodeRunElapsedMs /
 // runTimePillHtml / hideRunTimerForNode / refreshRunTimerPills / render /
 // measureSmartNodeImages 已迁移到 frontend/src/canvas/canvas-render.js
@@ -2330,9 +2319,7 @@ function expectedOutputSize(){
         return {w:1024, h:1024};
     }
     if(settings.engine === 'runninghub') return {w:1024, h:1024};
-    const sizeStr = settings.engine === 'modelscope'
-        ? apiImageSize(settings.msRatio || 'square', settings.msResolution || '1k', settings.msCustomRatio || '', settings.msCustomSize || '', settings.msRatioMatched || '')
-        : sizeForRun();
+    const sizeStr = sizeForRun();
     const parsed = parseSizeValue(sizeStr);
     if(parsed){
         return {w: Number(parsed.width) || 1024, h: Number(parsed.height) || 1024};
@@ -2342,11 +2329,6 @@ function expectedOutputSize(){
 function explicitRequestOutputSizeForPending(){
     if(isApiLikeEngine(settings.engine) && settings.apiKind !== 'video'){
         const parsed = parseSizeValue(sizeForRun());
-        if(parsed) return {w:Number(parsed.width) || 1024, h:Number(parsed.height) || 1024};
-    }
-    if(settings.engine === 'modelscope'){
-        const sizeStr = apiImageSize(settings.msRatio || 'square', settings.msResolution || '1k', settings.msCustomRatio || '', settings.msCustomSize || '', settings.msRatioMatched || '');
-        const parsed = parseSizeValue(sizeStr);
         if(parsed) return {w:Number(parsed.width) || 1024, h:Number(parsed.height) || 1024};
     }
     return null;
@@ -3218,9 +3200,7 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
     }
     const urls = activeSettings.engine === 'runninghub'
         ? await runRunningHubGeneration(prompt, refs, activeSettings)
-        : activeSettings.engine === 'modelscope'
-            ? await runModelscopeGeneration(prompt, refs, activeSettings)
-            : [];
+        : [];
     return {urls, kind:mediaKindForUrls(urls, 'image')};
 }
 async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
@@ -3301,7 +3281,6 @@ async function runPromptLLMNode(nodeId){
                 videos:requestVideos,
                 model,
                 provider,
-                ms_model: provider === 'modelscope' ? model : '',
                 system_prompt:systemPrompt
             })
         }).then(async r => {
@@ -3322,7 +3301,7 @@ async function runPromptLLMNode(nodeId){
 // M5 拆分（第2批）：comfyFieldKind / runApiGeneration /
 // submitRunningHubGeneration / pollRunningHubTask /
 // runRunningHubGeneration / runApiVideoGeneration /
-// runModelscopeGeneration / urlToBase64 / sleep / runComfyGeneration /
+// urlToBase64 / sleep / runComfyGeneration /
 // comfyNameForRef
 // 已迁移到 frontend/src/canvas/cascade-run.js（经典 <script>，
 // 非 ES module，原因同 M1-M4）。
@@ -3336,16 +3315,6 @@ function isRunningHubPendingTask(task){
     // RunningHub 标准模型 API（如 GPT-Image2）走通用 /api/canvas-image-tasks 流程，
     // 只有 AI 应用引擎提交的任务才带 mode 标记，需要走 /api/runninghub/query 轮询。
     return task?.mode === 'app';
-}
-class JimengPendingSignal extends Error {
-    constructor(info){
-        const data = info || {};
-        super(data.message || '即梦任务排队中，可继续等待或手动查询');
-        this.jimengPending = true;
-        this.submitId = data.submitId || data.submit_id || '';
-        this.kind = data.kind || 'image';
-        this.queueInfo = data.queueInfo || data.queue_info || {};
-    }
 }
 class ImageTaskRecoverSignal extends Error {
     constructor(info){
@@ -3362,46 +3331,6 @@ function extractUpstreamTaskId(text){
     const match = String(text || '').match(/(?:task_id|taskId|task id)\s*[=:：]\s*([A-Za-z0-9_.:-]+)/i);
     return match ? match[1] : '';
 }
-const activeJimengPolls = new Set();
-const JIMENG_POLL_INTERVAL = 60000;
-const JIMENG_POLL_MAX = 1440;
-function jimengQueueText(queueInfo){
-    const qi = queueInfo || {};
-    const idx = qi.queue_idx;
-    const len = qi.queue_length;
-    if(idx != null && len != null) return `即梦云端排队中（第 ${idx}/${len} 位）`;
-    return '即梦云端生成中';
-}
-function setNodeJimengPending(node, signal){
-    if(!node || !signal || !signal.submitId) return;
-    const prev = node.jimengPending && node.jimengPending.submitId === signal.submitId ? node.jimengPending : null;
-    node.jimengPending = {
-        submitId:signal.submitId,
-        kind:signal.kind || (prev && prev.kind) || 'image',
-        queueInfo:signal.queueInfo || (prev && prev.queueInfo) || {},
-        message:signal.message || (prev && prev.message) || '',
-        startedAt:(prev && prev.startedAt) || nowMs(),
-        updatedAt:nowMs(),
-        querying:prev ? prev.querying : false
-    };
-    node.running = false;
-    node.pending = 0;
-    delete node.pendingCandidatePool;
-    delete node.pendingTasks;
-    if(!node.runStartedAt) node.runStartedAt = node.jimengPending.startedAt;
-    delete node.runFinishedAt;
-    delete node.runElapsedMs;
-    node.runTimerHidden = false;
-    render();
-    scheduleSave();
-    startJimengPoll(node);
-}
-function handleJimengPendingSignal(node, e){
-    if(!(e && e.jimengPending && e.submitId)) return false;
-    setNodeJimengPending(node, e);
-    toast((e.message || jimengQueueText(e.queueInfo)).slice(0, 160));
-    return true;
-}
 function handleStorageQuotaSignal(e){
     if(!(e && e.storageQuotaExceeded)) return false;
     try {
@@ -3415,78 +3344,6 @@ function handleStorageQuotaSignal(e){
         toast((e.message || '存储空间不足').slice(0, 160));
     }
     return true;
-}
-function finalizeJimengPending(node, urls, kind='image'){
-    if(!node) return false;
-    const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : kind === 'text' ? 'txt' : 'png';
-    const additions = (urls || []).map((item, i) => {
-        const url = typeof item === 'string' ? item : item?.url || '';
-        const itemKind = (typeof item === 'object' && item.kind) || kind;
-        return kind === 'image'
-            ? generatedImageWithRunMeta({url, file_id:(typeof item === 'object' && item.file_id) || '', name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}, imageRunMetaForNodeFallback(node))
-            : stripImageGenerationMeta({url, file_id:(typeof item === 'object' && item.file_id) || '', name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
-    }).filter(item => item.url);
-    if(!additions.length) return false;
-    delete node.jimengPending;
-    replaceOutputsToNodeWithHistory(node, additions, kind, null, {skipShift:true});
-    node.running = false;
-    node.pending = 0;
-    node.runFinishedAt = nowMs();
-    if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
-    node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
-    node.runTimerHidden = false;
-    render();
-    scheduleSave();
-    return true;
-}
-function applyJimengQueryResult(node, data){
-    if(!node || !data) return false;
-    if(data.status === 'succeeded'){
-        const kind = data.kind || node.jimengPending?.kind || 'image';
-        return finalizeJimengPending(node, data.urls || [], kind);
-    }
-    if(data.status === 'failed'){
-        delete node.jimengPending;
-        node.running = false;
-        node.pending = 0;
-        toast((data.error || '即梦任务失败').slice(0, 160));
-        render();
-        scheduleSave();
-        return true;
-    }
-    if(node.jimengPending){
-        node.jimengPending.queueInfo = data.queue_info || node.jimengPending.queueInfo || {};
-        node.jimengPending.message = data.message || node.jimengPending.message || '';
-        node.jimengPending.updatedAt = nowMs();
-    }
-    render();
-    scheduleSave();
-    return false;
-}
-async function fetchJimengQuery(submitId, kind){
-    return fetch('/api/jimeng/query-media', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({submit_id:submitId, kind:kind || 'image'})
-    }).then(async r => { if(!r.ok) throw await smartResponseError(r); return r.json(); });
-}
-async function queryJimengNow(nodeId){
-    const node = nodes.find(n => n.id === nodeId);
-    if(!node || !node.jimengPending || !node.jimengPending.submitId) return;
-    if(node.jimengPending.querying) return;
-    const submitId = node.jimengPending.submitId;
-    const kind = node.jimengPending.kind || 'image';
-    node.jimengPending.querying = true;
-    render();
-    try {
-        const data = await fetchJimengQuery(submitId, kind);
-        applyJimengQueryResult(node, data);
-    } catch(e){
-        toast((e.message || '查询失败').slice(0, 160));
-    } finally {
-        if(node.jimengPending) node.jimengPending.querying = false;
-        render();
-    }
 }
 function providerIdForSmartTask(node, task){
     return task?.providerId || node?.runSettings?.provider_id || settings.provider_id || 'comfly';
@@ -3541,39 +3398,6 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
         scheduleSave();
     }
 }
-function startJimengPoll(node){
-    if(!node || !node.jimengPending || !node.jimengPending.submitId) return;
-    const submitId = node.jimengPending.submitId;
-    if(activeJimengPolls.has(submitId)) return;
-    activeJimengPolls.add(submitId);
-    const nodeId = node.id;
-    (async () => {
-        try {
-            for(let i = 0; i < JIMENG_POLL_MAX; i++){
-                await new Promise(resolve => setTimeout(resolve, JIMENG_POLL_INTERVAL));
-                const cur = nodes.find(n => n.id === nodeId);
-                if(!cur || !cur.jimengPending || cur.jimengPending.submitId !== submitId) return;
-                if(cur.jimengPending.querying) continue;
-                let data;
-                try {
-                    data = await fetchJimengQuery(submitId, cur.jimengPending.kind || 'image');
-                } catch(err){ continue; }
-                const done = applyJimengQueryResult(cur, data);
-                if(done) return;
-                const after = nodes.find(n => n.id === nodeId);
-                if(!after || !after.jimengPending || after.jimengPending.submitId !== submitId) return;
-            }
-        } finally {
-            activeJimengPolls.delete(submitId);
-        }
-    })();
-}
-function resumeJimengPendingNodes(){
-    nodes.filter(n => n && n.jimengPending && n.jimengPending.submitId).forEach(n => {
-        n.jimengPending.querying = false;
-        startJimengPoll(n);
-    });
-}
 async function pollCanvasTask(taskId){
     if(!taskId) throw new Error(tr('smart.errRunFailed'));
     if(activeSmartTaskPolls.has(taskId)) return activeSmartTaskPolls.get(taskId);
@@ -3588,7 +3412,6 @@ async function pollCanvasTask(taskId){
                 checkQuotaWarningFromResult(task);
                 return task.result || {};
             }
-            if(task.status === 'jimeng_pending') throw new JimengPendingSignal({submitId:task.submit_id, kind:task.kind, queueInfo:task.queue_info, message:task.message});
             if(task.status === 'failed'){
                 if(task.error_code === 'storage_quota_exceeded' || task.status_code === 413) throw new StorageQuotaSignal(task);
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '');
@@ -3657,13 +3480,6 @@ async function resumeSmartPendingNode(node){
             render();
             scheduleSave();
         } catch(e) {
-            if(e && e.jimengPending && e.submitId){
-                node.pendingTasks = smartPendingTasks(node).filter(item => item.taskId !== task.taskId);
-                setNodeJimengPending(node, e);
-                render();
-                scheduleSave();
-                return;
-            }
             if(e && e.imageTaskRecover && e.recoverTaskId){
                 task.failed = true;
                 task.querying = false;
@@ -5258,7 +5074,6 @@ async function windowLoadHandler(){
         updateBootLoadingPercent(70, '正在校正素材尺寸');
         if(measureSmartNodeImages({applyReady:true, renderOnChange:false})) render();
         resumeSmartPendingTasks();
-        resumeJimengPendingNodes();
         startCanvasMetaPoll();
     }
     await waitForVisibleBootMedia(2500, canvasLoaded ? 70 : 0, 100);

@@ -1,7 +1,6 @@
 // asset-manager 页面 —— 头像注册子系统（拆分自 static/js/asset-manager.js）。
 //
-// 范围：把资产库里的一张图片注册成某个 AI 供应商（当前支持 APIMart /
-// 火山引擎）的"头像"角色，用于后续生成任务里引用这个角色形象。
+// 范围：把资产库里的一张图片注册成某个 AI 供应商的"头像"角色。
 // 供应商与平台的映射判断（providerAvatarPlatform/providerAvatarSupported/
 // avatarCandidateProviders/activeAvatarProvider）、注册卡片渲染
 // （renderAvatarRegistrationCard/renderAvatarSection，展示注册状态/
@@ -16,12 +15,11 @@
 // 状态）、escapeHtml/escapeAttr/apiJson/setStatus/refreshIcons（通用
 // 工具）、render（主渲染入口）。
 
-const AVATAR_SUPPORTED_PLATFORMS = ['apimart', 'volcengine'];
-const AVATAR_PLATFORM_LABELS = {apimart:'APIMart', volcengine:'火山引擎'};
+const AVATAR_SUPPORTED_PLATFORMS = ['volcengine'];
+const AVATAR_PLATFORM_LABELS = {volcengine:'火山引擎'};
 function providerAvatarPlatform(p){
     const proto = String(p?.protocol || '').toLowerCase();
     const base = String(p?.base_url || '').toLowerCase();
-    if(proto === 'apimart' || base.includes('apimart.ai')) return 'apimart';
     if(proto === 'volcengine') return 'volcengine';
     return '';
 }
@@ -101,7 +99,7 @@ function renderAvatarSection(item){
         return `<div class="avatar-section">
             ${cards}
             <div class="avatar-head"><i data-lucide="user-round-cog"></i><span>注册为真人/数字人</span></div>
-            <div class="avatar-hint">未检测到可用平台。请先在「API 平台管理」中添加并启用 API 平台（如 APIMart）并填写 Key。</div>
+            <div class="avatar-hint">未检测到可用平台。请先在「API 平台管理」中添加并启用火山引擎并填写 Key。</div>
         </div>`;
     }
     const selected = activeAvatarProvider();

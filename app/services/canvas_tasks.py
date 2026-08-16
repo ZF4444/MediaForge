@@ -23,6 +23,7 @@ from app.core.redis_client import RedisUnavailableError, get_redis_client
 
 
 _INDEX_KEY = f"{REDIS_CANVAS_TASK_PREFIX}active"
+_DEAD_LETTER_STREAM = f"{REDIS_CANVAS_TASK_STREAM}:dead-letter"
 _REFRESH_LEASE_SCRIPT = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('EXPIRE', KEYS[1], ARGV[2])
@@ -34,6 +35,31 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
 end
 return 0
+"""
+_UPDATE_TASK_IF_STATUS_SCRIPT = """
+-- TASK_UPDATE_IF_STATUS
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return false
+end
+local record = cjson.decode(raw)
+if ARGV[1] ~= '' and record['status'] ~= ARGV[1] then
+  return false
+end
+local changes = cjson.decode(ARGV[2])
+for key, value in pairs(changes) do
+  record[key] = value
+end
+record['updated_at'] = tonumber(ARGV[3])
+record['version'] = tonumber(record['version'] or 0) + 1
+local encoded = cjson.encode(record)
+redis.call('SET', KEYS[1], encoded, 'EX', ARGV[4])
+if record['status'] == 'queued' or record['status'] == 'running' then
+  redis.call('ZADD', KEYS[2], tonumber(ARGV[3]) + tonumber(ARGV[4]), ARGV[5])
+else
+  redis.call('ZREM', KEYS[2], ARGV[5])
+end
+return encoded
 """
 _UPDATE_CLAIMED_TASK_SCRIPT = """
 -- TASK_UPDATE_IF_CLAIMED
@@ -50,6 +76,7 @@ for key, value in pairs(changes) do
   record[key] = value
 end
 record['updated_at'] = tonumber(ARGV[3])
+record['version'] = tonumber(record['version'] or 0) + 1
 local encoded = cjson.encode(record)
 redis.call('SET', KEYS[1], encoded, 'EX', ARGV[4])
 if record['status'] == 'queued' or record['status'] == 'running' then
@@ -80,7 +107,7 @@ def _unavailable(operation: str, exc: BaseException) -> RedisUnavailableError:
 async def create_canvas_task(task: dict[str, Any]) -> dict[str, Any]:
     task_id = str(task["id"])
     now = time.time()
-    record = {**task, "created_at": task.get("created_at", now), "updated_at": task.get("updated_at", now)}
+    record = {**task, "created_at": task.get("created_at", now), "updated_at": task.get("updated_at", now), "version": int(task.get("version") or 1)}
     client = get_redis_client()
     try:
         pipeline = client.pipeline(transaction=False)
@@ -107,22 +134,31 @@ async def get_canvas_task(task_id: str) -> dict[str, Any] | None:
     return record if isinstance(record, dict) else None
 
 
-async def update_canvas_task(task_id: str, **changes: Any) -> dict[str, Any] | None:
-    record = await get_canvas_task(task_id)
-    if record is None:
-        return None
-    record.update(changes)
-    record["updated_at"] = time.time()
+async def update_canvas_task(task_id: str, *, expected_status: str = "", **changes: Any) -> dict[str, Any] | None:
+    """Atomically update a task, optionally only from an expected state."""
+    now = time.time()
     client = get_redis_client()
     try:
-        await client.set(_task_key(task_id), json.dumps(record, separators=(",", ":")), ex=REDIS_CANVAS_TASK_TTL_SECONDS)
-        if record.get("status") in {"queued", "running"}:
-            await client.zadd(_INDEX_KEY, {task_id: record["updated_at"] + REDIS_CANVAS_TASK_TTL_SECONDS})
-        else:
-            await client.zrem(_INDEX_KEY, task_id)
+        raw = await client.eval(
+            _UPDATE_TASK_IF_STATUS_SCRIPT,
+            2,
+            _task_key(task_id),
+            _INDEX_KEY,
+            expected_status,
+            json.dumps(changes, separators=(",", ":")),
+            now,
+            REDIS_CANVAS_TASK_TTL_SECONDS,
+            task_id,
+        )
     except RedisError as exc:
         raise _unavailable("update", exc) from exc
-    return record
+    if not raw:
+        return None
+    try:
+        record = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
 
 
 async def update_claimed_canvas_task(
@@ -274,6 +310,36 @@ async def acknowledge_canvas_task(message_id: str) -> None:
         await client.xack(REDIS_CANVAS_TASK_STREAM, REDIS_CANVAS_TASK_CONSUMER_GROUP, message_id)
     except RedisError as exc:
         raise _unavailable("ack", exc) from exc
+
+
+async def dead_letter_canvas_task(message_id: str, task_id: str, reason: str) -> None:
+    """Move an unrecoverable stream delivery to a durable operator-visible queue."""
+    client = get_redis_client()
+    try:
+        pipeline = client.pipeline(transaction=True)
+        pipeline.xadd(_DEAD_LETTER_STREAM, {"task_id": task_id, "message_id": message_id, "reason": str(reason)[:1000], "failed_at": str(time.time())})
+        pipeline.xack(REDIS_CANVAS_TASK_STREAM, REDIS_CANVAS_TASK_CONSUMER_GROUP, message_id)
+        pipeline.delete(_dispatch_key(task_id))
+        await pipeline.execute()
+    except RedisError as exc:
+        raise _unavailable("dead_letter", exc) from exc
+
+
+async def list_dead_letter_canvas_tasks(limit: int = 100) -> list[dict[str, str]]:
+    client = get_redis_client()
+    try:
+        entries = await client.xrevrange(_DEAD_LETTER_STREAM, "+", "-", count=max(1, min(500, int(limit))))
+    except RedisError as exc:
+        raise _unavailable("dead_letter_list", exc) from exc
+    return [{"entry_id": str(entry_id), **{str(key): str(value) for key, value in fields.items()}} for entry_id, fields in entries]
+
+
+async def remove_dead_letter_canvas_task(entry_id: str) -> bool:
+    client = get_redis_client()
+    try:
+        return bool(await client.xdel(_DEAD_LETTER_STREAM, entry_id))
+    except RedisError as exc:
+        raise _unavailable("dead_letter_remove", exc) from exc
 
 
 async def release_canvas_task_dispatch(task_id: str) -> None:

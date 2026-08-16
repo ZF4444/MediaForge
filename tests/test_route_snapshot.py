@@ -8,13 +8,23 @@ import json
 import os
 
 BASELINE_FILE = os.path.join(os.path.dirname(__file__), "route_baseline.json")
+RETIRED_ROUTES = {
+    "/generate",
+    "/api/angle/generate",
+    "/api/angle/poll_status",
+    "/api/config/token",
+    "/api/ms/generate",
+}
 
 
 def _load_baseline():
     with open(BASELINE_FILE, encoding="utf-8") as f:
         raw = json.load(f)
     # JSON 中 list 还原为可比较的 tuple
-    return sorted((p, tuple(m), t) for p, m, t in raw)
+    return sorted(
+        (p, tuple(m), t) for p, m, t in raw
+        if p not in RETIRED_ROUTES
+    )
 
 
 def test_baseline_file_exists():

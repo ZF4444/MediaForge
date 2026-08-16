@@ -175,7 +175,6 @@ M5 拆了 `cascade-run.js`（一键运行/级联生成调度），是体量最�
       `sleep`）、其它 provider 调用（`runApiGeneration`/
       `submitRunningHubGeneration`/`pollRunningHubTask`/
       `runRunningHubGeneration`/`runApiVideoGeneration`/
-      `runModelscopeGeneration`/`urlToBase64`）。这批函数在原文件里物理
       上分成两段（中间隔着第3批的核心编排函数），搬到新文件后重新拼接
       为连续代码块。
     - **第3批**（核心编排函数，体量最大、嵌套最深）：
@@ -257,7 +256,6 @@ M7 拆了 `canvas-render.js`（主渲染循环 + 节点事件绑定），共 18 
 - **唯一源码分成九部分**：新增
   `frontend/src/canvas/canvas-render.js`（M7），排在 `upload.js`
   之后、`main.js` 之前加载。包含两类函数：
-  - 节点卡片 HTML 构建：`smartGroupBodyHtml`/`jimengPendingBodyHtml`/
     `smartRecoverableImageTask`/`imageTaskRecoverBodyHtml`/`nodeBodyHtml`。
   - 主渲染循环与节点事件绑定：`formatRunDuration`/`nodeRunElapsedMs`/
     `runTimePillHtml`/`hideRunTimerForNode`/`refreshRunTimerPills`/
@@ -465,8 +463,6 @@ M10 拆了 `generation-settings.js`，共135个函数。
   2. RunningHub 工作流字段解析与渲染：`rhFieldKind`/`rhFieldRole`/
      `rhExtractFieldOptions`/`rhDefaultValue`/`rhParamValue`/
      `renderRhSettingField`/`renderRhConfigControl` 等。
-  3. 即梦（Jimeng）模型/视频指令过滤：`filterJimengImageModels`/
-     `filterJimengVideoModels`/`jimengImageEditMode`/`jimengVideoCommand`
      等。
   4. 通用参数控件渲染：`renderProviderControl`/`renderModelControl`/
      `renderSizeControls`/`renderRatioControl`/`renderResolutionControl`/
@@ -1255,24 +1251,13 @@ ES module（原因见文首），只做"物理搬移函数到独立文件"，状
     预览、"测试运行"整套提交/轮询/取结果逻辑、编辑器滚动位置保持。
     这是本次迁移里最大的单个子系统。
   - `provider-onboarding.js`（162 行，6 个函数）：新用户首次接触
-    ModelScope/RunningHub 供应商时的引导卡片。
-  - `recommend-api.js`（149 行，6 个函数）："推荐 API"弹层——展示内置
-    推荐平台列表，一键保存 Key。
-  - `jimeng-cli.js`（172 行，10 个函数）：即梦 CLI 登录/登出/余额查询/
-    帮助文档弹层整套流程。`jimengLoginTimer`（登录状态轮询定时器 id）
-    是个只在这个子系统内部使用的 `let` 状态，判断为模块局部状态，
-    跟随函数一起搬过去了——跟 `providers`/`selectedId` 这类真正跨模块
-    共享的核心状态不同，那些依然留在 `main.js`。
-  - `ms-lora.js`（87 行，6 个函数）：ModelScope 供应商专属的 LoRA
     列表管理（新增/更新/删除一条 LoRA 配置）。
 - **留在 `main.js`**（1146 行，55.3% 缩减）：`providers`/`selectedId`
   核心状态、`provider()`/`syncEditor()`/`renderEditor()`/
   `saveProviders()`/`loadProviders()` 供应商 CRUD 核心、模型 CRUD、
   连接测试（`testConnection`/`probeAsync`/`fetchModels`）、模型选择器
   弹层（`openModelPicker` 等）、通用工具（`escapeHtml`/`tr`/`setStatus`/
-  `broadcastStudioApiChange` 等）、全部配置常量
-  （`VOLCENGINE_*`/`MS_*`/`RH_*`/`JIMENG_*`/`ONBOARDING_GUIDES`/
-  `RECOMMENDED_APIS`）。
+  `broadcastStudioApiChange` 等）、全部配置常量。
 - **内联 `onclick` 依赖的验证**：`api-settings.html` 有 40 处内联
   `onclick`/`onchange` 属性直接引用 window 全局函数（比画布的写法
   更依赖这个机制），拆分后专门用 vm 模拟验证了这些内联属性引用的函数
@@ -1360,8 +1345,7 @@ ES module（原因见文首），只做"物理搬移函数到独立文件"，状
   `indexSharedTree`/`rectsIntersect`/`marqueeTargetSelector` 等纯逻辑
   函数）、后端 4 测试不受影响。
 - **跳过测试的模块**：`asset-library.js`/`prompt-library.js`/
-  `avatar-registration.js`/`provider-onboarding.js`/`recommend-api.js`/
-  `jimeng-cli.js` 没有写专门的单元测试——这些模块的函数基本都是
+  `avatar-registration.js`/`provider-onboarding.js`/
   DB-CRUD/网络请求为主（跟画布 M5/M7/M8 核心批次同类不适合单元
   测试）或者过于 trivial（如 `openLocalItem` 就是 `window.open` 一行）。
 
@@ -1542,7 +1526,6 @@ npm test        # 跑全部五个页面的 Vitest 回归测试
 如果只改了 `static/js/api-settings.js`/`static/js/asset-manager.js`/
 `static/js/comfyui-settings.js`/`static/js/index.js`，忘记
 `npm run build`，页面加载到的会是旧版本代码。
-
 
 
 

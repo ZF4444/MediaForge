@@ -49,7 +49,6 @@ export function createCanvasSyncSandbox(overrides = {}) {
         normalizeLegacySmartNode: overrides.fns?.normalizeLegacySmartNode || (n => n),
         render: overrides.fns?.render || (() => {}),
         resumeSmartPendingTasks: overrides.fns?.resumeSmartPendingTasks || (() => {}),
-        resumeJimengPendingNodes: overrides.fns?.resumeJimengPendingNodes || (() => {}),
         document: {
             getElementById: overrides.fns?.getElementById || (() => null),
         },

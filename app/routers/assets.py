@@ -2,7 +2,7 @@
 
 从 main.py 的「素材库」区块原样迁移。URL/请求响应模型/状态码完全一致。
 注意：avatar 注册/审核两个路由（/items/{id}/register-avatar、/items/{id}/avatar-status）
-跨域依赖 apimart/volcengine 认证 helper，暂留在 main.py，待相关域抽离后再迁移。
+跨域依赖平台认证 helper，暂留在 main.py，待相关域抽离后再迁移。
 
 依赖：
 - app.services.assets：素材库数据与规范化逻辑

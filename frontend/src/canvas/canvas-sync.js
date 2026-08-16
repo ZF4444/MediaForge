@@ -29,7 +29,7 @@
 //     —— 这几个和 scheduleSave/saveCanvas（也在 main.js 里）共享读写，
 //     属于跨函数可变状态耦合，和 state.js 的顾虑一样，暂不迁移，留在
 //     main.js，本文件通过共享脚本作用域读写它们。
-//   渲染/恢复函数：render, resumeSmartPendingTasks, resumeJimengPendingNodes
+//   渲染/恢复函数：render, resumeSmartPendingTasks
 //     （M7/main.js 里的节点渲染与任务恢复逻辑）
 //   节点规范化：normalizeLegacySmartNode（M3 已拆到 node-model.js）
 //   连线图层：refreshConnectionLayer（如果存在则调用，可选依赖）
@@ -66,7 +66,7 @@ function mergeSmartImageLists(localImgs, remoteImgs){
     return out;
 }
 function smartNodeInFlight(node){
-    return Boolean(node && (node.running || node.pending || node.queued || node.jimengPending || smartPendingTasks(node).length));
+    return Boolean(node && (node.running || node.pending || node.queued || smartPendingTasks(node).length));
 }
 function mergeSmartNode(local, remote){
     // 本地正在生成/排队的节点完全以本地为准，只把对方可能多出来的图并进来，绝不被对方旧状态冲掉
@@ -119,7 +119,6 @@ function applyMergedServerCanvas(serverCanvas){
     render();
     if(typeof refreshConnectionLayer === 'function') refreshConnectionLayer();
     resumeSmartPendingTasks();
-    resumeJimengPendingNodes();
     return true;
 }
 async function mergeReloadCanvasNow(){

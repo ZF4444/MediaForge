@@ -95,7 +95,6 @@ function serializableSmartNode(node){
     copy.running = false;
     copy.pending = 0;
     copy.queued = false;
-    copy.jimengPending = null;
     delete copy.pendingTasks;
     delete copy.pendingCandidatePool;
     delete copy._rerunPreviousImages;

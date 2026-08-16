@@ -262,7 +262,7 @@ function addGeneratedCandidatesToNode(node, additions=[], options={}){
 }
 function candidateControlHtml(node){
     const count = candidateCountForNode(node);
-    if(count <= 1 || isHistoryGroupNode(node) || node.pending || node.queued || node.jimengPending) return '';
+    if(count <= 1 || isHistoryGroupNode(node) || node.pending || node.queued) return '';
     const open = candidatePanelNodeId === node.id;
     const expanded = expandedCandidateNodeIds.has(node.id);
     return `<button class="candidate-expand ${expanded ? 'open' : ''}" type="button" data-candidate-expand="${escapeAttr(node.id)}" title="展开全部候选图"><i data-lucide="${expanded ? 'grid-2x2-x' : 'grid-2x2'}"></i></button><button class="candidate-toggle ${open ? 'open' : ''}" type="button" data-candidate-toggle="${escapeAttr(node.id)}" title="候选图"><span class="candidate-count">${count}</span><i data-lucide="chevron-down"></i></button>`;

@@ -1,7 +1,7 @@
 """素材库（asset-library）的数据与规范化逻辑。
 
 从 main.py 的「素材库」相关 helper 原样迁移，行为完全一致。
-被 app/routers/assets.py 复用；avatar 注册/审核路由（跨域依赖 apimart/volcengine）
+被 app/routers/assets.py 复用；avatar 注册/审核路由（跨域依赖已接入的平台）
 暂留在 main.py，通过 import-back 复用本模块的 load/save/find 等函数。
 
 依赖：
