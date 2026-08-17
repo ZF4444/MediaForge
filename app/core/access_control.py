@@ -12,7 +12,7 @@
     * 未在配置中出现的用户，默认拥有全部页面与节点（向后兼容）。
     * 出现在配置中的用户，仅拥有其 pages/nodes 列表中列出的项。
     * 校验/保存时会过滤掉不在全集清单中的非法 id。
-    * "节点"（nodes）特指画布「AI生成」引擎（engine=api）下可选的具体模型，
+    * "nodes" 存储各功能可用的具体模型，
       id 格式为 "<provider_id>::<model>"，随 API 设置里的 provider/模型配置动态变化。
 
 依赖：PostgreSQL app_settings 与用户注册表。
@@ -113,12 +113,13 @@ def all_pages() -> List[Dict[str, str]]:
 def all_page_ids() -> List[str]:
     return [p["id"] for p in all_pages()]
 
-# --- 无限画布可用「节点」：动态感知画布 AI 生成引擎下的全部模型 ---
+# --- 可用模型：动态感知各 provider 配置的模型 ---
 # 不再使用固定的节点类型清单（image/prompt/loop/... 已废弃），改为按
-# "provider_id::model" 枚举画布「AI生成」引擎（engine=api）下可选的图片模型 + 视频模型。
+# "provider_id::model" 枚举对话、图片和视频模型。
 # 数据来源由 main.py 通过 set_image_models_provider() 注入 load_api_providers，
 # 避免 core 模块反向依赖 main.py 造成循环引用。
 _image_models_provider = None  # Callable[[], List[dict]]，返回值形如 load_api_providers() 的 provider 列表
+_fallback_chat_models_provider = None  # Callable[[], List[str]]，供旧版 GPT 对话的默认模型回退使用
 
 
 def set_image_models_provider(fn) -> None:
@@ -127,15 +128,21 @@ def set_image_models_provider(fn) -> None:
     _image_models_provider = fn
 
 
+def set_fallback_chat_models_provider(fn) -> None:
+    """注入旧版 GPT 对话在平台未配置聊天模型时使用的全局默认模型。"""
+    global _fallback_chat_models_provider
+    _fallback_chat_models_provider = fn
+
+
 def _provider_display_name(provider: Dict[str, Any]) -> str:
     return str(provider.get("name") or provider.get("id") or "").strip() or str(provider.get("id") or "")
 
 
 def all_nodes() -> List[Dict[str, str]]:
-    """动态枚举画布「AI生成」引擎（engine=api）下可选的全部模型。
+    """动态枚举访问控制可授权的全部模型。
 
-    id 格式："<provider_id>::<model>"，覆盖该引擎下的图片模型（image_models）与
-    视频模型（video_models）。provider 未启用（enabled=False）时跳过。
+    id 格式："<provider_id>::<model>"，覆盖对话（chat_models）、图片
+    （image_models）与视频（video_models）模型。provider 未启用（enabled=False）时跳过。
     每次调用都重新读取，随 data/api_providers.json 的改动即时生效。
     """
     if _image_models_provider is None:
@@ -145,33 +152,41 @@ def all_nodes() -> List[Dict[str, str]]:
     except Exception:
         logger.exception("failed to load provider models", extra={"event": "provider_models_load_failed"})
         return []
+    enabled_providers = [
+        provider for provider in providers
+        if isinstance(provider, dict) and provider.get("enabled") is not False
+    ]
+    primary_provider = next(
+        (provider for provider in enabled_providers if provider.get("primary")),
+        enabled_providers[0] if enabled_providers else {},
+    )
+    primary_provider_id = str(primary_provider.get("id") or "").strip()
     items: List[Dict[str, str]] = []
     seen = set()
-    for provider in providers:
-        if not isinstance(provider, dict) or provider.get("enabled") is False:
-            continue
+    fallback_chat_models = []
+    if _fallback_chat_models_provider is not None:
+        try:
+            fallback_chat_models = _fallback_chat_models_provider() or []
+        except Exception:
+            logger.exception("failed to load fallback chat models", extra={"event": "fallback_chat_models_load_failed"})
+    for provider in enabled_providers:
         provider_id = str(provider.get("id") or "").strip()
         if not provider_id:
             continue
         display_name = _provider_display_name(provider)
-        for model in provider.get("image_models") or []:
-            model = str(model or "").strip()
-            if not model:
-                continue
-            node_id = f"{provider_id}::{model}"
-            if node_id in seen:
-                continue
-            seen.add(node_id)
-            items.append({"id": node_id, "label": f"{display_name} · {model}"})
-        for model in provider.get("video_models") or []:
-            model = str(model or "").strip()
-            if not model:
-                continue
-            node_id = f"{provider_id}::{model}"
-            if node_id in seen:
-                continue
-            seen.add(node_id)
-            items.append({"id": node_id, "label": f"{display_name} · {model}"})
+        for model_type in ("chat_models", "image_models", "video_models"):
+            models = provider.get(model_type) or []
+            if model_type == "chat_models" and not models and provider_id == primary_provider_id:
+                models = fallback_chat_models
+            for model in models:
+                model = str(model or "").strip()
+                if not model:
+                    continue
+                node_id = f"{provider_id}::{model}"
+                if node_id in seen:
+                    continue
+                seen.add(node_id)
+                items.append({"id": node_id, "label": f"{display_name} · {model}"})
     return items
 
 

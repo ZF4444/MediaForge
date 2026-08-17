@@ -1258,6 +1258,7 @@ def save_api_providers(providers):
 # 反向 import main.py 造成循环依赖。
 import app.core.access_control as access_control
 access_control.set_image_models_provider(load_api_providers)
+access_control.set_fallback_chat_models_provider(lambda: CHAT_MODELS)
 
 def public_provider(provider, *, include_credentials=False):
     item = {**provider}
@@ -1303,7 +1304,10 @@ def require_admin() -> str:
 
 def require_model_access(provider_id: str, model: str) -> str:
     uid = current_user_id()
-    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, provider_id, model):
+    # Legacy clients may submit `comfly`; get_api_provider resolves it to the
+    # active provider. Authorization must use that same concrete provider ID.
+    provider = get_api_provider(provider_id)
+    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, provider["id"], model):
         raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员(@飞帆)在访问控制中开放。")
     return uid
 
