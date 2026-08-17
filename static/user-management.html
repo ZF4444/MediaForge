@@ -17,7 +17,7 @@
         .tabs{display:flex;gap:4px;margin-top:20px;overflow:auto}.tab{height:42px;padding:0 14px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--faint,#667085);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:7px}.tab svg{width:16px;height:16px}.tab:hover{color:var(--text,#16191f)}.tab.active{color:var(--text,#16191f);border-bottom-color:var(--text,#16191f)}
         .content{flex:1;min-height:0;position:relative}.view{display:none;height:100%}.view.active{display:block}.embed{width:100%;height:100%;border:0;background:var(--bg,#f5f6f8)}
         .users{height:100%;overflow:auto;padding:24px 28px 48px;max-width:1180px;margin:0 auto}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.section-title{font-size:14px;font-weight:700}.search{width:min(320px,55vw);height:38px;padding:0 12px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:13px;outline:none}.search:focus{border-color:var(--text,#16191f)}
-        .table{border-top:1px solid var(--border,#e4e7ec)}.row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(180px,1.3fr) 130px minmax(160px,1fr);align-items:center;gap:16px;min-height:62px;padding:10px 12px;border-bottom:1px solid var(--border,#e4e7ec)}.row.header{min-height:40px;color:var(--faint,#667085);font-size:11px;font-weight:700;text-transform:uppercase}.user{font-size:13px;font-weight:650}.id{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--faint,#667085)}.badge{justify-self:start;padding:3px 8px;border:1px solid var(--border,#d0d5dd);font-size:11px;color:var(--faint,#667085)}.badge.admin{border-color:#d97706;color:#b45309;background:#fffbeb}.empty{text-align:center;padding:70px 20px;color:var(--faint,#667085);font-size:13px}
+        .table{border-top:1px solid var(--border,#e4e7ec)}.row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(180px,1.3fr) 130px minmax(160px,1fr) 58px;align-items:center;gap:16px;min-height:62px;padding:10px 12px;border-bottom:1px solid var(--border,#e4e7ec)}.row.header{min-height:40px;color:var(--faint,#667085);font-size:11px;font-weight:700;text-transform:uppercase}.user{font-size:13px;font-weight:650}.id{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--faint,#667085)}.badge{justify-self:start;padding:3px 8px;border:1px solid var(--border,#d0d5dd);font-size:11px;color:var(--faint,#667085)}.badge.admin{border-color:#d97706;color:#b45309;background:#fffbeb}.empty{text-align:center;padding:70px 20px;color:var(--faint,#667085);font-size:13px}.user-delete{width:30px;height:30px;display:grid;place-items:center;border:0;background:transparent;color:#b42318;cursor:pointer}.user-delete:hover{background:#fef3f2}.user-delete svg{width:15px;height:15px}
         .org-select{width:100%;max-width:220px;height:34px;padding:0 8px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:12.5px;outline:none}.org-select:focus{border-color:var(--text,#16191f)}
         .org-panel{border:1px solid var(--border,#e4e7ec);background:var(--panel,#fff);padding:14px 16px;margin-bottom:18px}.org-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.org-panel-title{font-size:13px;font-weight:700}.org-form{display:flex;gap:8px}.org-input{flex:1;max-width:260px;height:34px;padding:0 10px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:13px;outline:none}.org-input:focus{border-color:var(--text,#16191f)}
         .org-btn{height:34px;padding:0 14px;border:1px solid var(--text,#16191f);background:var(--text,#16191f);color:var(--panel,#fff);font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}.org-btn:hover{opacity:.88}.org-btn:disabled{opacity:.5;cursor:not-allowed}
@@ -26,7 +26,7 @@
         .usage{height:100%;overflow:auto;padding:24px 28px 48px;max-width:1180px;margin:0 auto}.usage-toolbar{display:flex;justify-content:space-between;align-items:end;gap:14px;margin-bottom:18px}.usage-toolbar h2{font-size:15px;margin:0}.usage-toolbar p{font-size:12px;color:var(--faint,#667085);margin:5px 0 0}.month-input{height:34px;border:1px solid var(--border,#d0d5dd);padding:0 9px;background:var(--panel,#fff);color:var(--text,#16191f);font-size:12px}.usage-summary{margin-bottom:24px}.usage-summary-title{font-size:13px;font-weight:700;margin:0 0 9px}.usage-summary + .usage-summary{margin-top:22px}.usage-summary-table{border-top:1px solid var(--border,#e4e7ec)}.usage-summary-line{display:grid;grid-template-columns:minmax(180px,1.35fr) minmax(120px,1fr) 120px 100px;gap:12px;align-items:center;padding:10px 8px;border-bottom:1px solid var(--border,#e4e7ec);font-size:12px}.usage-summary-line.personal{grid-template-columns:minmax(180px,1.35fr) minmax(120px,1fr) minmax(140px,1fr)}.usage-summary-line.header{font-size:11px;color:var(--faint,#667085);font-weight:700}.usage-summary-note{margin-top:3px;color:var(--faint,#667085);font-size:11px}.usage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:10px;margin-bottom:24px}.budget-row{border:1px solid var(--border,#e4e7ec);background:var(--panel,#fff);padding:14px}.budget-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.budget-name{font-size:13px;font-weight:700}.budget-state{font-size:11px;color:var(--faint,#667085)}.budget-money{font-size:20px;font-weight:750;margin:13px 0 4px}.budget-meta{font-size:11px;color:var(--faint,#667085)}.budget-progress{height:5px;background:var(--bg,#f5f6f8);margin:12px 0}.budget-progress i{display:block;height:100%;background:#20745a}.budget-progress.over i{background:#b42318}.budget-edit{display:grid;grid-template-columns:1fr auto auto;gap:7px;margin-top:12px}.budget-edit input{min-width:0;height:30px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);padding:0 8px;font-size:12px}.budget-toggle{display:flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap}.budget-save{width:30px;height:30px;border:1px solid var(--text,#16191f);background:var(--text,#16191f);color:var(--panel,#fff);display:grid;place-items:center;cursor:pointer}.budget-save svg{width:14px;height:14px}.usage-table{border-top:1px solid var(--border,#e4e7ec)}.usage-line{display:grid;grid-template-columns:minmax(150px,1.2fr) minmax(120px,1fr) 100px 100px 90px 130px;gap:12px;padding:10px 8px;align-items:center;border-bottom:1px solid var(--border,#e4e7ec);font-size:12px}.usage-line.header{font-size:11px;color:var(--faint,#667085);font-weight:700}.usage-task{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--faint,#667085);margin-top:3px}.usage-status{font-size:11px}.usage-status.succeeded{color:#087443}.usage-status.failed{color:#b42318}.usage-empty{padding:38px 0;text-align:center;color:var(--faint,#667085);font-size:13px}
         .placeholder{height:100%;display:grid;place-items:center;padding:28px}.placeholder-inner{text-align:center;max-width:420px}.placeholder-icon{width:44px;height:44px;margin:0 auto 16px;color:var(--faint,#667085)}.placeholder-title{font-size:16px;font-weight:700}.placeholder-copy{margin-top:8px;font-size:13px;line-height:1.7;color:var(--faint,#667085)}
         .status{font-size:12px;color:var(--faint,#667085)}
-        @media(max-width:680px){.head{padding:18px 16px 0}.users,.usage{padding:18px 16px 36px}.row{grid-template-columns:1fr 100px}.row>*:nth-child(2),.row>*:nth-child(4){display:none}.toolbar,.usage-toolbar{align-items:flex-start;flex-direction:column}.search{width:100%}.org-form{flex-wrap:wrap}.usage-summary-line{grid-template-columns:1fr 100px}.usage-summary-line>*:nth-child(3),.usage-summary-line>*:nth-child(4){display:none}.usage-line{grid-template-columns:1fr 85px 80px}.usage-line>*:nth-child(2),.usage-line>*:nth-child(5),.usage-line>*:nth-child(6){display:none}}
+        @media(max-width:680px){.head{padding:18px 16px 0}.users,.usage{padding:18px 16px 36px}.row{grid-template-columns:1fr 100px 34px}.row>*:nth-child(2),.row>*:nth-child(4){display:none}.toolbar,.usage-toolbar{align-items:flex-start;flex-direction:column}.search{width:100%}.org-form{flex-wrap:wrap}.usage-summary-line{grid-template-columns:1fr 100px}.usage-summary-line>*:nth-child(3),.usage-summary-line>*:nth-child(4){display:none}.usage-line{grid-template-columns:1fr 85px 80px}.usage-line>*:nth-child(2),.usage-line>*:nth-child(5),.usage-line>*:nth-child(6){display:none}}
     </style>
 </head>
 <body>
@@ -80,10 +80,11 @@
         const users = q ? state.users.filter(u => `${u.username || ''} ${u.user_id || ''}`.toLowerCase().includes(q)) : state.users;
         document.getElementById('userCount').textContent = `${state.users.length} 位用户`;
         const orgOptions = state.orgs.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
-        document.getElementById('userTable').innerHTML = `<div class="row header"><div>用户</div><div>用户 ID</div><div>角色</div><div>组织</div></div>${users.map(u => {
+        document.getElementById('userTable').innerHTML = `<div class="row header"><div>用户</div><div>用户 ID</div><div>角色</div><div>组织</div><div>操作</div></div>${users.map(u => {
             const isAdmin = u.user_id === 'admin';
             const orgSelect = isAdmin ? '<span class="status">—</span>' : `<select class="org-select" data-user="${esc(u.user_id)}"><option value="">未分配</option>${orgOptions}</select>`;
-            return `<div class="row"><div class="user">${esc(u.username || u.user_id)}</div><div class="id">${esc(u.user_id)}</div><div class="badge ${isAdmin ? 'admin' : ''}">${isAdmin ? '管理员' : '用户'}</div><div>${orgSelect}</div></div>`;
+            const deleteButton = isAdmin ? '<span class="status">—</span>' : `<button type="button" class="user-delete" data-user-delete="${esc(u.user_id)}" title="删除用户"><i data-lucide="trash-2"></i></button>`;
+            return `<div class="row"><div class="user">${esc(u.username || u.user_id)}</div><div class="id">${esc(u.user_id)}</div><div class="badge ${isAdmin ? 'admin' : ''}">${isAdmin ? '管理员' : '用户'}</div><div>${orgSelect}</div><div>${deleteButton}</div></div>`;
         }).join('') || '<div class="empty">没有匹配的用户</div>'}`;
         document.querySelectorAll('.org-select').forEach(sel => {
             const uid = sel.dataset.user;
@@ -91,6 +92,10 @@
             sel.value = (user && user.org_id) || '';
             sel.addEventListener('change', () => assignUserOrg(uid, sel.value || null));
         });
+        document.querySelectorAll('[data-user-delete]').forEach(button => {
+            button.addEventListener('click', () => deleteUser(button.dataset.userDelete));
+        });
+        if(window.lucide) lucide.createIcons();
     }
     function renderOrgs(){
         document.getElementById('orgList').innerHTML = state.orgs.length ? state.orgs.map(o => `
@@ -161,6 +166,20 @@
             if(!r.ok) throw new Error(d.detail || '分配失败');
             await Promise.all([loadUsers(), loadOrgs()]);
         } catch(e){ status.textContent = e.message || '分配失败'; }
+    }
+    async function deleteUser(userId){
+        const user = state.users.find(item => item.user_id === userId);
+        const name = user?.username || userId;
+        if(!window.confirm(`删除用户「${name}」？该用户将无法继续登录，历史用量记录会保留。`)) return;
+        const status = document.getElementById('status');
+        status.textContent = '删除中...';
+        try {
+            const r = await fetch(`/api/access-control/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+            const d = await r.json();
+            if(!r.ok) throw new Error(d.detail || '删除失败');
+            await Promise.all([loadUsers(), loadOrgs()]);
+            status.textContent = '用户已删除';
+        } catch(e){ status.textContent = e.message || '删除失败'; }
     }
     const money = value => `$${Number(value || 0).toFixed(4)}`;
     const moneyUsd = value => `$${Number(value || 0).toFixed(4)}`;

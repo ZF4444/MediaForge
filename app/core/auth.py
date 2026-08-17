@@ -99,6 +99,39 @@ def register_user(user_id: str, username: str) -> bool:
     return True
 
 
+async def delete_user(user_id: str) -> bool:
+    """删除注册账号并撤销其所有登录会话；管理员账号由路由层禁止删除。"""
+    with USERS_LOCK:
+        if user_id not in USERS:
+            return False
+
+    token_hashes = []
+    async with database_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        await cur.execute("SELECT token_hash FROM user_sessions WHERE user_id=%s", (user_id,))
+        token_hashes = [str(row["token_hash"]) for row in await cur.fetchall()]
+        await cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
+        if not cur.rowcount:
+            return False
+        await cur.execute("DELETE FROM user_settings WHERE user_id=%s", (user_id,))
+
+    with USERS_LOCK:
+        USERS.pop(user_id, None)
+
+    # The session cache can outlive the database row, so revoke cached sessions too.
+    if token_hashes:
+        client = get_redis_client()
+        try:
+            pipeline = client.pipeline(transaction=False)
+            for token_hash in token_hashes:
+                pipeline.delete(_session_key(token_hash))
+                pipeline.zrem(_LAST_SEEN_DIRTY_KEY, token_hash)
+            await pipeline.execute()
+        except RedisError as exc:
+            raise _redis_unavailable("user_session_revoke", exc) from exc
+
+    return True
+
+
 def load_sessions():
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM user_sessions WHERE expires_at < %s", (now_ms(),))
