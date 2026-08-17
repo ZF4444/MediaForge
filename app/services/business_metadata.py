@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS smart_canvas_node_files (
     file_id TEXT NOT NULL REFERENCES files(id) ON DELETE RESTRICT, field_name TEXT NOT NULL DEFAULT '',
     sort_order INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_smart_canvas_node_files_node ON smart_canvas_node_files(node_id);
 CREATE INDEX IF NOT EXISTS idx_smart_canvas_node_files_file ON smart_canvas_node_files(file_id);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -314,13 +315,63 @@ def save_canvas_payload(user_id: str, canvas: Dict[str, Any]) -> None:
         deleted_at = None
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
         cur.execute("INSERT INTO smart_canvases(id,user_id,title,icon,owner,color,pinned,created_at,updated_at,deleted_at,viewport_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,icon=EXCLUDED.icon,owner=EXCLUDED.owner,color=EXCLUDED.color,pinned=EXCLUDED.pinned,updated_at=EXCLUDED.updated_at,deleted_at=EXCLUDED.deleted_at,viewport_json=EXCLUDED.viewport_json", (payload["id"], user_id, payload.get("title", ""), payload.get("icon", ""), payload.get("owner", ""), payload.get("color", ""), bool(payload.get("pinned")), payload.get("created_at", now), now, deleted_at, json_value({"viewport": payload.get("viewport", {}), "payload": {k:v for k,v in payload.items() if k not in {"id","title","icon","owner","color","pinned","created_at","updated_at","deleted_at","viewport"}}})))
-        cur.execute("DELETE FROM smart_canvas_node_files WHERE node_id IN (SELECT id FROM smart_canvas_nodes WHERE canvas_id=%s)", (payload["id"],))
-        cur.execute("DELETE FROM smart_canvas_nodes WHERE canvas_id=%s", (payload["id"],))
+        cur.execute("SELECT id,sort_order,data_json FROM smart_canvas_nodes WHERE canvas_id=%s", (payload["id"],))
+        existing_nodes = {row["id"]: row for row in cur.fetchall()}
         for order, node in enumerate(nodes):
             node_id = node.get("id") or new_id()
-            cur.execute("INSERT INTO smart_canvas_nodes(id,canvas_id,node_type,position_x,position_y,sort_order,data_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)", (node_id, payload["id"], node.get("type", node.get("node_type", "")), float(node.get("x", 0) or 0), float(node.get("y", 0) or 0), order, json_value(node), node.get("created_at", now), now))
-            for ref_order, (file_id, field_name, role) in enumerate(_file_refs(node)):
-                cur.execute("INSERT INTO smart_canvas_node_files(id,node_id,file_id,field_name,sort_order,role) SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE)", (new_id(), node_id, file_id, field_name, ref_order, role, file_id))
+            node["id"] = node_id
+            existing = existing_nodes.pop(node_id, None)
+            node_changed = existing is None or existing["data_json"] != node
+            if existing is None:
+                cur.execute("INSERT INTO smart_canvas_nodes(id,canvas_id,node_type,position_x,position_y,sort_order,data_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)", (node_id, payload["id"], node.get("type", node.get("node_type", "")), float(node.get("x", 0) or 0), float(node.get("y", 0) or 0), order, json_value(node), node.get("created_at", now), now))
+            elif node_changed or existing["sort_order"] != order:
+                cur.execute("UPDATE smart_canvas_nodes SET node_type=%s,position_x=%s,position_y=%s,sort_order=%s,data_json=%s,updated_at=%s WHERE id=%s AND canvas_id=%s", (node.get("type", node.get("node_type", "")), float(node.get("x", 0) or 0), float(node.get("y", 0) or 0), order, json_value(node), now, node_id, payload["id"]))
+            old_refs = list(_file_refs(existing["data_json"])) if existing else []
+            new_refs = list(_file_refs(node))
+            if existing is None or old_refs != new_refs:
+                if existing is not None:
+                    cur.execute("DELETE FROM smart_canvas_node_files WHERE node_id=%s", (node_id,))
+                for ref_order, (file_id, field_name, role) in enumerate(new_refs):
+                    cur.execute("INSERT INTO smart_canvas_node_files(id,node_id,file_id,field_name,sort_order,role) SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE)", (new_id(), node_id, file_id, field_name, ref_order, role, file_id))
+        for removed_node_id in existing_nodes:
+            cur.execute("DELETE FROM smart_canvas_nodes WHERE id=%s AND canvas_id=%s", (removed_node_id, payload["id"]))
+
+
+def update_canvas_metadata(user_id: str, canvas_id: str, *, title: Optional[str] = None,
+                           icon: Optional[str] = None, owner: Optional[str] = None,
+                           color: Optional[str] = None, pinned: Optional[bool] = None) -> Optional[Dict[str, Any]]:
+    """Update canvas metadata without loading or rewriting its nodes."""
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """WITH updated AS (
+                   UPDATE smart_canvases
+                   SET title=COALESCE(%s,title), icon=COALESCE(%s,icon),
+                       owner=COALESCE(%s,owner), color=COALESCE(%s,color),
+                       pinned=COALESCE(%s,pinned)
+                   WHERE id=%s AND user_id=%s
+                   RETURNING id,title,icon,owner,color,pinned,created_at,updated_at
+               )
+               SELECT updated.*, (SELECT COUNT(*) FROM smart_canvas_nodes WHERE canvas_id=updated.id) AS node_count
+               FROM updated""",
+            (title, icon, owner, color, pinned, canvas_id, user_id),
+        )
+        return cur.fetchone()
+
+
+def touch_canvas_payload(user_id: str, canvas_id: str, updated_at: int) -> Optional[Dict[str, Any]]:
+    """Advance a canvas timestamp without rewriting its nodes or file references."""
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """WITH updated AS (
+                   UPDATE smart_canvases SET updated_at=%s
+                   WHERE id=%s AND user_id=%s
+                   RETURNING id,title,icon,owner,color,pinned,created_at,updated_at
+               )
+               SELECT updated.*, (SELECT COUNT(*) FROM smart_canvas_nodes WHERE canvas_id=updated.id) AS node_count
+               FROM updated""",
+            (updated_at, canvas_id, user_id),
+        )
+        return cur.fetchone()
 
 
 def load_canvas_payload(user_id: str, canvas_id: str) -> Optional[Dict[str, Any]]:

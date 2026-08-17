@@ -18,7 +18,13 @@ from app.core.utils import now_ms
 from app.core.ws import manager
 from app.models import CanvasCreateRequest, CanvasMetaUpdate, CanvasSaveRequest
 from app.services.storage import compact_media_refs, normalize_media_refs
-from app.services.business_metadata import save_canvas_payload, load_canvas_payload, delete_canvas_payload
+from app.services.business_metadata import (
+    delete_canvas_payload,
+    load_canvas_payload,
+    save_canvas_payload,
+    touch_canvas_payload,
+    update_canvas_metadata,
+)
 
 router = APIRouter()
 
@@ -172,18 +178,16 @@ def get_canvas_meta(canvas_id: str):
 def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
-    canvas = load_canvas_raw(canvas_id)
-    if payload.title is not None:
-        canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
-    if payload.icon is not None:
-        canvas["icon"] = (payload.icon or "layers")[:32]
-    if payload.owner is not None:
-        canvas["owner"] = str(payload.owner).strip()[:40]
-    if payload.color is not None:
-        canvas["color"] = normalize_canvas_color(payload.color)
-    if payload.pinned is not None:
-        canvas["pinned"] = bool(payload.pinned)
-    save_canvas_raw(canvas, update_timestamp=False)
+    canvas = update_canvas_metadata(
+        current_user_id(), canvas_id,
+        title=(payload.title[:80] if payload.title else None),
+        icon=((payload.icon or "layers")[:32] if payload.icon is not None else None),
+        owner=(str(payload.owner).strip()[:40] if payload.owner is not None else None),
+        color=(normalize_canvas_color(payload.color) if payload.color is not None else None),
+        pinned=(bool(payload.pinned) if payload.pinned is not None else None),
+    )
+    if canvas is None:
+        raise HTTPException(status_code=404, detail="画布不存在")
     return {"canvas": canvas_record(canvas)}
 
 
@@ -194,8 +198,9 @@ def get_canvas(canvas_id: str):
 
 @router.post("/api/canvases/{canvas_id}/touch")
 def touch_canvas(canvas_id: str):
-    canvas = load_canvas_raw(canvas_id)
-    save_canvas_raw(canvas, update_timestamp=True)
+    canvas = touch_canvas_payload(current_user_id(), canvas_id, now_ms())
+    if canvas is None:
+        raise HTTPException(status_code=404, detail="画布不存在")
     return {"canvas": canvas_record(canvas), "updated_at": canvas.get("updated_at", 0)}
 
 

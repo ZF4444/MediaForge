@@ -81,6 +81,8 @@ def test_canvas_save_normalizes_zero_deleted_at_to_null(monkeypatch):
             if "INSERT INTO smart_canvases" in query:
                 captured["deleted_at"] = params[9]
 
+        def fetchall(self): return []
+
         def __enter__(self): return self
         def __exit__(self, *_): return False
 
@@ -98,6 +100,36 @@ def test_canvas_save_normalizes_zero_deleted_at_to_null(monkeypatch):
     assert captured["deleted_at"] is None
 
 
+def test_canvas_node_move_does_not_rebuild_file_references(monkeypatch):
+    executed = []
+    old_node = {"id": "node-1", "type": "output", "x": 0, "images": [{"file_id": "file-1"}]}
+    moved_node = {**old_node, "x": 120}
+
+    class Cursor:
+        def execute(self, query, params=()):
+            executed.append((query, params))
+
+        def fetchall(self):
+            return [{"id": "node-1", "sort_order": 0, "data_json": old_node}]
+
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+
+    class Connection:
+        def cursor(self): return Cursor()
+        def transaction(self): return self
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+
+    monkeypatch.setattr(business_metadata, "metadata_connection", lambda: Connection())
+    business_metadata.save_canvas_payload("user1", {
+        "id": "canvas1", "title": "demo", "created_at": 1, "updated_at": 2, "nodes": [moved_node],
+    })
+
+    assert any("UPDATE smart_canvas_nodes" in query for query, _ in executed)
+    assert not any("DELETE FROM smart_canvas_node_files" in query for query, _ in executed)
+
+
 def test_canvas_delete_permanently_removes_payload(monkeypatch):
     deleted = []
     monkeypatch.setattr(canvases, "load_canvas_raw", lambda canvas_id: {"id": canvas_id})
@@ -112,3 +144,34 @@ def test_canvas_delete_permanently_removes_payload(monkeypatch):
 
     assert result == {"ok": True}
     assert deleted == [("user1", "canvas1")]
+
+
+def test_canvas_meta_update_does_not_load_or_save_payload(monkeypatch):
+    updated = []
+    monkeypatch.setattr(canvases, "current_user_id", lambda: "user1")
+    monkeypatch.setattr(canvases, "load_canvas_raw", lambda _: (_ for _ in ()).throw(AssertionError("must not load payload")))
+    monkeypatch.setattr(canvases, "save_canvas_raw", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not save payload")))
+    monkeypatch.setattr(canvases, "update_canvas_metadata", lambda *args, **kwargs: updated.append((args, kwargs)) or {
+        "id": "canvas1", "title": "renamed", "icon": "layers", "owner": "", "color": "", "pinned": False,
+        "created_at": 1, "updated_at": 2, "node_count": 3,
+    })
+
+    result = canvases.update_canvas_meta("canvas1", type("Payload", (), {"title": "renamed", "icon": None, "owner": None, "color": None, "pinned": None})())
+
+    assert result["canvas"]["node_count"] == 3
+    assert updated[0][0] == ("user1", "canvas1")
+
+
+def test_canvas_touch_does_not_load_or_save_payload(monkeypatch):
+    monkeypatch.setattr(canvases, "current_user_id", lambda: "user1")
+    monkeypatch.setattr(canvases, "load_canvas_raw", lambda _: (_ for _ in ()).throw(AssertionError("must not load payload")))
+    monkeypatch.setattr(canvases, "save_canvas_raw", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not save payload")))
+    monkeypatch.setattr(canvases, "touch_canvas_payload", lambda *_: {
+        "id": "canvas1", "title": "demo", "icon": "layers", "owner": "", "color": "", "pinned": False,
+        "created_at": 1, "updated_at": 2, "node_count": 3,
+    })
+
+    result = canvases.touch_canvas("canvas1")
+
+    assert result["updated_at"] == 2
+    assert result["canvas"]["node_count"] == 3
