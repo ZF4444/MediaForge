@@ -27,7 +27,9 @@ from app.core.access_control import (
 )
 from app.core.auth import USERS, USERS_LOCK, current_user_id, delete_user
 from app.core.logging import audit_event
+from app.core.storage_io import run_storage_io
 from app.models import AccessControlConfigPayload
+from app.services.storage import delete_user_media_objects, load_storage_quota_config, save_storage_quota_config
 
 router = APIRouter()
 
@@ -123,14 +125,22 @@ async def access_control_delete_user(user_id: str):
         exists = user_id in USERS
     if not exists:
         raise HTTPException(status_code=404, detail="用户不存在。")
-    if not await delete_user(user_id):
+    result = await delete_user(user_id)
+    if not result:
         raise HTTPException(status_code=404, detail="用户不存在。")
+
+    for entry in result.get("files", []):
+        await run_storage_io(delete_user_media_objects, entry)
 
     config = load_config()
     users_config = config.get("users", {})
     if user_id in users_config:
         users_config.pop(user_id, None)
         save_config({"users": users_config})
+    quota_config = load_storage_quota_config()
+    if user_id in quota_config.get("users", {}):
+        quota_config["users"].pop(user_id, None)
+        save_storage_quota_config(quota_config)
     audit_event(
         "user_deleted",
         action="delete",
