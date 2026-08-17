@@ -7,6 +7,7 @@ import contextlib
 import json
 from typing import Any
 
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
 from app.config import CLIENT_ID, REDIS_WEBSOCKET_CHANNEL
@@ -57,6 +58,14 @@ async def websocket_pubsub_loop(manager: ConnectionManager) -> None:
             await _listen_once(manager)
         except asyncio.CancelledError:
             raise
+        except RedisConnectionError:
+            # A dropped Redis socket is recoverable: _listen_once creates a new
+            # Pub/Sub connection on the next iteration.
+            logger.warning(
+                "websocket pubsub connection lost; reconnecting",
+                extra={"event": "websocket_pubsub_reconnecting"},
+            )
+            await asyncio.sleep(3)
         except Exception:
             logger.exception("websocket pubsub listener failed", extra={"event": "websocket_pubsub_listener_failed"})
             await asyncio.sleep(3)

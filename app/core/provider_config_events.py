@@ -7,6 +7,7 @@ import contextlib
 import json
 from collections.abc import Callable
 
+from redis.exceptions import NoPermissionError
 from redis.exceptions import RedisError
 
 from app.config import CLIENT_ID, PROVIDER_CONFIG_CACHE_REFRESH_SECONDS, REDIS_PROVIDER_CONFIG_CHANNEL
@@ -50,7 +51,17 @@ async def _listen_once(refresh: Callable[[], object]) -> None:
 
 async def provider_config_event_loop(refresh: Callable[[], object]) -> None:
     """Use Pub/Sub for immediate updates and polling as a missed-event backstop."""
+    pubsub_disabled = False
     while True:
+        if pubsub_disabled:
+            # The Redis ACL user may be intentionally restricted to data
+            # commands. Keep cache invalidation functional through polling.
+            try:
+                await asyncio.to_thread(refresh)
+            except Exception:
+                logger.exception("provider config periodic refresh failed", extra={"event": "provider_config_periodic_refresh_failed"})
+            await asyncio.sleep(PROVIDER_CONFIG_CACHE_REFRESH_SECONDS)
+            continue
         try:
             await asyncio.wait_for(
                 _listen_once(refresh), timeout=PROVIDER_CONFIG_CACHE_REFRESH_SECONDS,
@@ -62,6 +73,12 @@ async def provider_config_event_loop(refresh: Callable[[], object]) -> None:
                 logger.exception("provider config periodic refresh failed", extra={"event": "provider_config_periodic_refresh_failed"})
         except asyncio.CancelledError:
             raise
+        except NoPermissionError:
+            pubsub_disabled = True
+            logger.warning(
+                "Redis ACL does not allow SUBSCRIBE; using periodic provider config refresh",
+                extra={"event": "provider_config_pubsub_disabled"},
+            )
         except Exception:
             logger.exception("provider config listener failed", extra={"event": "provider_config_listener_failed"})
             await asyncio.sleep(3)

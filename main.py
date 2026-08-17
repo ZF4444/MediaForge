@@ -240,11 +240,15 @@ async def startup_event():
             WEBSOCKET_PUBSUB_TASK = asyncio.create_task(websocket_pubsub_loop(manager))
         if PROVIDER_CONFIG_SYNC_TASK is None:
             PROVIDER_CONFIG_SYNC_TASK = asyncio.create_task(provider_config_event_loop(refresh_api_providers_cache))
-        await ensure_canvas_task_consumer_group()
-        if CANVAS_TASK_RECOVERY_ENABLED and CANVAS_TASK_RECOVERY_TASK is None:
-            CANVAS_TASK_RECOVERY_TASK = asyncio.create_task(canvas_task_recovery_loop())
-        if CANVAS_TASK_WORKER_ENABLED and CANVAS_TASK_WORKER_TASK is None:
-            CANVAS_TASK_WORKER_TASK = asyncio.create_task(canvas_task_worker_loop())
+        # API-only replicas do not consume or recover stream messages.  Avoid
+        # requiring stream ACL commands in that mode; the dedicated worker (or
+        # a combined single-process deployment) initializes the group instead.
+        if CANVAS_TASK_RECOVERY_ENABLED or CANVAS_TASK_WORKER_ENABLED:
+            await ensure_canvas_task_consumer_group()
+            if CANVAS_TASK_RECOVERY_ENABLED and CANVAS_TASK_RECOVERY_TASK is None:
+                CANVAS_TASK_RECOVERY_TASK = asyncio.create_task(canvas_task_recovery_loop())
+            if CANVAS_TASK_WORKER_ENABLED and CANVAS_TASK_WORKER_TASK is None:
+                CANVAS_TASK_WORKER_TASK = asyncio.create_task(canvas_task_worker_loop())
         logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
     except Exception:
         await close_http_client()
@@ -355,7 +359,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
 from app.config import (
     CLIENT_ID,
     CANVAS_TASK_RECOVERY_ENABLED,
+    CANVAS_TASK_WORKER_CONCURRENCY,
     CANVAS_TASK_WORKER_ENABLED,
+    HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
     REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS,
     BASE_DIR,
     WORKFLOW_DIR,
@@ -3218,7 +3224,9 @@ async def generate_omnilojo_provider_image(prompt, size, model, reference_images
     body = {"model": model, "messages": [{"role": "user", "content": content}]}
     cfg = gemini_image_config(size)
     body["extra_body"] = {"google": {"image_config": {"aspect_ratio": cfg["aspectRatio"], "image_size": cfg["imageSize"]}}}
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0)) as client:
+    async with shared_http_client(timeout=httpx.Timeout(
+        connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
+    )) as client:
         response = await client.post(chat_url, headers=api_headers(provider=provider, model=model), json=body)
         response.raise_for_status()
         raw = response.json()
@@ -4395,7 +4403,9 @@ async def build_online_image_result(payload: OnlineImageRequest):
     max_count = max(1, min(8, int(os.getenv("AI_ONLINE_IMAGE_MAX_COUNT", "4"))))
     count = max(1, min(max_count, int(payload.n or 1)))
     async def generate_one():
-        image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, refs, provider["id"])
+        image_data, raw_item = await generate_ai_image(
+            payload.prompt, payload.size, payload.quality, model, refs, provider["id"],
+        )
         local_url = await save_ai_image_to_output(image_data, prefix="online_")
         return local_url, raw_item
     try:
@@ -4596,8 +4606,55 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 async def create_canvas_image_task(payload: OnlineImageRequest):
     require_model_access(payload.provider_id, payload.model)
     await assert_provider_budget_available(get_api_provider(payload.provider_id), current_user_id())
-    task_id = f"canvas_img_{uuid.uuid4().hex}"
     owner_id = current_user_id()
+    count = max(1, min(8, int(payload.n or 1)))
+    if count > 1:
+        parent_task_id = f"canvas_img_batch_{uuid.uuid4().hex}"
+        child_tasks = []
+        child_request = payload.model_copy(update={"n": 1}).model_dump(mode="json")
+        for index in range(count):
+            child_task_id = f"canvas_img_{uuid.uuid4().hex}"
+            child_tasks.append(child_task_id)
+            await create_canvas_task({
+                "id": child_task_id,
+                "type": "online-image",
+                "status": "queued",
+                "created_at": time.time(),
+                "updated_at": time.time(),
+                "result": None,
+                "error": "",
+                "provider_id": payload.provider_id,
+                "model": payload.model,
+                "owner_id": owner_id,
+                "parent_task_id": parent_task_id,
+                "child_index": index,
+                "request": child_request,
+            })
+        # The parent is metadata only. It is never enqueued, so recovery does
+        # not try to execute it as an image-generation task.
+        await create_canvas_task({
+            "id": parent_task_id,
+            "type": "online-image-batch",
+            "status": "batching",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "result": None,
+            "error": "",
+            "provider_id": payload.provider_id,
+            "model": payload.model,
+            "owner_id": owner_id,
+            "child_task_ids": child_tasks,
+            "request": payload.model_dump(mode="json"),
+        })
+        for child_task_id in child_tasks:
+            await enqueue_canvas_task(child_task_id)
+        task_logger.info(
+            "canvas image batch submitted",
+            extra={"event": "task_batch_submitted", "task_id": parent_task_id, "provider": payload.provider_id, "operation": "image_generation", "status": "queued", "count": count},
+        )
+        return {"task_id": parent_task_id, "child_task_ids": child_tasks, "status": "queued"}
+
+    task_id = f"canvas_img_{uuid.uuid4().hex}"
     await create_canvas_task({
             "id": task_id,
             "type": "online-image",
@@ -4618,6 +4675,38 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
     await enqueue_canvas_task(task_id)
     return {"task_id": task_id, "status": "queued"}
 
+
+async def _canvas_image_batch_view(task: dict):
+    child_ids = [str(task_id) for task_id in task.get("child_task_ids") or [] if task_id]
+    children = await asyncio.gather(*(get_canvas_task(task_id) for task_id in child_ids))
+    completed = [child for child in children if child and child.get("status") in {"succeeded", "failed", "interrupted"}]
+    images = []
+    image_items = []
+    failures = []
+    for child in children:
+        if not child:
+            continue
+        result = child.get("result") if isinstance(child.get("result"), dict) else {}
+        images.extend(result.get("images") or [])
+        image_items.extend(result.get("image_items") or [])
+        if child.get("status") in {"failed", "interrupted"}:
+            failures.append({"task_id": child.get("id"), "error": child.get("error") or "任务失败"})
+    if len(completed) < len(child_ids):
+        status = "running" if any(child and child.get("status") == "running" for child in children) else "queued"
+    elif images:
+        status = "succeeded"
+    else:
+        status = "failed"
+    return {
+        **task,
+        "status": status,
+        "result": {"images": images, "image_items": image_items, "failed_children": failures},
+        "completed_children": len(completed),
+        "total_children": len(child_ids),
+        "failed_children": failures,
+    }
+
+
 @app.get("/api/canvas-image-tasks/{task_id}")
 async def get_canvas_image_task(task_id: str):
     task = await get_canvas_task(task_id)
@@ -4625,6 +4714,8 @@ async def get_canvas_image_task(task_id: str):
         raise HTTPException(status_code=404, detail="画布任务不存在，可能服务已重启或任务已过期")
     if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
+    if task.get("type") == "online-image-batch":
+        task = await _canvas_image_batch_view(task)
     task.pop("request", None)
     return task
 
@@ -4802,12 +4893,12 @@ async def execute_canvas_task(task_id: str):
         current_user_var.reset(context_token)
 
 
-async def canvas_task_worker_loop():
+async def _canvas_task_consumer_loop(consumer_id: str):
     while True:
         try:
-            messages = await reclaim_canvas_task_messages(CLIENT_ID)
+            messages = await reclaim_canvas_task_messages(consumer_id)
             if not messages:
-                messages = await dequeue_canvas_tasks(CLIENT_ID)
+                messages = await dequeue_canvas_tasks(consumer_id)
             for message_id, task_id in messages:
                 try:
                     await execute_canvas_task(task_id)
@@ -4825,6 +4916,17 @@ async def canvas_task_worker_loop():
         except Exception:
             logger.exception("canvas task worker loop failed", extra={"event": "task_worker_loop_failed"})
             await asyncio.sleep(REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS)
+
+
+async def canvas_task_worker_loop():
+    """Consume several canvas tasks concurrently within one worker process."""
+    if CANVAS_TASK_WORKER_CONCURRENCY == 1:
+        await _canvas_task_consumer_loop(CLIENT_ID)
+        return
+    await asyncio.gather(*(
+        _canvas_task_consumer_loop(f"{CLIENT_ID}:{slot}")
+        for slot in range(CANVAS_TASK_WORKER_CONCURRENCY)
+    ))
 
 # --- Canvas Video ---
 

@@ -172,12 +172,17 @@ function comfyFieldKind(field){
 async function runApiGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.provider_id || !runSettings.model) throw new Error(tr('smart.errNoApiModel'));
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
-    const payload = {prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs)};
-    const tasks = await Promise.all(Array.from({length:count}, () => fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
+    // The API returns one batch parent plus one independently scheduled child
+    // task per image. Polling children lets the canvas show partial results.
+    const payload = {prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:count, reference_images:imageRefsOnly(refs)};
+    const task = await fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
         if(!r.ok) throw await smartResponseError(r);
         return r.json();
-    })));
-    return {taskIds:tasks.map(task => task.task_id).filter(Boolean), count, providerId:runSettings.provider_id, model:runSettings.model};
+    });
+    const taskIds = Array.isArray(task?.child_task_ids) && task.child_task_ids.length
+        ? task.child_task_ids
+        : (task?.task_id ? [task.task_id] : []);
+    return {taskIds, count, providerId:runSettings.provider_id, model:runSettings.model};
 }
 async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const ref = selectedRunningHubRef(runSettings);
@@ -1147,7 +1152,7 @@ async function runGeneration(){
     } finally {
         if(!apiConcurrentRun){
             clearNodeRunningState(pendingNode);
-            runBtn.disabled = false;
+            syncPrimaryRunButton(activeSettingsSubject());
         }
         // A user may open another node while this run is in flight. Do not let
         // the completed node's restored settings overwrite that node's panel.

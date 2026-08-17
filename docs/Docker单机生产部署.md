@@ -166,6 +166,21 @@ COMFLY_API_KEY=
 RUNNINGHUB_API_KEY=
 ```
 
+若为 Redis 配置了受限 ACL 用户，请额外授予 Pub/Sub 命令，否则跨进程 WebSocket 事件无法转发：
+
+```text
+ACL SETUSER mediaforge +publish +subscribe +unsubscribe
+```
+
+画布任务 worker 或恢复扫描还会读写任务状态、有序集合和 Streams；受限 ACL
+用户需要同时授予以下命令类别，否则会出现 `ZRANGE`、`XGROUP` 等权限错误：
+
+```text
+ACL SETUSER mediaforge +@read +@write +@stream +eval
+```
+
+Provider 配置监听在缺少 `subscribe` 权限时会自动改用定时刷新；WebSocket 事件转发仍需要 `publish/subscribe` 权限。
+
 生成随机值可以使用：
 
 ```bash

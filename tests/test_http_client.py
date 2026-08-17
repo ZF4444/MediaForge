@@ -28,6 +28,16 @@ def test_shared_http_client_reuses_process_wide_instance():
     asyncio.run(scenario())
 
 
+def test_shared_http_client_uses_configured_connection_limits():
+    async def scenario():
+        client = await http_client.open_http_client()
+        pool = client._transport._pool
+        assert pool._max_connections == http_client.HTTP_CLIENT_MAX_CONNECTIONS
+        assert pool._max_keepalive_connections == http_client.HTTP_CLIENT_KEEPALIVE_CONNECTIONS
+        await http_client.close_http_client()
+
+    asyncio.run(scenario())
+
 def test_shared_http_client_close_is_idempotent():
     async def scenario():
         await http_client.open_http_client()

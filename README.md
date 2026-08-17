@@ -107,6 +107,24 @@ export MINIO_SECRET_KEY=readygo123
 export REDIS_URL=redis://mediaforge:readygo123@127.0.0.1:6379/0
 ```
 
+如果 Redis 使用 ACL 用户而不是默认用户，该用户还需要发布订阅权限（跨进程 WebSocket 和 Provider 配置通知会使用 Pub/Sub）：
+
+```text
+ACL SETUSER mediaforge +publish +subscribe +unsubscribe
+```
+
+启用画布任务 worker 或恢复扫描时，该用户还必须拥有 Redis Streams 命令权限，
+否则应用会在启动时无法创建 `canvas-workers` 消费组。可以按部署所需的最小范围授予：
+
+```text
+ACL SETUSER mediaforge +@read +@write +@stream +eval
+```
+
+API-only 副本（`CANVAS_TASK_WORKER_ENABLED=false` 且
+`CANVAS_TASK_RECOVERY_ENABLED=false`）不会初始化消费组，因此不需要 `@stream` 权限。
+
+应用检测到 `SUBSCRIBE` 被 ACL 拒绝时会自动降级为定时刷新 Provider 配置，但 WebSocket 跨进程事件仍需要 `publish/subscribe` 权限。
+
 在 `API/.env` 中填写 AI 平台密钥：
 
 ```dotenv
@@ -201,6 +219,13 @@ RUN_BACKGROUND_MAINTENANCE=false uv run python -m app.workers.canvas
 `REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS`、`REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS`
 和 `REDIS_CANVAS_TASK_STREAM_MAXLEN`。pending 接管阈值应大于正常任务启动前的
 最大停顿时间，且不要小于租约刷新间隔。
+
+单个 worker 进程默认同时消费 100 个画布任务。一次生成多张图会创建一个父任务和
+多个独立的图片子任务；子任务分别由 worker 调度，父任务聚合整体结果。多 worker 消费可通过
+`CANVAS_TASK_WORKER_CONCURRENCY` 显式调整；实际提交到同一 AI Provider 的并发仍受
+`AI_PROVIDER_MAX_CONCURRENCY`（默认 100）和相应的分 Provider 配置限制。
+当 worker 并发提高时，`REDIS_MAX_CONNECTIONS` 应至少高于 worker 数量，并为
+认证、恢复和其它 Redis 操作预留连接。
 
 任务 worker 的租约值是一次执行一换的 fencing token。任务状态和结果仅允许当前 token
 通过 Redis 原子脚本写入；已失租的 worker 即使随后返回，也不会覆盖接管者的结果。对于不支持

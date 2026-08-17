@@ -327,6 +327,16 @@ function syncSmartCascadeLegacyState(preferredLoopId=''){
     smartCascadeRunPath = activeRun?.runPath || null;
 }
 function smartCascadeAnyRunning(){ return smartCascadeRunning || activeSmartCascadeCount() > 0; }
+function syncPrimaryRunButton(node=selectedNode()){
+    if(!runBtn) return;
+    // The primary run control belongs to the selected node. A Comfy task on a
+    // different node must not leave the current node's AI run button locked.
+    if(smartCascadeAnyRunning()){
+        runBtn.disabled = true;
+        return;
+    }
+    runBtn.disabled = Boolean(node?.running || node?.pending || node?.queued);
+}
 function smartCascadeEdgeState(edgeKey){
     for(const run of smartCascadeRuns.values()){
         const state = run?.runPath?.states?.[edgeKey];
@@ -2166,6 +2176,7 @@ function positionComposerForNode(node){
 }
 function updateComposer(){
     const node = selectedNode();
+    syncPrimaryRunButton(node);
     if(node?.id && suppressComposerForCandidateNodeId === node.id){
         composer.classList.remove('open');
         updateNodeShortcutBar();

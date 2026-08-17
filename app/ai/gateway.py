@@ -43,10 +43,10 @@ def _positive_int(value: str, fallback: int) -> int:
 def _limits(provider_id: str) -> tuple[int, int]:
     normalized = "".join(char if char.isalnum() else "_" for char in provider_id.upper())
     concurrency = _positive_int(
-        os.getenv(f"AI_PROVIDER_{normalized}_MAX_CONCURRENCY", os.getenv("AI_PROVIDER_MAX_CONCURRENCY", "4")),
-        4,
+        os.getenv(f"AI_PROVIDER_{normalized}_MAX_CONCURRENCY", os.getenv("AI_PROVIDER_MAX_CONCURRENCY", "100")),
+        100,
     )
-    queue_limit = _positive_int(os.getenv("AI_PROVIDER_QUEUE_LIMIT", "16"), 16)
+    queue_limit = _positive_int(os.getenv("AI_PROVIDER_QUEUE_LIMIT", "200"), 200)
     return concurrency, queue_limit
 
 
@@ -140,7 +140,7 @@ async def _acquire_distributed_slot(provider: str, operation: str) -> tuple[str,
     """Acquire one cluster-wide execution slot when Redis governance is enabled."""
     if not _governance_enabled() or os.getenv("AI_DISTRIBUTED_CONCURRENCY_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
         return None
-    limit = _provider_setting(provider, "MAX_CONCURRENCY", 4)
+    limit = _provider_setting(provider, "MAX_CONCURRENCY", 100)
     token = uuid.uuid4().hex
     key = f"{_GOVERNANCE_PREFIX}slot:{provider}:{operation}:{token}"
     try:

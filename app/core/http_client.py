@@ -200,7 +200,12 @@ def shared_http_client(*, timeout: Any = _UNSET, follow_redirects: Any = _UNSET)
     return _SharedHttpClientContext(timeout=timeout, follow_redirects=follow_redirects)
 
 
-def new_outbound_http_client(*, timeout: Any, follow_redirects: bool = False) -> httpx.AsyncClient:
+def new_outbound_http_client(
+    *,
+    timeout: Any,
+    follow_redirects: bool = False,
+    limits: httpx.Limits | None = None,
+) -> httpx.AsyncClient:
     """Create an isolated outbound client with the standard egress safeguards.
 
     This is reserved for recovery paths that must discard a potentially bad
@@ -208,11 +213,13 @@ def new_outbound_http_client(*, timeout: Any, follow_redirects: bool = False) ->
     directly, because direct transports can resolve a hostname again after the
     endpoint validator accepted it.
     """
-    limits = httpx.Limits(max_connections=1, max_keepalive_connections=0)
+    # Recovery callers can request an isolated single-connection client;
+    # the process-wide client passes its configured pool limits explicitly.
+    effective_limits = limits or httpx.Limits(max_connections=1, max_keepalive_connections=0)
     outbound_proxy = str(os.getenv("AI_OUTBOUND_PROXY", "")).strip()
     transport = (
-        httpx.AsyncHTTPTransport(limits=limits, proxy=outbound_proxy, trust_env=False)
-        if outbound_proxy else _PinnedAsyncHTTPTransport(limits=limits)
+        httpx.AsyncHTTPTransport(limits=effective_limits, proxy=outbound_proxy, trust_env=False)
+        if outbound_proxy else _PinnedAsyncHTTPTransport(limits=effective_limits)
     )
     return httpx.AsyncClient(timeout=timeout, transport=transport, follow_redirects=follow_redirects)
 
@@ -235,6 +242,7 @@ async def open_http_client() -> httpx.AsyncClient:
             pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
         ),
         follow_redirects=False,
+        limits=limits,
     )
     _CLIENT = client
     logger.info(
