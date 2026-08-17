@@ -109,7 +109,7 @@
                     <div id="storageQuotaDialogTitle" class="storage-quota-dialog-title">预算不足</div>
                     <button class="storage-quota-dialog-close" type="button" data-quota-close aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
                 </div>
-                <div class="storage-quota-dialog-message">${escapeHtml(message)}<br>请联系管理员增加预算或调整预算配置。</div>
+                <div class="storage-quota-dialog-message">${escapeHtml(message)}<br>请联系管理员(@飞帆)增加预算或调整预算配置。</div>
                 <div class="storage-quota-dialog-actions">
                     <button class="storage-quota-dialog-btn primary" type="button" data-quota-close>我知道了</button>
                 </div>

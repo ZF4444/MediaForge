@@ -112,6 +112,73 @@ def fake_database(cursor):
     return connection
 
 
+class SyncCursor:
+    def __init__(self, rows):
+        self.rows = iter(rows)
+        self.executed = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query, params=None):
+        self.executed.append((str(query), params))
+
+    def fetchone(self):
+        return next(self.rows)
+
+
+class SyncTransaction:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class SyncConnection:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def cursor(self):
+        return self._cursor
+
+    def transaction(self):
+        return SyncTransaction()
+
+
+def test_register_user_creates_an_enabled_zero_budget(monkeypatch):
+    cursor = SyncCursor([{"id": "new-user"}])
+    monkeypatch.setattr(auth, "metadata_connection", lambda: SyncConnection(cursor))
+    monkeypatch.setattr(auth, "now_ms", lambda: 5_000_000)
+    monkeypatch.setattr(auth, "USERS", {})
+
+    assert auth.register_user("new-user", "New User") is True
+
+    assert len(cursor.executed) == 2
+    budget_query, budget_params = cursor.executed[1]
+    assert "INSERT INTO user_budgets" in budget_query
+    assert "VALUES(%s,0,TRUE,%s,%s)" in budget_query
+    assert budget_params == ("new-user", 5_000_000, 5_000_000)
+
+
+def test_register_user_does_not_create_budget_when_user_already_exists(monkeypatch):
+    cursor = SyncCursor([])
+    monkeypatch.setattr(auth, "metadata_connection", lambda: SyncConnection(cursor))
+    monkeypatch.setattr(auth, "USERS", {"existing-user": {}})
+
+    assert auth.register_user("existing-user", "Existing User") is False
+    assert cursor.executed == []
+
+
 def test_session_cache_hit_does_not_query_postgres(monkeypatch):
     now = 2_000_000
     payload = {

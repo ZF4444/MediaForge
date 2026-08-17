@@ -87,10 +87,14 @@ def register_user(user_id: str, username: str) -> bool:
         if user_id in USERS:
             return False
         created_at = now_ms()
-        with metadata_connection() as conn, conn.cursor() as cur:
+        with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
             cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING id", (user_id, username, created_at))
             if not cur.fetchone():
                 return False
+            cur.execute(
+                "INSERT INTO user_budgets(user_id,monthly_budget_usd,enabled,created_at,updated_at) VALUES(%s,0,TRUE,%s,%s)",
+                (user_id, created_at, created_at),
+            )
         USERS[user_id] = {"username": username, "created_at": created_at, "org_id": None}
     return True
 

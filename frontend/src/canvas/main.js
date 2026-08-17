@@ -3385,7 +3385,7 @@ function handleUsageBudgetSignal(e){
     try {
         window.MediaForgeUpload?.showBudgetDialog?.({message:e.message});
     } catch(_) {
-        toast((e.message || '本月使用预算已用尽，请联系管理员。').slice(0, 160));
+        toast((e.message || '本月使用预算已用尽，请联系管理员(@飞帆)。').slice(0, 160));
     }
     return true;
 }

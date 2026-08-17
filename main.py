@@ -1304,7 +1304,7 @@ def require_admin() -> str:
 def require_model_access(provider_id: str, model: str) -> str:
     uid = current_user_id()
     if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, provider_id, model):
-        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员在访问控制中开放。")
+        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员(@飞帆)在访问控制中开放。")
     return uid
 
 def get_primary_provider_id(providers=None):

@@ -114,7 +114,7 @@ async def auth_register(payload: LoginRequest):
         result="failure",
         reason="registration_disabled",
     )
-    raise HTTPException(status_code=403, detail="当前不开放注册，请联系管理员创建账号。")
+    raise HTTPException(status_code=403, detail="当前不开放注册，请联系管理员(@飞帆)创建账号。")
 
 
 @router.post("/auth/login")
@@ -125,7 +125,7 @@ async def auth_login(payload: LoginRequest):
         raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
     if not user_exists(user_id):
         audit_event("login_failed", action="login", resource_type="session", resource_id=user_id, result="failure", reason="user_not_found")
-        raise HTTPException(status_code=404, detail="该用户名尚未注册，请联系管理员创建账号。")
+        raise HTTPException(status_code=404, detail="该用户名尚未注册，请联系管理员(@飞帆)创建账号。")
     username = payload.username.strip()[:60]
     response = await _issue_session_response(user_id, username)
     audit_event("login_succeeded", action="login", resource_type="session", resource_id=user_id, user_id=user_id, username=username)

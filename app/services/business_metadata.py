@@ -114,9 +114,11 @@ CREATE TABLE IF NOT EXISTS organization_budgets (
 );
 CREATE TABLE IF NOT EXISTS user_budgets (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    monthly_budget_usd NUMERIC(14, 4), enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    monthly_budget_usd NUMERIC(14, 4) NOT NULL DEFAULT 0, enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
 );
+ALTER TABLE user_budgets ALTER COLUMN monthly_budget_usd SET DEFAULT 0;
+ALTER TABLE user_budgets ALTER COLUMN enabled SET DEFAULT TRUE;
 CREATE TABLE IF NOT EXISTS runninghub_usage_records (
     id TEXT PRIMARY KEY, upstream_task_id TEXT NOT NULL UNIQUE,
     user_id TEXT NOT NULL DEFAULT '', org_id TEXT,
