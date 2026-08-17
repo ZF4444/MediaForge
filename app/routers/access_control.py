@@ -25,7 +25,7 @@ from app.core.access_control import (
     load_config,
     save_config,
 )
-from app.core.auth import USERS, USERS_LOCK, current_user_id
+from app.core.auth import USERS, USERS_LOCK, current_user_id, delete_user
 from app.core.logging import audit_event
 from app.models import AccessControlConfigPayload
 
@@ -110,3 +110,31 @@ def access_control_users():
     """已注册用户列表（仅 admin）。"""
     _require_admin()
     return {"users": _registered_users()}
+
+
+@router.delete("/api/access-control/users/{user_id}")
+async def access_control_delete_user(user_id: str):
+    """删除注册用户（仅 admin）；历史用量和审计记录保留。"""
+    _require_admin()
+    if user_id == ADMIN_USER_ID:
+        raise HTTPException(status_code=400, detail="管理员账号不支持删除。")
+    user_id = str(user_id or "").strip()
+    with USERS_LOCK:
+        exists = user_id in USERS
+    if not exists:
+        raise HTTPException(status_code=404, detail="用户不存在。")
+    if not await delete_user(user_id):
+        raise HTTPException(status_code=404, detail="用户不存在。")
+
+    config = load_config()
+    users_config = config.get("users", {})
+    if user_id in users_config:
+        users_config.pop(user_id, None)
+        save_config({"users": users_config})
+    audit_event(
+        "user_deleted",
+        action="delete",
+        resource_type="user",
+        resource_id=user_id,
+    )
+    return {"ok": True, "user_id": user_id}
