@@ -140,6 +140,13 @@ class ApiProviderPayload(BaseModel):
     volcengine_secret_access_key: Optional[str] = None
     api_key: Optional[str] = None
     clear_key: bool = False
+    omnilojo_management_token: Optional[str] = None
+    clear_omnilojo_management_token: bool = False
+    omnilojo_usage_scope: str = "token"
+    omnilojo_admin_user_id: str = ""
+    omnilojo_quota_per_usd: float = 500000
+    omnilojo_cny_per_usd: float = 7.2
+    omnilojo_model_prices: Dict[str, Dict[str, float]] = {}
     clear_volcengine_access_key_id: bool = False
     clear_volcengine_secret_access_key: bool = False
 

@@ -180,6 +180,40 @@
         "type": "boolean",
         "default": false
       },
+      "omnilojo_management_token": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "clear_omnilojo_management_token": {
+        "type": "boolean",
+        "default": false
+      },
+      "omnilojo_usage_scope": {
+        "type": "string",
+        "default": "token"
+      },
+      "omnilojo_admin_user_id": {
+        "type": "string",
+        "default": ""
+      },
+      "omnilojo_quota_per_usd": {
+        "type": "number",
+        "default": 500000
+      },
+      "omnilojo_cny_per_usd": {
+        "type": "number",
+        "default": 7.2
+      },
+      "omnilojo_model_prices": {
+        "type": "object",
+        "default": {}
+      },
       "clear_volcengine_access_key_id": {
         "type": "boolean",
         "default": false

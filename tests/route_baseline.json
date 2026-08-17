@@ -7,6 +7,13 @@
     "APIRoute"
   ],
   [
+    "/api/account/overview",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/access-control/config",
     [
       "GET"
@@ -616,6 +623,20 @@
     "APIRoute"
   ],
   [
+    "/api/organizations/{org_id}/budget",
+    [
+      "PUT"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/users/{user_id}/budget",
+    [
+      "PUT"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/pose-studio/generate-fbx",
     [
       "POST"
@@ -1046,6 +1067,20 @@
   ],
   [
     "/static/{page}.html",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/usage/omnilojo",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/usage/runninghub",
     [
       "GET"
     ],

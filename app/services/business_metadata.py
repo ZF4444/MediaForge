@@ -106,6 +106,46 @@ CREATE TABLE IF NOT EXISTS organizations (
 );
 ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id);
+CREATE TABLE IF NOT EXISTS organization_budgets (
+    organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    monthly_budget_cny NUMERIC(14, 4), enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_budgets (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    monthly_budget_usd NUMERIC(14, 4), enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS runninghub_usage_records (
+    id TEXT PRIMARY KEY, upstream_task_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL DEFAULT '', org_id TEXT,
+    operation TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'submitted',
+    submitted_at BIGINT NOT NULL, completed_at BIGINT,
+    consume_money_cny NUMERIC(14, 4) NOT NULL DEFAULT 0,
+    third_party_money_cny NUMERIC(14, 4) NOT NULL DEFAULT 0,
+    total_money_cny NUMERIC(14, 4) NOT NULL DEFAULT 0,
+    consume_coins NUMERIC(14, 4) NOT NULL DEFAULT 0,
+    task_cost_seconds NUMERIC(14, 4) NOT NULL DEFAULT 0,
+    raw_usage JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runninghub_usage_org_submitted ON runninghub_usage_records(org_id, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runninghub_usage_user_submitted ON runninghub_usage_records(user_id, submitted_at DESC);
+CREATE TABLE IF NOT EXISTS omnilojo_usage_records (
+    id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, upstream_log_id TEXT NOT NULL,
+    request_id TEXT NOT NULL DEFAULT '', upstream_request_id TEXT NOT NULL DEFAULT '',
+    user_id TEXT NOT NULL DEFAULT '', org_id TEXT, external_username TEXT NOT NULL DEFAULT '', token_name TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '', quota NUMERIC(18, 4) NOT NULL DEFAULT 0,
+    cost_usd NUMERIC(14, 6) NOT NULL DEFAULT 0, total_money_cny NUMERIC(14, 4) NOT NULL DEFAULT 0,
+    prompt_tokens BIGINT NOT NULL DEFAULT 0, completion_tokens BIGINT NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'succeeded', created_at BIGINT NOT NULL, raw_log JSONB NOT NULL DEFAULT '{}'::jsonb,
+    inserted_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, UNIQUE(provider_id, upstream_log_id)
+);
+ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS upstream_request_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_org_created ON omnilojo_usage_records(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_created ON omnilojo_usage_records(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_user_created ON omnilojo_usage_records(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS user_sessions (
     token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     username TEXT NOT NULL, created_at BIGINT NOT NULL, last_seen BIGINT NOT NULL, expires_at BIGINT NOT NULL

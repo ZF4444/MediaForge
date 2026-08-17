@@ -702,6 +702,9 @@ def provider_key_env(provider_id):
         return "ARK_API_KEY"
     return f"API_PROVIDER_{re.sub(r'[^A-Za-z0-9]', '_', provider_id).upper()}_KEY"
 
+def omnilojo_management_token_env(provider_id):
+    return f"API_PROVIDER_{re.sub(r'[^A-Za-z0-9]', '_', str(provider_id or '').lower()).upper()}_OMNILOJO_MANAGEMENT_TOKEN"
+
 def volcengine_access_key_env():
     return "VOLCENGINE_ACCESS_KEY_ID"
 
@@ -1094,6 +1097,24 @@ def normalize_endpoint_override(value, label):
         raise HTTPException(status_code=400, detail=f"{label} 需要以 /v1/... 开头，或填写完整 http(s) 地址")
     return endpoint
 
+def normalize_positive_number(value, default, label):
+    try:
+        number = float(value if value not in (None, "") else default)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{label} 必须是数字") from None
+    if not 0 < number <= 999999999:
+        raise HTTPException(status_code=400, detail=f"{label} 必须大于 0")
+    return number
+
+def normalize_nonnegative_number(value, default, label):
+    try:
+        number = float(value if value not in (None, "") else default)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{label} 必须是数字") from None
+    if not 0 <= number <= 999999999:
+        raise HTTPException(status_code=400, detail=f"{label} 必须为非负数")
+    return number
+
 def provider_endpoint_url(provider, key, default_path):
     base_url = str((provider or {}).get("base_url") or AI_BASE_URL).strip().rstrip("/")
     override = str((provider or {}).get(key) or "").strip()
@@ -1140,8 +1161,35 @@ def normalize_provider(item):
         name = "ComfyUI"
         protocol = "openai"
         base_url = ""
-    elif protocol not in {"openai", "gemini"}:
+    elif protocol not in {"openai", "gemini", "omnilojo"}:
         protocol = "openai"
+    raw_omnilojo_prices = item.get("omnilojo_model_prices") or {}
+    omnilojo_model_prices = {}
+    if isinstance(raw_omnilojo_prices, dict):
+        for raw_model, raw_price in raw_omnilojo_prices.items():
+            model_name = str(raw_model or "").strip()[:160]
+            if not model_name or not isinstance(raw_price, dict):
+                continue
+            input_per_million = normalize_nonnegative_number(raw_price.get("input_per_million"), 0, "Omnilojo 输入单价")
+            output_per_million = normalize_nonnegative_number(raw_price.get("output_per_million"), 0, "Omnilojo 输出单价")
+            omnilojo_model_prices[model_name] = {
+                "input_per_million": input_per_million,
+                "output_per_million": output_per_million,
+            }
+    if protocol == "omnilojo":
+        configured_models = {
+            str(model or "").strip()
+            for values in (item.get("image_models") or [], item.get("chat_models") or [], item.get("video_models") or [])
+            for model in values if str(model or "").strip()
+        }
+        missing_prices = [
+            model for model in configured_models
+            if not omnilojo_model_prices.get(model)
+            or omnilojo_model_prices[model]["input_per_million"] <= 0
+            or omnilojo_model_prices[model]["output_per_million"] <= 0
+        ]
+        if missing_prices:
+            raise HTTPException(status_code=400, detail=f"Omnilojo 模型必须配置输入和输出单价：{', '.join(sorted(missing_prices)[:3])}")
     return {
         "id": provider_id,
         "name": name,
@@ -1159,6 +1207,11 @@ def normalize_provider(item):
         "rh_apps": normalize_runninghub_entries(item.get("rh_apps") or [], "app"),
         "volcengine_project_name": volc_project,
         "volcengine_region": volc_region,
+        "omnilojo_admin_user_id": re.sub(r"\s+", "", str(item.get("omnilojo_admin_user_id") or ""))[:80],
+        "omnilojo_usage_scope": "admin" if str(item.get("omnilojo_usage_scope") or "token").lower() == "admin" else "token",
+        "omnilojo_quota_per_usd": normalize_positive_number(item.get("omnilojo_quota_per_usd"), 500000, "Omnilojo 每美元额度"),
+        "omnilojo_cny_per_usd": normalize_positive_number(item.get("omnilojo_cny_per_usd"), 7.2, "Omnilojo 美元兑人民币汇率"),
+        "omnilojo_model_prices": omnilojo_model_prices,
     }
 
 _API_PROVIDERS_CACHE = None
@@ -1222,6 +1275,12 @@ def public_provider(provider, *, include_credentials=False):
             "volcengine_secret_key_env": volcengine_secret_key_env(),
             "volcengine_project_name": provider.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME,
             "volcengine_region": provider.get("volcengine_region") or VOLCENGINE_DEFAULT_REGION,
+        })
+    if provider_protocol(provider) == "omnilojo":
+        management_token = get_provider_secret(provider["id"], "omnilojo_management_token") if os.getenv("APP_SECRET_KEY") else (os.getenv(omnilojo_management_token_env(provider["id"]), "") or read_api_env_value(omnilojo_management_token_env(provider["id"])))
+        item.update({
+            "has_omnilojo_management_token": bool(management_token),
+            "omnilojo_management_token_preview": mask_secret(management_token),
         })
     return item
 
@@ -2846,6 +2905,121 @@ def friendly_chat_error_detail(text, model="", provider=None):
         return "请求过于频繁，已被上游限流，请稍后再试。"
     return ""
 
+# ---- RunningHub task protocol helpers ----
+def runninghub_provider():
+    return get_api_provider_exact("runninghub")
+
+def runninghub_api_key(provider):
+    key = provider_env_key_value((provider or {}).get("id") or "runninghub")
+    if not key:
+        raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
+    return key
+
+def runninghub_api_headers(provider):
+    return {"Accept": "application/json", "Authorization": bearer_auth_value(runninghub_api_key(provider)), "Content-Type": "application/json"}
+
+def runninghub_app_headers(json_body=True):
+    headers = {"Accept": "application/json", "Authorization": bearer_auth_value(runninghub_api_key(runninghub_provider()))}
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+def runninghub_extract_task_id(payload):
+    if not isinstance(payload, dict): return ""
+    for key in ("taskId", "task_id"):
+        if payload.get(key): return str(payload[key])
+    return runninghub_extract_task_id(payload.get("data")) if isinstance(payload.get("data"), dict) else ""
+
+def runninghub_extract_outputs(payload):
+    found, seen = [], set(); keys = {"fileUrl", "file_url", "download_url", "imageUrl", "image_url", "videoUrl", "video_url", "audioUrl", "audio_url", "fileName"}
+    def visit(value, depth=0):
+        if depth > 10: return
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in keys:
+                    for item in child if isinstance(child, list) else [child]:
+                        text = str(item or "").strip()
+                        if text and text not in seen: seen.add(text); found.append(text)
+                elif key != "fieldValue": visit(child, depth + 1)
+        elif isinstance(value, list):
+            for item in value: visit(item, depth + 1)
+    visit(payload); return found
+
+def runninghub_output_ext(remote):
+    return os.path.splitext(urllib.parse.urlsplit(str(remote or "")).path)[1].lstrip(".").lower()
+
+def runninghub_output_kind(ext):
+    ext = str(ext or "").lower().lstrip(".")
+    if ext in {"mp4", "mov", "webm", "mkv", "avi"}: return "video"
+    if ext in {"mp3", "wav", "m4a", "aac", "ogg", "flac"}: return "audio"
+    if ext in {"png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"}: return "image"
+    return "file"
+
+def runninghub_normalized_status(raw, code, urls):
+    data = raw.get("data") if isinstance(raw, dict) else {}
+    status = next((str(item.get("status") or "").upper() for item in (raw, data) if isinstance(item, dict) and item.get("status")), "")
+    if status in {"SUCCESS", "SUCCEEDED", "COMPLETED"}: return "SUCCESS"
+    if status in {"FAILED", "ERROR", "CANCELLED"}: return "FAILED"
+    if urls: return "SUCCESS"
+    # /task/openapi/outputs returns 804 (APIKEY_TASK_IS_RUNNING) while an
+    # accepted AI App task is still executing. Keep polling instead of
+    # converting this transient state into a failed canvas task.
+    return "RUNNING" if code in (0, "0", None, 804, "804") else "FAILED"
+
+def runninghub_fail_reason(raw):
+    if not isinstance(raw, dict): return "RunningHub 任务失败"
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    return str(data.get("errorMessage") or data.get("failReason") or raw.get("msg") or raw.get("errorMessage") or "RunningHub 任务失败")
+
+def runninghub_entry_config_from_model(provider, model):
+    key = str(model or "").strip()
+    return next((entry for entry in ((provider or {}).get("rh_apps") or []) if key in {str(entry.get("id") or ""), str(entry.get("appId") or ""), str(entry.get("webappId") or "")}), None)
+
+def runninghub_task_endpoint(provider, model):
+    return runninghub_endpoint_url(provider, f"/openapi/v2/{urllib.parse.quote(str(model or '').strip(), safe='')}/text-to-image")
+
+def is_rhart_gpt_image2_model(model):
+    return str(model or "").strip().lower() == "rhart-image-g-2-official"
+
+def runninghub_extract_image(raw):
+    item = next((item for item in runninghub_extract_outputs(raw) if runninghub_output_kind(runninghub_output_ext(item)) == "image"), "")
+    if not item: raise HTTPException(status_code=502, detail="RunningHub 未返回图片结果。")
+    return {"type": "url", "value": item}
+
+async def wait_for_runninghub_image_task(client, provider, task_id):
+    deadline = time.monotonic() + IMAGE_TASK_TIMEOUT
+    while time.monotonic() < deadline:
+        response = await client.post(runninghub_endpoint_url(provider, "/openapi/v2/query"), headers=runninghub_api_headers(provider), json={"taskId": task_id})
+        response.raise_for_status(); raw = response.json()
+        status = runninghub_normalized_status(raw, raw.get("code") if isinstance(raw, dict) else None, runninghub_extract_outputs(raw))
+        if status == "SUCCESS": return raw
+        if status == "FAILED": raise HTTPException(status_code=502, detail=runninghub_fail_reason(raw))
+        await asyncio.sleep(min(IMAGE_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
+    raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{task_id}")
+
+async def runninghub_upload_reference(client, provider, ref):
+    return str((ref or {}).get("url") or "").strip()
+
+async def generate_runninghub_app_image(prompt, reference_images, provider, entry):
+    fields = entry.get("fields") or []
+    node_info = [{"nodeId": str(field.get("nodeId") or ""), "fieldName": str(field.get("fieldName") or ""), "fieldValue": prompt} for field in fields if str(field.get("fieldName") or "").lower() in {"prompt", "text"}]
+    body = {"apiKey": runninghub_api_key(provider), "webappId": entry.get("webappId") or entry.get("appId") or entry.get("id"), "nodeInfoList": node_info}
+    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=180.0, pool=20.0)) as client:
+        response = await client.post(runninghub_endpoint_url(provider, "/task/openapi/ai-app/run"), headers=runninghub_app_headers(True), json=body)
+        response.raise_for_status(); raw = response.json(); task_id = runninghub_extract_task_id(raw)
+        if not task_id: raise HTTPException(status_code=502, detail="RunningHub 未返回 taskId。")
+        result = await wait_for_runninghub_image_task(client, provider, task_id)
+    return runninghub_extract_image(result), result
+
+def runninghub_local_asset_path(source_url):
+    return output_file_from_url(source_url)
+
+async def runninghub_store_remote_output(client, remote):
+    response = await client.get(validate_external_http_url(remote, label="RunningHub 输出地址")); response.raise_for_status()
+    filename = os.path.basename(urllib.parse.urlsplit(remote).path) or f"runninghub.{runninghub_output_ext(remote) or 'bin'}"
+    saved = await run_storage_io(save_media_bytes, "output", filename, response.content, original_name=filename, content_type=response.headers.get("content-type") or "", kind=runninghub_output_kind(runninghub_output_ext(remote)), source="generated")
+    return saved["url"]
+
 async def generate_runninghub_provider_image(prompt, size, model, reference_images=None, provider=None, quality=""):
     entry = runninghub_entry_config_from_model(provider, model)
     if entry:
@@ -2928,6 +3102,24 @@ def omnilojo_image_from_value(value):
     if text.startswith(("http://", "https://")):
         return {"type": "url", "value": text}
     return None
+
+GEMINI_IMAGE_RATIO_CHOICES = (
+    (1, 1, "1:1"), (16, 9, "16:9"), (9, 16, "9:16"),
+    (4, 3, "4:3"), (3, 4, "3:4"), (3, 2, "3:2"), (2, 3, "2:3"),
+    (5, 4, "5:4"), (4, 5, "4:5"),
+)
+
+def gemini_image_config(size):
+    """Translate the canvas pixel size into Google image-generation options."""
+    raw = str(size or "").strip().upper()
+    width, height = parse_size_pair(size)
+    if not width or not height:
+        return {"aspectRatio": "1:1", "imageSize": raw if raw in {"1K", "2K", "4K"} else "1K"}
+    ratio = width / max(1, height)
+    _rw, _rh, aspect_ratio = min(GEMINI_IMAGE_RATIO_CHOICES, key=lambda item: abs(ratio - item[0] / item[1]))
+    longest_edge = max(width, height)
+    image_size = "4K" if longest_edge > 3000 else "2K" if longest_edge > 1500 else "1K"
+    return {"aspectRatio": aspect_ratio, "imageSize": image_size}
 
 def image_from_inline_payload(value):
     if not isinstance(value, dict):
@@ -3199,6 +3391,7 @@ def image_adapter_key(provider, model: str) -> str:
 
 async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly"):
     provider = get_api_provider(provider_id)
+    await assert_provider_budget_available(provider, current_user_id())
     request = ImageGenerationRequest(
         prompt=str(prompt or ""),
         size=str(size or ""),
@@ -3209,6 +3402,23 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
     )
     async with provider_operation(provider["id"], "image_generation", user_id=current_user_id()):
         return await IMAGE_ADAPTERS.dispatch(image_adapter_key(provider, request.model), request)
+
+
+async def assert_provider_budget_available(provider, user_id):
+    if not (is_runninghub_provider(provider) or is_omnilojo_provider(provider)):
+        return
+    from app.services.usage import assert_runninghub_budget_available
+    try:
+        await asyncio.to_thread(assert_runninghub_budget_available, user_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error_code": "usage_budget_exceeded",
+                "message": str(exc),
+                "contact_admin": True,
+            },
+        ) from None
 
 def upstream_message_from_record(item):
     role = item.get("role")
@@ -3449,10 +3659,12 @@ async def runninghub_app_info(webappId: str = ""):
 @app.post("/api/runninghub/submit")
 async def runninghub_submit(payload: RunningHubSubmitRequest):
     user_id = require_admin()
+    from app.services.usage import record_runninghub_submission
     webapp_id = str(payload.webappId or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = runninghub_provider()
+    await assert_provider_budget_available(provider, user_id)
     api_key = runninghub_api_key(provider)
     body = {
         "apiKey": api_key,
@@ -3472,16 +3684,26 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
                 raise HTTPException(status_code=502, detail=f"提交 RunningHub 任务失败：{exc}") from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
+    if isinstance(raw, dict) and raw.get("code") in (804, "804"):
+        raise HTTPException(
+            status_code=409,
+            detail="RunningHub 正在执行当前 API Key 的其他任务，请等待其完成后再提交。",
+        )
     if isinstance(raw, dict) and raw.get("code") in (0, "0"):
         task_id = raw.get("data", {}).get("taskId") if isinstance(raw.get("data"), dict) else ""
         if not task_id:
             raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId：{raw}")
+        await asyncio.to_thread(
+            record_runninghub_submission, user_id, task_id,
+            operation="ai_app", model=webapp_id,
+        )
         return {"success": True, "data": {"taskId": task_id, "raw": raw}}
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
 
 @app.get("/api/runninghub/query")
 async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
-    require_admin()
+    user_id = require_admin()
+    from app.services.usage import settle_runninghub_usage
     task_id = str(taskId or "").strip()
     if not task_id:
         raise HTTPException(status_code=400, detail="taskId 必填")
@@ -3514,6 +3736,10 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
             urls.append(local_url)
             media_items.append(await run_storage_io(media_response_item, local_url, "", kind))
         status = runninghub_normalized_status(raw, code, urls)
+        await asyncio.to_thread(
+            settle_runninghub_usage, user_id, task_id, raw,
+            status=status, operation="ai_app",
+        )
         result_data = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}
         try:
             quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
@@ -3648,7 +3874,7 @@ def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = 
     # 收集每个 item 的 primary 字段
     raw_primary_flags = [bool(getattr(item, "primary", False)) for item in payload]
     for item in payload:
-        provider = normalize_provider(item.dict(exclude={"api_key"}))
+        provider = normalize_provider(item.dict(exclude={"api_key", "omnilojo_management_token"}))
         if provider["id"] == "runninghub":
             provider = preserve_runninghub_hidden_overrides(provider)
         if any(existing["id"] == provider["id"] for existing in providers):
@@ -3661,6 +3887,13 @@ def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = 
         elif item.api_key is not None and item.api_key.strip():
             env_updates[key_env] = item.api_key.strip()
             secret_updates.append((provider["id"], "api_key", item.api_key.strip()))
+        if provider["protocol"] == "omnilojo":
+            if item.clear_omnilojo_management_token:
+                secret_updates.append((provider["id"], "omnilojo_management_token", ""))
+                env_updates[omnilojo_management_token_env(provider["id"])] = ""
+            elif item.omnilojo_management_token is not None and item.omnilojo_management_token.strip():
+                secret_updates.append((provider["id"], "omnilojo_management_token", item.omnilojo_management_token.strip()))
+                env_updates[omnilojo_management_token_env(provider["id"])] = item.omnilojo_management_token.strip()
         if provider["id"] == "volcengine":
             ak_env = volcengine_access_key_env()
             sk_env = volcengine_secret_key_env()
@@ -4199,6 +4432,20 @@ async def build_online_image_result(payload: OnlineImageRequest):
         "params": {"provider_id": provider["id"], "model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
+    if is_runninghub_provider(provider):
+        task_id = str(result.get("task_id") or "").strip()
+        if task_id:
+            from app.services.usage import settle_runninghub_usage
+            await asyncio.to_thread(
+                settle_runninghub_usage, current_user_id(), task_id, raw,
+                status="succeeded", operation="image_generation", model=model,
+            )
+    elif is_omnilojo_provider(provider):
+        from app.services.usage import record_omnilojo_response_usage
+        await asyncio.gather(*(
+            asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider, model, raw_item, operation="image_generation")
+            for _url, raw_item in generated
+        ))
     await asyncio.to_thread(save_to_history, result)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
@@ -4315,14 +4562,20 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 413 if isinstance(exc, StorageQuotaExceeded) else 500)
+        budget_error = detail if isinstance(detail, dict) and detail.get("error_code") == "usage_budget_exceeded" else None
         upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
         failure = {
             "status": "failed",
-            "error": str(detail),
+            "error": str((budget_error or {}).get("message") or detail),
             "status_code": status_code,
             "upstream_task_id": upstream_task_id,
             "updated_at": time.time(),
         }
+        if budget_error:
+            failure.update({
+                "error_code": "usage_budget_exceeded",
+                "contact_admin": bool(budget_error.get("contact_admin", True)),
+            })
         if isinstance(exc, StorageQuotaExceeded):
             failure.update({
                 "error_code": "storage_quota_exceeded",
@@ -4342,6 +4595,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
     require_model_access(payload.provider_id, payload.model)
+    await assert_provider_budget_available(get_api_provider(payload.provider_id), current_user_id())
     task_id = f"canvas_img_{uuid.uuid4().hex}"
     owner_id = current_user_id()
     await create_canvas_task({
@@ -5027,6 +5281,7 @@ def save_expand_rules(payload: dict):
 async def _canvas_llm_impl(payload: CanvasLLMRequest):
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model)
     _llm_provider = get_api_provider(payload.provider)
+    await assert_provider_budget_available(_llm_provider, current_user_id())
     system_prompt = (payload.system_prompt or "").strip()
     upstream_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
     for item in payload.messages[-MAX_HISTORY_MESSAGES:]:
@@ -5076,13 +5331,17 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
         upstream_messages.append({"role": "user", "content": payload.message})
     content_parts_acc = []
     raw_usage = None
+    response_id = ""
     try:
         async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
             async with client.stream(
                 "POST",
                 f"{chat_base}/chat/completions",
                 headers=chat_hdrs,
-                json={"model": model, "messages": upstream_messages, "stream": True},
+                json={
+                    "model": model, "messages": upstream_messages, "stream": True,
+                    **({"stream_options": {"include_usage": True}} if is_omnilojo_provider(_llm_provider) else {}),
+                },
             ) as response:
                 if response.status_code >= 400:
                     detail = await response.aread()
@@ -5102,6 +5361,8 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
                         continue
                     if isinstance(chunk, dict) and chunk.get("usage"):
                         raw_usage = chunk.get("usage")
+                    if isinstance(chunk, dict) and chunk.get("id"):
+                        response_id = str(chunk.get("id") or "")
                     delta = text_delta_from_chat_chunk(chunk)
                     if delta:
                         content_parts_acc.append(delta)
@@ -5116,6 +5377,12 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"解析上游响应失败：{exc}") from exc
     text = "".join(content_parts_acc).strip() or "接口返回了空回复。"
+    if is_omnilojo_provider(_llm_provider):
+        from app.services.usage import record_omnilojo_response_usage
+        await asyncio.to_thread(
+            record_omnilojo_response_usage, current_user_id(), _llm_provider, model,
+            {"id": response_id, "usage": raw_usage}, operation="canvas_llm",
+        )
     return {"text": text, "model": model, "raw_usage": raw_usage}
 
 
@@ -5529,10 +5796,14 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "model": model,
             "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
         }
+        if is_omnilojo_provider(provider):
+            from app.services.usage import record_omnilojo_response_usage
+            await asyncio.to_thread(record_omnilojo_response_usage, user_id, provider, model, raw, operation="image_generation")
     else:
         chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model)
         require_model_access(payload.provider, model)
         _conv_provider = get_api_provider(payload.provider)
+        await assert_provider_budget_available(_conv_provider, user_id)
         history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
         upstream_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for item in history:
@@ -5565,6 +5836,9 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "model": model,
             "raw_usage": raw_data.get("usage") if isinstance(raw_data, dict) else None,
         }
+        if is_omnilojo_provider(_conv_provider):
+            from app.services.usage import record_omnilojo_response_usage
+            await asyncio.to_thread(record_omnilojo_response_usage, user_id, _conv_provider, model, raw_data, operation="chat")
 
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
@@ -5600,6 +5874,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model)
     require_model_access(payload.provider, model)
     _stream_provider = get_api_provider(payload.provider)
+    await assert_provider_budget_available(_stream_provider, user_id)
     history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
     upstream_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for item in history:
@@ -5610,6 +5885,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     async def stream():
         content_parts = []
         raw_usage = None
+        response_id = ""
         yield sse_event({"type": "meta", "conversation": conversation})
         try:
             async with provider_operation(payload.provider, "llm", user_id=user_id):
@@ -5618,7 +5894,10 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
                         "POST",
                         f"{chat_base}/chat/completions",
                         headers=chat_hdrs,
-                        json={"model": model, "messages": upstream_messages, "stream": True},
+                        json={
+                            "model": model, "messages": upstream_messages, "stream": True,
+                            **({"stream_options": {"include_usage": True}} if is_omnilojo_provider(_stream_provider) else {}),
+                        },
                     ) as response:
                         if response.status_code >= 400:
                             detail = await response.aread()
@@ -5638,6 +5917,8 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
                                 continue
                             if isinstance(chunk, dict) and chunk.get("usage"):
                                 raw_usage = chunk.get("usage")
+                            if isinstance(chunk, dict) and chunk.get("id"):
+                                response_id = str(chunk.get("id") or "")
                             delta = text_delta_from_chat_chunk(chunk)
                             if delta:
                                 content_parts.append(delta)
@@ -5660,6 +5941,9 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         conversation["messages"].append(assistant_message)
         conversation["updated_at"] = now_ms()
         await asyncio.to_thread(save_conversation, user_id, conversation)
+        if is_omnilojo_provider(_stream_provider):
+            from app.services.usage import record_omnilojo_response_usage
+            await asyncio.to_thread(record_omnilojo_response_usage, user_id, _stream_provider, model, {"id": response_id, "usage": raw_usage}, operation="chat")
         yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -6037,6 +6321,7 @@ from app.routers import feedback as feedback_router
 from app.routers import help as help_router
 from app.routers import announcement as announcement_router
 from app.routers import storage_management as storage_management_router
+from app.routers import usage as usage_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -6054,6 +6339,7 @@ app.include_router(feedback_router.router)
 app.include_router(help_router.router)
 app.include_router(announcement_router.router)
 app.include_router(storage_management_router.router)
+app.include_router(usage_router.router)
 
 if __name__ == "__main__":
     import argparse, uvicorn
