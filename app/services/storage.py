@@ -2285,6 +2285,20 @@ def delete_media_objects(entry: Dict[str, Any]) -> None:
         delete_object(bucket, key)
 
 
+def delete_user_media_objects(entry: Dict[str, Any]) -> None:
+    """Remove a user's original, derived, and cached media objects."""
+    if not isinstance(entry, dict):
+        return
+    delete_media_objects(entry)
+    bucket = str(entry.get("bucket") or "").strip()
+    file_id = str(entry.get("file_id") or "").strip()
+    if not bucket or not file_id:
+        return
+    keys = [str(entry.get("object_key") or "").strip(), *media_derived_object_keys(entry)]
+    for key in dict.fromkeys(key for key in keys if key):
+        _remove_cache_file(cached_media_path({"bucket": bucket, "object_key": key}))
+
+
 def media_objects_exist(entry: Dict[str, Any]) -> bool:
     if not isinstance(entry, dict):
         return False

@@ -95,20 +95,36 @@ def register_user(user_id: str, username: str) -> bool:
     return True
 
 
-async def delete_user(user_id: str) -> bool:
-    """删除注册账号并撤销其所有登录会话；管理员账号由路由层禁止删除。"""
+async def delete_user(user_id: str) -> dict:
+    """删除账号及其业务数据，返回需要从对象存储移除的文件元数据。"""
     with USERS_LOCK:
         if user_id not in USERS:
             return False
 
     token_hashes = []
+    deleted_files = []
     async with database_connection() as conn, conn.transaction(), conn.cursor() as cur:
         await cur.execute("SELECT token_hash FROM user_sessions WHERE user_id=%s", (user_id,))
         token_hashes = [str(row["token_hash"]) for row in await cur.fetchall()]
+        # Remove child references before their owning records and file metadata.
+        await cur.execute("DELETE FROM history_record_files WHERE history_record_id IN (SELECT id FROM history_records WHERE user_id=%s)", (user_id,))
+        await cur.execute("DELETE FROM conversation_message_files WHERE message_id IN (SELECT m.id FROM conversation_messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.user_id=%s)", (user_id,))
+        await cur.execute("DELETE FROM smart_canvas_node_files WHERE node_id IN (SELECT n.id FROM smart_canvas_nodes n JOIN smart_canvases c ON c.id=n.canvas_id WHERE c.user_id=%s)", (user_id,))
+        await cur.execute("DELETE FROM asset_items WHERE category_id IN (SELECT c.id FROM asset_categories c JOIN asset_libraries l ON l.id=c.library_id WHERE l.user_id=%s)", (user_id,))
+        await cur.execute("DELETE FROM history_records WHERE user_id=%s", (user_id,))
+        await cur.execute("DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user_id=%s)", (user_id,))
+        await cur.execute("DELETE FROM conversations WHERE user_id=%s", (user_id,))
+        await cur.execute("DELETE FROM smart_canvas_nodes WHERE canvas_id IN (SELECT id FROM smart_canvases WHERE user_id=%s)", (user_id,))
+        await cur.execute("DELETE FROM smart_canvases WHERE user_id=%s", (user_id,))
+        await cur.execute("DELETE FROM asset_categories WHERE library_id IN (SELECT id FROM asset_libraries WHERE user_id=%s)", (user_id,))
+        await cur.execute("DELETE FROM asset_libraries WHERE user_id=%s", (user_id,))
+        await cur.execute("DELETE FROM feedback_entries WHERE user_id=%s", (user_id,))
+        await cur.execute("DELETE FROM user_settings WHERE user_id=%s", (user_id,))
+        await cur.execute("DELETE FROM files WHERE user_id=%s AND NOT EXISTS (SELECT 1 FROM history_record_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM conversation_message_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id=files.id) RETURNING *", (user_id,))
+        deleted_files = await cur.fetchall()
         await cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
         if not cur.rowcount:
             return False
-        await cur.execute("DELETE FROM user_settings WHERE user_id=%s", (user_id,))
 
     with USERS_LOCK:
         USERS.pop(user_id, None)
@@ -125,7 +141,7 @@ async def delete_user(user_id: str) -> bool:
         except RedisError as exc:
             raise _redis_unavailable("user_session_revoke", exc) from exc
 
-    return True
+    return {"ok": True, "files": deleted_files}
 
 
 def load_sessions():
