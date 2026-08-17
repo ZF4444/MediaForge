@@ -111,6 +111,11 @@
             color: var(--text);
             box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
         }
+        .tab.disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+            pointer-events: none;
+        }
 
         label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
 
@@ -166,7 +171,7 @@
 
         <div class="tabs">
             <div class="tab active" id="tabLogin" data-mode="login">登录</div>
-            <div class="tab" id="tabRegister" data-mode="register">注册</div>
+            <div class="tab disabled" id="tabRegister" aria-disabled="true" title="暂不开放注册">注册</div>
         </div>
 
         <form id="authForm" autocomplete="on">
@@ -182,27 +187,9 @@
         const form = document.getElementById('authForm');
         const input = document.getElementById('username');
         const msgEl = document.getElementById('msg');
-        const hintEl = document.getElementById('hint');
         const btn = document.getElementById('submitBtn');
         const tabLogin = document.getElementById('tabLogin');
-        const tabRegister = document.getElementById('tabRegister');
-        let mode = 'login';
-
-        function setMode(next) {
-            mode = next;
-            tabLogin.classList.toggle('active', mode === 'login');
-            tabRegister.classList.toggle('active', mode === 'register');
-            btn.textContent = mode === 'login' ? '登录' : '注册并进入';
-            hintEl.textContent = mode === 'login'
-                ? '登录已注册的用户名。无需密码，同一台电脑下次访问会自动保持登录。'
-                : '注册一个新用户名（至少 5 位），系统会检查是否已被占用，可用则创建并进入。';
-            msgEl.textContent = '';
-            msgEl.className = 'msg';
-            input.focus();
-        }
-
-        tabLogin.addEventListener('click', () => setMode('login'));
-        tabRegister.addEventListener('click', () => setMode('register'));
+        tabLogin.addEventListener('click', () => input.focus());
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -215,15 +202,9 @@
                 input.focus();
                 return;
             }
-            if (mode === 'register' && username.length < 5) {
-                msgEl.textContent = '用户名至少需要 5 位。';
-                msgEl.className = 'msg error';
-                input.focus();
-                return;
-            }
-            const url = mode === 'login' ? '/auth/login' : '/auth/register';
+            const url = '/auth/login';
             btn.disabled = true;
-            btn.textContent = mode === 'login' ? '登录中…' : '注册中…';
+            btn.textContent = '登录中…';
             try {
                 const resp = await fetch(url, {
                     method: 'POST',
@@ -234,19 +215,16 @@
                     window.location.href = '/';
                     return;
                 }
-                let detail = (mode === 'login' ? '登录失败' : '注册失败') + '，请重试。';
+                let detail = '登录失败，请重试。';
                 try { detail = (await resp.json()).detail || detail; } catch (_) {}
                 msgEl.textContent = detail;
                 msgEl.className = 'msg error';
-                if (mode === 'login' && resp.status === 404) {
-                    setTimeout(() => { setMode('register'); msgEl.textContent = '该用户名尚未注册，已切换到注册。'; msgEl.className = 'msg'; }, 600);
-                }
             } catch (err) {
                 msgEl.textContent = '网络错误：' + (err && err.message ? err.message : err);
                 msgEl.className = 'msg error';
             } finally {
                 btn.disabled = false;
-                btn.textContent = mode === 'login' ? '登录' : '注册并进入';
+                btn.textContent = '登录';
             }
         });
     </script>

@@ -106,18 +106,15 @@ async def login_page(request: Request):
 @router.post("/auth/register")
 async def auth_register(payload: LoginRequest):
     user_id = clean_user_id(payload.username)
-    if not user_id:
-        audit_event("registration_failed", action="register", resource_type="user", result="failure", reason="invalid_username")
-        raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
-    if len(user_id) < 5:
-        audit_event("registration_failed", action="register", resource_type="user", resource_id=user_id, result="failure", reason="username_too_short")
-        raise HTTPException(status_code=400, detail="用户名至少需要 5 位。")
-    username = payload.username.strip()[:60]
-    if not await asyncio.to_thread(register_user, user_id, username):
-        audit_event("registration_failed", action="register", resource_type="user", resource_id=user_id, result="failure", reason="username_taken")
-        raise HTTPException(status_code=409, detail="该用户名已被占用，请换一个或直接登录。")
-    audit_event("user_registered", action="register", resource_type="user", resource_id=user_id)
-    return await _issue_session_response(user_id, username)
+    audit_event(
+        "registration_failed",
+        action="register",
+        resource_type="user",
+        resource_id=user_id or None,
+        result="failure",
+        reason="registration_disabled",
+    )
+    raise HTTPException(status_code=403, detail="当前不开放注册，请联系管理员创建账号。")
 
 
 @router.post("/auth/login")
@@ -128,7 +125,7 @@ async def auth_login(payload: LoginRequest):
         raise HTTPException(status_code=400, detail="用户名无效，请输入字母、数字或中文。")
     if not user_exists(user_id):
         audit_event("login_failed", action="login", resource_type="session", resource_id=user_id, result="failure", reason="user_not_found")
-        raise HTTPException(status_code=404, detail="该用户名尚未注册，请先注册。")
+        raise HTTPException(status_code=404, detail="该用户名尚未注册，请联系管理员创建账号。")
     username = payload.username.strip()[:60]
     response = await _issue_session_response(user_id, username)
     audit_event("login_succeeded", action="login", resource_type="session", resource_id=user_id, user_id=user_id, username=username)
