@@ -314,16 +314,18 @@ function measureSmartNodeImages({applyReady=false, renderOnChange=true}={}){
     let changed = false;
     world.querySelectorAll('.image-node img,.image-node video').forEach(imgEl => {
         const candidatePanel = imgEl.closest('.candidate-panel');
+        const candidateGridItem = imgEl.closest('[data-candidate-grid-item]');
         const nodeEl = imgEl.closest('.image-node');
         const itemEl = imgEl.closest('[data-image-index]');
         const node = nodes.find(n => n.id === nodeEl?.dataset.id);
-        const candidateIndex = Number(candidatePanel?.dataset.candidateIndex ?? -1);
+        const candidateIndex = Number(candidatePanel?.dataset.candidateIndex ?? candidateGridItem?.dataset.candidateGridItem ?? -1);
         const index = Number(itemEl?.dataset.imageIndex ?? 0);
-        const candidatePool = candidatePanel ? nodeCandidateImages(node) : [];
-        const image = candidatePanel ? candidatePool[candidateIndex] : node?.images?.[index];
+        const isCandidateImage = Boolean(candidatePanel || candidateGridItem);
+        const candidatePool = isCandidateImage ? nodeCandidateImages(node) : [];
+        const image = isCandidateImage ? candidatePool[candidateIndex] : node?.images?.[index];
         const isVideo = imgEl.tagName?.toLowerCase() === 'video';
         if(imgEl.tagName?.toLowerCase() === 'img' && image?.url) bindImageProxyFallback(imgEl, image);
-        if(!node || !image || (!isVideo && imageResolutionLabel(image))) return;
+        if(!node || !image) return;
         const apply = () => {
             const w = imgEl.naturalWidth || imgEl.videoWidth || 0;
             const h = imgEl.naturalHeight || imgEl.videoHeight || 0;
@@ -331,11 +333,10 @@ function measureSmartNodeImages({applyReady=false, renderOnChange=true}={}){
             const currentW = Number(image.natural_w || image.width || image.w || 0);
             const currentH = Number(image.natural_h || image.height || image.h || 0);
             if(currentW === w && currentH === h) return;
-            if(!isVideo && imageResolutionLabel(image)) return;
             image.natural_w = w;
             image.natural_h = h;
             changed = true;
-            if(candidatePanel) syncCandidateImageDimensions(node, image, w, h);
+            if(isCandidateImage || image.generatedResult) syncCandidateImageDimensions(node, image, w, h);
             applyThumbDisplaySizeToElement(itemEl, image, Math.max(itemEl?.clientWidth || 0, itemEl?.clientHeight || 0));
             if(renderOnChange){
                 render();

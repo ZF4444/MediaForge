@@ -218,11 +218,14 @@ function syncCandidateImageDimensions(node, image, w, h){
     let changed = false;
     const apply = item => {
         if(!item || candidateImageKey(item) !== key) return;
-        if(!item.natural_w){
+        // Candidate entries and the displayed main image are separate copies.
+        // The browser's decoded dimensions are authoritative, including when
+        // persisted metadata came from a different candidate in the same run.
+        if(Number(item.natural_w || 0) !== w){
             item.natural_w = w;
             changed = true;
         }
-        if(!item.natural_h){
+        if(Number(item.natural_h || 0) !== h){
             item.natural_h = h;
             changed = true;
         }

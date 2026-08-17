@@ -170,3 +170,19 @@ describe('nodeCandidateImages / candidateCountForNode', () => {
         expect(nodeCandidateImages({ type: 'smart-prompt' })).toEqual([]);
     });
 });
+
+describe('syncCandidateImageDimensions', () => {
+    it('用实际加载尺寸同步候选项与当前主图，覆盖过时元数据', () => {
+        const { syncCandidateImageDimensions } = createCandidatePoolSandbox();
+        const candidate = { url: 'https://x.com/portrait.png', natural_w: 1600, natural_h: 900 };
+        const displayed = { url: 'https://x.com/portrait.png', natural_w: 1600, natural_h: 900, generatedResult: true };
+        const node = {
+            candidateImages: [candidate, { url: 'https://x.com/landscape.png' }],
+            images: [displayed],
+        };
+
+        expect(syncCandidateImageDimensions(node, candidate, 768, 1365)).toBe(true);
+        expect(candidate).toMatchObject({ natural_w: 768, natural_h: 1365 });
+        expect(displayed).toMatchObject({ natural_w: 768, natural_h: 1365 });
+    });
+});
