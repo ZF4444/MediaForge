@@ -53,7 +53,7 @@
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_PINNED_KEY = 'studio_sidebar_pinned';
         const DEFAULT_PAGE_ID = 'canvas';
-        const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','api-settings','comfyui-settings','user-management','feedback-admin','broadcast-admin'];
+        const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','my-account','api-settings','comfyui-settings','user-management','feedback-admin','broadcast-admin'];
         const LEGACY_USER_MANAGEMENT_TABS = {'access-control':'access','storage-quota':'quota'};
         const LOCAL_PAGE_IDS = ['angle','gaussian','pose-studio'];
 
@@ -154,7 +154,16 @@
             // 切换功能页面时自动收起帮助面板：不同页面的帮助内容互相独立，
             // 避免面板停留在旧页面的内容上造成误解。
             if (typeof window.closeHelpDrawer === 'function') window.closeHelpDrawer();
-            if (!target.src) target.src = target.dataset.src;
+            const notifyAccountFocus = () => {
+                if (id !== 'my-account') return;
+                try { target.contentWindow?.postMessage({ type: 'account-focus' }, '*'); } catch(e) {}
+            };
+            if (!target.src) {
+                target.addEventListener('load', notifyAccountFocus, { once:true });
+                target.src = target.dataset.src;
+            } else {
+                notifyAccountFocus();
+            }
             if(!options.skipRemember) localStorage.setItem(ACTIVE_PAGE_KEY, id);
             // sync theme to newly activated iframe
             syncThemeToFrame(target);
@@ -254,7 +263,7 @@
             const allowed = new Set(me && Array.isArray(me.pages) ? me.pages : PAGE_IDS);
             let hidActive = false;
             PAGE_IDS.forEach(pid => {
-                if (pid === 'user-management' || pid === 'feedback-admin' || pid === 'broadcast-admin') return;   // 该入口仅 admin，已在上面处理
+                if (pid === 'my-account' || pid === 'user-management' || pid === 'feedback-admin' || pid === 'broadcast-admin') return;   // 账户页始终开放；其余入口由管理员处理
                 if (allowed.has(pid)) return;
                 // 隐藏对应导航入口（nav-item 或 side-pill）
                 document.querySelectorAll(`[onclick*="'${pid}'"],[onclick*='"${pid}"']`).forEach(el => {

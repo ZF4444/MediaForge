@@ -181,6 +181,9 @@
                                 <div class="runninghub-hint">
                                 </div>
                             </label>
+                            <section id="omnilojoUsageBlock" class="block" hidden>
+                                <div class="block-head"><div><div class="block-title">Omnilojo 计费价格</div><div class="block-desc">按模型填写 USD / 100 万 token。响应中的 usage 将直接归属到当前用户。</div></div></div>
+                            </section>
                             <!-- 验证操作行 -->
                             <div class="verify-action-row">
                                 <button id="testUrlBtn" class="action-btn" type="button" onclick="testConnection()">
@@ -193,6 +196,7 @@
                                     <select id="protocolInput">
                                         <option value="openai" data-i18n="api.protocolOpenAI">OpenAI 直连</option>
                                         <option value="gemini" data-i18n="api.protocolGemini">Gemini 协议</option>
+                                        <option value="omnilojo">Omnilojo / New API</option>
                                     </select>
                                 </div>
                             </div>
@@ -349,6 +353,6 @@
     <script src="/static/dist/api-settings/rh-workflow-editor.js"></script>
     <script src="/static/dist/api-settings/comfy-instances.js"></script>
     <script src="/static/dist/api-settings/provider-onboarding.js"></script>
-    <script src="/static/dist/api-settings/main.js"></script>
+    <script src="/static/dist/api-settings/main.js?v=20260817-omnilojo-pricing-1"></script>
 </body>
 </html>

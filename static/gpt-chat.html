@@ -560,7 +560,7 @@
                             reference_images: pendingRefs,
                             provider: activeImageProvider,
                         })
-                    }).then(async r => { if(!r.ok) throw new Error((await r.json()).detail || tr('chat.requestFailed')); return r.json(); });
+                    }).then(async r => { if(!r.ok) throw await chatResponseError(r); return r.json(); });
                     currentConversation = data.conversation;
                     setChatTitle(currentConversation.title);
                     renderMessages(currentConversation.messages || []);
@@ -590,7 +590,7 @@
                     reference_images: pendingRefs
                 })
             });
-            if(!res.ok) throw new Error((await res.json()).detail || tr('chat.requestFailed'));
+            if(!res.ok) throw await chatResponseError(res);
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
@@ -614,7 +614,10 @@
                         assistantBubble.text.textContent = fullText;
                         scrollBottom();
                     }
-                    if(event.type === 'error') throw new Error(event.detail || tr('chat.requestFailed'));
+                    if(event.type === 'error') {
+                        if(event.error_code === 'usage_budget_exceeded') showBudgetDialog(event);
+                        throw new Error(event.detail || tr('chat.requestFailed'));
+                    }
                     if(event.type === 'done'){
                         assistantBubble.bubble.classList.remove('streaming');
                         currentConversation = event.conversation;
@@ -625,6 +628,22 @@
                 }
             }
             assistantBubble.bubble.classList.remove('streaming');
+        }
+
+        async function chatResponseError(response){
+            let data = {};
+            try { data = await response.json(); } catch (_) {}
+            const detail = data?.detail;
+            const budget = detail && typeof detail === 'object' ? detail : data;
+            if(response.status === 429 && budget?.error_code === 'usage_budget_exceeded') {
+                showBudgetDialog(budget);
+                return new Error(budget.message || tr('chat.requestFailed'));
+            }
+            return new Error(typeof detail === 'string' ? detail : (detail?.message || data?.message || tr('chat.requestFailed')));
+        }
+
+        function showBudgetDialog(data){
+            window.MediaForgeUpload?.showBudgetDialog?.({message:data?.message || data?.detail});
         }
 
         function scrollBottom(){ requestAnimationFrame(() => { const box = document.getElementById('messages'); box.scrollTop = box.scrollHeight; }); }

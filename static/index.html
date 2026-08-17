@@ -1140,6 +1140,13 @@
                     </svg>
                     <span class="side-pill-text" data-i18n="common.userGuide">使用说明</span>
                 </button>
+                <button class="side-pill" id="nav-my-account" onclick="switchUI(this, 'my-account')" type="button" title="我的账户">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="8" r="4"></circle>
+                        <path d="M4 21a8 8 0 0 1 16 0"></path>
+                    </svg>
+                    <span class="side-pill-text">我的账户</span>
+                </button>
                 <button id="nav-api-settings" class="side-pill" onclick="switchUI(this, 'api-settings')" type="button" title="API 设置">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M15 7h3a5 5 0 0 1 0 10h-3"></path>
@@ -1209,8 +1216,9 @@
             <iframe id="frame-gaussian" data-src="/static/gaussian.html" scrolling="yes"></iframe>
             <iframe id="frame-pose-studio" data-src="/static/pose-studio.html" scrolling="yes"></iframe>
             <iframe id="frame-gpt-chat" data-src="/static/gpt-chat.html" scrolling="yes"></iframe>
-            <iframe id="frame-canvas" data-src="/static/canvas.html" class="active" scrolling="yes"></iframe>
+            <iframe id="frame-canvas" data-src="/static/canvas-manager.html" class="active" scrolling="yes"></iframe>
             <iframe id="frame-asset-manager" data-src="/static/asset-manager.html" scrolling="yes"></iframe>
+            <iframe id="frame-my-account" data-src="/static/my-account.html" scrolling="yes"></iframe>
             <iframe id="frame-api-settings" data-src="/static/api-settings.html" scrolling="yes"></iframe>
             <iframe id="frame-comfyui-settings" data-src="/static/workflow-settings.html" scrolling="yes"></iframe>
             <iframe id="frame-user-management" data-src="/static/user-management.html" scrolling="yes"></iframe>

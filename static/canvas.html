@@ -99,7 +99,10 @@
         </div>
         <div id="nodeShortcutOverlay" class="node-shortcut-overlay"></div>
         <div id="nodeContextMenu" class="node-context-menu" role="menu" hidden></div>
-        <div id="canvasTitle" class="canvas-title" data-i18n="canvas.title">画布</div>
+        <div class="canvas-title-bar">
+            <button id="canvasManagerBtn" class="canvas-manager-btn" type="button" title="返回画布管理" aria-label="返回画布管理"><i data-lucide="arrow-left"></i></button>
+            <div id="canvasTitle" class="canvas-title" data-i18n="canvas.title">画布</div>
+        </div>
         <div id="createMenu" class="create-menu">
             <div class="create-menu-grid">
                 <button class="create-card" type="button" data-create-type="image">

@@ -60,6 +60,8 @@ function requestSmartCascadeStop(loopId=''){
 }
 function smartCascadeParallelLimit(chain=[]){
     const hasComfy = (chain || []).some(node => smartSettingsForNode(node)?.engine === 'comfy');
+    const hasRunningHub = (chain || []).some(node => smartSettingsForNode(node)?.engine === 'runninghub');
+    if(hasRunningHub) return 1;
     return hasComfy ? Math.max(1, Math.min(6, Number(comfyInstanceCount) || 1)) : 6;
 }
 async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runState=null){
@@ -130,6 +132,8 @@ async function waitSmartComfyTaskResult(taskId){
         if(data.status === 'succeeded'){ checkQuotaWarningFromResult(data); return data.result || {}; }
         if(data.status === 'failed'){
             if(data.error_code === 'storage_quota_exceeded' || data.status_code === 413) throw new StorageQuotaSignal(data);
+            const budget = budgetDataFromPayload(data);
+            if(budget) throw new UsageBudgetSignal(budget);
             throw new Error(data.error || tr('smart.errRunFailed'));
         }
         await sleep(1600);
@@ -189,8 +193,9 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(body)
     }).then(async r => {
+        if(!r.ok) throw await smartResponseError(r, tr('smart.rhFailed'));
         const data = await r.json();
-        if(!r.ok || data.success === false) throw new Error(data.detail || data.error || tr('smart.rhFailed'));
+        if(data.success === false) throw new Error(data.detail || data.error || tr('smart.rhFailed'));
         return data.data || data;
     });
     const taskId = submit.taskId;
@@ -745,7 +750,7 @@ async function runSmartCascade(targetNode=null){
             selectedId = originalSelected;
             settings = originalSettings;
             promptInput.innerHTML = originalPromptHtml;
-            if(!handleStorageQuotaSignal(e)) toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
+            if(!handleTaskLimitSignal(e)) toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
         } finally {
             smartCascadeRuns.delete(runKey);
             syncSmartCascadeLegacyState();
@@ -922,7 +927,7 @@ async function runSmartCascade(targetNode=null){
         selectedId = originalSelected;
         settings = originalSettings;
         promptInput.innerHTML = originalPromptHtml;
-        if(!handleStorageQuotaSignal(e)) toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
+        if(!handleTaskLimitSignal(e)) toast(e?.smartCascadeStopped ? '已停止链路运行' : (e.message || tr('smart.errRunFailed')).slice(0, 160));
     } finally {
         smartCascadeRuns.delete(runKey);
         syncSmartCascadeLegacyState();
@@ -953,6 +958,11 @@ async function runGeneration(){
     const previousSettings = cloneSmartSettings(settings);
     const runSettings = smartSettingsForNode(node);
     settings = {...settings, ...cloneSmartSettings(runSettings || {})};
+    if(settings.engine === 'runninghub' && hasRunningHubPendingTask()){
+        toast('RunningHub 任务正在执行，等待当前任务完成后再提交。');
+        settings = previousSettings;
+        return;
+    }
     if(!prompt && smartPromptInputEnabledForSettings(settings)){
         toast(tr('smart.toastNeedPrompt'));
         settings = previousSettings;
@@ -982,7 +992,9 @@ async function runGeneration(){
         : settings.engine === 'comfy'
         ? 1
         : Math.max(1, Math.min(4, Number(settings.count || 1)));
-    const apiConcurrentRun = isApiLikeEngine(settings.engine) || settings.engine === 'runninghub';
+    // RunningHub AI 应用以 API Key 为粒度限制并发；保持运行态直到轮询结束，
+    // 避免统一画布在两秒冷却后再次提交同一密钥。
+    const apiConcurrentRun = isApiLikeEngine(settings.engine);
     const nodeHasImages = (node.images || []).some(img => img?.url);
     const workflowModeRun = smartImageUsesWorkflowInput(node, smartLoopContext);
     const rerunInPlace = nodeHasImages && !workflowModeRun && isGeneratedResultNode(node);
@@ -1131,7 +1143,7 @@ async function runGeneration(){
         delete pendingNode._runMetaTargetId;
         delete pendingNode._rerunPreviousImages;
         addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e)});
-        if(!handleStorageQuotaSignal(e)) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
+        if(!handleTaskLimitSignal(e)) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
     } finally {
         if(!apiConcurrentRun){
             clearNodeRunningState(pendingNode);

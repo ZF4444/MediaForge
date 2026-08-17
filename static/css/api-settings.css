@@ -154,6 +154,11 @@ body.studio-theme-dark .key-btn.key-clear:hover { background:rgba(127,29,29,.18)
 .model-list { display:flex; flex-direction:column; gap:6px; }
 .model-row { display:grid; grid-template-columns:20px minmax(0,1fr) minmax(0,0.8fr) 36px; align-items:center; gap:6px; padding:4px; border:1px solid var(--line); border-radius:11px; background:var(--panel); }
 .model-row.has-protocol { grid-template-columns:20px minmax(0,1fr) minmax(0,0.8fr) auto 36px; }
+.model-row:has(.model-price-fields) { grid-template-columns:20px minmax(130px,1fr) minmax(100px,.7fr) minmax(176px,.85fr) auto 36px; }
+.model-row.has-protocol:has(.model-price-fields) { grid-template-columns:20px minmax(130px,1fr) minmax(100px,.7fr) auto minmax(176px,.85fr) 36px; }
+.model-price-fields { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+.model-price-fields label { display:grid; grid-template-columns:18px minmax(0,1fr); align-items:center; color:var(--muted); font-size:11px; }
+.model-price-fields input { min-width:0; }
 .model-row.is-dragging { opacity:.45; }
 .model-row.model-drop-target { box-shadow:inset 0 0 0 1px var(--line-strong); background:var(--soft); }
 .model-drag-handle { display:flex; align-items:center; justify-content:center; color:var(--faint); cursor:grab; opacity:.5; }
@@ -503,7 +508,9 @@ body.show-runninghub #probeAsyncBtn,
 body.show-runninghub .advanced-endpoints,
 body.show-runninghub .protocol-selector-wrap,
 body.show-volcengine-standalone #probeAsyncBtn,
-body.show-volcengine-standalone .protocol-selector-wrap,
+body.show-volcengine-standalone .protocol-selector-wrap {
+    display:none !important;
+}
 .protocol-selector-wrap { height:36px; padding:0 4px; flex-shrink:0; background:var(--panel); }
 body.studio-theme-dark .protocol-selector-wrap,
 html.studio-theme-dark body .protocol-selector-wrap { background:var(--soft); border-color:var(--line-strong); }
@@ -1524,6 +1531,17 @@ html.studio-theme-dark body .provider-card:not(.active) {
 
 .provider-card-banner .runninghub-icon {
     max-width:134px;
+}
+
+.provider-card-banner .comfyui-wordmark {
+    display:inline-flex;
+    align-items:center;
+    min-height:22px;
+    color:var(--text);
+    font-size:17px;
+    line-height:1;
+    font-weight:950;
+    letter-spacing:.01em;
 }
 
 .provider-logo-fallback {

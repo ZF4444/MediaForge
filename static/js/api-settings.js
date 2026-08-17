@@ -24,6 +24,7 @@ const volcSkInput = document.getElementById('volcSkInput');
 const volcAssetKeyHint = document.getElementById('volcAssetKeyHint');
 const volcProjectInput = document.getElementById('volcProjectInput');
 const volcRegionInput = document.getElementById('volcRegionInput');
+const omnilojoUsageBlock = document.getElementById('omnilojoUsageBlock');
 const runninghubConfigBlock = document.getElementById('runninghubConfigBlock');
 const rhPasteInput = document.getElementById('rhPasteInput');
 const rhAppsList = document.getElementById('rhAppsList');
@@ -144,7 +145,7 @@ function syncEditor(){
     item.id = nextId;
     if(oldId !== item.id) selectedId = item.id;
     item.name = nameInput.value.trim() || item.id;
-    const selectedProtocol = item.id === 'runninghub' ? 'runninghub' : item.id === 'volcengine' ? 'volcengine' : 'openai';
+    const selectedProtocol = item.id === 'runninghub' ? 'runninghub' : item.id === 'volcengine' ? 'volcengine' : (protocolInput?.value || 'openai');
     item.base_url = baseInput.value.trim();
     // 固定平台不从协议下拉读取
     item.protocol = selectedProtocol;
@@ -170,13 +171,14 @@ function updateProtocolFromInput(){
     const item = provider();
     if(!item || !protocolInput || isFixedProvider(item)) return;
     const value = String(protocolInput.value || 'openai').toLowerCase();
-    item.protocol = ['openai', 'gemini'].includes(value) ? value : 'openai';
+    item.protocol = ['openai', 'gemini', 'omnilojo'].includes(value) ? value : 'openai';
     clearVerifyResult();
-    // 协议会改变整个表单（如即梦 CLI 账户面板、默认模型、Key 占位）。renderEditor 是唯一切换这些的入口，
-    // 这里复跑一次让面板立即出现；保存并恢复 Key 输入框，避免推荐流程里先填的 Key 被 renderEditor 清空。
-    const savedKey = keyInput ? keyInput.value : '';
-    renderEditor();
-    if(keyInput) keyInput.value = savedKey;
+    // 不在 change 事件中整页重绘。重绘会从旧的 Provider 快照回填 select，
+    // 导致 Omnilojo 刚被选中又显示成 OpenAI。
+    if(omnilojoUsageBlock) omnilojoUsageBlock.hidden = item.protocol !== 'omnilojo';
+    renderModels('image');
+    renderModels('chat');
+    renderModels('video');
 }
 function isVolcengineProvider(item){
     return String(item?.protocol || '').toLowerCase() === 'volcengine';
@@ -234,7 +236,7 @@ function renderProviderList(){
             return `
                 <button class="provider-card provider-card-banner ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeHtml(item.id)}')">
                     <span class="provider-banner-inner">
-                        <span class="provider-logo-wrap"><i data-lucide="workflow" class="w-5 h-5"></i><span class="provider-logo-fallback">ComfyUI</span></span>
+                        <span class="provider-logo-wrap"><span class="comfyui-wordmark">ComfyUI</span></span>
                         <span class="provider-protocol-pill">Local</span>
                     </span>
                 </button>
@@ -316,6 +318,7 @@ function renderEditor(){
     const isVolcengine = item.id === 'volcengine' || String(protocolInput?.value || item.protocol || '').toLowerCase() === 'volcengine';
     const isStandaloneVolcengine = item.id === 'volcengine';
     const isComfyui = item.id === 'comfyui';
+    const isOmnilojo = String(item.protocol || '').toLowerCase() === 'omnilojo';
     if(isRunningHub){
         ensureRunningHubLists(item);
         if(rhFreeKeyInput){
@@ -345,6 +348,9 @@ function renderEditor(){
         if(volcProjectInput) volcProjectInput.value = item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME;
         if(volcRegionInput) volcRegionInput.value = item.volcengine_region || VOLCENGINE_DEFAULT_REGION;
     }
+    if(omnilojoUsageBlock) omnilojoUsageBlock.hidden = !isOmnilojo;
+    if(isOmnilojo){
+    }
     document.body.classList.toggle('show-runninghub', isRunningHub);
     document.body.classList.toggle('show-volcengine', isVolcengine);
     document.body.classList.toggle('show-volcengine-standalone', isStandaloneVolcengine);
@@ -355,11 +361,12 @@ function renderEditor(){
         editorSub.textContent = isComfyui ? '管理工作流运行所使用的 ComfyUI 后端地址。' : tr('api.editorSub');
     }
     if(providerOnboardingCard && isComfyui) providerOnboardingCard.hidden = true;
+    const showRunningHubApps = isRunningHub && isRunningHubAppsPage;
     if(runninghubConfigBlock){
-        runninghubConfigBlock.hidden = !isRunningHub;
-        runninghubConfigBlock.style.display = isRunningHub ? 'flex' : 'none';
+        runninghubConfigBlock.hidden = !showRunningHubApps;
+        runninghubConfigBlock.style.display = showRunningHubApps ? 'flex' : 'none';
     }
-    if(!isRunningHub){
+    if(!showRunningHubApps){
         if(rhPasteInput) rhPasteInput.value = '';
         if(rhAppsList) rhAppsList.innerHTML = '';
         if(rhAppsCount) rhAppsCount.textContent = '0';
@@ -370,14 +377,14 @@ function renderEditor(){
     const contentActions = document.querySelector('.content-actions');
     if(contentActions) contentActions.hidden = isComfyui;
     const providerBasicBlock = document.getElementById('providerBasicBlock');
-    if(providerBasicBlock) providerBasicBlock.hidden = isComfyui;
+    if(providerBasicBlock) providerBasicBlock.hidden = isComfyui || isRunningHubAppsPage;
     const comfyBackendBlock = document.getElementById('comfyBackendBlock');
     if(comfyBackendBlock) comfyBackendBlock.hidden = !isComfyui;
     const modelsHead = document.getElementById('modelsHead');
-    if(modelsHead) modelsHead.hidden = isComfyui;
+    if(modelsHead) modelsHead.hidden = isComfyui || isRunningHub;
     const modelGrid = document.querySelector('.model-grid');
-    if(modelGrid) modelGrid.hidden = isComfyui;
-    document.querySelectorAll('.model-list').forEach(list => list.closest('.block').hidden = isComfyui);
+    if(modelGrid) modelGrid.hidden = isComfyui || isRunningHub;
+    document.querySelectorAll('.model-list').forEach(list => list.closest('.block').hidden = isComfyui || isRunningHub);
     renderModels('image');
     renderModels('chat');
     renderModels('video');
@@ -393,6 +400,9 @@ function currentProviderApiKey(item){
         return rhFreeKeyInput?.value.trim() || '';
     }
     return keyInput.value.trim();
+}
+function isManualProtocol(protocol){
+    return ['gemini', 'volcengine', 'omnilojo'].includes(String(protocol || '').toLowerCase());
 }
 function applyDetectedProtocol(protocol){
     const item = provider();
@@ -432,7 +442,7 @@ async function probeAsync(){
         });
         const detectedProtocol = String(data.protocol || '').toLowerCase();
         const isOpenAiCompat = data.ok === true && detectedProtocol === 'openai';
-        const keepManualProtocol = ['gemini', 'volcengine'].includes(currentProtocol);
+        const keepManualProtocol = isManualProtocol(currentProtocol);
         if(protocolInput && !keepManualProtocol){
             applyDetectedProtocol(detectedProtocol || 'openai');
         }
@@ -456,7 +466,7 @@ async function probeAsync(){
                 <pre style="margin-top:6px;padding:10px 12px;border-radius:10px;background:var(--soft);border:1px solid var(--line-2);font-size:10.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text);max-height:200px;overflow:auto">${escapeHtml(rawJson)}</pre>
             </details>`);
     } catch(e){
-        const keepManualProtocol = ['gemini', 'volcengine'].includes(String(protocolInput?.value || item.protocol || '').toLowerCase());
+        const keepManualProtocol = isManualProtocol(protocolInput?.value || item.protocol);
         if(protocolInput && !keepManualProtocol){ protocolInput.value = 'openai'; protocolInput.dispatchEvent(new Event('change')); }
         const suffix = keepManualProtocol ? '，已保留当前手动选择的协议' : '，协议已设为 OpenAI 兼容';
         showVerifyResult(`<div style="font-size:11px;font-weight:800;color:#b45309">⚠ ${escapeHtml(e.message || String(e))}${suffix}</div>`);
@@ -484,7 +494,7 @@ async function testConnection(){
         });
         if(data.ok){
             const detectedProtocol = String(data.protocol || '').toLowerCase();
-            if(detectedProtocol && detectedProtocol !== String(protocolInput?.value || '').toLowerCase()){
+            if(detectedProtocol && !isManualProtocol(protocolInput?.value || item.protocol) && detectedProtocol !== String(protocolInput?.value || '').toLowerCase()){
                 applyDetectedProtocol(detectedProtocol);
             }
             // 存入 picker 状态并启用「选择模型」按钮，但不自动弹出
@@ -541,7 +551,7 @@ async function fetchModels(){
             video: new Set(data.video_models || []),
         };
         const detectedProtocol = String(data.protocol || '').toLowerCase();
-        if(detectedProtocol && detectedProtocol !== String(protocolInput?.value || '').toLowerCase()){
+        if(detectedProtocol && !isManualProtocol(protocolInput?.value || item.protocol) && detectedProtocol !== String(protocolInput?.value || '').toLowerCase()){
             applyDetectedProtocol(detectedProtocol);
         }
         // 启用「选择模型」按钮，并 statusbar 显示已拉取数量
@@ -708,14 +718,18 @@ function renderModels(kind){
     }
     const aliases = item?.model_aliases || {};
     const showProtocol = kind !== 'video' && providerSupportsModelProtocol(item);
+    const showPrices = String(item?.protocol || '').toLowerCase() === 'omnilojo';
+    const prices = item?.omnilojo_model_prices || {};
     list.innerHTML = models.map((model, index) => {
         const alias = aliases[model] || '';
+        const price = prices[String(model || '').trim()] || {};
         return `
         <div class="model-row${showProtocol ? ' has-protocol' : ''}" draggable="true" data-kind="${kind}" data-index="${index}" ondragstart="handleModelDragStart(event,'${kind}',${index})" ondragover="handleModelDragOver(event,'${kind}',${index})" ondrop="handleModelDrop(event,'${kind}',${index})" ondragend="handleModelDragEnd(event)">
             <span class="model-drag-handle"><i data-lucide="grip-vertical" class="w-3.5 h-3.5"></i></span>
             <input value="${escapeAttr(model)}" oninput="updateModel('${kind}', ${index}, this.value)" title="模型名">
             <input class="model-alias-input" value="${escapeAttr(alias)}" oninput="updateModelAlias('${kind}', ${index}, this.value)" placeholder="别名（选填）" title="画布中显示的名称">
             ${modelProtocolSelectHtml(kind, index, model, item)}
+            ${showPrices ? `<div class="model-price-fields"><label>入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.input_per_million ?? '')}" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'input_per_million', this.value)" title="输入 USD / 100 万 token"></label><label>出 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.output_per_million ?? '')}" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'output_per_million', this.value)" title="输出 USD / 100 万 token"></label></div>` : ''}
             <button class="icon-btn" type="button" onclick="removeModel('${kind}', ${index})" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
         </div>
     `;}).join('');
@@ -827,6 +841,21 @@ function updateModel(kind, index, value){
             if(newName) item.model_aliases[newName] = alias;
         }
     }
+    if(item.omnilojo_model_prices && typeof item.omnilojo_model_prices === 'object' && oldName && oldName !== newName && Object.prototype.hasOwnProperty.call(item.omnilojo_model_prices, oldName)){
+        const price = item.omnilojo_model_prices[oldName];
+        delete item.omnilojo_model_prices[oldName];
+        if(newName) item.omnilojo_model_prices[newName] = price;
+    }
+}
+function updateOmnilojoModelPrice(kind, index, field, value){
+    const item = provider();
+    const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
+    const model = String(item[key]?.[index] || '').trim();
+    if(!model) return;
+    if(!item.omnilojo_model_prices || typeof item.omnilojo_model_prices !== 'object') item.omnilojo_model_prices = {};
+    const current = item.omnilojo_model_prices[model] || {};
+    const parsed = Number(value);
+    item.omnilojo_model_prices[model] = {...current, [field]: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0};
 }
 function updateModelAlias(kind, index, value){
     const item = provider();
@@ -860,6 +889,7 @@ function removeModel(kind, index){
     if(removed && item.model_protocols && typeof item.model_protocols === 'object' && !modelProtocolStillUsed(item, removed)){
         delete item.model_protocols[removed];
     }
+    if(removed && item.omnilojo_model_prices && typeof item.omnilojo_model_prices === 'object' && !modelProtocolStillUsed(item, removed)) delete item.omnilojo_model_prices[removed];
     renderModels(kind);
 }
 let modelDragState = null;
@@ -919,7 +949,7 @@ async function saveProviders(){
             ? 'runninghub'
             : item.id === 'volcengine'
             ? 'volcengine'
-            : ['openai', 'gemini'].includes(String(item.protocol || '').toLowerCase()) ? String(item.protocol).toLowerCase() : 'openai';
+            : ['openai', 'gemini', 'omnilojo'].includes(String(item.protocol || '').toLowerCase()) ? String(item.protocol).toLowerCase() : 'openai';
         item.image_generation_endpoint = '';
         item.image_edit_endpoint = '';
         item.image_models = unique(item.image_models || []);
@@ -961,6 +991,12 @@ async function saveProviders(){
                 volcengine_secret_access_key:item.volcengine_secret_access_key || undefined,
                 api_key:item.api_key || undefined,
                 clear_key:item._clearKey === true,
+                omnilojo_management_token:item.omnilojo_management_token || undefined,
+                clear_omnilojo_management_token:item._clearOmnilojoManagementToken === true,
+                omnilojo_usage_scope:item.omnilojo_usage_scope || 'token',
+                omnilojo_admin_user_id:item.omnilojo_admin_user_id || '',
+                omnilojo_quota_per_usd:item.omnilojo_quota_per_usd || 500000,
+                omnilojo_model_prices:(item.omnilojo_model_prices && typeof item.omnilojo_model_prices === 'object') ? item.omnilojo_model_prices : {},
                 clear_volcengine_access_key_id:item._clearVolcengineAccessKey === true,
                 clear_volcengine_secret_access_key:item._clearVolcengineSecretKey === true
             })))
@@ -971,6 +1007,8 @@ async function saveProviders(){
         providersVersion = Number.isInteger(data.version) ? data.version : providersVersion;
         providers.forEach(item => {
             delete item.api_key;
+            delete item.omnilojo_management_token;
+            delete item._clearOmnilojoManagementToken;
             delete item.volcengine_access_key_id;
             delete item.volcengine_secret_access_key;
             delete item._clearKey;

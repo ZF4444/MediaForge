@@ -95,6 +95,43 @@
         overlay.querySelector('[data-quota-manage]')?.focus();
     }
 
+    function showBudgetDialog(data) {
+        ensureStyles();
+        closeDialog();
+        const message = String(data?.message || data?.detail || '本月使用预算已用尽，暂时无法继续执行任务。');
+        const overlay = document.createElement('div');
+        overlay.id = DIALOG_ID;
+        overlay.className = 'storage-quota-dialog-overlay';
+        overlay.setAttribute('role', 'presentation');
+        overlay.innerHTML = `
+            <section class="storage-quota-dialog" role="dialog" aria-modal="true" aria-labelledby="storageQuotaDialogTitle">
+                <div class="storage-quota-dialog-head">
+                    <div id="storageQuotaDialogTitle" class="storage-quota-dialog-title">预算不足</div>
+                    <button class="storage-quota-dialog-close" type="button" data-quota-close aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
+                </div>
+                <div class="storage-quota-dialog-message">${escapeHtml(message)}<br>请联系管理员增加预算或调整预算配置。</div>
+                <div class="storage-quota-dialog-actions">
+                    <button class="storage-quota-dialog-btn primary" type="button" data-quota-close>我知道了</button>
+                </div>
+            </section>
+        `;
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay || event.target.closest('[data-quota-close]')) closeDialog();
+        });
+        overlay.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeDialog();
+        });
+        document.body.appendChild(overlay);
+        window.lucide?.createIcons?.();
+        overlay.querySelector('[data-quota-close]')?.focus();
+    }
+
+    function escapeHtml(value) {
+        const node = document.createElement('div');
+        node.textContent = String(value || '');
+        return node.innerHTML;
+    }
+
     async function upload(form, onProgress) {
         if (typeof onProgress !== 'function') {
             const response = await fetch('/api/ai/upload', {method: 'POST', body: form});
@@ -136,5 +173,5 @@
         });
     }
 
-    window.MediaForgeUpload = {upload, showQuotaDialog, openStorageManagement};
+    window.MediaForgeUpload = {upload, showQuotaDialog, showBudgetDialog, openStorageManagement};
 })();

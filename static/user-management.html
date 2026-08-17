@@ -23,9 +23,10 @@
         .org-btn{height:34px;padding:0 14px;border:1px solid var(--text,#16191f);background:var(--text,#16191f);color:var(--panel,#fff);font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}.org-btn:hover{opacity:.88}.org-btn:disabled{opacity:.5;cursor:not-allowed}
         .org-list{display:flex;flex-wrap:wrap;gap:8px}.org-chip{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border:1px solid var(--border,#e4e7ec);font-size:12.5px}.org-chip-name{font-weight:600}.org-chip-count{color:var(--faint,#667085);font-size:11px}.org-chip-actions{display:flex;gap:2px}.org-chip-btn{width:24px;height:24px;display:grid;place-items:center;border:0;background:transparent;color:var(--faint,#667085);cursor:pointer}.org-chip-btn:hover{color:var(--text,#16191f)}.org-chip-btn svg{width:14px;height:14px}
         .org-empty{font-size:12.5px;color:var(--faint,#667085)}
+        .usage{height:100%;overflow:auto;padding:24px 28px 48px;max-width:1180px;margin:0 auto}.usage-toolbar{display:flex;justify-content:space-between;align-items:end;gap:14px;margin-bottom:18px}.usage-toolbar h2{font-size:15px;margin:0}.usage-toolbar p{font-size:12px;color:var(--faint,#667085);margin:5px 0 0}.month-input{height:34px;border:1px solid var(--border,#d0d5dd);padding:0 9px;background:var(--panel,#fff);color:var(--text,#16191f);font-size:12px}.usage-summary{margin-bottom:24px}.usage-summary-title{font-size:13px;font-weight:700;margin:0 0 9px}.usage-summary + .usage-summary{margin-top:22px}.usage-summary-table{border-top:1px solid var(--border,#e4e7ec)}.usage-summary-line{display:grid;grid-template-columns:minmax(180px,1.35fr) minmax(120px,1fr) 120px 100px;gap:12px;align-items:center;padding:10px 8px;border-bottom:1px solid var(--border,#e4e7ec);font-size:12px}.usage-summary-line.personal{grid-template-columns:minmax(180px,1.35fr) minmax(120px,1fr) minmax(140px,1fr)}.usage-summary-line.header{font-size:11px;color:var(--faint,#667085);font-weight:700}.usage-summary-note{margin-top:3px;color:var(--faint,#667085);font-size:11px}.usage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:10px;margin-bottom:24px}.budget-row{border:1px solid var(--border,#e4e7ec);background:var(--panel,#fff);padding:14px}.budget-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.budget-name{font-size:13px;font-weight:700}.budget-state{font-size:11px;color:var(--faint,#667085)}.budget-money{font-size:20px;font-weight:750;margin:13px 0 4px}.budget-meta{font-size:11px;color:var(--faint,#667085)}.budget-progress{height:5px;background:var(--bg,#f5f6f8);margin:12px 0}.budget-progress i{display:block;height:100%;background:#20745a}.budget-progress.over i{background:#b42318}.budget-edit{display:grid;grid-template-columns:1fr auto auto;gap:7px;margin-top:12px}.budget-edit input{min-width:0;height:30px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);padding:0 8px;font-size:12px}.budget-toggle{display:flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap}.budget-save{width:30px;height:30px;border:1px solid var(--text,#16191f);background:var(--text,#16191f);color:var(--panel,#fff);display:grid;place-items:center;cursor:pointer}.budget-save svg{width:14px;height:14px}.usage-table{border-top:1px solid var(--border,#e4e7ec)}.usage-line{display:grid;grid-template-columns:minmax(150px,1.2fr) minmax(120px,1fr) 100px 100px 90px 130px;gap:12px;padding:10px 8px;align-items:center;border-bottom:1px solid var(--border,#e4e7ec);font-size:12px}.usage-line.header{font-size:11px;color:var(--faint,#667085);font-weight:700}.usage-task{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--faint,#667085);margin-top:3px}.usage-status{font-size:11px}.usage-status.succeeded{color:#087443}.usage-status.failed{color:#b42318}.usage-empty{padding:38px 0;text-align:center;color:var(--faint,#667085);font-size:13px}
         .placeholder{height:100%;display:grid;place-items:center;padding:28px}.placeholder-inner{text-align:center;max-width:420px}.placeholder-icon{width:44px;height:44px;margin:0 auto 16px;color:var(--faint,#667085)}.placeholder-title{font-size:16px;font-weight:700}.placeholder-copy{margin-top:8px;font-size:13px;line-height:1.7;color:var(--faint,#667085)}
         .status{font-size:12px;color:var(--faint,#667085)}
-        @media(max-width:680px){.head{padding:18px 16px 0}.users{padding:18px 16px 36px}.row{grid-template-columns:1fr 100px}.row>*:nth-child(2),.row>*:nth-child(4){display:none}.toolbar{align-items:flex-start;flex-direction:column}.search{width:100%}.org-form{flex-wrap:wrap}}
+        @media(max-width:680px){.head{padding:18px 16px 0}.users,.usage{padding:18px 16px 36px}.row{grid-template-columns:1fr 100px}.row>*:nth-child(2),.row>*:nth-child(4){display:none}.toolbar,.usage-toolbar{align-items:flex-start;flex-direction:column}.search{width:100%}.org-form{flex-wrap:wrap}.usage-summary-line{grid-template-columns:1fr 100px}.usage-summary-line>*:nth-child(3),.usage-summary-line>*:nth-child(4){display:none}.usage-line{grid-template-columns:1fr 85px 80px}.usage-line>*:nth-child(2),.usage-line>*:nth-child(5),.usage-line>*:nth-child(6){display:none}}
     </style>
 </head>
 <body>
@@ -38,6 +39,7 @@
             <button class="tab" data-tab="quota"><i data-lucide="database"></i>存储配额</button>
             <button class="tab" data-tab="sessions"><i data-lucide="monitor-smartphone"></i>登录会话</button>
             <button class="tab" data-tab="usage"><i data-lucide="chart-no-axes-column"></i>使用统计</button>
+            <button class="tab" data-tab="budgets"><i data-lucide="wallet-cards"></i>预算配置</button>
         </nav>
     </header>
     <main class="content">
@@ -61,12 +63,13 @@
         <section class="view" data-view="access"><iframe class="embed" data-src="/static/access-control.html" title="访问权限"></iframe></section>
         <section class="view" data-view="quota"><iframe class="embed" data-src="/static/storage-quota.html" title="存储配额"></iframe></section>
         <section class="view" data-view="sessions"><div class="placeholder"><div class="placeholder-inner"><i class="placeholder-icon" data-lucide="monitor-smartphone"></i><div class="placeholder-title">登录会话</div><div class="placeholder-copy">会话管理视图尚未开放。后续将在这里查看登录设备、最后活动时间并撤销指定会话。</div></div></div></section>
-        <section class="view" data-view="usage"><div class="placeholder"><div class="placeholder-inner"><i class="placeholder-icon" data-lucide="chart-no-axes-column"></i><div class="placeholder-title">使用统计</div><div class="placeholder-copy">使用统计视图尚未开放。后续将在这里汇总用户存储、生成任务与功能使用情况。</div></div></div></section>
+        <section class="view" data-view="usage"><div class="usage"><div class="usage-toolbar"><div><h2>使用统计</h2><p id="usageStatus">所有费用按 USD 结算</p></div><div style="display:flex;gap:8px;align-items:center"><button id="syncOmnilojo" class="budget-save" type="button" title="刷新用量"><i data-lucide="refresh-cw"></i></button><input id="usageMonth" class="month-input" type="month"></div></div><div id="usageSummary"></div><div class="usage-summary-title">使用明细</div><div id="usageTable" class="usage-table"></div></div></section>
+        <section class="view" data-view="budgets"><div class="usage"><div class="usage-toolbar"><div><h2>预算配置</h2><p id="budgetStatus">所有预算按 USD 设置</p></div></div><div class="section-title" style="margin-bottom:10px">组织预算</div><div id="budgetGrid" class="usage-grid"></div><div class="section-title" style="margin:26px 0 10px">个人预算</div><div id="personalBudgetGrid" class="usage-grid"></div></div></section>
     </main>
 </div>
 <script>
 (() => {
-    const state = { users: [], orgs: [], query: '' };
+    const state = { users: [], orgs: [], query: '', usage: null };
     const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     function orgName(orgId){
         const org = state.orgs.find(o => o.id === orgId);
@@ -159,11 +162,76 @@
             await Promise.all([loadUsers(), loadOrgs()]);
         } catch(e){ status.textContent = e.message || '分配失败'; }
     }
+    const money = value => `$${Number(value || 0).toFixed(4)}`;
+    const moneyUsd = value => `$${Number(value || 0).toFixed(4)}`;
+    const dateTime = value => value ? new Date(Number(value)).toLocaleString('zh-CN', {hour12:false}) : '—';
+    function renderUsage(){
+        const data = state.usage;
+        const usageTable = document.getElementById('usageTable');
+        const usageSummary = document.getElementById('usageSummary');
+        if(!data){ usageSummary.innerHTML = ''; usageTable.innerHTML = ''; return; }
+        const organizations = data.organizations || [];
+        const users = data.user_budgets || [];
+        usageSummary.innerHTML = `<section class="usage-summary"><h3 class="usage-summary-title">组织汇总</h3><div class="usage-summary-table"><div class="usage-summary-line header"><div>组织</div><div>消耗</div><div>RunningHub 用量</div><div>任务数</div></div>${organizations.map(org => `<div class="usage-summary-line"><div><strong>${esc(org.name)}</strong></div><div>${moneyUsd(org.spent_cny)}</div><div>${Number(org.consume_coins || 0).toFixed(2)} RH币</div><div>${Number(org.task_count || 0)}</div></div>`).join('') || '<div class="usage-empty">暂无组织消耗记录</div>'}</div></section><section class="usage-summary"><h3 class="usage-summary-title">个人汇总</h3><div class="usage-summary-table"><div class="usage-summary-line personal header"><div>用户</div><div>消耗</div><div>组织</div></div>${users.map(user => `<div class="usage-summary-line personal"><div><strong>${esc(user.username || user.user_id)}</strong><div class="usage-summary-note">${esc(user.user_id)}</div></div><div>${moneyUsd(user.spent_usd)}</div><div>${esc(user.organization_name || '未分配')}</div></div>`).join('') || '<div class="usage-empty">暂无个人消耗记录</div>'}</div></section>`;
+        const rhRecords = (data.records || []).map(item => ({...item, source:'RunningHub', reference:item.upstream_task_id, units:`${Number(item.consume_coins || 0).toFixed(2)} RH币`, timestamp:item.completed_at || item.submitted_at}));
+        const omniRecords = (data.omnilojo?.records || []).map(item => ({...item, source:'Omnilojo', reference:item.request_id || item.upstream_request_id || item.upstream_log_id, status:'succeeded', units:`输入 ${Number(item.prompt_tokens || 0)} / 输出 ${Number(item.completion_tokens || 0)} token`, timestamp:item.created_at}));
+        const records = [...rhRecords, ...omniRecords].sort((a,b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+        usageTable.innerHTML = `<div class="usage-line header"><div>用户 / 来源</div><div>组织</div><div>状态</div><div>费用</div><div>用量</div><div>时间</div></div>${records.map(item => `<div class="usage-line"><div><strong>${esc(item.username || item.user_id || '未分配')}</strong><div class="usage-task">${esc(item.source)} · ${esc(item.reference || '')}</div></div><div>${esc(item.organization_name || '未分配')}</div><div class="usage-status ${esc(item.status)}">${esc(item.status)}</div><div>${item.source === 'Omnilojo' ? moneyUsd(item.cost_usd) : money(item.total_money_cny)}</div><div>${esc(item.units)}</div><div>${dateTime(item.timestamp)}</div></div>`).join('') || '<div class="usage-empty">这个月还没有使用记录</div>'}`;
+    }
+    function renderBudgets(){
+        const data = state.usage;
+        const budgetGrid = document.getElementById('budgetGrid');
+        const personalBudgetGrid = document.getElementById('personalBudgetGrid');
+        if(!data){ budgetGrid.innerHTML = ''; personalBudgetGrid.innerHTML = ''; return; }
+        budgetGrid.innerHTML = (data.organizations || []).map(org => {
+            const budget = Number(org.monthly_budget_cny || 0);
+            const spent = Number(org.spent_cny || 0);
+            const pct = budget > 0 ? Math.min(100, spent / budget * 100) : 0;
+            const over = budget > 0 && spent >= budget;
+            return `<article class="budget-row"><div class="budget-head"><span class="budget-name">${esc(org.name)}</span><span class="budget-state">${org.budget_enabled ? '预算已启用' : '未启用预算'}</span></div><div class="budget-money">${money(spent)}</div><div class="budget-meta">预算 ${budget ? money(budget) : '未设置'} · ${Number(org.consume_coins || 0).toFixed(2)} RH币 · ${org.task_count} 个任务</div><div class="budget-progress ${over ? 'over' : ''}"><i style="width:${pct}%"></i></div><div class="budget-edit"><input type="number" min="0" step="0.0001" value="${budget || ''}" placeholder="月度预算（USD）" data-budget-input="${esc(org.id)}"><label class="budget-toggle"><input type="checkbox" data-budget-enabled="${esc(org.id)}" ${org.budget_enabled ? 'checked' : ''}>启用</label><button class="budget-save" type="button" data-budget-save="${esc(org.id)}" title="保存预算"><i data-lucide="check"></i></button></div></article>`;
+        }).join('') || '<div class="usage-empty">暂无组织</div>';
+        personalBudgetGrid.innerHTML = (data.user_budgets || []).map(user => {
+            const budget = Number(user.monthly_budget_usd || 0);
+            const spent = Number(user.spent_usd || 0);
+            const pct = budget > 0 ? Math.min(100, spent / budget * 100) : 0;
+            const over = budget > 0 && spent >= budget;
+            return `<article class="budget-row"><div class="budget-head"><span class="budget-name">${esc(user.username || user.user_id)}</span><span class="budget-state">${user.budget_enabled ? '预算已启用' : '未启用预算'}</span></div><div class="budget-money">${money(spent)}</div><div class="budget-meta">${esc(user.organization_name || '未分配')} · 预算 ${budget ? money(budget) : '未设置'}</div><div class="budget-progress ${over ? 'over' : ''}"><i style="width:${pct}%"></i></div><div class="budget-edit"><input type="number" min="0" step="0.0001" value="${budget || ''}" placeholder="月度预算（USD）" data-user-budget-input="${esc(user.user_id)}"><label class="budget-toggle"><input type="checkbox" data-user-budget-enabled="${esc(user.user_id)}" ${user.budget_enabled ? 'checked' : ''}>启用</label><button class="budget-save" type="button" data-user-budget-save="${esc(user.user_id)}" title="保存预算"><i data-lucide="check"></i></button></div></article>`;
+        }).join('') || '<div class="usage-empty">暂无用户</div>';
+        document.querySelectorAll('[data-budget-save]').forEach(button => button.addEventListener('click', () => saveBudget(button.dataset.budgetSave)));
+        document.querySelectorAll('[data-user-budget-save]').forEach(button => button.addEventListener('click', () => saveUserBudget(button.dataset.userBudgetSave)));
+        if(window.lucide) lucide.createIcons();
+    }
+    async function loadUsage(){
+        const month = document.getElementById('usageMonth').value;
+        const status = document.getElementById('usageStatus');
+        status.textContent = '加载中...';
+        try { const [rh, omni] = await Promise.all([fetch(`/api/usage/runninghub?month=${encodeURIComponent(month)}`), fetch(`/api/usage/omnilojo?month=${encodeURIComponent(month)}`)]); const d = await rh.json(); const omnilojo = await omni.json().catch(() => ({detail:`Omnilojo 接口错误（HTTP ${omni.status}）`})); if(!rh.ok) throw new Error(d.detail || '加载失败'); state.usage = {...d, omnilojo: omni.ok ? omnilojo : {records:[]}}; status.textContent = omni.ok ? '所有费用按 USD 结算' : `Omnilojo 统计不可用：${omnilojo.detail || '请求失败'}`; const budgetStatus = document.getElementById('budgetStatus'); if(budgetStatus) budgetStatus.textContent = omni.ok ? '所有预算按 USD 设置' : '部分统计不可用'; renderUsage(); renderBudgets(); }
+        catch(e){ status.textContent = e.message || '加载失败'; }
+    }
+    async function saveBudget(orgId){
+        const input = document.querySelector(`[data-budget-input="${CSS.escape(orgId)}"]`);
+        const enabled = document.querySelector(`[data-budget-enabled="${CSS.escape(orgId)}"]`);
+        const status = document.getElementById('budgetStatus');
+        const amount = Number(input?.value || 0);
+        if(!Number.isFinite(amount) || amount < 0){ status.textContent = '预算金额必须为非负数'; return; }
+        try { const r = await fetch(`/api/organizations/${encodeURIComponent(orgId)}/budget`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({monthly_budget_cny:amount, enabled:Boolean(enabled?.checked)})}); const d = await r.json(); if(!r.ok) throw new Error(d.detail || '保存失败'); await loadUsage(); }
+        catch(e){ status.textContent = e.message || '保存失败'; }
+    }
+    async function saveUserBudget(userId){
+        const input = document.querySelector(`[data-user-budget-input="${CSS.escape(userId)}"]`);
+        const enabled = document.querySelector(`[data-user-budget-enabled="${CSS.escape(userId)}"]`);
+        const status = document.getElementById('budgetStatus');
+        const amount = Number(input?.value || 0);
+        if(!Number.isFinite(amount) || amount < 0){ status.textContent = '预算金额必须为非负数'; return; }
+        try { const r = await fetch(`/api/users/${encodeURIComponent(userId)}/budget`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({monthly_budget_usd:amount, enabled:Boolean(enabled?.checked)})}); const d = await r.json(); if(!r.ok) throw new Error(d.detail || '保存失败'); await loadUsage(); }
+        catch(e){ status.textContent = e.message || '保存失败'; }
+    }
     function activate(name){
         document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
         document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.dataset.view === name));
         const frame = document.querySelector(`[data-view="${name}"] iframe[data-src]`);
         if(frame && !frame.src) frame.src = frame.dataset.src;
+        if(name === 'usage' || name === 'budgets') loadUsage();
         history.replaceState(null, '', `#${name}`);
     }
     document.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => activate(el.dataset.tab)));
@@ -176,7 +244,10 @@
         input.value = '';
         createOrg(name);
     });
-    const initial = ['users','access','quota','sessions','usage'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'users';
+    document.getElementById('usageMonth').value = new Date().toISOString().slice(0, 7);
+    document.getElementById('usageMonth').addEventListener('change', loadUsage);
+    document.getElementById('syncOmnilojo').addEventListener('click', loadUsage);
+    const initial = ['users','access','quota','sessions','usage','budgets'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'users';
     activate(initial); loadOrgs(); loadUsers(); if(window.lucide) lucide.createIcons();
 })();
 </script>

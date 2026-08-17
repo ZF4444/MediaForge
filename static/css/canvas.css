@@ -37,7 +37,11 @@ button { border:0; cursor:pointer; }
 .boot-loading-percent { position:absolute; inset:0; display:grid; place-items:center; color:var(--text); font-size:18px; font-weight:900; font-variant-numeric:tabular-nums; }
 .boot-loading-title { display:block; width:100%; color:var(--text); font-size:16px; font-weight:900; letter-spacing:.04em; text-align:center; }
 .boot-loading-sub { display:block; width:100%; color:var(--muted); font-size:12px; font-weight:700; text-align:center; }
-.canvas-title { position:absolute; left:22px; top:22px; z-index:10; max-width:min(420px, calc(100vw - 44px)); color:var(--muted); font-size:12px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; pointer-events:none; }
+.canvas-title-bar { position:absolute; left:18px; top:18px; z-index:10; display:flex; align-items:center; gap:8px; max-width:min(420px, calc(100vw - 44px)); }
+.canvas-title { min-width:0; color:var(--muted); font-size:12px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; pointer-events:none; }
+.canvas-manager-btn { width:30px; height:30px; display:grid; place-items:center; flex:0 0 auto; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--muted); box-shadow:0 6px 18px var(--shadow); }
+.canvas-manager-btn:hover { color:var(--text); border-color:var(--line-2); }
+.canvas-manager-btn i { width:15px; height:15px; }
 .canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle { position:absolute; top:22px; z-index:56; width:96px; height:40px; padding:0 15px; border-radius:999px; background:var(--panel); color:var(--text); border:1px solid var(--line); box-shadow:0 14px 34px var(--shadow); backdrop-filter:blur(16px); display:flex; align-items:center; justify-content:center; gap:8px; font-size:12px; font-weight:750; white-space:nowrap; transition:transform .14s ease, border-color .14s ease; }
 .canvas-log-toggle { right:130px; }
 .canvas-shortcut-toggle { right:238px; }

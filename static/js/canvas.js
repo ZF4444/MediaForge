@@ -1,6 +1,7 @@
 const params = new URLSearchParams(location.search);
 let canvasId = params.get('id') || '';
 const shell = document.getElementById('shell');
+const canvasManagerBtn = document.getElementById('canvasManagerBtn');
 const bootLoadingOverlay = document.getElementById('bootLoadingOverlay');
 const bootLoadingRingProgress = document.getElementById('bootLoadingRingProgress');
 const bootLoadingPercent = document.getElementById('bootLoadingPercent');
@@ -2249,10 +2250,27 @@ class StorageQuotaSignal extends Error {
         this.incoming_bytes = data.incoming_bytes;
     }
 }
+class UsageBudgetSignal extends Error {
+    constructor(info){
+        const detail = info?.detail && typeof info.detail === 'object' ? info.detail : info;
+        super(detail?.message || detail?.detail || '本月使用预算已用尽，暂时无法继续执行任务。');
+        this.usageBudgetExceeded = true;
+        this.contactAdmin = detail?.contact_admin !== false;
+    }
+}
 function quotaDataFromPayload(payload){
     if(!payload || typeof payload !== 'object') return null;
     if(payload.error === 'storage_quota_exceeded') return payload;
     return null;
+}
+function budgetDataFromPayload(payload){
+    if(!payload || typeof payload !== 'object') return null;
+    const detail = payload.detail && typeof payload.detail === 'object' ? payload.detail : payload;
+    if(detail.error_code === 'usage_budget_exceeded') return detail;
+    const message = String(detail.message || detail.detail || payload.error || payload.message || '');
+    return /(?:预算(?:已用尽|不足)|组织.*预算|个人.*预算)/.test(message)
+        ? {...detail, message}
+        : null;
 }
 function checkQuotaWarningFromResult(data){
     if(!data || typeof data !== 'object') return;
@@ -2283,6 +2301,8 @@ async function smartResponseError(response, fallback='请求失败'){
     let payload = null;
     try { payload = await response.clone().json(); } catch(_) {}
     if(response.status === 413 && quotaDataFromPayload(payload)) return new StorageQuotaSignal(payload);
+    const budget = budgetDataFromPayload(payload);
+    if(budget) return new UsageBudgetSignal(budget);
     return new Error(await smartResponseErrorMessage(response, fallback, payload));
 }
 async function smartResponseErrorMessage(response, fallback='请求失败', prefetched){
@@ -2292,6 +2312,7 @@ async function smartResponseErrorMessage(response, fallback='请求失败', pref
     }
     if(data && typeof data === 'object'){
         const detail = data.detail ?? data.error ?? data.message;
+        if(detail && typeof detail === 'object') return detail.message || detail.detail || fallback;
         if(typeof detail === 'string') return detail || fallback;
         if(Array.isArray(detail)) return detail.map(item => item?.msg || item?.message || String(item)).join('\n') || fallback;
     }
@@ -3292,7 +3313,7 @@ async function runPromptLLMNode(nodeId){
         node.llmModel = model;
         scheduleSave();
     } catch(e) {
-        toast((e.message || tr('smart.promptLlmFailed')).slice(0, 160));
+        if(!handleTaskLimitSignal(e)) toast((e.message || tr('smart.promptLlmFailed')).slice(0, 160));
     } finally {
         node.running = false;
         render();
@@ -3315,6 +3336,9 @@ function isRunningHubPendingTask(task){
     // RunningHub 标准模型 API（如 GPT-Image2）走通用 /api/canvas-image-tasks 流程，
     // 只有 AI 应用引擎提交的任务才带 mode 标记，需要走 /api/runninghub/query 轮询。
     return task?.mode === 'app';
+}
+function hasRunningHubPendingTask(){
+    return nodes.some(node => smartPendingTasks(node).some(isRunningHubPendingTask));
 }
 class ImageTaskRecoverSignal extends Error {
     constructor(info){
@@ -3344,6 +3368,18 @@ function handleStorageQuotaSignal(e){
         toast((e.message || '存储空间不足').slice(0, 160));
     }
     return true;
+}
+function handleUsageBudgetSignal(e){
+    if(!(e && e.usageBudgetExceeded)) return false;
+    try {
+        window.MediaForgeUpload?.showBudgetDialog?.({message:e.message});
+    } catch(_) {
+        toast((e.message || '本月使用预算已用尽，请联系管理员。').slice(0, 160));
+    }
+    return true;
+}
+function handleTaskLimitSignal(e){
+    return handleStorageQuotaSignal(e) || handleUsageBudgetSignal(e);
 }
 function providerIdForSmartTask(node, task){
     return task?.providerId || node?.runSettings?.provider_id || settings.provider_id || 'comfly';
@@ -3414,6 +3450,8 @@ async function pollCanvasTask(taskId){
             }
             if(task.status === 'failed'){
                 if(task.error_code === 'storage_quota_exceeded' || task.status_code === 413) throw new StorageQuotaSignal(task);
+                const budget = budgetDataFromPayload(task);
+                if(budget) throw new UsageBudgetSignal(budget);
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '');
                 if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, providerId:task.provider_id, kind:'image', message:task.error || tr('smart.errRunFailed')});
                 throw new Error(task.error || tr('smart.errRunFailed'));
@@ -3509,7 +3547,7 @@ async function resumeSmartPendingNode(node){
                 }
             }
             failures.push(e);
-            if(!handleStorageQuotaSignal(e)) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
+            if(!handleTaskLimitSignal(e)) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
             render();
             scheduleSave();
         }
@@ -3902,7 +3940,7 @@ shell.addEventListener('mousedown', shellMousedownHandler, true);
 function shellMousedownHandler2(e){
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
-    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
+    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
 }
@@ -3911,7 +3949,7 @@ function shellClickHandler(e){
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
     if(didPan){ e.preventDefault(); e.stopPropagation(); return; }
-    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
+    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
     const nodeEl = e.target.closest('.image-node');
@@ -3921,7 +3959,7 @@ function shellClickHandler(e){
 shell.addEventListener('click', shellClickHandler, true);
 function shellPointerdownHandler(e){
     if(e.button !== 2) return;
-    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     closeCreateMenu();
     didPan = false;
     rightMouseDownPoint = {x:e.clientX, y:e.clientY};
@@ -3930,9 +3968,9 @@ function shellPointerdownHandler(e){
 }
 shell.addEventListener('pointerdown', shellPointerdownHandler);
 function shellMousedownHandler3(e){
-    if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
+    if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     if(e.button === 2){
-        if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
+        if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
         e.preventDefault();
         if(!rightMouseDownPoint){
             closeCreateMenu();
@@ -3944,7 +3982,7 @@ function shellMousedownHandler3(e){
     }
     // 中键按下时，即使指针落在图片节点上也允许拖拽画布；
     // 但落在底部输入栏/小地图/弹层等真正的交互 UI 上时不平移。
-    if(e.button === 1 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')){
+    if(e.button === 1 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')){
         e.preventDefault();
         closeCreateMenu();
         didPan = false;
@@ -3952,7 +3990,7 @@ function shellMousedownHandler3(e){
         shell.classList.add('panning');
         return;
     }
-    if(e.target.closest('.image-node,.composer,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     closeCreateMenu();
     if(e.button === 0){
         e.preventDefault();
@@ -3964,14 +4002,14 @@ function shellMousedownHandler3(e){
 }
 shell.onmousedown = shellMousedownHandler3;
 function shellContextmenuHandler(e){
-    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
 }
 shell.oncontextmenu = shellContextmenuHandler;
 function shellDblclickHandler(e){
-    if(didPan || e.target.closest('.image-node,.composer,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
+    if(didPan || e.target.closest('.image-node,.composer,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     openCreateMenu(e);
@@ -3979,7 +4017,7 @@ function shellDblclickHandler(e){
 shell.ondblclick = shellDblclickHandler;
 function shellClickHandler2(e){
     if(selectionJustFinished) return;
-    if(didPan || e.target.closest('.image-node,.composer,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
+    if(didPan || e.target.closest('.image-node,.composer,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     closeCreateMenu();
     clearSelection();
@@ -5093,3 +5131,8 @@ async function windowLoadHandler(){
     }));
 }
 window.onload = windowLoadHandler;
+canvasManagerBtn?.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    window.location.assign('/static/canvas-manager.html');
+});

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/static/images/logo.png" type="image/png">
+    <title>画布管理</title>
+    <script>(function(){try{if((localStorage.getItem('studio_theme')||localStorage.getItem('canvas_theme'))==='dark')document.documentElement.classList.add('theme-dark')}catch(e){}})();</script>
+    <script src="/static/vendor/js/lucide.js"></script>
+    <script src="/static/js/theme.js"></script>
+    <link rel="stylesheet" href="/static/css/canvas-manager.css">
+</head>
+<body>
+    <main class="canvas-manager">
+        <header class="manager-header">
+            <div><p class="manager-eyebrow">CANVASES</p><h1>画布管理</h1><p class="manager-subtitle">选择已有画布，或创建一张新的画布开始创作。</p></div>
+            <button id="refreshBtn" class="icon-button" type="button" title="刷新画布列表" aria-label="刷新画布列表"><i data-lucide="refresh-cw"></i></button>
+        </header>
+        <section class="create-panel" aria-label="新建画布">
+            <div class="create-panel-copy"><i data-lucide="sparkles"></i><span>新建画布</span></div>
+            <form id="createForm" class="create-form">
+                <label class="sr-only" for="canvasTitleInput">画布名称</label>
+                <input id="canvasTitleInput" type="text" maxlength="80" placeholder="输入画布名称（可选）" autocomplete="off">
+                <button class="create-button" type="submit"><i data-lucide="plus"></i><span>创建</span></button>
+            </form>
+        </section>
+        <div class="list-heading"><span>我的画布</span><span id="canvasCount" class="canvas-count">0</span></div>
+        <section id="canvasList" class="canvas-list" aria-live="polite"></section>
+    </main>
+    <script src="/static/js/canvas-manager.js"></script>
+</body>
+</html>
