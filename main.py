@@ -1312,7 +1312,17 @@ def require_model_access(provider_id: str, model: str) -> str:
     uid = current_user_id()
     # Legacy clients may submit `comfly`; get_api_provider resolves it to the
     # active provider. Authorization must use that same concrete provider ID.
-    provider = get_api_provider(provider_id)
+    if not str(provider_id or '').strip():
+        model_text = str(model or '').strip()
+        provider = next((item for item in load_api_providers() if item.get('enabled', True) and model_text in {
+            str(value or '').strip()
+            for key in ('chat_models', 'image_models', 'video_models')
+            for value in (item.get(key) or [])
+        }), None)
+        if provider is None:
+            raise HTTPException(status_code=400, detail='未指定有效的 Provider/模型。Agent 聊天模型与图片生成模型需要分别配置。')
+    else:
+        provider = get_api_provider(provider_id)
     if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, provider["id"], model):
         raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员(@飞帆)在访问控制中开放。")
     return uid
@@ -1818,7 +1828,16 @@ def display_title(text):
     return title[:24] or "新对话"
 
 def resolve_chat_provider(provider: str, model: str):
-    api_provider = get_api_provider(provider or "")
+    requested_provider = str(provider or '').strip().lower()
+    if requested_provider == 'comfyui':
+        raise HTTPException(status_code=400, detail='ComfyUI 仅用于工作流执行，不能作为 Agent 聊天模型 Provider。请在模型选择中选择可用的聊天 Provider。')
+    if requested_provider:
+        api_provider = get_api_provider(requested_provider)
+    else:
+        candidates = [item for item in load_api_providers() if item.get('enabled', True) and item.get('id') not in {'comfyui', 'runninghub'} and (item.get('chat_models') or item.get('base_url') or AI_BASE_URL)]
+        api_provider = next((item for item in candidates if item.get('primary')), None) or (candidates[0] if candidates else None)
+        if api_provider is None:
+            raise HTTPException(status_code=400, detail='未配置可用于 Agent 的聊天 Provider，请先在 API 平台管理中配置聊天模型。')
     base_root = (api_provider.get("base_url") or AI_BASE_URL).rstrip("/")
     if not base_root:
         raise HTTPException(status_code=400, detail=f"{api_provider.get('name') or api_provider['id']} 未配置 Base URL")

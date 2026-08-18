@@ -1,7 +1,17 @@
 (function(){
   const state = window.CanvasAgentState;
   const active = status => ['running','planning','applying','awaiting_confirmation'].includes(status);
-  function saveRun() { localStorage.setItem(`canvas-agent-run:${window.CanvasAgentBridge.canvasId()}`, state.runId); }
+  function saveRun() {
+    const canvasId = window.CanvasAgentBridge.canvasId();
+    localStorage.setItem(`canvas-agent-run:${canvasId}`, state.runId);
+    if (!state.runId) return;
+    try {
+      const key = `canvas-agent-runs:${canvasId}`;
+      const history = JSON.parse(localStorage.getItem(key) || '[]').filter(Boolean).filter(id => id !== state.runId);
+      history.unshift(state.runId);
+      localStorage.setItem(key, JSON.stringify(history.slice(0, 100)));
+    } catch (_) {}
+  }
   function applyEvent(event) {
     if (!event || Number(event.sequence) <= state.sequence) return;
     state.sequence = Number(event.sequence); const type = String(event.type || '').replace(/^agent\./, ''); const data = event.payload_json || event.data || {};

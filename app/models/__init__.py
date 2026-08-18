@@ -218,13 +218,13 @@ class CanvasAgentMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
     selected_node_ids: List[str] = []
     mention_node_ids: List[str] = []
-    use_model: bool = False
+    use_model: bool = True
     provider: str = ""
     model: str = ""
 
 class CanvasAgentAnswerRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=20000)
-    use_model: bool = False
+    use_model: bool = True
     provider: str = ""
     model: str = ""
 

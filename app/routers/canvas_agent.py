@@ -13,7 +13,6 @@ from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_agent.adapter import semantic_plan_to_patch
 from app.services.canvas_agent.context import build_canvas_context
 from app.services.canvas_agent.events import emit_agent_event
-from app.services.canvas_agent.planner import plan_fast_track
 from app.services.canvas_agent.model_resolver import resolve_canvas_agent_model
 from app.services.canvas_agent.planner import plan_with_deep_agent
 from app.services.canvas_agent.checkpoint import create_checkpointer
@@ -85,13 +84,10 @@ async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, re
     try:
         context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"], selected_node_ids=payload.selected_node_ids, mention_node_ids=payload.mention_node_ids)
         context["run_id"] = run_id
-        if payload.use_model:
-            model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
-            with create_checkpointer() as checkpointer:
-                plan = await plan_with_deep_agent(model, payload.content, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool((run.get("metadata_json") or {}).get("model_thread_started")))
-            await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model})
-        else:
-            plan = plan_fast_track(payload.content, context)
+        model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
+        with create_checkpointer() as checkpointer:
+            plan = await plan_with_deep_agent(model, payload.content, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool((run.get("metadata_json") or {}).get("model_thread_started")))
+        await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model})
         plan_json = plan.model_dump(mode="json")
         estimate = estimate_plan_cost(plan_json)
         plan_json["execution"]["estimated_cost"] = estimate["estimated_cost"]
@@ -112,25 +108,21 @@ async def answer_agent_question(run_id: str, payload: CanvasAgentAnswerRequest, 
     user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
     await asyncio.to_thread(append_message, user_id, run_id, "user", payload.answer, {"kind": "answer"})
     metadata = run.get("metadata_json") or {}
-    if payload.use_model or metadata.get("model_thread_started"):
-        try:
-            context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"])
-            context["run_id"] = run_id
-            provider, model_name = payload.provider or metadata.get("model_provider", ""), payload.model or metadata.get("model_name", "")
-            model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
-            with create_checkpointer() as checkpointer:
-                plan = await plan_with_deep_agent(model, payload.answer, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=True)
-            saved = await asyncio.to_thread(save_plan, user_id, run_id, plan.model_dump(mode="json"), status="awaiting_confirmation")
-            await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name})
-            await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json"), "resumed": True})
-            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved}
-        except Exception as exc:
-            await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="planning")
-            await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc)[:500]})
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    await asyncio.to_thread(update_run, user_id, run_id, status="planning", phase="planning")
-    await emit_agent_event(user_id, run_id, "input.received", {"kind": "answer"})
-    return {"run": await asyncio.to_thread(get_run, user_id, run_id)}
+    try:
+        context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"])
+        context["run_id"] = run_id
+        provider, model_name = payload.provider or metadata.get("model_provider", ""), payload.model or metadata.get("model_name", "")
+        model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
+        with create_checkpointer() as checkpointer:
+            plan = await plan_with_deep_agent(model, payload.answer, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool(metadata.get("model_thread_started")))
+        saved = await asyncio.to_thread(save_plan, user_id, run_id, plan.model_dump(mode="json"), status="awaiting_confirmation")
+        await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name})
+        await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json"), "resumed": True})
+        return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved}
+    except Exception as exc:
+        await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="planning")
+        await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc)[:500]})
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 @router.post("/api/canvas-agent/runs/{run_id}/confirm")
 async def confirm_agent_plan(run_id: str, payload: CanvasAgentConfirmRequest, request: Request, x_user_id: str = Header(default="")):
