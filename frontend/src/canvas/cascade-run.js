@@ -997,8 +997,8 @@ async function runGeneration(){
         : settings.engine === 'comfy'
         ? 1
         : Math.max(1, Math.min(4, Number(settings.count || 1)));
-    // RunningHub AI 应用以 API Key 为粒度限制并发；保持运行态直到轮询结束，
-    // 避免统一画布在两秒冷却后再次提交同一密钥。
+    // 图片 API 任务提交后还会经历服务端排队与轮询。运行态必须持续到该
+    // 任务真正结束，不能用短暂的按钮冷却替代，否则用户可以重复提交。
     const apiConcurrentRun = isApiLikeEngine(settings.engine);
     const nodeHasImages = (node.images || []).some(img => img?.url);
     const workflowModeRun = smartImageUsesWorkflowInput(node, smartLoopContext);
@@ -1041,13 +1041,8 @@ async function runGeneration(){
         pendingNode.h = pendingBox.h;
         attachRunMeta(pendingNode, pendingMeta);
     }
-    if(apiConcurrentRun){
-        coolNodeRunningState(pendingNode, 2000);
-        coolRunButton(2000);
-    } else {
-        pendingNode.running = true;
-        runBtn.disabled = true;
-    }
+    pendingNode.running = true;
+    runBtn.disabled = true;
     render();
     try {
         if(settings.engine === 'comfy'){
