@@ -46,6 +46,8 @@ const PAGES = [
       'candidate-pool.js', 'clipboard.js', 'node-context-ui.js', 'workflow-transfer.js',
       'canvas-sync.js', 'prompt-templates.js', 'prompt-task-rules.js', 'mention-composer.js', 'canvas-render.js',
       'image-editor.js', 'asset-library.js', 'generation-settings.js',
+      'agent/agent-state.js', 'agent/agent-bridge.js', 'agent/agent-client.js',
+      'agent/agent-plan.js', 'agent/agent-artifacts.js', 'agent/agent-events.js', 'agent/agent-panel.js',
     ],
   },
   {
@@ -101,6 +103,7 @@ function buildPage({ page, mainSrc, handwrittenFiles }) {
   for (const name of handwrittenFiles) {
     const src = resolve(frontendRoot, 'src', page, name);
     const dest = resolve(outDir, name);
+    mkdirSync(dirname(dest), { recursive: true });
     copyFileSync(src, dest);
     console.log(`[build:${page}] copied ${src} -> ${dest}`);
   }

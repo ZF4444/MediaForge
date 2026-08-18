@@ -201,6 +201,97 @@ class CanvasSaveRequest(BaseModel):
     settings: Dict[str, Any] = {}
     client_id: str = ""
     base_updated_at: int = 0
+    # New clients may use the monotonic version returned by GET /api/canvases/{id}.
+    # It remains optional until Phase 1 moves the classic save endpoint to version CAS.
+    base_version: int = 0
+
+class CanvasAgentRunCreateRequest(BaseModel):
+    canvas_id: str = Field(min_length=1, max_length=128)
+    mode: str = "fast_track"
+    conversation_id: str = ""
+    selected_node_ids: List[str] = []
+    mention_node_ids: List[str] = []
+    max_steps: int = Field(default=12, ge=1, le=100)
+    limits: Dict[str, Any] = {}
+
+class CanvasAgentMessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=20000)
+    selected_node_ids: List[str] = []
+    mention_node_ids: List[str] = []
+    use_model: bool = False
+    provider: str = ""
+    model: str = ""
+
+class CanvasAgentAnswerRequest(BaseModel):
+    answer: str = Field(min_length=1, max_length=20000)
+    use_model: bool = False
+    provider: str = ""
+    model: str = ""
+
+class CanvasAgentConfirmRequest(BaseModel):
+    plan_version: int = Field(ge=1)
+    approved: bool = True
+    authorized_node_ids: List[str] = []
+
+class CanvasAgentRetryRequest(BaseModel):
+    operation_id: str = ""
+
+class CanvasAgentRedoRequest(BaseModel):
+    node_id: str = Field(min_length=1, max_length=128)
+    prompt: str = Field(min_length=1, max_length=20000)
+
+class CanvasAgentReviewRequest(BaseModel):
+    status: str = "approved"
+    note: str = Field(default="", max_length=4000)
+
+class CanvasArtifactUpsertRequest(BaseModel):
+    type: str = Field(min_length=1, max_length=64)
+    content: Dict[str, Any] = {}
+    status: str = "draft"
+    source_artifact_ids: List[str] = []
+
+class CanvasArtifactStatusRequest(BaseModel):
+    status: str = Field(min_length=1, max_length=32)
+    note: str = Field(default="", max_length=4000)
+
+class CanvasPromptCompileRequest(BaseModel):
+    shot: Dict[str, Any] = {}
+    anchor_artifact_id: str = ""
+
+class CanvasArtifactAdvanceRequest(BaseModel):
+    target_stage: str = Field(min_length=1, max_length=64)
+    content: Dict[str, Any] = {}
+    source_artifact_ids: List[str] = []
+
+class CanvasPromptPackCompileRequest(BaseModel):
+    shot_list_artifact_id: str = Field(min_length=1, max_length=128)
+    anchor_artifact_id: str = Field(min_length=1, max_length=128)
+
+class CanvasPromptPackGenerateRequest(BaseModel):
+    node_ids: List[str] = []
+
+class CanvasCostEstimateRequest(BaseModel):
+    budget: float | None = Field(default=None, ge=0)
+
+class CanvasOrchestrationRequest(BaseModel):
+    goal: str = Field(min_length=1, max_length=8000)
+    roles: List[str] = []
+    budget: float | None = Field(default=None, ge=0)
+
+class CanvasTemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    content: Dict[str, Any] = {}
+    source_run_id: str = Field(default="", max_length=128)
+
+class CanvasTemplateInstantiateRequest(BaseModel):
+    run_id: str = Field(min_length=1, max_length=128)
+
+class CanvasProjectAssetShareRequest(BaseModel):
+    run_id: str = Field(min_length=1, max_length=128)
+    artifact_id: str = Field(min_length=1, max_length=128)
+    project_id: str = Field(min_length=1, max_length=128)
+    asset_type: str = Field(default="artifact", max_length=80)
 
 
 class CanvasAssetCheckRequest(BaseModel):

@@ -64,8 +64,10 @@ CREATE INDEX IF NOT EXISTS idx_conversation_message_files_file ON conversation_m
 CREATE TABLE IF NOT EXISTS smart_canvases (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '',
     owner TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '', pinned BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, deleted_at BIGINT, viewport_json JSONB NOT NULL DEFAULT '{}'::jsonb
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, deleted_at BIGINT, viewport_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version BIGINT NOT NULL DEFAULT 1
 );
+ALTER TABLE smart_canvases ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS idx_smart_canvases_user_updated ON smart_canvases(user_id, updated_at DESC);
 UPDATE smart_canvases SET deleted_at = NULL WHERE deleted_at = 0;
 CREATE TABLE IF NOT EXISTS smart_canvas_nodes (
@@ -82,6 +84,69 @@ CREATE TABLE IF NOT EXISTS smart_canvas_node_files (
 );
 CREATE INDEX IF NOT EXISTS idx_smart_canvas_node_files_node ON smart_canvas_node_files(node_id);
 CREATE INDEX IF NOT EXISTS idx_smart_canvas_node_files_file ON smart_canvas_node_files(file_id);
+CREATE TABLE IF NOT EXISTS canvas_agent_runs (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, canvas_id TEXT NOT NULL REFERENCES smart_canvases(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'fast_track', status TEXT NOT NULL DEFAULT 'created',
+    phase TEXT NOT NULL DEFAULT 'planning', base_canvas_version BIGINT NOT NULL DEFAULT 1, step_count INTEGER NOT NULL DEFAULT 0,
+    max_steps INTEGER NOT NULL DEFAULT 12, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_runs_user_updated ON canvas_agent_runs(user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS canvas_agent_messages (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, role TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '', sequence BIGINT NOT NULL, created_at BIGINT NOT NULL, metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    UNIQUE(run_id, sequence)
+);
+CREATE TABLE IF NOT EXISTS canvas_agent_plans (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, version INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft', content_json JSONB NOT NULL, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
+    UNIQUE(run_id, version)
+);
+CREATE TABLE IF NOT EXISTS canvas_agent_operations (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, idempotency_key TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL, risk TEXT NOT NULL DEFAULT 'safe', status TEXT NOT NULL DEFAULT 'pending', input_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result_json JSONB NOT NULL DEFAULT '{}'::jsonb, error TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_operations_run ON canvas_agent_operations(run_id, created_at);
+CREATE TABLE IF NOT EXISTS canvas_agent_artifacts (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, type TEXT NOT NULL,
+    version INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'draft', content_json JSONB NOT NULL, source_artifact_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, stale BOOLEAN NOT NULL DEFAULT FALSE,
+    approved_by TEXT NOT NULL DEFAULT '', approved_at BIGINT, rejection_note TEXT NOT NULL DEFAULT '', UNIQUE(run_id, type, version)
+);
+ALTER TABLE canvas_agent_artifacts ADD COLUMN IF NOT EXISTS stale BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE canvas_agent_artifacts ADD COLUMN IF NOT EXISTS approved_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE canvas_agent_artifacts ADD COLUMN IF NOT EXISTS approved_at BIGINT;
+ALTER TABLE canvas_agent_artifacts ADD COLUMN IF NOT EXISTS rejection_note TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS canvas_agent_events (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, sequence BIGINT NOT NULL,
+    type TEXT NOT NULL, payload_json JSONB NOT NULL DEFAULT '{}'::jsonb, created_at BIGINT NOT NULL, UNIQUE(run_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_events_run ON canvas_agent_events(run_id, sequence);
+CREATE TABLE IF NOT EXISTS canvas_agent_skills (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '1',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE, metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS canvas_agent_evaluations (
+    id TEXT PRIMARY KEY, scenario_id TEXT NOT NULL, run_id TEXT, metrics_json JSONB NOT NULL,
+    created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_evaluations_scenario_created ON canvas_agent_evaluations(scenario_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS canvas_agent_templates (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1, content_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_run_id TEXT REFERENCES canvas_agent_runs(id) ON DELETE SET NULL,
+    visibility TEXT NOT NULL DEFAULT 'private', created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
+    UNIQUE(user_id, name, version)
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_templates_user_updated ON canvas_agent_templates(user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS canvas_agent_project_assets (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT NOT NULL,
+    canvas_id TEXT NOT NULL REFERENCES smart_canvases(id) ON DELETE CASCADE,
+    artifact_id TEXT NOT NULL REFERENCES canvas_agent_artifacts(id) ON DELETE CASCADE,
+    asset_type TEXT NOT NULL DEFAULT 'artifact', visibility TEXT NOT NULL DEFAULT 'project', created_at BIGINT NOT NULL,
+    UNIQUE(user_id, project_id, artifact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_project_assets_user_project ON canvas_agent_project_assets(user_id, project_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL DEFAULT 1
@@ -316,7 +381,7 @@ def save_canvas_payload(user_id: str, canvas: Dict[str, Any]) -> None:
     except (TypeError, ValueError):
         deleted_at = None
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("INSERT INTO smart_canvases(id,user_id,title,icon,owner,color,pinned,created_at,updated_at,deleted_at,viewport_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,icon=EXCLUDED.icon,owner=EXCLUDED.owner,color=EXCLUDED.color,pinned=EXCLUDED.pinned,updated_at=EXCLUDED.updated_at,deleted_at=EXCLUDED.deleted_at,viewport_json=EXCLUDED.viewport_json", (payload["id"], user_id, payload.get("title", ""), payload.get("icon", ""), payload.get("owner", ""), payload.get("color", ""), bool(payload.get("pinned")), payload.get("created_at", now), now, deleted_at, json_value({"viewport": payload.get("viewport", {}), "payload": {k:v for k,v in payload.items() if k not in {"id","title","icon","owner","color","pinned","created_at","updated_at","deleted_at","viewport"}}})))
+        cur.execute("INSERT INTO smart_canvases(id,user_id,title,icon,owner,color,pinned,created_at,updated_at,deleted_at,viewport_json,version) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,icon=EXCLUDED.icon,owner=EXCLUDED.owner,color=EXCLUDED.color,pinned=EXCLUDED.pinned,updated_at=EXCLUDED.updated_at,deleted_at=EXCLUDED.deleted_at,viewport_json=EXCLUDED.viewport_json,version=smart_canvases.version+1", (payload["id"], user_id, payload.get("title", ""), payload.get("icon", ""), payload.get("owner", ""), payload.get("color", ""), bool(payload.get("pinned")), payload.get("created_at", now), now, deleted_at, json_value({"viewport": payload.get("viewport", {}), "payload": {k:v for k,v in payload.items() if k not in {"id","title","icon","owner","color","pinned","created_at","updated_at","deleted_at","viewport","version"}}}), int(payload.get("version") or 1)))
         cur.execute("SELECT id,sort_order,data_json FROM smart_canvas_nodes WHERE canvas_id=%s", (payload["id"],))
         existing_nodes = {row["id"]: row for row in cur.fetchall()}
         for order, node in enumerate(nodes):
@@ -351,7 +416,7 @@ def update_canvas_metadata(user_id: str, canvas_id: str, *, title: Optional[str]
                        owner=COALESCE(%s,owner), color=COALESCE(%s,color),
                        pinned=COALESCE(%s,pinned)
                    WHERE id=%s AND user_id=%s
-                   RETURNING id,title,icon,owner,color,pinned,created_at,updated_at
+                   RETURNING id,title,icon,owner,color,pinned,created_at,updated_at,version
                )
                SELECT updated.*, (SELECT COUNT(*) FROM smart_canvas_nodes WHERE canvas_id=updated.id) AS node_count
                FROM updated""",
@@ -367,7 +432,7 @@ def touch_canvas_payload(user_id: str, canvas_id: str, updated_at: int) -> Optio
             """WITH updated AS (
                    UPDATE smart_canvases SET updated_at=%s
                    WHERE id=%s AND user_id=%s
-                   RETURNING id,title,icon,owner,color,pinned,created_at,updated_at
+                   RETURNING id,title,icon,owner,color,pinned,created_at,updated_at,version
                )
                SELECT updated.*, (SELECT COUNT(*) FROM smart_canvas_nodes WHERE canvas_id=updated.id) AS node_count
                FROM updated""",
@@ -382,7 +447,7 @@ def load_canvas_payload(user_id: str, canvas_id: str) -> Optional[Dict[str, Any]
         if not row: return None
         cur.execute("SELECT data_json FROM smart_canvas_nodes WHERE canvas_id=%s ORDER BY sort_order", (canvas_id,)); nodes = [r["data_json"] for r in cur.fetchall()]
     meta = row.get("viewport_json") or {}; payload = dict(meta.get("payload") or {})
-    payload.update({"id": row["id"], "title": row["title"], "icon": row["icon"], "owner": row["owner"], "color": row["color"], "pinned": row["pinned"], "created_at": row["created_at"], "updated_at": row["updated_at"], "deleted_at": row["deleted_at"], "viewport": meta.get("viewport") or {}, "nodes": nodes})
+    payload.update({"id": row["id"], "title": row["title"], "icon": row["icon"], "owner": row["owner"], "color": row["color"], "pinned": row["pinned"], "created_at": row["created_at"], "updated_at": row["updated_at"], "deleted_at": row["deleted_at"], "version": int(row.get("version") or 1), "viewport": meta.get("viewport") or {}, "nodes": nodes})
     return payload
 
 
@@ -397,13 +462,13 @@ def list_canvas_records(user_id: str) -> list:
         cur.execute(
             """
             SELECT c.id, c.title, c.icon, c.owner, c.color, c.pinned,
-                   c.created_at, c.updated_at, c.viewport_json,
+                   c.created_at, c.updated_at, c.version, c.viewport_json,
                    COUNT(n.id) AS node_count
             FROM smart_canvases c
             LEFT JOIN smart_canvas_nodes n ON n.canvas_id = c.id
             WHERE c.user_id=%s AND c.deleted_at IS NULL
             GROUP BY c.id, c.title, c.icon, c.owner, c.color, c.pinned,
-                     c.created_at, c.updated_at, c.viewport_json
+                     c.created_at, c.updated_at, c.version, c.viewport_json
             """,
             (user_id,),
         )
@@ -421,6 +486,7 @@ def list_canvas_records(user_id: str) -> list:
             "pinned": row["pinned"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "version": int(row.get("version") or 1),
             "kind": payload.get("kind"),
             "node_count": int(row["node_count"] or 0),
         })

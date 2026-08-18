@@ -133,6 +133,7 @@ def canvas_record(data):
         "pinned": bool(data.get("pinned") or False),
         "created_at": data.get("created_at", 0),
         "updated_at": data.get("updated_at", 0),
+        "version": data.get("version", 1),
         "node_count": data["node_count"] if "node_count" in data else len(data.get("nodes", [])),
     }
 
@@ -171,6 +172,7 @@ def get_canvas_meta(canvas_id: str):
         "updated_at": canvas.get("updated_at", 0),
         "title": canvas.get("title", "未命名画布"),
         "icon": canvas.get("icon", "layers"),
+        "version": canvas.get("version", 1),
     }
 
 
@@ -232,7 +234,8 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
     await manager.broadcast_canvas_updated(
         canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id, current_user_id(),
     )
-    return {"canvas": {"id": canvas_id, "updated_at": canvas.get("updated_at", 0)}}
+    saved = await asyncio.to_thread(load_canvas_raw, canvas_id)
+    return {"canvas": {"id": canvas_id, "updated_at": canvas.get("updated_at", 0), "version": saved.get("version", 1)}}
 
 
 @router.delete("/api/canvases/{canvas_id}")

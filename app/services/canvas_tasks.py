@@ -10,6 +10,7 @@ from typing import Any
 from redis.exceptions import RedisError
 
 from app.config import (
+    CANVAS_TASK_TIMEOUT_SECONDS,
     REDIS_CANVAS_TASK_LEASE_SECONDS,
     REDIS_CANVAS_TASK_PREFIX,
     REDIS_CANVAS_TASK_CONSUMER_GROUP,
@@ -71,6 +72,9 @@ if not raw then
   return false
 end
 local record = cjson.decode(raw)
+if record['cancellation_requested'] == true then
+  return false
+end
 local changes = cjson.decode(ARGV[2])
 for key, value in pairs(changes) do
   record[key] = value
@@ -158,7 +162,10 @@ async def update_canvas_task(task_id: str, *, expected_status: str = "", **chang
         record = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    return record if isinstance(record, dict) else None
+    if not isinstance(record, dict):
+        return None
+    await _emit_agent_task_event(record)
+    return record
 
 
 async def update_claimed_canvas_task(
@@ -193,7 +200,29 @@ async def update_claimed_canvas_task(
         record = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    return record if isinstance(record, dict) else None
+    if not isinstance(record, dict):
+        return None
+    await _emit_agent_task_event(record)
+    return record
+
+async def _emit_agent_task_event(task: dict[str, Any]) -> None:
+    """Project task lifecycle changes into the owning Agent Run event stream."""
+    run_id = str(task.get("agent_run_id") or "")
+    user_id = str(task.get("owner_id") or "")
+    if not run_id or not user_id:
+        return
+    status = str(task.get("status") or "")
+    event_type = {"queued": "task.queued", "running": "task.running", "succeeded": "task.succeeded", "failed": "task.failed", "interrupted": "task.cancelled", "timed_out": "task.timed_out"}.get(status)
+    if not event_type:
+        return
+    try:
+        from app.services.canvas_agent.events import emit_agent_event
+        from app.services.canvas_agent.reliability import classify_failure
+        await emit_agent_event(user_id, run_id, event_type, {"task_id": task.get("id"), "node_id": task.get("agent_node_id"), "status": status, "error": task.get("error") or "", "failure_category": classify_failure(task.get("error") or "") if status in {"failed", "timed_out"} else "", "result": task.get("result") if status == "succeeded" else None})
+    except Exception:
+        # Task completion must remain durable in Redis even if Agent event
+        # projection is temporarily unavailable.
+        return
 
 
 async def claim_canvas_task(task_id: str, worker_id: str) -> str | None:

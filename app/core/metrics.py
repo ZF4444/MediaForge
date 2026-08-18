@@ -176,6 +176,26 @@ AI_PROVIDER_INFLIGHT = Gauge(
     registry=REGISTRY,
 )
 
+AGENT_RUNS = Counter(
+    "mediaforge_canvas_agent_runs_total",
+    "Canvas Agent runs by mode and terminal/current status.",
+    ("mode", "status"),
+    registry=REGISTRY,
+)
+AGENT_FAILURES = Counter(
+    "mediaforge_canvas_agent_failures_total",
+    "Canvas Agent failures classified by stage and category.",
+    ("stage", "category"),
+    registry=REGISTRY,
+)
+AGENT_OPERATION_SECONDS = Histogram(
+    "mediaforge_canvas_agent_operation_seconds",
+    "Canvas Agent operation latency.",
+    ("operation", "status"),
+    buckets=(0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 300),
+    registry=REGISTRY,
+)
+
 
 def update_pool_stats(stats: dict) -> None:
     DB_POOL_SIZE.set(float(stats.get("pool_size", 0) or 0))

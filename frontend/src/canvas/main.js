@@ -1437,6 +1437,7 @@ function connectAssetLibrarySyncSocket(){
                 const data = JSON.parse(event.data);
                 if(data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(data);
                 if(data?.type === 'canvas_updated') handleCanvasUpdatedMessage(data);
+                if(data?.type?.startsWith('agent.') && window.canvasAgentHandleEvent) window.canvasAgentHandleEvent(data);
             } catch(e) {}
         };
         socket.onclose = () => {
@@ -3932,7 +3933,7 @@ function documentClickHandler(event){
 }
 document.addEventListener('click', documentClickHandler, true);
 function spacePanBlockedTarget(target){
-    return Boolean(target?.closest?.('button,input,textarea,select,[contenteditable="true"],.composer,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.port-drop-menu,.canvas-minimap,.selection-actions,.node-context-menu'));
+    return Boolean(target?.closest?.('button,input,textarea,select,[contenteditable="true"],.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.port-drop-menu,.canvas-minimap,.selection-actions,.node-context-menu'));
 }
 function shellMousedownHandler(e){
     if(e.button !== 0 || !spacePanActive || spacePanBlockedTarget(e.target)) return;
@@ -3951,7 +3952,7 @@ shell.addEventListener('mousedown', shellMousedownHandler, true);
 function shellMousedownHandler2(e){
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
-    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
+    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
 }
@@ -3960,7 +3961,7 @@ function shellClickHandler(e){
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
     if(didPan){ e.preventDefault(); e.stopPropagation(); return; }
-    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
+    if(e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
     const nodeEl = e.target.closest('.image-node');
@@ -3970,7 +3971,7 @@ function shellClickHandler(e){
 shell.addEventListener('click', shellClickHandler, true);
 function shellPointerdownHandler(e){
     if(e.button !== 2) return;
-    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     closeCreateMenu();
     didPan = false;
     rightMouseDownPoint = {x:e.clientX, y:e.clientY};
@@ -3979,9 +3980,9 @@ function shellPointerdownHandler(e){
 }
 shell.addEventListener('pointerdown', shellPointerdownHandler);
 function shellMousedownHandler3(e){
-    if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
+    if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap')) return;
     if(e.button === 2){
-        if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
+        if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
         e.preventDefault();
         if(!rightMouseDownPoint){
             closeCreateMenu();
@@ -3993,7 +3994,7 @@ function shellMousedownHandler3(e){
     }
     // 中键按下时，即使指针落在图片节点上也允许拖拽画布；
     // 但落在底部输入栏/小地图/弹层等真正的交互 UI 上时不平移。
-    if(e.button === 1 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')){
+    if(e.button === 1 && !e.target.closest('.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')){
         e.preventDefault();
         closeCreateMenu();
         didPan = false;
@@ -4001,7 +4002,7 @@ function shellMousedownHandler3(e){
         shell.classList.add('panning');
         return;
     }
-    if(e.target.closest('.image-node,.composer,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     closeCreateMenu();
     if(e.button === 0){
         e.preventDefault();
@@ -4013,14 +4014,14 @@ function shellMousedownHandler3(e){
 }
 shell.onmousedown = shellMousedownHandler3;
 function shellContextmenuHandler(e){
-    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
+    if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
 }
 shell.oncontextmenu = shellContextmenuHandler;
 function shellDblclickHandler(e){
-    if(didPan || e.target.closest('.image-node,.composer,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
+    if(didPan || e.target.closest('.image-node,.composer,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     openCreateMenu(e);
@@ -4028,7 +4029,7 @@ function shellDblclickHandler(e){
 shell.ondblclick = shellDblclickHandler;
 function shellClickHandler2(e){
     if(selectionJustFinished) return;
-    if(didPan || e.target.closest('.image-node,.composer,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
+    if(didPan || e.target.closest('.image-node,.composer,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     closeCreateMenu();
     clearSelection();

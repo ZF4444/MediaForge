@@ -20,6 +20,7 @@
     <script src="/static/js/theme.js"></script>
     <script src="/static/js/i18n.js"></script>
     <link rel="stylesheet" href="/static/css/canvas.css">
+    <link rel="stylesheet" href="/static/css/canvas-agent.css">
 </head>
 <body>
     <div id="shell" class="shell">
@@ -233,6 +234,30 @@
         <button id="canvasShortcutToggle" class="canvas-shortcut-toggle" type="button" onclick="openCanvasShortcuts()" title="快捷键" aria-label="快捷键" data-i18n-title="smart.shortcuts"><i data-lucide="keyboard"></i><span data-i18n="smart.shortcuts">快捷键</span></button>
         <button id="canvasLogToggle" class="canvas-log-toggle" type="button" onclick="openCanvasLog()" title="日志" aria-label="日志" data-i18n-title="canvas.logs"><i data-lucide="list-todo"></i><span data-i18n="canvas.logs">日志</span></button>
         <button id="assetToggle" class="asset-toggle" type="button"><i data-lucide="library"></i><span data-i18n="smart.assetLibrary">资产库</span></button>
+        <button id="canvasAgentToggle" class="canvas-agent-toggle" type="button" title="打开 Agent" aria-label="打开 Agent"><i data-lucide="bot"></i><span>Agent</span></button>
+        <aside id="canvasAgentPanel" class="canvas-agent-panel" aria-label="画布 Agent" hidden>
+            <div class="canvas-agent-head">
+                <div class="canvas-agent-title"><i data-lucide="bot"></i><span>画布 Agent</span></div>
+                <button id="canvasAgentClose" class="asset-mini-btn" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+            </div>
+            <div class="canvas-agent-runbar">
+                <select id="canvasAgentRunSelect" aria-label="切换 Agent Run" title="切换 Agent Run"></select>
+                <button id="canvasAgentNewRun" class="canvas-agent-run-new" type="button" title="新建 Run" aria-label="新建 Run"><i data-lucide="plus"></i></button>
+            </div>
+            <div id="canvasAgentStatus" class="canvas-agent-status" aria-live="polite">正在初始化</div>
+            <div id="canvasAgentMessages" class="canvas-agent-messages" aria-live="polite"></div>
+            <div id="canvasAgentPlan" class="canvas-agent-plan" hidden></div>
+            <div id="canvasAgentArtifacts" class="canvas-agent-artifacts" hidden></div>
+            <div class="canvas-agent-compose">
+                <div id="canvasAgentMentions" class="canvas-agent-mentions"></div>
+                <textarea id="canvasAgentInput" rows="3" placeholder="描述你想在画布上完成的操作"></textarea>
+                <div class="canvas-agent-compose-actions">
+                    <button id="canvasAgentMention" class="canvas-agent-action secondary" type="button" title="引用选中节点"><i data-lucide="at-sign"></i><span>引用选区</span></button>
+                    <button id="canvasAgentCancel" class="canvas-agent-action secondary" type="button" title="取消运行"><i data-lucide="square"></i><span>取消</span></button>
+                    <button id="canvasAgentSend" class="canvas-agent-action primary" type="button"><i data-lucide="send"></i><span>发送</span></button>
+                </div>
+            </div>
+        </aside>
         <aside id="canvasWorkflowTransferModal" class="workflow-transfer-panel" hidden>
             <div class="workflow-transfer-head">
                 <div>
@@ -570,6 +595,13 @@
     <script src="/static/dist/canvas/asset-library.js"></script>
     <script src="/static/dist/canvas/generation-settings.js"></script>
     <script src="/static/dist/canvas/main.js"></script>
+    <script src="/static/dist/canvas/agent/agent-state.js"></script>
+    <script src="/static/dist/canvas/agent/agent-bridge.js"></script>
+    <script src="/static/dist/canvas/agent/agent-client.js"></script>
+    <script src="/static/dist/canvas/agent/agent-plan.js"></script>
+    <script src="/static/dist/canvas/agent/agent-artifacts.js"></script>
+    <script src="/static/dist/canvas/agent/agent-events.js"></script>
+    <script src="/static/dist/canvas/agent/agent-panel.js"></script>
     <script>
     /* 访问控制：按当前用户权限限制画布「AI生成」引擎（engine=api）下可选的模型。
        - 暴露 window.__canvasAllowedModels（Set<"provider_id::model"> 或 null=全部放开）。

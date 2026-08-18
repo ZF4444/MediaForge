@@ -172,6 +172,7 @@ RUN_BACKGROUND_MAINTENANCE = os.getenv("RUN_BACKGROUND_MAINTENANCE", "true").str
 import app.core.shared_state as shared_state
 from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup, check_storage_quota
 from app.services.business_metadata import archive_ai_task, initialize_business_metadata
+from app.services.canvas_agent.skills import register_builtin_skills
 from app.services.provider_secrets import initialize_provider_secrets, get_provider_secret, set_provider_secret
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
 from app.core.redis_client import RedisUnavailableError, close_redis_client, open_redis_client, redis_readiness_status
@@ -219,6 +220,7 @@ async def startup_event():
         # initialization in startup so new deployments and existing databases are
         # upgraded automatically before serving requests.
         await asyncio.to_thread(initialize_business_metadata)
+        await asyncio.to_thread(register_builtin_skills)
         if os.getenv("APP_SECRET_KEY"):
             await asyncio.to_thread(initialize_provider_secrets)
         await asyncio.to_thread(load_users_registry)
@@ -361,6 +363,7 @@ from app.config import (
     CANVAS_TASK_RECOVERY_ENABLED,
     CANVAS_TASK_WORKER_CONCURRENCY,
     CANVAS_TASK_WORKER_ENABLED,
+    CANVAS_TASK_TIMEOUT_SECONDS,
     HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
     REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS,
     BASE_DIR,
@@ -4884,18 +4887,26 @@ async def execute_canvas_task(task_id: str):
     task = await get_canvas_task(task_id)
     if not task or task.get("status") != "queued":
         return
+    deadline = float(task.get("deadline_at") or 0)
+    if deadline and time.time() >= deadline:
+        await update_canvas_task(task_id, expected_status="queued", status="timed_out", error="任务超过执行时限")
+        return
     request = task.get("request")
     if not isinstance(request, dict):
         await update_canvas_task(task_id, expected_status="queued", status="failed", error="任务执行数据缺失")
         return
     context_token = current_user_var.set(str(task.get("owner_id") or ""))
     try:
-        if task.get("type") == "online-image":
-            await run_canvas_image_task(task_id, OnlineImageRequest.model_validate(request))
-        elif task.get("type") == "comfy":
-            await run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request))
-        else:
-            await update_canvas_task(task_id, expected_status="queued", status="failed", error="不支持的画布任务类型")
+        timeout = max(1.0, deadline - time.time()) if deadline else CANVAS_TASK_TIMEOUT_SECONDS
+        try:
+            if task.get("type") == "online-image":
+                await asyncio.wait_for(run_canvas_image_task(task_id, OnlineImageRequest.model_validate(request)), timeout=timeout)
+            elif task.get("type") == "comfy":
+                await asyncio.wait_for(run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request)), timeout=timeout)
+            else:
+                await update_canvas_task(task_id, expected_status="queued", status="failed", error="不支持的画布任务类型")
+        except asyncio.TimeoutError:
+            await update_canvas_task(task_id, expected_status="running", status="timed_out", error="任务超过执行时限")
     finally:
         current_user_var.reset(context_token)
 
@@ -6431,6 +6442,7 @@ from app.routers import help as help_router
 from app.routers import announcement as announcement_router
 from app.routers import storage_management as storage_management_router
 from app.routers import usage as usage_router
+from app.routers import canvas_agent as canvas_agent_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -6449,6 +6461,7 @@ app.include_router(help_router.router)
 app.include_router(announcement_router.router)
 app.include_router(storage_management_router.router)
 app.include_router(usage_router.router)
+app.include_router(canvas_agent_router.router)
 
 if __name__ == "__main__":
     import argparse, uvicorn

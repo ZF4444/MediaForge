@@ -1,0 +1,43 @@
+"""Minimal Deep Agents harness boundary for Phase 0.
+
+The runtime is intentionally lazy: deployments without the optional agent
+packages can still run the classic canvas, while startup fails clearly when
+the Agent runtime is requested.
+"""
+from __future__ import annotations
+from typing import Any
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class ReadOnlyCanvasBackend:
+    """Marker for a state-backed harness with all mutation tools excluded."""
+    def write(self, *_: Any, **__: Any) -> None: raise PermissionError("Agent filesystem writes are disabled")
+    def edit(self, *_: Any, **__: Any) -> None: raise PermissionError("Agent filesystem edits are disabled")
+    def delete(self, *_: Any, **__: Any) -> None: raise PermissionError("Agent filesystem deletes are disabled")
+
+def _harness_key(model: Any, key: str) -> str:
+    if key: return key
+    if isinstance(model, str) and ":" in model: return model
+    raise ValueError("harness_key is required when model is not a provider:model string")
+
+def create_canvas_agent(*, model: Any, tools: list[Any] | None = None, checkpointer: Any = None, harness_key: str = "", response_format: Any = None):
+    """Create a constrained Deep Agent graph with no task or write capabilities."""
+    try:
+        from deepagents import GeneralPurposeSubagentProfile, HarnessProfile, create_deep_agent, register_harness_profile
+        from deepagents.backends import StateBackend
+    except ImportError as exc:
+        raise RuntimeError("deepagents is required to create the Canvas Agent") from exc
+    profile = HarnessProfile(
+        general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+        excluded_tools=frozenset({"write_file", "edit_file", "execute", "delete_file", "task"}),
+    )
+    register_harness_profile(_harness_key(model, harness_key), profile)
+    # Semantic-plan submission is the only model-facing handoff into the
+    # deterministic runtime. Require an explicit graph interruption there;
+    # subsequent Patch confirmation remains enforced by the API/Policy layer.
+    kwargs = {
+        "model": model, "tools": list(tools or []), "subagents": [], "backend": StateBackend(),
+        "checkpointer": checkpointer, "interrupt_on": {"submit_semantic_plan": True},
+    }
+    if response_format is not None: kwargs["response_format"] = response_format
+    return create_deep_agent(**kwargs)
