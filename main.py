@@ -2974,10 +2974,11 @@ def runninghub_normalized_status(raw, code, urls):
     if status in {"SUCCESS", "SUCCEEDED", "COMPLETED"}: return "SUCCESS"
     if status in {"FAILED", "ERROR", "CANCELLED"}: return "FAILED"
     if urls: return "SUCCESS"
-    # /task/openapi/outputs returns 804 (APIKEY_TASK_IS_RUNNING) while an
-    # accepted AI App task is still executing. Keep polling instead of
-    # converting this transient state into a failed canvas task.
-    return "RUNNING" if code in (0, "0", None, 804, "804") else "FAILED"
+    # /task/openapi/outputs returns 803 (APIKEY_TASK_IS_QUEUED) while an
+    # accepted AI App task is waiting for a worker, and 804
+    # (APIKEY_TASK_IS_RUNNING) while it is executing. Keep polling instead
+    # of converting either transient state into a failed canvas task.
+    return "RUNNING" if code in (0, "0", None, 803, "803", 804, "804") else "FAILED"
 
 def runninghub_fail_reason(raw):
     if not isinstance(raw, dict): return "RunningHub 任务失败"
