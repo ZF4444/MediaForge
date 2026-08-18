@@ -2977,10 +2977,11 @@ def runninghub_normalized_status(raw, code, urls):
     if status in {"SUCCESS", "SUCCEEDED", "COMPLETED"}: return "SUCCESS"
     if status in {"FAILED", "ERROR", "CANCELLED"}: return "FAILED"
     if urls: return "SUCCESS"
-    # /task/openapi/outputs returns 804 (APIKEY_TASK_IS_RUNNING) while an
-    # accepted AI App task is still executing. Keep polling instead of
-    # converting this transient state into a failed canvas task.
-    return "RUNNING" if code in (0, "0", None, 804, "804") else "FAILED"
+    # /task/openapi/outputs returns 803 (APIKEY_TASK_IS_QUEUED) while an
+    # accepted AI App task is waiting for a worker, and 804
+    # (APIKEY_TASK_IS_RUNNING) while it is executing. Keep polling instead
+    # of converting either transient state into a failed canvas task.
+    return "RUNNING" if code in (0, "0", None, 803, "803", 804, "804") else "FAILED"
 
 def runninghub_fail_reason(raw):
     if not isinstance(raw, dict): return "RunningHub 任务失败"
@@ -3652,7 +3653,6 @@ async def cloud_video_upload(payload: CloudVideoUploadRequest, request: Request)
 
 @app.get("/api/runninghub/app-info")
 async def runninghub_app_info(webappId: str = ""):
-    require_admin()
     webapp_id = str(webappId or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
@@ -3676,7 +3676,7 @@ async def runninghub_app_info(webappId: str = ""):
 
 @app.post("/api/runninghub/submit")
 async def runninghub_submit(payload: RunningHubSubmitRequest):
-    user_id = require_admin()
+    user_id = current_user_id()
     from app.services.usage import record_runninghub_submission
     webapp_id = str(payload.webappId or "").strip()
     if not webapp_id:
@@ -3720,7 +3720,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
 
 @app.get("/api/runninghub/query")
 async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
-    user_id = require_admin()
+    user_id = current_user_id()
     from app.services.usage import settle_runninghub_usage
     task_id = str(taskId or "").strip()
     if not task_id:
@@ -3769,7 +3769,6 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
 
 @app.post("/api/runninghub/upload-asset")
 async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
-    require_admin()
     source_url = str(payload.url or "").strip()
     if not source_url:
         raise HTTPException(status_code=400, detail="url 必填")
@@ -3823,7 +3822,6 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
 
 @app.post("/api/runninghub/upload-asset-file")
 async def runninghub_upload_asset_file(file: UploadFile = File(...)):
-    require_admin()
     provider = runninghub_provider()
     api_key = runninghub_api_key(provider)
     filename = os.path.basename(str(file.filename or "").strip()) or "asset.bin"

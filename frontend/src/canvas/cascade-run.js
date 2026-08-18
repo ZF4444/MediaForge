@@ -963,11 +963,6 @@ async function runGeneration(){
     const previousSettings = cloneSmartSettings(settings);
     const runSettings = smartSettingsForNode(node);
     settings = {...settings, ...cloneSmartSettings(runSettings || {})};
-    if(settings.engine === 'runninghub' && hasRunningHubPendingTask()){
-        toast('RunningHub 任务正在执行，等待当前任务完成后再提交。');
-        settings = previousSettings;
-        return;
-    }
     if(!prompt && smartPromptInputEnabledForSettings(settings)){
         toast(tr('smart.toastNeedPrompt'));
         settings = previousSettings;
