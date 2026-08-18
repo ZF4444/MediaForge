@@ -364,10 +364,22 @@ function addConnection(fromId, toId, kind='flow'){
     if(canvas.connections.some(c => c.from === fromId && c.to === toId && (c.kind || 'flow') === kind)) return;
     canvas.connections.push({from:fromId, to:toId, kind});
 }
+function nodeHasVideoInputMedia(node){
+    if(!node) return false;
+    if(String(node.outputKind || '').toLowerCase() === 'video') return true;
+    return (node.images || []).some(item => {
+        if(String(item?.kind || '').toLowerCase() === 'video') return true;
+        return typeof mediaKindForItem === 'function' && mediaKindForItem(item) === 'video';
+    });
+}
 function connectInputNode(fromId, toId){
     const from = nodes.find(n => n.id === fromId);
     const to = nodes.find(n => n.id === toId);
     if(!from || !to || from.id === to.id) return false;
+    if(to.genKind === 'image' && nodeHasVideoInputMedia(from)){
+        toast('图片生成节点不支持视频输入');
+        return false;
+    }
     if(to.type === 'smart-loop'){
         // 智能分组按其成员内容识别：含图片则可作图片输入，含提示词/循环则可作提示词输入。
         const groupHasImage = isSmartGroupNode(from) && smartGroupImageRefs(from).length > 0;
