@@ -1,15 +1,12 @@
 .venv/
+.agents/
+skills-lock.json
 __pycache__/
 
 **/.env
 assets/
 data/
 docs/*
-!docs/日志系统说明.md
-!docs/50人使用容量评估与优化建议.md
-!docs/Docker单机生产部署.md
-!docs/画布Agent设计方案.md
-!docs/画布Agent最终架构方案.md
 backups/
 logs/
 .runtime/
