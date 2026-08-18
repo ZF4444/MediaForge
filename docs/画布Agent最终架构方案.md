@@ -2,45 +2,29 @@
 
 ## 1. 结论
 
-MediaForge 的画布 Agent 应设计为一个“服务端编排、客户端呈现、画布协议驱动”的创作运行时，而不是把 RH/OpenClaw 的文本工具协议原样复制进来。
+MediaForge 的画布 Agent 是一个“服务端编排、客户端呈现、画布协议驱动”的创作运行时。
 
 推荐架构：
 
 ```text
-用户 -> Agent 面板 -> Agent Runtime -> Planner -> Policy/Validator
-                                  |                 |
-                                  v                 v
-                             Agent Run Store    Canvas Patch
-                                  |                 |
-                                  +------> Executor +------> 画布/生成任务
-                                                    |
-                                                    v
-                                              Event Stream -> 客户端
+用户 -> Agent 面板 -> FastAPI -> Deep Agents Runtime -> Skills / LangChain Tools
+                                      |                    |
+                                      v                    v
+                               LangGraph Checkpoint   Policy/Validator
+                                      |                    |
+                               Agent Run Store -> Executor -> Canvas Patch
+                                                     |
+                                                     v
+                                               Event Stream -> 客户端
 ```
 
 核心原则：
 
-1. Agent 的计划、操作和运行状态必须是结构化数据，不依赖模型输出中的 XML 文本。
+1. Agent 的计划、操作和运行状态必须是结构化数据，不依赖自由文本解析。
 2. 服务端是 Agent Run、权限、确认、幂等和审计的权威来源。
 3. 画布改动通过版本化 Patch 执行，不能让模型直接修改画布 JSON。
 4. 客户端工具只负责选区、视口、确认弹窗等浏览器能力。
 5. Fast Track 与 Doc Chain 共用同一套 Planner、Patch、Executor 和事件协议。
-6. RH/OpenClaw 的 `<tool_call>` 和 Fence Block 只作为模型兼容适配层。
-
-## 2. 为什么不完全照搬 RH
-
-RH 的协议适合以 OpenClaw 为中心的运行环境，但不应成为 MediaForge 的内部核心协议：
-
-| RH/OpenClaw 做法 | MediaForge 推荐做法 | 原因 |
-| --- | --- | --- |
-| `<tool_call>` 嵌入回复文本 | 服务端保存结构化 `tool_calls` | XML 文本解析脆弱，难以校验和审计 |
-| `thinking` 中保存阶段状态 | 数据库保存 Agent Run 和阶段 | 状态不能依赖模型记忆 |
-| 客户端承担工具幂等 | 服务端幂等键和操作记录 | 刷新、多端协作时更可靠 |
-| Agent 自己生成画布节点 schema | 语义计划经 Adapter 转换为现有节点 | 避免模型耦合节点内部字段 |
-| 每轮读取全量画布 | 服务端构造相关子图上下文 | 降低 token、延迟和信息泄露风险 |
-| `subType` 隐式路由模型 | Capability Registry 显式选择能力 | 可校验比例、时长、参考图和成本 |
-
-可以借鉴 RH 的工具边界、结构化追问、Quick Actions 和 Doc Chain 体验，但运行时可靠性应由 MediaForge 自己保证。
 
 ## 3. 产品能力边界
 
@@ -82,22 +66,26 @@ RH 的协议适合以 OpenClaw 为中心的运行环境，但不应成为 MediaF
 
 负责鉴权、请求校验、Run 创建、确认、取消和事件输出，不直接拼接 Prompt。
 
-### 4.3 Agent Runtime
+### 4.3 Agent Runtime（Deep Agents）
 
-Agent 的核心状态机，负责：
+使用 Deep Agents `create_deep_agent` 作为主 Agent Harness，负责 Skill 发现、上下文管理、工具调用循环和人工介入。Deep Agents 底层使用 LangChain 模型与 LangGraph 运行时；它不拥有画布与业务审计事实，负责：
 
 - 加载 Run 和会话状态。
 - 构造画布上下文。
-- 调用 Planner。
+- 按需加载匹配的 Skill，并调用受控工具。
 - 校验计划。
 - 请求确认。
 - 执行 Patch 或生成任务。
 - 处理工具结果和失败。
-- 决定结束、重试或继续下一阶段。
+- 决定继续规划、请求输入、请求确认或结束。
 
-### 4.4 Planner
+每次推进使用 `thread_id = run_id`；Deep Agents 编译图接入 PostgreSQL Checkpointer。Run、Plan、Operation、Artifact 和 Event 仍由 MediaForge PostgreSQL 表保存，不能仅依赖 checkpoint 恢复业务状态。
 
-使用 LLM 将目标转换为语义计划，不直接输出 MediaForge 节点的完整内部对象。
+### 4.4 Planner 与 Skills（Deep Agents + LangChain）
+
+Deep Agents 使用 LangChain 的模型统一接口、结构化输出和 `@tool` 生成语义计划，不直接输出 MediaForge 节点的完整内部对象。Skill 遵循 Agent Skills 的 `SKILL.md` 格式，启动时只加载名称和描述，命中后才读取完整流程、参考资料和模板。Fast Track 的 Planner 以受限 `SemanticPlan` schema 输出。
+
+第一版 Skill 仅覆盖只读知识与创作流程，例如 `product-ad-creative`、`shot-list`、`prompt-pack` 和 `canvas-capabilities`。Skill 不能直接写画布、运行脚本、发起网络请求或加载用户未授权资产；任何画布修改都必须通过下文定义的受控执行工具。
 
 ### 4.5 Policy/Validator
 
@@ -383,6 +371,47 @@ Planner 选择 `capability`，Resolver 根据用户配置、权限和可用性�
 
 模型的自然语言回复与执行状态分开存储。即使回复解析失败，Run 状态也不能丢失。
 
+### 12.1 Deep Agents 主运行图
+
+```text
+START
+  -> load_run
+  -> gather_context
+  -> deep_agent
+       -> discover_skill -> read_skill -> read_context / submit_semantic_plan
+  -> validate_plan
+  -> [awaiting_input | awaiting_confirmation | apply_patch | finish | block]
+
+awaiting_input / awaiting_confirmation -- Command(resume=...) --> validate_resume
+  -> [plan_or_answer | apply_patch | finish | block]
+
+apply_patch -> submit_tasks -> observe_results -> review
+  -> [deep_agent | finish | block]
+```
+
+- `load_run` 从业务库读取权威 Run，并校验当前用户和画布权限；checkpoint 只用于恢复 Deep Agents 的短期 Graph 状态。
+- `deep_agent` 是 `create_deep_agent` 生成的主图。它通过 LangChain Chat Model 生成回复与计划；`submit_semantic_plan` 是唯一可提交变更意图的写语义工具，参数必须通过 Pydantic `SemanticPlan` 校验。
+- `validate_plan`、`apply_patch`、`submit_tasks` 是确定性 LangGraph 节点，内部调用现有 Policy、Adapter、Executor；模型没有数据库、任意 HTTP、MCP、shell、脚本执行或通用画布 JSON 工具。
+- Deep Agents 对 `submit_semantic_plan` 配置 `interrupt_on`，在计划被接受前暂停。API 将问题/确认事件写入业务库后返回，`answers`/`confirm` API 在验证 `plan_version` 后以 `Command(resume=...)` 恢复同一 `thread_id`；批准路径才进入确定性的 `apply_patch`。
+- 副作用节点先用 `Agent Operation.idempotency_key` 获取或创建操作记录，再调用下游服务；LangGraph 从 checkpoint 重放时不得重复创建节点或提交任务。
+- Graph 状态仅保存 `run_id`、计划版本、上下文引用、待恢复请求和安全的摘要，不写入原始 data URL、密钥或完整媒体内容。
+
+### 12.2 Deep Agents 安全配置
+
+主 Agent 使用只读 Skill Backend：只允许读取服务端投影出的 `/skills` 和当前 Run 的 Context Snapshot。必须显式禁用或不注册 `write_file`、`edit_file`、`delete`、`execute`、解释器、MCP、通用 `task` 子 Agent 和动态子 Agent；Skill 的 `scripts/` 仅作为审核过的参考文件，第一版不执行。
+
+允许暴露给模型的工具只有：
+
+```text
+read_canvas_context      读取服务端构造的相关子图
+read_capability_registry 读取可用能力与约束
+read_artifact            读取当前 Run 有权限的 Artifact
+submit_semantic_plan     提交受 Schema 校验的变更意图
+request_clarification    请求结构化用户输入
+```
+
+计划执行不是模型工具：确认 API 校验 `plan_version` 后由 Runtime 以受控恢复数据驱动 `apply_patch` 和任务提交。这样 Deep Agents 的 Skill 与工具循环不会绕过确认、Policy、Patch Validator 和 Executor。
+
 ## 13. Fast Track
 
 适合单次或短链路任务：
@@ -484,26 +513,6 @@ show_quick_actions
 
 这些动作不作为画布持久化事实，失败也不影响 Run 的业务状态。
 
-## 17. RH/OpenClaw 兼容层
-
-如果某个模型或外部 Agent 只能输出 RH 风格文本协议，可以增加 Adapter：
-
-```text
-<tool_call> -> 解析 -> Tool Schema -> Policy -> Operation
-workflow-json -> 解析 -> Semantic Plan -> Canvas Adapter
-form-fields -> Agent Question
-creative-doc -> Artifact
-progress -> 忽略外部状态，映射为非权威展示事件
-```
-
-兼容层约束：
-
-- XML/Fence 内容永远先校验，不能直接执行。
-- `thinking` 只作为摘要文本，不作为权威状态。
-- 外部节点类型先映射成 MediaForge `semantic_type`。
-- 外部 ID 只作为 `client_ref`，真实节点 ID 由服务端生成。
-- 外部 `autoRun` 仍受本地确认和额度策略约束。
-
 ## 18. API 设计
 
 ```text
@@ -546,9 +555,16 @@ GET  /api/canvas-agent/runs/{run_id}/events
 app/routers/canvas_agent.py
 app/models/canvas_agent.py
 app/services/canvas_agent/
+  deep_agent.py
+  skill_backend.py
+  skills.py
+  tool_policy.py
+  state.py
   runtime.py
   context.py
   planner.py
+  tools.py
+  checkpoint.py
   schemas.py
   policy.py
   capabilities.py
@@ -582,6 +598,7 @@ canvas_agent_plans
 canvas_agent_operations
 canvas_agent_artifacts
 canvas_agent_events
+canvas_agent_skills
 ```
 
 字段原则：
@@ -630,7 +647,10 @@ agent_run_total{mode,status}
 - Policy 风险分级。
 - Canvas Adapter。
 - Patch 校验和幂等。
-- RH/XML/Fence 兼容解析器。
+- Deep Agents Skill 发现、渐进加载与只读权限。
+- Deep Agents `interrupt_on`、LangGraph `Command(resume=...)` 和 checkpoint 恢复。
+- Skill 与工具白名单：不得暴露文件写入、脚本执行、MCP 或子 Agent。
+- 副作用节点的 checkpoint 重放不重复执行。
 - Artifact 版本与 stale 传播。
 
 ### 集成测试
@@ -657,6 +677,7 @@ agent_run_total{mode,status}
 - 定义 Run、Plan、Operation、Artifact 和 Event Schema。
 - 建立 Capability Registry。
 - 增加 Canvas Adapter 和 Patch Validator。
+- 接入新版 Deep Agents、LangChain、LangGraph、PostgreSQL Checkpointer，并实现最小主图、Skill Backend 与 Run 恢复测试。
 
 ### Phase 1：Fast Track 闭环
 
@@ -679,13 +700,14 @@ agent_run_total{mode,status}
 
 - Artifact 编辑与确认。
 - Brief、剧本、资产清单和 Shot List。
+- 编写并注册创意、镜头、Prompt Pack 等只读 Skill。
 - Anchor First 和 Prompt Compiler。
 - 上游变更后的 stale 传播。
 
 ### Phase 4：高级编排
 
 - 成本预测和预算策略。
-- 多专业 Planner，但仍共用同一个 Runtime。
+- 多专业 Planner 子图，但仍共用同一个 Runtime、Policy、Patch 和 Executor。
 - 模板复用和质量评估。
 - 跨画布项目资产，仅在权限模型完善后开放。
 
@@ -704,20 +726,24 @@ agent_run_total{mode,status}
 9. 用户同时移动节点不会丢失 Agent 结果。
 10. 任一失败步骤可以单独重试，不重复创建成功节点。
 
-达到以上标准后，再进入 Doc Chain。第一版不应同时实现多 Agent、长期记忆和完整广告片管线，否则会掩盖底层 Run、Patch 和幂等机制的问题。
+达到以上标准后，再进入 Doc Chain。第一版不启用 Deep Agents 的通用子 Agent、长期记忆、文件写入或完整广告片管线，否则会掩盖底层 Run、Patch 和幂等机制的问题。
 
 ## 26. 技术栈与选型
 
 ### 26.1 选型原则
 
-第一版优先复用 MediaForge 已有基础设施。Agent 是业务编排能力，不应为它立即引入新的 Agent 框架、消息队列或前端框架。新增依赖必须解决明确的可靠性或性能问题。
+第一版优先复用 MediaForge 已有基础设施，并以新版 Deep Agents 作为主 Agent 框架：它提供 Agent Skills、上下文管理、工具循环和人工确认；LangChain 提供模型、结构化输出与工具基础，LangGraph 提供持久化运行时、流式和恢复。框架不拥有业务事实、权限和副作用，仍由 MediaForge 服务端控制。
 
 | 层级 | 选型 | 用途 | 第一版决策 |
 | --- | --- | --- | --- |
 | 后端语言 | Python 3.11+ | Agent Runtime、策略、适配器与任务编排 | 复用 |
 | Web API | FastAPI | Run、确认、取消、事件和鉴权接口 | 复用 |
 | 数据模型 | Pydantic v2 | API、Plan、Patch、Operation、Artifact Schema | 复用 |
-| LLM 接入 | 现有 OpenAI-compatible Provider Gateway + `httpx` | Planner、摘要、Prompt Compiler | 复用 |
+| 主 Agent 框架 | `deepagents>=0.7,<1` | Skill、上下文管理、受控工具循环与人工确认 | 新增 |
+| Agent 框架 | `langchain>=1,<2` | Chat Model、结构化输出、工具与中间件 | 新增 |
+| Agent 运行时 | `langgraph>=1,<2` | Deep Agents 底层状态图、`interrupt`、流式与恢复 | 新增 |
+| Graph 持久化 | `langgraph-checkpoint-postgres` | Graph checkpoint，支持暂停后恢复与故障续跑 | 新增 |
+| LLM 接入 | LangChain Chat Model Adapter + 现有 Provider Gateway | Planner、摘要、Prompt Compiler；保留既有 Provider 鉴权与限流 | 改造复用 |
 | 关系数据 | PostgreSQL + `psycopg`/连接池 | Run、消息、计划、操作、Artifact、事件审计 | 复用 |
 | 短期协调 | Redis + hiredis | 分布式锁、幂等缓存、限流、Pub/Sub、任务恢复索引 | 复用 |
 | 实时事件 | 现有 WebSocket + Redis Pub/Sub | 画布协作、Agent 运行进度和断线通知 | 第一版复用 |
@@ -728,33 +754,44 @@ agent_run_total{mode,status}
 | 指标 | Prometheus Client | 延迟、失败、确认率和成本类指标 | 复用 |
 | 部署 | Docker + Uvicorn | 单体服务部署 | 复用 |
 
+依赖版本以锁文件中的当前稳定新版为准；生产环境锁定兼容的 Deep Agents、LangChain、LangGraph 和 checkpoint 包版本，升级四者必须作为同一次兼容性验证。开发环境可使用 `uv add deepagents langchain langgraph langgraph-checkpoint-postgres` 安装。
+
+不引入 AutoGen 或 CrewAI。Deep Agents 的文件系统、脚本执行、MCP 与子 Agent 不是本产品的默认能力，必须按第 12.2 节关闭；专业角色通过 Skill 组织，后续确有必要时才引入受限的 Deep Agents 子 Agent。
+
 ### 26.2 后端实现
 
-Agent Runtime 使用 `asyncio`/`anyio` 驱动，不阻塞 FastAPI 请求线程。LLM 调用、媒体检查和外部生成任务复用现有 `httpx` 与 provider 操作限流机制。
+Agent Runtime 使用 `asyncio`/`anyio` 驱动，不阻塞 FastAPI 请求线程。Deep Agents 主图通过 `ainvoke`/`astream` 执行，底层由 LangGraph 恢复和持久化；LLM 调用、媒体检查和外部生成任务复用现有 `httpx` 与 provider 操作限流机制。
 
 建议保持以下边界：
 
 ```text
 Router       HTTP 请求、鉴权、响应与事件订阅
-Runtime      状态机和编排循环
-Planner      LLM 调用与结构化计划解析
+Runtime      Graph 入口、Run 推进与事件映射
+Deep Agent   Skills、上下文管理、工具循环与 interrupt_on
+Skill Backend 只读 Skill/Context 文件投影、Skill 注册与权限过滤
+LangGraph    Deep Agents 底层状态图、Checkpoint、恢复与流式
+Planner      LangChain 模型调用与 SemanticPlan 结构化输出
+Tools        只读上下文工具与 submit_semantic_plan 定义
 Policy       权限、风险、额度和操作上限
 Adapter      语义计划 <-> 当前画布节点/连线
 Executor     数据库事务、Patch、任务提交和幂等
 Repository   PostgreSQL 与 Redis 访问
 ```
 
-不建议在第一版接入 LangChain、LangGraph、AutoGen 或 CrewAI。它们会把 Agent 状态、工具语义和重试机制分散到第三方抽象中，而当前需求更适合显式、可测试的有限状态机。将来需要多 Agent 协作时，也应先以内部 `Planner` 接口实现专业角色，再评估是否引入框架。
+图状态使用 TypedDict 或 Pydantic 明确建模，至少包含 `run_id`、`plan_version`、`context_ref`、`semantic_plan`、`pending_interrupt`、`last_operation_id`、`retry_count` 和 `next_action`。消息历史只保留当前 Run 必需的摘要与引用；`canvas_agent_messages` 是完整对话记录的权威来源。
+
+Deep Agents 技能和工具按权限分层：模型可调用的 Skill 只能读取已构造的 Context Snapshot 与审核后的 `/skills`；唯一提交意图的 `submit_semantic_plan` 不产生副作用，之后由 Policy 验证并交给确定性 Graph 节点。这样 Deep Agents 的工具循环不会绕过 Patch Validator、确认和幂等控制。
 
 ### 26.3 数据与缓存
 
-PostgreSQL 保存长期事实，JSON 内容使用明确的 `schema_version`，并将常用查询字段拆为普通列：
+PostgreSQL 保存长期事实、Skill 注册元数据和 LangGraph checkpoint，JSON 内容使用明确的 `schema_version`，并将常用查询字段拆为普通列：
 
 ```text
 canvas_agent_runs: canvas_id, status, phase, base_canvas_version, updated_at
 canvas_agent_operations: run_id, idempotency_key, type, status, created_at
 canvas_agent_events: run_id, sequence, type, created_at
 canvas_agent_artifacts: run_id, type, version, status, created_at
+canvas_agent_skills: name, version, status, content_ref, permission_profile, updated_at
 ```
 
 Redis 只保存可过期的协调数据：
@@ -768,9 +805,11 @@ agent:context:{canvas_id}:{version}  短期上下文缓存
 
 Redis 不作为唯一的 Run 状态存储。Redis 不可用时，持久化状态和操作审计仍必须留在 PostgreSQL 中。
 
+LangGraph Checkpointer 使用 `thread_id = run_id`，只保存 Deep Agents 主图的可恢复执行快照。每次恢复都先读取 `canvas_agent_runs` 与最新计划版本，发现 Run 已取消、权限变化或计划版本不匹配时终止恢复。设置 checkpoint 保留策略和定期清理，避免长对话无限增长；不使用内存 Checkpointer 作为生产存储。
+
 ### 26.4 流式与异步任务
 
-第一版沿用现有 WebSocket 和 Redis Pub/Sub 广播 Agent 事件，事件带 `run_id` 与递增 `sequence`。客户端断线后通过 `GET /api/canvas-agent/runs/{run_id}` 获取状态，并按最后已见 sequence 补拉事件。
+第一版沿用现有 WebSocket 和 Redis Pub/Sub 广播 Agent 事件，事件带 `run_id` 与递增 `sequence`。Graph 的 `astream` 输出经 Runtime 映射到既有 `agent.*` 事件，不能将 LangGraph 内部事件直接暴露给客户端。客户端断线后通过 `GET /api/canvas-agent/runs/{run_id}` 获取状态，并按最后已见 sequence 补拉事件。
 
 外部图片/视频任务继续使用当前 Canvas Task/RunningHub/ComfyUI 任务机制。Agent Runtime 只负责提交和观察任务，不能把轮询逻辑复制一份：
 
@@ -798,16 +837,17 @@ agent-artifacts.js Doc Chain 文档和锚点版本展示
 
 与现有 `nodes`、`canvas`、`selectedIds`、`scheduleSave`、`render` 的交互集中在少量桥接函数中。Agent UI 不得自行维护一份可写的完整画布副本。
 
-### 26.6 LLM 结构化输出
+### 26.6 Deep Agents、Skills 与结构化工具
 
 优先级如下：
 
-1. Provider 支持 JSON Schema/structured output 时，直接要求 `SemanticPlan` JSON。
-2. Provider 仅支持 tool calling 时，使用单个内部 `submit_semantic_plan` 工具并校验参数。
-3. 仅支持文本输出时，以受限 Markdown JSON Fence 作为降级方案。
-4. RH/OpenClaw `<tool_call>` 仅由兼容 Adapter 解析，不能成为 MediaForge 的主协议。
+1. 使用 Deep Agents `create_deep_agent` 创建主 Agent，并通过 LangChain Chat Model Adapter 连接现有 OpenAI-compatible Provider Gateway；Provider、模型、密钥和限流继续由现有 Resolver/Gateway 决定。
+2. Skill 使用 Agent Skills 标准的 `SKILL.md`，经 `canvas_agent_skills` 注册、版本化和权限过滤后投影到只读 Backend。启动时仅暴露 `name`、`description`，命中后才读取完整 Skill。
+3. Provider 支持 JSON Schema/structured output 时，使用 `with_structured_output(SemanticPlan)`；否则使用唯一的内部 `submit_semantic_plan` tool calling 并校验参数。
+4. 不支持 JSON Schema structured output 或标准 tool calling 的 Provider 不接入画布 Agent。
+5. 不启用默认文件写入、脚本执行、MCP 或子 Agent；如未来单独开放，必须为每个 Skill、工具和用户授权增加白名单与确认策略。
 
-所有路径最终都进入同一个 Pydantic `SemanticPlan` 校验器；解析失败时只允许一次格式修复请求，随后进入 `blocked` 并保留原始输出供诊断。
+所有路径最终都进入同一个 Pydantic `SemanticPlan` 校验器；结构化参数校验失败时，随后进入 `blocked` 并保留 Provider 响应用于诊断。Deep Agents 的 Skill 只负责指导和读取，LangChain middleware 可用于观测和模型路由，但 Policy、确认、额度、重试上限和副作用幂等仍在确定性 Graph 节点中执行。
 
 ### 26.7 后续可选组件
 
@@ -819,6 +859,7 @@ agent-artifacts.js Doc Chain 文档和锚点版本展示
 | 专用队列 | 长任务需要独立扩缩容或可靠投递 | 后台 Agent Run 调度 |
 | pgvector | 需要跨项目检索大量文档/资产语义 | 项目记忆和检索增强 |
 | Temporal/工作流引擎 | 需要跨天审批、复杂补偿或人工流程 | Durable Workflow |
-| 多 Agent 框架 | 专业角色协作超过显式状态机维护能力 | Agent 协作抽象 |
+| 受限 Deep Agents 子 Agent | 需隔离长文本研究，且通过成本、权限与质量评估 | 只读、无画布写入的专业研究任务 |
+| LangSmith（可选） | 需要跨 Run 可视化追踪、评估与提示词迭代 | 仅上传脱敏 trace，不替代本地审计 |
 
 在引入前应先用指标证明瓶颈存在，例如 Run 队列等待时间、事件延迟、任务重试率或文档检索命中率。
