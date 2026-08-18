@@ -1145,8 +1145,11 @@ def normalize_provider(item):
     if not PROVIDER_ID_RE.fullmatch(provider_id):
         raise HTTPException(status_code=400, detail=f"API 平台 ID 不合法：{provider_id or '(empty)'}")
     name = re.sub(r"\s+", " ", str(item.get("name") or provider_id).strip())[:60] or provider_id
+    enabled = bool(item.get("enabled", True))
     base_url = str(item.get("base_url") or "").strip().rstrip("/")
-    if base_url:
+    # Disabled providers remain persisted for easy re-enablement. Do not let
+    # an unavailable DNS record for an unused provider invalidate all config.
+    if base_url and enabled:
         base_url = validate_public_http_url(base_url, label=f"{name} 的 Base URL")
     protocol = str(item.get("protocol") or "openai").strip().lower()
     if protocol not in SUPPORTED_PROVIDER_PROTOCOLS:
@@ -1203,7 +1206,7 @@ def normalize_provider(item):
         "protocol": protocol,
         "image_generation_endpoint": image_generation_endpoint,
         "image_edit_endpoint": image_edit_endpoint,
-        "enabled": bool(item.get("enabled", True)),
+        "enabled": enabled,
         "primary": bool(item.get("primary", False)),
         "image_models": model_list_from_values(item.get("image_models") or []),
         "chat_models": model_list_from_values(item.get("chat_models") or []),
