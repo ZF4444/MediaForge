@@ -13,6 +13,7 @@
 import json
 import os
 import re
+import tempfile
 
 from fastapi import APIRouter, HTTPException
 
@@ -39,6 +40,22 @@ def workflow_path_from_name(name: str) -> str:
 
 def workflow_config_path(name: str) -> str:
     return workflow_path_from_name(name).replace(".json", ".config.json")
+
+
+def _write_json_atomic(path: str, payload):
+    """Write a config atomically so a concurrent/read during save never sees partial JSON."""
+    directory = os.path.dirname(path)
+    fd, temp_path = tempfile.mkstemp(prefix=".workflow-config-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def is_builtin_workflow(name: str) -> bool:
@@ -72,6 +89,7 @@ def list_workflows():
                 "title": cfg.get("title") or fn.replace(".json", ""),
                 "builtin": False,
                 "field_count": len(cfg.get("fields") or []),
+                "media": cfg.get("media") if cfg.get("media") in {"image", "video"} else "image",
             })
     items.sort(key=lambda item: (0 if item["name"].startswith(f"{CUSTOM_WORKFLOW_FOLDER}/") else 1, item["title"]))
     return {"workflows": items}
@@ -86,7 +104,7 @@ def get_workflow(name: str):
         raise HTTPException(status_code=404, detail="Workflow not found")
     with open(workflow_path, "r", encoding="utf-8") as f:
         workflow = json.load(f)
-    cfg = {"title": name.replace(".json", ""), "fields": []}
+    cfg = {"title": name.replace(".json", ""), "fields": [], "media": "image"}
     cfg_path = workflow_config_path(name)
     if os.path.exists(cfg_path):
         try:
@@ -94,6 +112,8 @@ def get_workflow(name: str):
                 cfg = json.load(f) or cfg
         except Exception:
             pass
+    if cfg.get("media") not in {"image", "video"}:
+        cfg["media"] = "image"
     return {"name": name, "workflow": workflow, "config": cfg, "builtin": is_builtin_workflow(name)}
 
 
@@ -127,9 +147,11 @@ def save_workflow_config(name: str, payload: WorkflowConfig):
     if not os.path.exists(workflow_path):
         raise HTTPException(status_code=404, detail="Workflow not found")
     cfg_path = workflow_config_path(name)
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(payload.dict(), f, ensure_ascii=False, indent=2)
-    return {"config": payload.dict()}
+    config = payload.dict()
+    if config.get("media") not in {"image", "video"}:
+        config["media"] = "image"
+    _write_json_atomic(cfg_path, config)
+    return {"config": config}
 
 
 @router.delete("/api/workflows/{name:path}")

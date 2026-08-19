@@ -927,6 +927,7 @@ def normalize_runninghub_entry(raw, kind):
         "note": note,
         "thumbnail": thumb,
         "enabled": bool(raw.get("enabled", True)),
+        "media": "video" if str(raw.get("media") or "").strip().lower() == "video" else "image",
     }
     if raw.get("hidden") is True:
         entry["hidden"] = True

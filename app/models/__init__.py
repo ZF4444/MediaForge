@@ -429,11 +429,20 @@ class WorkflowField(BaseModel):
     options: List[str] = []
     random_enabled: bool = False
 
+    class Config:
+        # Keep editor extensions (labels, grouping, upstream mappings, etc.)
+        # when a config is round-tripped through the API.
+        extra = "allow"
+
 
 class WorkflowConfig(BaseModel):
     title: str = ""
     fields: List[WorkflowField] = []
     mini_cards: Dict[str, Any] = {}
+    media: str = "image"
+
+    class Config:
+        extra = "allow"
 
 
 class WorkflowUploadRequest(BaseModel):

@@ -242,6 +242,7 @@ async function selectWorkflow(name){
         currentWorkflow = data.workflow;
         currentConfig = data.config || { title:name.replace('.json',''), fields:[] };
         if(!currentConfig.fields) currentConfig.fields = [];
+        currentConfig.media = currentConfig.media === 'video' ? 'video' : 'image';
         if(!currentConfig.mini_cards) currentConfig.mini_cards = {};
         isBuiltin = !!data.builtin;
         miniCards = {...defaultMiniCards(), ...currentConfig.mini_cards};
@@ -527,6 +528,7 @@ async function onDelete(){
 window.addEventListener('message', event => {
     if(event.data?.type === 'studio-theme' && window.StudioTheme) window.StudioTheme.set(event.data.theme);
     if(event.data?.type === 'studio-lang' && window.StudioI18n) window.StudioI18n.set(event.data.lang);
+    if(event.data?.type === 'workflow-media' && currentConfig) currentConfig.media = event.data.media === 'video' ? 'video' : 'image';
 });
 window.addEventListener('studio-lang-change', refreshLanguageView);
 
