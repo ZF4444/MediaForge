@@ -139,7 +139,7 @@ function rhWorkflowFieldTypeLabel(type){
         AUDIO:'音频'
     })[String(type || '').toUpperCase()] || type;
 }
-const RH_EDITOR_KNOWN_FIELD_OPTIONS = {
+var RH_EDITOR_KNOWN_FIELD_OPTIONS = {
     sampler_name:['euler','euler_ancestral','heun','dpm_2','dpm_2_ancestral','lms','dpmpp_2m','dpmpp_sde','ddim','uni_pc'],
     sampler:['euler','euler_ancestral','heun','dpm_2','dpm_2_ancestral','lms','dpmpp_2m','dpmpp_sde','ddim','uni_pc'],
     scheduler:['normal','karras','exponential','sgm_uniform','simple','ddim_uniform','beta'],
@@ -538,14 +538,17 @@ function renderRhMappedPreview(){
 function renderRhMappedPreviewHtml(config){
     const enabledFields = rhEditorSortedFields((config.fields || []).filter(field => field.enabled === true));
     const title = config.title || 'RunningHub AI 应用';
-    const mediaCounts = enabledFields.reduce((acc, field) => {
+    let imageCount = 0;
+    let videoCount = 0;
+    let audioCount = 0;
+    let settingCount = 0;
+    enabledFields.forEach(field => {
         const kind = rhWorkflowFieldKind(field);
-        if(kind === 'IMAGE') acc.image += 1;
-        else if(kind === 'VIDEO') acc.video += 1;
-        else if(kind === 'AUDIO') acc.audio += 1;
-        else acc.setting += 1;
-        return acc;
-    }, {image:0, video:0, audio:0, setting:0});
+        if(kind === 'IMAGE') imageCount += 1;
+        else if(kind === 'VIDEO') videoCount += 1;
+        else if(kind === 'AUDIO') audioCount += 1;
+        else settingCount += 1;
+    });
     const fieldsHtml = enabledFields.length
         ? enabledFields.map(field => renderRhPreviewControl(field)).join('')
         : `<div class="rh-preview-empty">勾选右侧参数后，这里会显示画布节点上的效果</div>`;
@@ -565,10 +568,10 @@ function renderRhMappedPreviewHtml(config){
                 </div>
             </div>
             <div class="rh-mapped-stats">
-                <span>图片 ${mediaCounts.image}</span>
-                <span>视频 ${mediaCounts.video}</span>
-                <span>音频 ${mediaCounts.audio}</span>
-                <span>参数 ${mediaCounts.setting}</span>
+                <span>图片 ${imageCount}</span>
+                <span>视频 ${videoCount}</span>
+                <span>音频 ${audioCount}</span>
+                <span>参数 ${settingCount}</span>
             </div>
             <div class="rh-preview-fields">${fieldsHtml}</div>
             <button class="rh-preview-run ${rhWorkflowEditorState.previewRunning ? 'running' : ''}" type="button" onclick="testRhMappedPreview()" ${rhWorkflowEditorState.previewRunning ? 'disabled' : ''}><i data-lucide="${rhWorkflowEditorState.previewRunning ? 'loader-2' : 'play'}" class="w-3.5 h-3.5 ${rhWorkflowEditorState.previewRunning ? 'spin-icon' : ''}"></i><span>${rhWorkflowEditorState.previewRunning ? '测试中...' : '测试'}</span></button>

@@ -64,6 +64,18 @@ def test_omnilojo_provider_requires_both_prices_for_enabled_models():
         raise AssertionError("expected missing output price to be rejected")
 
 
+def test_legacy_omnilojo_provider_protocol_still_requires_model_prices():
+    try:
+        normalize_provider({
+            "id": "omnilojo-main", "name": "Omnilojo", "base_url": "", "protocol": "omnilojo",
+            "image_models": ["gemini-3-pro-image"],
+        })
+    except Exception as exc:
+        assert "输入和输出单价" in str(exc.detail)
+    else:
+        raise AssertionError("expected missing model price to be rejected after protocol migration")
+
+
 def test_omnilojo_image_request_uses_google_image_size_and_nearest_ratio():
     assert gemini_image_config("2048x1024") == {"aspectRatio": "16:9", "imageSize": "2K"}
 

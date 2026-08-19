@@ -54,7 +54,7 @@ const PAGES = [
     // API 设置页（迁移中，见 frontend/README.md 的 api-settings 章节）
     page: 'api-settings',
     mainSrc: 'static/js/api-settings.js',
-    handwrittenFiles: ['rh-workflow-editor.js', 'provider-onboarding.js', 'comfy-instances.js'],
+    handwrittenFiles: ['provider-onboarding.js', 'comfy-instances.js'],
   },
   {
     // 素材库管理页（迁移中，见 frontend/README.md 的 asset-manager 章节）
@@ -72,7 +72,7 @@ const PAGES = [
     // 工作流设置父页：承载 ComfyUI 工作流与 RH 应用两个同源子页。
     page: 'workflow-settings',
     mainSrc: 'static/js/workflow-settings.js',
-    handwrittenFiles: [],
+    handwrittenFiles: ['rh-workflow-editor.js'],
   },
   {
     // 应用外壳/app shell（迁移中，见 frontend/README.md 的 index 章节）

@@ -11,20 +11,21 @@
 <body>
     <main class="workflow-settings-shell">
         <header class="workflow-settings-head">
-            <div>
+            <div class="head-copy">
+                <div class="eyebrow">WORKFLOW SETTINGS</div>
                 <h1>工作流设置</h1>
-                <p>管理本地 ComfyUI 工作流和 RunningHub 应用。</p>
+                <p>统一管理 ComfyUI 工作流与 RH 应用。</p>
             </div>
-            <nav class="workflow-settings-tabs" aria-label="工作流设置子页面">
-                <button class="active" type="button" data-workflow-page="comfyui">
-                    <span>ComfyUI工作流</span>
-                </button>
-                <button type="button" data-workflow-page="runninghub">
-                    <span>RH应用</span>
-                </button>
-            </nav>
+            <button id="newWorkflowBtn" class="primary-btn" type="button"><span class="plus">+</span> 新建工作流</button>
         </header>
-        <iframe id="workflowSettingsFrame" title="工作流设置内容" scrolling="yes"></iframe>
+
+        <section id="workflowListView" class="workflow-list-view">
+            <div class="list-toolbar">
+                <div><h2>工作流列表</h2><span id="workflowCount" class="list-count">0 个</span></div>
+                <button id="refreshWorkflowsBtn" class="icon-btn" type="button" title="刷新">↻</button>
+            </div>
+            <div id="workflowList" class="workflow-grid" aria-live="polite"></div>
+        </section>
     </main>
     <script src="/static/dist/workflow-settings/main.js"></script>
 </body>

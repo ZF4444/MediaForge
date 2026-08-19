@@ -29,7 +29,6 @@ const promptComposerInstructionRow = document.getElementById('promptComposerInst
 const promptComposerInstruction = document.getElementById('promptComposerInstruction');
 const promptComposerRunBtn = document.getElementById('promptComposerRunBtn');
 const fileInput = document.getElementById('fileInput');
-const apiKindToggle = document.getElementById('apiKindToggle');
 const inputThumbsRow = document.getElementById('inputThumbsRow');
 const inputPromptPreview = document.getElementById('inputPromptPreview');
 const minimap = document.getElementById('minimap');
@@ -594,7 +593,7 @@ let recentSmartSettingsByMode = {};
 function smartSettingsModeKey(source=settings){
     const engine = ['api','volcengine','comfy','runninghub'].includes(source?.engine) ? source.engine : 'api';
     if(engine === 'api') return `api:${source?.apiKind === 'video' ? 'video' : 'image'}`;
-    if(engine === 'volcengine') return `volcengine:${source?.apiKind === 'video' ? 'video' : 'image'}`;
+    if(engine === 'volcengine') return `api:${source?.apiKind === 'video' ? 'video' : 'image'}`;
     if(engine === 'comfy') return 'comfy';
     if(engine === 'runninghub') return 'runninghub';
     return 'api';
@@ -632,30 +631,32 @@ function rememberRecentSmartSettings(source=settings, node=null){
     saveRecentSmartSettings();
 }
 function applyRecentSmartSettingsForCurrentMode(){
-    const requestedEngine = ['api','volcengine','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
+    const requestedEngine = settings.engine === 'volcengine' ? 'api' : (['api','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api');
     const requestedApiKind = settings.apiKind === 'video' ? 'video' : 'image';
     const key = smartSettingsModeKey(settings);
     const saved = recentSmartSettingsForMode(key);
     if(!Object.keys(saved).length){
         settings.engine = requestedEngine;
         if(isApiLikeEngine(requestedEngine)) settings.apiKind = requestedApiKind;
-        clearVolcengineSelectionOutsideVolcengine(settings);
         sanitizeSmartApiSelection(settings);
         return;
     }
     settings = {...settings, ...saved, engine:requestedEngine};
     if(isApiLikeEngine(requestedEngine)) settings.apiKind = requestedApiKind;
-    clearVolcengineSelectionOutsideVolcengine(settings);
     sanitizeSmartApiSelection(settings);
 }
 function clearVolcengineSelectionOutsideVolcengine(target=settings){
-    if(!target || typeof target !== 'object' || target.engine === 'volcengine') return target;
-    if(target.provider_id === 'volcengine') target.provider_id = '';
-    if(target.videoProvider === 'volcengine') target.videoProvider = '';
+    if(!target || typeof target !== 'object') return target;
+    if(target.engine === 'volcengine') target.engine = 'api';
     return target;
 }
 function isSmartImageNode(node){
-    return Boolean(node && (node.type === 'smart-image' || node.type === 'smart-asset-image' || !node.type));
+    return Boolean(node && (
+        node.type === 'smart-image' ||
+        node.type === 'smart-asset-image' ||
+        ['image', 'video', 'workflow'].includes(node.genKind) ||
+        !node.type
+    ));
 }
 function genKindLabel(node){
     if(node?.genKind === 'video') return '视频生成';
@@ -701,6 +702,9 @@ function createGenerationNodeByKind(kind, point, options={}){
     // 此时节点卡片（图标/标题/hint）和 composer（toggle/engine下拉）都还读不到最新的 genKind，
     // 需要在赋值后强制刷新一次，保证创建瞬间显示的状态就是正确的。
     render();
+    // createImageNodeAt 已经保存过一次，但此时还没有 genKind/runSettings；
+    // 类型赋值后必须再次保存，否则刷新页面后视频节点会退化成图片节点。
+    scheduleSave();
     if(options.select !== false && selectedId === node.id){
         lastComposerNodeId = '';
         updateComposer();
@@ -776,7 +780,7 @@ function exceedsFourKStandard(width, height){
 function withOutpaintDisplaySettings(node, baseSettings){
     const size = validOutpaintSize(node);
     if(!size) return baseSettings;
-    const engine = ['api','volcengine','comfy','runninghub'].includes(baseSettings?.engine) ? baseSettings.engine : 'api';
+    const engine = baseSettings?.engine === 'volcengine' ? 'api' : (['api','comfy','runninghub'].includes(baseSettings?.engine) ? baseSettings.engine : 'api');
     const next = {
         ...baseSettings,
         resolution:'custom',
@@ -827,13 +831,19 @@ function smartSettingsForNode(node){
         ...recentSettings,
         ...nodeSettings
     };
+    // Keep settings mode aligned with the node type after reload or legacy
+    // migration, so stale workflow settings cannot drive an API node panel.
+    if(node?.genKind === 'video' && isApiLikeEngine(base.engine)) base.apiKind = 'video';
+    if(node?.genKind === 'image' && isApiLikeEngine(base.engine)) base.apiKind = 'image';
+    if(node?.genKind === 'workflow' && !['comfy', 'runninghub'].includes(base.engine)) base.engine = 'comfy';
     return withOutpaintDisplaySettings(node, base);
 }
 function activeSettingsSubject(){
     const active = activeComposerSubject?.id
         ? (nodes.find(n => n.id === activeComposerSubject.id) || activeComposerSubject)
         : selectedNode();
-    return isSmartImageNode(active) ? active : null;
+    if(!isSmartImageNode(active)) return null;
+    return active;
 }
 function activeComposerNode(){
     if(!lastComposerNodeId) return null;
@@ -4257,38 +4267,41 @@ function windowBlurHandler(){
 }
 window.addEventListener('blur', windowBlurHandler);
 function engineSelectChangeHandler(){
-    settings.engine = engineSelect.value;
-    applyRecentSmartSettingsForCurrentMode();
-    syncApiKindToggleVisibility();
+    const node = activeSettingsSubject();
+    const requestedEngine = ['api','comfy','runninghub'].includes(engineSelect.value) ? engineSelect.value : 'api';
+    settings.engine = requestedEngine;
+    // 图片/视频节点的类型是节点固有状态。切换引擎时只切换参数面板，
+    // 不再让最近使用的工作流配置覆盖当前节点的 apiKind 或引擎状态。
+    if(node?.genKind === 'image') settings.apiKind = 'image';
+    else if(node?.genKind === 'video') settings.apiKind = 'video';
+    else applyRecentSmartSettingsForCurrentMode();
+    // A previous workflow render may still have populated the dynamic panel
+    // (or finish asynchronously). Clear it before rendering the API view so
+    // switching back to AI generation cannot leave workflow controls visible.
+    if(requestedEngine === 'api' && dynamicParams){
+        dynamicParams.replaceChildren();
+        if(node?.genKind === 'video') {
+            settings.apiKind = 'video';
+            renderApiVideoParams();
+        } else {
+            settings.apiKind = 'image';
+            renderApiParams();
+        }
+        bindDynamicParams();
+        updatePromptPlaceholder();
+        syncComposerPromptVisibility();
+        renderInputThumbsRow(selectedNode());
+        renderInputPromptPreview(selectedNode());
+        persistActiveSmartSettings();
+        if(window.lucide) lucide.createIcons();
+        scheduleSave();
+        return;
+    }
     renderDynamicParams();
     persistActiveSmartSettings();
     scheduleSave();
 }
 engineSelect.onchange = engineSelectChangeHandler;
-function syncApiKindToggleVisibility(){
-    if(!apiKindToggle) return;
-    // 图片/视频/工作流生成节点类型固定，均隐藏图片/视频切换；仅非定型旧节点在 api 类引擎下保留切换
-    const node = activeSettingsSubject();
-    const isTypedGenNode = node?.genKind === 'image' || node?.genKind === 'video' || node?.genKind === 'workflow';
-    apiKindToggle.style.display = (!isTypedGenNode && isApiLikeEngine(settings.engine)) ? 'inline-flex' : 'none';
-    apiKindToggle.querySelectorAll('[data-kind]').forEach(btn => btn.classList.toggle('active', btn.dataset.kind === (settings.apiKind || 'image')));
-}
-if(apiKindToggle){
-    apiKindToggle.querySelectorAll('[data-kind]').forEach(btn => {
-        btn.onclick = e => {
-            e.preventDefault();
-            e.stopPropagation();
-            const kind = btn.dataset.kind;
-            if(kind === settings.apiKind) return;
-            settings.apiKind = kind;
-            applyRecentSmartSettingsForCurrentMode();
-            syncApiKindToggleVisibility();
-            renderDynamicParams();
-            persistActiveSmartSettings();
-            scheduleSave();
-        };
-    });
-}
 let promptResizeState = null;
 const promptResize = document.getElementById('promptResize');
 if(promptResize){
@@ -5128,7 +5141,6 @@ async function windowLoadHandler(){
     }
     await waitForVisibleBootMedia(2500, canvasLoaded ? 70 : 0, 100);
     await Promise.allSettled([promptTemplatesPromise, configPromise, assetLibraryPromise]);
-    syncApiKindToggleVisibility();
     updateComposer();
     updatePromptComposer();
     requestAnimationFrame(() => hideBootLoadingOverlay(() => {

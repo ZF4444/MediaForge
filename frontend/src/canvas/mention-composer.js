@@ -82,8 +82,7 @@
 //     M7）、disconnectConnection（connections.js，M4）、renderAssetLibrary/
 //     assetCategories/assetLibraries/assetCategoryForMention/assetMediaKind
 //     （asset-library.js，M9）、smartLoopInputImages/smartLoopPrompt
-//     （loop-node.js，M2）、chatModelOptions/chatProviderOptions/
-//     resolveChatModel/resolveChatProviderId/rhActiveFields/
+//     （loop-node.js，M2）、resolveChatModel/resolveChatProviderId/rhActiveFields/
 //     rhDefaultPromptSuggestion/rhFieldIndexes/rhFieldKind/rhParamKey/
 //     rhRequiresPrompt/smartPromptInputEnabledForSettings/
 //     syncRhConfigForRefs（generation-settings.js，M10）、
@@ -141,8 +140,27 @@ function promptComposerParamsHtml(node){
     const ruleHtml = task === 'caption' || task === 'expand'
         ? `<select class="prompt-composer-control prompt-composer-rule">${smartRuleTemplateOptions(task, task === 'caption' ? node.captionTemplateId : node.expandTemplateId)}</select>`
         : '';
-    return `<select class="prompt-composer-control prompt-composer-provider">${chatProviderOptions(node.llmProvider)}</select>
-        <select class="prompt-composer-control prompt-composer-model">${chatModelOptions(node.llmModel, node.llmProvider)}</select>
+    const entries = chatApiProviders().flatMap(provider => (provider.chat_models || []).map(model => ({
+        providerId: provider.id,
+        model,
+        label: modelDisplayName(model, provider.id),
+        locked: !smartModelAllowed(provider.id, model)
+    })));
+    const current = entries.find(entry => entry.providerId === node.llmProvider && entry.model === node.llmModel);
+    const modelControl = `<div class="smart-control model-control prompt-composer-model-control">
+        <button class="smart-pill" type="button"><i data-lucide="message-square"></i><span class="sub">${escapeHtml(current?.label || node.llmModel || tr('smart.model'))}</span></button>
+        <div class="smart-popover compact-popover">
+            <div class="smart-popover-title">${escapeHtml(tr('smart.model'))}</div>
+            <div class="model-list">
+                ${entries.map(entry => {
+                    const locked = entry.locked;
+                    const active = entry.providerId === node.llmProvider && entry.model === node.llmModel;
+                    return `<button type="button" class="direct-option prompt-composer-model-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-prompt-model="${escapeAttr(entry.model)}" data-prompt-provider-id="${escapeAttr(entry.providerId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noChatModel') || tr('smart.model'))}</div>`}
+            </div>
+        </div>
+    </div>`;
+    return `${modelControl}
         ${ruleHtml}`;
 }
 function renderPromptComposer(node){
@@ -181,15 +199,29 @@ function bindPromptComposerControls(node){
     if(promptComposerInstruction){
         promptComposerInstruction.oninput = e => { node.llmInstruction = e.target.value; scheduleSave(); };
     }
-    const providerEl = promptComposerParams?.querySelector('.prompt-composer-provider');
-    if(providerEl) providerEl.onchange = e => {
-        node.llmProvider = resolveChatProviderId(e.target.value);
-        node.llmModel = resolveChatModel('', node.llmProvider);
-        renderPromptComposer(node);
-        scheduleSave();
+    const modelPill = promptComposerParams?.querySelector('.prompt-composer-model-control > .smart-pill');
+    if(modelPill) modelPill.onclick = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const control = modelPill.parentElement;
+        const wasPinned = control.classList.contains('pinned');
+        document.querySelectorAll('.smart-control.pinned').forEach(item => item.classList.remove('pinned'));
+        if(!wasPinned) control.classList.add('pinned');
     };
-    const modelEl = promptComposerParams?.querySelector('.prompt-composer-model');
-    if(modelEl) modelEl.onchange = e => { node.llmModel = e.target.value; scheduleSave(); };
+    promptComposerParams?.querySelectorAll('.prompt-composer-model-option').forEach(modelEl => {
+        modelEl.onclick = event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if(modelEl.classList.contains('is-locked')){
+                toast(tr('smart.modelLocked'));
+                return;
+            }
+            node.llmProvider = resolveChatProviderId(modelEl.dataset.promptProviderId || '');
+            node.llmModel = modelEl.dataset.promptModel || '';
+            renderPromptComposer(node);
+            scheduleSave();
+        };
+    });
     const ruleEl = promptComposerParams?.querySelector('.prompt-composer-rule');
     if(ruleEl) ruleEl.onchange = e => {
         if(node.llmTask === 'caption') node.captionTemplateId = e.target.value;

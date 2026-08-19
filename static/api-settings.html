@@ -35,9 +35,8 @@
 
             <div class="layout">
                 <aside class="sidebar">
-                    <div class="side-section-title" data-i18n="api.providersTitle">平台列表</div>
+                    <div class="side-section-title">模型列表</div>
                     <div id="providerList" class="provider-list"></div>
-                    <button class="add-btn" type="button" onclick="addProvider()"><i data-lucide="plus" class="w-4 h-4"></i><span data-i18n="api.addProvider">新增平台</span></button>
                 </aside>
 
                 <main id="settingsContent" class="content">
@@ -49,6 +48,7 @@
                         <div class="content-actions">
                             <label class="provider-enable-toggle" title="启用/禁用此平台"><input id="enabledToggle" type="checkbox" onchange="var p=provider(); if(p){p.enabled=this.checked; renderProviderList();}"><span class="toggle-track"><span class="toggle-thumb"></span></span><span class="toggle-label" data-i18n="api.enabled">启用</span></label>
                             <button id="deleteBtn" class="action-btn danger-btn api-page-delete-btn" type="button" onclick="deleteProvider()"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i><span data-i18n="api.delete">删除</span></button>
+                            <button id="deleteModelBtn" class="action-btn danger-btn api-page-delete-btn" type="button" onclick="deleteSelectedModel()"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i><span>删除模型</span></button>
                             <button class="action-btn save-btn api-page-save-btn" type="button" onclick="saveProviders()"><i data-lucide="save" class="w-3.5 h-3.5"></i><span data-i18n="api.save">保存</span></button>
                         </div>
                     </div>
@@ -73,12 +73,12 @@
                     <section id="providerBasicBlock" class="block">
                         <div class="block-head">
                             <div>
-                                <div class="block-title" data-i18n="api.basicInfo">基本信息</div>
-                                <div class="block-desc" data-i18n="api.basicHint">平台显示名、唯一 ID 和请求地址</div>
+                                <div id="providerBasicTitle" class="block-title" data-i18n="api.basicInfo">连接配置</div>
+                                <div id="providerBasicDesc" class="block-desc">API协议、请求地址和 API Key</div>
                             </div>
                         </div>
                         <div class="form">
-                            <label class="field full">
+                            <label id="providerIdentityField" class="field full">
                                 <span class="label" data-i18n="api.platformName">平台名称</span>
                                 <div class="field-frame"><input id="nameInput" type="text" placeholder="Comfly"></div>
                                 <span class="hint"><span data-i18n="api.platformIdShown">平台 ID</span>: <span id="idPreview" style="font-family:ui-monospace,Menlo,monospace;color:var(--text)">—</span></span>
@@ -181,9 +181,10 @@
                                 <div class="runninghub-hint">
                                 </div>
                             </label>
-                            <section id="omnilojoUsageBlock" class="block" hidden>
-                                <div class="block-head"><div><div class="block-title">Omnilojo 计费价格</div><div class="block-desc">按模型填写 USD / 100 万 token。响应中的 usage 将直接归属到当前用户。</div></div></div>
-                            </section>
+                            <label id="selectedModelProtocolField" class="field full" hidden>
+                                <span class="label">API协议</span>
+                                <div class="field-frame"><select id="selectedModelProtocol"><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="omnilojo">Omnilojo</option></select></div>
+                            </label>
                             <!-- 验证操作行 -->
                             <div class="verify-action-row">
                                 <button id="testUrlBtn" class="action-btn" type="button" onclick="testConnection()">
@@ -192,51 +193,45 @@
                                 <button id="probeAsyncBtn" class="action-btn" type="button" onclick="probeAsync()">
                                     <i data-lucide="radar" class="w-3.5 h-3.5"></i><span>验证协议</span>
                                 </button>
-                                <div class="field-frame protocol-selector-wrap">
-                                    <select id="protocolInput">
-                                        <option value="openai" data-i18n="api.protocolOpenAI">OpenAI 直连</option>
-                                        <option value="gemini" data-i18n="api.protocolGemini">Gemini 协议</option>
-                                        <option value="omnilojo">Omnilojo / New API</option>
-                                    </select>
-                                </div>
                             </div>
                             <div id="verifyResult" style="display:none;padding:2px 0;grid-column:1/-1"></div>
                         </div>
                     </section>
 
-                    <section id="runninghubConfigBlock" class="block runninghub-config-block" hidden>
+                    <section id="modelConfigBlock" class="block model-config-block" hidden>
                         <div class="block-head">
                             <div>
-                                <div class="block-title">AI 应用</div>
-                                <div class="block-desc">粘贴运行路径后，点击右侧创建卡片。</div>
+                                <div class="block-title">模型配置</div>
+                                <div class="block-desc">当前模型的连接、显示别名和价格配置。</div>
                             </div>
                         </div>
-                        <div class="rh-paste-row">
-                            <input id="rhPasteInput" class="rh-paste-input" type="text" placeholder="/run/ai-app/...">
-                            <button class="action-btn" type="button" onclick="createRhEntryFromPaste()"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>创建</span></button>
+                        <div class="model-config-grid">
+                            <label class="field">
+                                <span class="label">显示别名</span>
+                                <div class="field-frame"><input id="selectedModelAliasInput" type="text" placeholder="画布中显示的名称（选填）"></div>
+                            </label>
                         </div>
-                        <div class="rh-card-columns">
-                            <div class="rh-card-group">
-                                <div class="rh-group-head">
-                                    <div class="rh-group-title">AI 应用</div>
-                                    <div id="rhAppsCount" class="rh-group-count">0</div>
-                                </div>
-                                <div id="rhAppsList" class="rh-card-list"></div>
-                            </div>
+                        <div id="selectedModelPriceFields" class="model-config-prices" hidden>
+                            <label class="field"><span class="label">输入 USD / 100 万 token</span><div class="field-frame"><input id="selectedModelInputPrice" type="number" min="0" step="0.0001"></div></label>
+                            <label class="field"><span class="label">输出 USD / 100 万 token</span><div class="field-frame"><input id="selectedModelOutputPrice" type="number" min="0" step="0.0001"></div></label>
                         </div>
                     </section>
 
                     <div id="modelsHead" class="block models-toolbar">
                         <div>
-                            <div class="block-title" data-i18n="api.modelsTitle">模型列表</div>
-                            <div class="block-desc" data-i18n="api.modelsDesc">从上游 API 自动拉取所有可用模型并按类型分类（image / chat / video）</div>
+                                <div class="block-title">选择模型</div>
+                                <div class="block-desc">从上游 API 获取模型 ID，选择后进入模型配置。</div>
+                                <label id="selectedModelIdField" class="selected-model-id-field" hidden>
+                                    <span class="label">当前模型 ID</span>
+                                    <div class="field-frame"><input id="selectedModelInput" type="text" readonly></div>
+                                </label>
                         </div>
                         <div class="models-toolbar-actions">
                             <button id="fetchModelsBtn" class="action-btn primary-btn" type="button" onclick="fetchModels()">
-                                <i data-lucide="download-cloud" class="w-3.5 h-3.5"></i><span data-i18n="api.fetchModels">拉取模型</span>
+                                <i data-lucide="download-cloud" class="w-3.5 h-3.5"></i><span>获取模型列表</span>
                             </button>
                             <button id="openPickerBtn" class="action-btn" type="button" onclick="openModelPicker()" disabled style="opacity:.5">
-                                <i data-lucide="list-checks" class="w-3.5 h-3.5"></i><span data-i18n="api.selectModels">选择模型</span>
+                                <i data-lucide="list-checks" class="w-3.5 h-3.5"></i><span>选择一个模型</span>
                             </button>
                         </div>
                     </div>
@@ -250,7 +245,6 @@
                                         <span class="ms-line"><span data-i18n="api.msModelExample">模型名称示意：</span><span class="inline-code">Tongyi-MAI/Z-Image-Turbo</span></span>
                                     </div>
                                 </div>
-                                <button class="ghost-btn" type="button" onclick="addModel('image')"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span data-i18n="api.model">模型</span></button>
                             </div>
                             <div id="imageModelList" class="model-list"></div>
                         </section>
@@ -261,7 +255,6 @@
                                     <div class="block-title" data-i18n="api.chatModels">聊天模型</div>
                                     <div class="block-desc" data-i18n="api.chatHint">GPT 对话和 LLM 节点使用</div>
                                 </div>
-                                <button class="ghost-btn" type="button" onclick="addModel('chat')"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span data-i18n="api.model">模型</span></button>
                         </div>
                         <div id="chatModelList" class="model-list"></div>
                     </section>
@@ -272,7 +265,6 @@
                                     <div class="block-title" data-i18n="api.videoModels">视频模型</div>
                                     <div class="block-desc" data-i18n="api.videoHint">无限画布视频生成节点使用</div>
                                 </div>
-                                <button class="ghost-btn" type="button" onclick="addModel('video')"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span data-i18n="api.model">模型</span></button>
                             </div>
                             <div id="videoModelList" class="model-list"></div>
                         </section>
@@ -303,56 +295,19 @@
             </div>
             <div id="pickerList" class="picker-body"></div>
             <div id="pickerSummary" class="picker-summary">
-                <span class="picker-summary-title">将应用：</span>
-                <span id="sumImage" class="picker-sum-chip picker-sum-chip-empty">生图 0</span>
-                <span id="sumChat" class="picker-sum-chip picker-sum-chip-empty">聊天 0</span>
-                <span id="sumVideo" class="picker-sum-chip picker-sum-chip-empty">视频 0</span>
-                <span id="sumUnsel" style="margin-left:auto;color:var(--faint)">未选 0</span>
+                <span class="picker-summary-title">将添加：</span>
+                <span id="pickerSelectedModel" class="picker-sum-chip picker-sum-chip-empty">未选择</span>
             </div>
             <div class="picker-foot">
                 <button class="action-btn" type="button" onclick="closeModelPicker()">取消</button>
-                <button class="action-btn save-btn" type="button" onclick="applyModelPicker()">应用到模型列表</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="rhWorkflowEditorOverlay" class="rh-workflow-editor-overlay">
-        <div class="rh-workflow-editor-modal">
-            <div class="rh-workflow-editor-head">
-                <div class="rh-workflow-editor-title-wrap">
-                    <div id="rhWorkflowEditorTitle" class="rh-workflow-editor-title">RunningHub AI 应用</div>
-                    <div id="rhWorkflowEditorSub" class="rh-workflow-editor-sub">选择要暴露到画布的输入参数</div>
-                </div>
-                <div class="rh-workflow-editor-actions">
-                    <button class="action-btn" type="button" onclick="fetchRhAppEditor(true)"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>重新拉取</span></button>
-                    <button id="rhWorkflowSaveBtn" class="action-btn save-btn" type="button" onclick="saveRhWorkflowEditor()"><i data-lucide="save" class="w-3.5 h-3.5"></i><span>保存</span></button>
-                    <button class="rh-workflow-editor-close" type="button" onclick="closeRhWorkflowEditor()"><i data-lucide="x" class="w-4 h-4"></i></button>
-                </div>
-            </div>
-            <div class="rh-workflow-editor-body">
-                <aside class="rh-workflow-editor-side">
-                    <label class="rh-editor-field">
-                        <span>名称</span>
-                        <input id="rhWorkflowEditName" type="text" oninput="updateRhWorkflowEditorMeta('title', this.value)">
-                    </label>
-                    <label class="rh-editor-field">
-                        <span>备注</span>
-                        <textarea id="rhWorkflowEditNote" oninput="updateRhWorkflowEditorMeta('description', this.value)"></textarea>
-                    </label>
-                    <div id="rhWorkflowEditorSummary" class="rh-editor-summary"></div>
-                    <div id="rhWorkflowEditorNodeList" class="rh-editor-node-list"></div>
-                </aside>
-                <section class="rh-workflow-editor-canvas">
-                    <div id="rhWorkflowEditorGraphWrap" class="rh-editor-graph-wrap rh-app-field-wrap"></div>
-                </section>
+                <button class="action-btn save-btn" type="button" onclick="applyModelPicker()">添加模型</button>
             </div>
         </div>
     </div>
 
     <script src="/static/js/upload-quota-dialog.js"></script>
-    <script src="/static/dist/api-settings/rh-workflow-editor.js"></script>
     <script src="/static/dist/api-settings/comfy-instances.js"></script>
     <script src="/static/dist/api-settings/provider-onboarding.js"></script>
-    <script src="/static/dist/api-settings/main.js?v=20260817-omnilojo-pricing-1"></script>
+    <script src="/static/dist/api-settings/main.js?v=20260819-unified-protocol-1"></script>
 </body>
 </html>

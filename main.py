@@ -420,22 +420,6 @@ SUPPORTED_PROVIDER_PROTOCOLS = {"openai", "gemini", "volcengine", "runninghub", 
 RUNNINGHUB_DEFAULT_BASE_URL = "https://www.runninghub.cn"
 VOLCENGINE_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 from app.config import VOLCENGINE_DEFAULT_PROJECT_NAME, VOLCENGINE_DEFAULT_REGION
-VOLCENGINE_DEFAULT_VIDEO_MODELS = [
-    "doubao-seedance-2-0-260128",
-    "doubao-seedance-2-0-fast-260128",
-    "doubao-seedance-1-5-pro-251215",
-    "doubao-seedance-1-0-pro-250528",
-    "doubao-seedance-1-0-lite-t2v-250428",
-    "doubao-seedance-1-0-lite-i2v-250428",
-]
-RUNNINGHUB_DEFAULT_IMAGE_MODELS = [
-    "seedream-v5-lite/text-to-image",
-    "seedream-v5-lite/image-to-image",
-    "rhart-image-g-2-official",
-]
-# RunningHub 标准模型 API：GPT-Image2（rhart-image-g-2-official），文生图/图生图共用一个模型条目，
-# 由是否附带参考图自动判断调用 /text-to-image 还是 /image-to-image。
-RHART_GPT_IMAGE2_MODEL_ID = "rhart-image-g-2-official"
 RUNNINGHUB_DEFAULT_APPS = [
     {
         "id": "2058517022748798977",
@@ -832,11 +816,11 @@ def default_api_providers():
             "image_edit_endpoint": "",
             "enabled": True,
             "primary": False,
-            "image_models": RUNNINGHUB_DEFAULT_IMAGE_MODELS,
+            "image_models": [],
             "chat_models": [],
             "video_models": [],
             "rh_apps": RUNNINGHUB_DEFAULT_APPS,
-            "model_aliases": {RHART_GPT_IMAGE2_MODEL_ID: "GPT-Image2"},
+            "model_aliases": {},
         },
         {
             "id": "volcengine",
@@ -849,7 +833,7 @@ def default_api_providers():
             "primary": False,
             "image_models": [],
             "chat_models": [],
-            "video_models": VOLCENGINE_DEFAULT_VIDEO_MODELS,
+            "video_models": [],
             "volcengine_project_name": VOLCENGINE_DEFAULT_PROJECT_NAME,
             "volcengine_region": VOLCENGINE_DEFAULT_REGION,
         },
@@ -867,11 +851,12 @@ def merge_default_api_providers(providers):
                 current["base_url"] = rh_default["base_url"]
             if not current.get("protocol") or current.get("protocol") == "openai":
                 current["protocol"] = "runninghub"
-            current["image_models"] = model_list_from_values([*(current.get("image_models") or []), *(rh_default.get("image_models") or [])])
+            current["image_models"] = []
+            current["chat_models"] = []
+            current["video_models"] = []
             current["rh_apps"] = merge_runninghub_system_entries(rh_default.get("rh_apps") or [], current.get("rh_apps") or [], "app")
-            merged_aliases = dict(rh_default.get("model_aliases") or {})
-            merged_aliases.update(current.get("model_aliases") or {})
-            current["model_aliases"] = merged_aliases
+            current["model_aliases"] = {}
+            current["model_protocols"] = {}
     volc_default = next((d for d in default_api_providers() if d["id"] == "volcengine"), None)
     if volc_default:
         current = next((item for item in merged if item.get("id") == "volcengine"), None)
@@ -885,7 +870,7 @@ def merge_default_api_providers(providers):
                     "base_url": legacy.get("base_url") or volc_default["base_url"],
                     "image_models": legacy_image_models or model_list_from_values(volc_default.get("image_models") or []),
                     "chat_models": model_list_from_values(legacy.get("chat_models") or []),
-                    "video_models": legacy_video_models or model_list_from_values(volc_default.get("video_models") or []),
+                    "video_models": legacy_video_models,
                 }
                 merged.append(current)
             else:
@@ -1072,7 +1057,7 @@ def merge_runninghub_provider_with_static(provider):
         return static_provider
     merged = {**static_provider, **provider}
     merged["protocol"] = "runninghub"
-    merged["image_models"] = model_list_from_values([*(provider.get("image_models") or []), *(static_provider.get("image_models") or [])])
+    merged["image_models"] = []
     merged["rh_apps"] = merge_runninghub_system_entries(static_provider.get("rh_apps") or [], provider.get("rh_apps") or [], "app")
     return normalize_provider(merged)
 
@@ -1182,24 +1167,26 @@ def normalize_provider(item):
             model_name = str(raw_model or "").strip()[:160]
             if not model_name or not isinstance(raw_price, dict):
                 continue
-            input_per_million = normalize_nonnegative_number(raw_price.get("input_per_million"), 0, "Omnilojo 输入单价")
-            output_per_million = normalize_nonnegative_number(raw_price.get("output_per_million"), 0, "Omnilojo 输出单价")
             omnilojo_model_prices[model_name] = {
-                "input_per_million": input_per_million,
-                "output_per_million": output_per_million,
+                "input_per_million": normalize_nonnegative_number(raw_price.get("input_per_million"), 0, "Omnilojo 输入单价"),
+                "output_per_million": normalize_nonnegative_number(raw_price.get("output_per_million"), 0, "Omnilojo 输出单价"),
             }
-    if protocol == "omnilojo":
-        configured_models = {
-            str(model or "").strip()
-            for values in (item.get("image_models") or [], item.get("chat_models") or [], item.get("video_models") or [])
-            for model in values if str(model or "").strip()
-        }
-        missing_prices = [
-            model for model in configured_models
-            if not omnilojo_model_prices.get(model)
-            or omnilojo_model_prices[model]["input_per_million"] <= 0
-            or omnilojo_model_prices[model]["output_per_million"] <= 0
-        ]
+    rh_apps = normalize_runninghub_entries(item.get("rh_apps") or [], "app")
+    model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("image_models") or [])
+    chat_model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("chat_models") or [])
+    video_model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("video_models") or [])
+    # AI API 协议归属于模型；旧配置中的供应商协议只用于给未迁移模型补默认值。
+    model_protocols = normalize_model_protocols(item.get("model_protocols"))
+    if provider_id not in FIXED_PROTOCOL_PROVIDER_IDS and protocol in PER_MODEL_PROTOCOL_OPTIONS:
+        for model_name in (*model_values, *chat_model_values, *video_model_values):
+            model_protocols.setdefault(model_name, protocol)
+    configured_models = {
+        model_name
+        for model_name in (*model_values, *chat_model_values, *video_model_values)
+        if effective_protocol({"id": provider_id, "protocol": protocol, "model_protocols": model_protocols}, model_name) == "omnilojo"
+    }
+    if configured_models:
+        missing_prices = [model for model in configured_models if not omnilojo_model_prices.get(model) or omnilojo_model_prices[model]["input_per_million"] <= 0 or omnilojo_model_prices[model]["output_per_million"] <= 0]
         if missing_prices:
             raise HTTPException(status_code=400, detail=f"Omnilojo 模型必须配置输入和输出单价：{', '.join(sorted(missing_prices)[:3])}")
     return {
@@ -1211,12 +1198,12 @@ def normalize_provider(item):
         "image_edit_endpoint": image_edit_endpoint,
         "enabled": enabled,
         "primary": bool(item.get("primary", False)),
-        "image_models": model_list_from_values(item.get("image_models") or []),
-        "chat_models": model_list_from_values(item.get("chat_models") or []),
-        "video_models": model_list_from_values(item.get("video_models") or []),
-        "model_protocols": normalize_model_protocols(item.get("model_protocols")),
-        "model_aliases": {str(k).strip(): str(v).strip() for k, v in (item.get("model_aliases") or {}).items() if isinstance(k, str) and isinstance(v, str) and str(k).strip() and str(v).strip()},
-        "rh_apps": normalize_runninghub_entries(item.get("rh_apps") or [], "app"),
+        "image_models": model_values,
+        "chat_models": chat_model_values,
+        "video_models": video_model_values,
+        "model_protocols": {} if provider_id == "runninghub" else model_protocols,
+        "model_aliases": {} if provider_id == "runninghub" else {str(k).strip(): str(v).strip() for k, v in (item.get("model_aliases") or {}).items() if isinstance(k, str) and isinstance(v, str) and str(k).strip() and str(v).strip()},
+        "rh_apps": rh_apps,
         "volcengine_project_name": volc_project,
         "volcengine_region": volc_region,
         "omnilojo_admin_user_id": re.sub(r"\s+", "", str(item.get("omnilojo_admin_user_id") or ""))[:80],
@@ -2010,13 +1997,13 @@ def images_api_unsupported(response):
 def provider_protocol(provider):
     return str((provider or {}).get("protocol") or "openai").strip().lower()
 
-# 单模型可覆盖的协议（仅 OpenAI / Gemini，二者可共用同一站点的 Base URL + Key）
-PER_MODEL_PROTOCOL_OPTIONS = {"openai", "gemini"}
+# 单模型可覆盖的协议；三种协议可共用同一站点的 Base URL + Key。
+PER_MODEL_PROTOCOL_OPTIONS = {"openai", "gemini", "omnilojo"}
 # 协议固定、不支持单模型覆盖的内置平台
 FIXED_PROTOCOL_PROVIDER_IDS = {"volcengine", "runninghub"}
 
 def normalize_model_protocols(value):
-    """规整 {模型名: 协议} 覆盖表，仅保留 openai/gemini。"""
+    """规整 {模型名: 协议} 覆盖表，仅保留支持的模型协议。"""
     out = {}
     if isinstance(value, dict):
         for raw_name, raw_proto in value.items():
@@ -3011,12 +2998,6 @@ def runninghub_entry_config_from_model(provider, model):
     key = str(model or "").strip()
     return next((entry for entry in ((provider or {}).get("rh_apps") or []) if key in {str(entry.get("id") or ""), str(entry.get("appId") or ""), str(entry.get("webappId") or "")}), None)
 
-def runninghub_task_endpoint(provider, model):
-    return runninghub_endpoint_url(provider, f"/openapi/v2/{urllib.parse.quote(str(model or '').strip(), safe='')}/text-to-image")
-
-def is_rhart_gpt_image2_model(model):
-    return str(model or "").strip().lower() == "rhart-image-g-2-official"
-
 def runninghub_extract_image(raw):
     item = next((item for item in runninghub_extract_outputs(raw) if runninghub_output_kind(runninghub_output_ext(item)) == "image"), "")
     if not item: raise HTTPException(status_code=502, detail="RunningHub 未返回图片结果。")
@@ -3032,9 +3013,6 @@ async def wait_for_runninghub_image_task(client, provider, task_id):
         if status == "FAILED": raise HTTPException(status_code=502, detail=runninghub_fail_reason(raw))
         await asyncio.sleep(min(IMAGE_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
     raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{task_id}")
-
-async def runninghub_upload_reference(client, provider, ref):
-    return str((ref or {}).get("url") or "").strip()
 
 async def generate_runninghub_app_image(prompt, reference_images, provider, entry):
     fields = entry.get("fields") or []
@@ -3058,74 +3036,9 @@ async def runninghub_store_remote_output(client, remote):
 
 async def generate_runninghub_provider_image(prompt, size, model, reference_images=None, provider=None, quality=""):
     entry = runninghub_entry_config_from_model(provider, model)
-    if entry:
-        return await generate_runninghub_app_image(prompt, reference_images, provider, entry)
-    if is_rhart_gpt_image2_model(model):
-        return await generate_rhart_gpt_image2(prompt, size, reference_images, provider, quality)
-    endpoint = runninghub_task_endpoint(provider, model)
-    width, height = parse_size_pair(size)
-    body = {"prompt": prompt}
-    if width and height:
-        body.update({"width": width, "height": height})
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=180.0, pool=20.0)) as client:
-        image_urls = []
-        for ref in (reference_images or [])[:10]:
-            url = await runninghub_upload_reference(client, provider, ref)
-            if url:
-                image_urls.append(url)
-        if image_urls:
-            body["imageUrls"] = image_urls
-        response = await client.post(endpoint, headers=runninghub_api_headers(provider), json=body)
-        response.raise_for_status()
-        raw = response.json()
-        try:
-            return runninghub_extract_image(raw), raw
-        except HTTPException:
-            task_id = runninghub_extract_task_id(raw)
-            if not task_id:
-                raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId 或图片结果：{raw}")
-        result = await wait_for_runninghub_image_task(client, provider, task_id)
-        return runninghub_extract_image(result), result
-
-async def generate_rhart_gpt_image2(prompt, size, reference_images, provider, quality=""):
-    """RunningHub 标准模型 API：GPT-Image2（rhart-image-g-2-official）。
-    根据是否带参考图，自动在 text-to-image / image-to-image 两个端点之间切换。"""
-    aspect_ratio, resolution = rhart_gpt_image2_aspect_resolution(size)
-    body_quality = rhart_gpt_image2_quality(quality)
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=180.0, pool=20.0)) as client:
-        image_urls = []
-        for ref in (reference_images or [])[:10]:
-            url = await runninghub_upload_reference(client, provider, ref)
-            if url:
-                image_urls.append(url)
-        if image_urls:
-            endpoint = runninghub_endpoint_url(provider, "/openapi/v2/rhart-image-g-2-official/image-to-image")
-            body = {
-                "prompt": prompt,
-                "imageUrls": image_urls,
-                "aspectRatio": aspect_ratio,
-                "resolution": resolution,
-                "quality": body_quality,
-            }
-        else:
-            endpoint = runninghub_endpoint_url(provider, "/openapi/v2/rhart-image-g-2-official/text-to-image")
-            body = {
-                "prompt": prompt,
-                "aspectRatio": aspect_ratio,
-                "resolution": resolution,
-                "quality": body_quality,
-            }
-        response = await client.post(endpoint, headers=runninghub_api_headers(provider), json=body)
-        response.raise_for_status()
-        raw = response.json()
-        try:
-            return runninghub_extract_image(raw), raw
-        except HTTPException:
-            task_id = runninghub_extract_task_id(raw)
-            if not task_id:
-                raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId 或图片结果：{raw}")
-        result = await wait_for_runninghub_image_task(client, provider, task_id)
-        return runninghub_extract_image(result), result
+    if not entry:
+        raise HTTPException(status_code=400, detail="RunningHub 仅支持配置好的 AI 应用")
+    return await generate_runninghub_app_image(prompt, reference_images, provider, entry)
 
 def omnilojo_image_from_value(value):
     text = str(value or "").strip()
@@ -3421,7 +3334,7 @@ def image_adapter_key(provider, model: str) -> str:
     return select_image_adapter(
         provider, model,
         runninghub=is_runninghub_provider,
-        omnilojo=is_omnilojo_provider,
+        omnilojo=lambda item, selected: effective_protocol(item, selected) == "omnilojo",
         gemini=lambda item, selected: effective_protocol(item, selected) == "gemini",
         volcengine=is_volcengine_provider,
     )
@@ -4026,20 +3939,11 @@ def upstream_model_headers(api_key: str, protocol: str):
         return {"Authorization": strip_auth_scheme(api_key, "Bearer"), "Accept": "application/json"}
     return {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
 
-def volcengine_default_model_payload(status=200, message="", raw=None):
-    models = VOLCENGINE_DEFAULT_VIDEO_MODELS[:]
-    return {
-        "ok": True,
-        "protocol": "volcengine",
-        "status": status,
-        "message": message or "方舟任务接口可用，模型列表接口未返回模型，已使用默认 Seedance 模型。",
-        "model_count": len(models),
-        "image_models": [],
-        "chat_models": [],
-        "video_models": models,
-        "all": models,
-        "raw": raw,
-    }
+def volcengine_empty_model_payload(status=200, message="", raw=None):
+    return {"ok": True, "protocol": "volcengine", "status": status,
+            "message": message or "方舟任务接口可用，但模型列表接口未返回模型。",
+            "model_count": 0, "image_models": [], "chat_models": [],
+            "video_models": [], "all": [], "raw": raw}
 
 def volcengine_task_probe_url(base_url: str):
     base = str(base_url or "").strip().rstrip("/")
@@ -4209,20 +4113,18 @@ async def test_provider_connection(payload: TestConnectionPayload):
                 if protocol == "volcengine":
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                     if detected:
-                        message = f"{probe.get('message') or '方舟任务接口可达'}；但 /api/v3/models 不可用，已使用默认 Seedance 模型。"
-                        return volcengine_default_model_payload(status=probe.get("status") or resp.status_code, message=message, raw={"models_error": resp.text[:300], **(probe.get("raw") or {})})
+                        return volcengine_empty_model_payload(status=probe.get("status") or resp.status_code, raw={"models_error": resp.text[:300], **(probe.get("raw") or {})})
                 elif protocol == "openai":
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                     if detected:
-                        message = f"{probe.get('message') or '检测到方舟/Ark 兼容入口'}；OpenAI /v1/models 不可用，已自动切换为方舟协议并使用默认 Seedance 模型。"
-                        return volcengine_default_model_payload(status=probe.get("status") or resp.status_code, message=message, raw={"models_error": resp.text[:300], **(probe.get("raw") or {})})
+                        return volcengine_empty_model_payload(status=probe.get("status") or resp.status_code, raw={"models_error": resp.text[:300], **(probe.get("raw") or {})})
                 return {"ok": False, "status": resp.status_code, "message": resp.text[:300]}
             data = resp.json() if resp.text else {}
             grouped, ids = parse_upstream_models(data, protocol)
             if protocol == "volcengine" and not ids:
                 detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                 if detected:
-                    return volcengine_default_model_payload(status=resp.status_code, raw=data)
+                    return volcengine_empty_model_payload(status=resp.status_code, raw=data)
             return {"ok": True, "status": resp.status_code, "model_count": len(ids), "image_models": grouped["image"], "chat_models": grouped["chat"], "video_models": grouped["video"], "all": ids}
     except httpx.HTTPError as e:
         if protocol == "volcengine":
@@ -4230,8 +4132,7 @@ async def test_provider_connection(payload: TestConnectionPayload):
                 async with new_outbound_http_client(timeout=15) as client:
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                     if detected:
-                        message = f"{probe.get('message') or '方舟任务接口可达'}；但模型列表请求失败，已使用默认 Seedance 模型。"
-                        return volcengine_default_model_payload(status=probe.get("status") or 0, message=message, raw={"models_error": str(e)[:300], **(probe.get("raw") or {})})
+                        return volcengine_empty_model_payload(status=probe.get("status") or 0, raw={"models_error": str(e)[:300], **(probe.get("raw") or {})})
             except Exception:
                 pass
         return {"ok": False, "status": 0, "message": str(e)[:300]}
@@ -4327,9 +4228,8 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
                 if protocol == "volcengine":
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                     if detected:
-                        payload = volcengine_default_model_payload(
+                        payload = volcengine_empty_model_payload(
                             status=probe.get("status") or resp.status_code,
-                            message=f"{probe.get('message') or '方舟任务接口可达'}；但 /api/v3/models 不可用，已使用默认 Seedance 模型。",
                             raw={"models_error": resp.text[:300], **(probe.get("raw") or {})},
                         )
                         return {
@@ -4345,9 +4245,8 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
                 elif protocol == "openai":
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                     if detected:
-                        payload = volcengine_default_model_payload(
+                        payload = volcengine_empty_model_payload(
                             status=probe.get("status") or resp.status_code,
-                            message=f"{probe.get('message') or '检测到方舟/Ark 兼容入口'}；OpenAI /v1/models 不可用，已自动切换为方舟协议并使用默认 Seedance 模型。",
                             raw={"models_error": resp.text[:300], **(probe.get("raw") or {})},
                         )
                         return {
@@ -4368,9 +4267,8 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
                 async with new_outbound_http_client(timeout=15) as client:
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
                     if detected:
-                        payload = volcengine_default_model_payload(
+                        payload = volcengine_empty_model_payload(
                             status=probe.get("status") or 0,
-                            message=f"{probe.get('message') or '方舟任务接口可达'}；但模型列表请求失败，已使用默认 Seedance 模型。",
                             raw={"models_error": str(e)[:300], **(probe.get("raw") or {})},
                         )
                         return {
@@ -4388,7 +4286,7 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
         raise HTTPException(status_code=502, detail=f"请求上游模型列表失败：{e}")
     grouped, ids = parse_upstream_models(raw, protocol)
     if protocol == "volcengine" and not ids:
-        payload = volcengine_default_model_payload(raw=raw)
+        payload = volcengine_empty_model_payload(raw=raw)
         return {
             "total": payload["model_count"],
             "image_models": payload["image_models"],

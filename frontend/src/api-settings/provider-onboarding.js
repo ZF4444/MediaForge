@@ -95,7 +95,6 @@ function applyProviderOnboardingDefaults(id){
     } else if(id === 'volcengine'){
         item.base_url = VOLCENGINE_DEFAULT_BASE_URL;
         item.protocol = 'volcengine';
-        item.video_models = unique([...(item.video_models || []), ...VOLCENGINE_DEFAULT_VIDEO_MODELS]);
         item.volcengine_project_name = item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME;
         item.volcengine_region = item.volcengine_region || VOLCENGINE_DEFAULT_REGION;
     }

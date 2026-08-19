@@ -7,6 +7,8 @@ if(isEmbeddedApiSettings) document.body.classList.add('embedded-api-settings');
 let providers = [];
 let providersVersion = null;
 let selectedId = '';
+let selectedModel = { providerId:'', kind:'', name:'', index:-1 };
+const expandedModelKinds = new Set(['image', 'chat', 'video']);
 const providerList = document.getElementById('providerList');
 const editorTitle = document.getElementById('editorTitle');
 const statusEl = document.getElementById('status');
@@ -24,7 +26,6 @@ const volcSkInput = document.getElementById('volcSkInput');
 const volcAssetKeyHint = document.getElementById('volcAssetKeyHint');
 const volcProjectInput = document.getElementById('volcProjectInput');
 const volcRegionInput = document.getElementById('volcRegionInput');
-const omnilojoUsageBlock = document.getElementById('omnilojoUsageBlock');
 const runninghubConfigBlock = document.getElementById('runninghubConfigBlock');
 const rhPasteInput = document.getElementById('rhPasteInput');
 const rhAppsList = document.getElementById('rhAppsList');
@@ -43,20 +44,20 @@ const rhWorkflowEditorGraphWrap = document.getElementById('rhWorkflowEditorGraph
 const imageModelList = document.getElementById('imageModelList');
 const chatModelList = document.getElementById('chatModelList');
 const videoModelList = document.getElementById('videoModelList');
+const modelConfigBlock = document.getElementById('modelConfigBlock');
+const selectedModelInput = document.getElementById('selectedModelInput');
+const selectedModelIdField = document.getElementById('selectedModelIdField');
+const selectedModelAliasInput = document.getElementById('selectedModelAliasInput');
+const selectedModelProtocol = document.getElementById('selectedModelProtocol');
+const selectedModelProtocolField = document.getElementById('selectedModelProtocolField');
+const selectedModelPriceFields = document.getElementById('selectedModelPriceFields');
+const selectedModelInputPrice = document.getElementById('selectedModelInputPrice');
+const selectedModelOutputPrice = document.getElementById('selectedModelOutputPrice');
 const VOLCENGINE_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const VOLCENGINE_DEFAULT_PROJECT_NAME = 'default';
 const VOLCENGINE_DEFAULT_REGION = 'cn-beijing';
-const VOLCENGINE_DEFAULT_VIDEO_MODELS = [
-    'doubao-seedance-2-0-260128',
-    'doubao-seedance-2-0-fast-260128',
-    'doubao-seedance-1-5-pro-251215',
-    'doubao-seedance-1-0-pro-250528',
-    'doubao-seedance-1-0-lite-t2v-250428',
-    'doubao-seedance-1-0-lite-i2v-250428'
-];
 const RH_DEFAULT_BASE_URL = 'https://www.runninghub.cn';
 const EXAMPLE_BASE_URL = 'https://api.example.com/v1';
-const RH_DEFAULT_IMAGE_MODELS = ['/openapi/v2/text2image'];
 const ONBOARDING_GUIDES = {
     runninghub:{
         titleKey:'api.rhOnboardingTitle',
@@ -69,6 +70,15 @@ const ONBOARDING_GUIDES = {
 };
 let rhWorkflowEditorState = { open:false, index:-1, entry:null, config:null, expanded:{}, activeNodeId:'', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
 let providerDragId = '';
+function normalizeRhEntries(values){
+    const seen = new Set();
+    return (Array.isArray(values) ? values : []).map(raw => {
+        const id = String(raw?.id || raw?.appId || '').trim();
+        if(!id || seen.has(id)) return null;
+        seen.add(id);
+        return {...raw, id, appId:id, title:String(raw?.title || raw?.name || `AI 应用 ${id.slice(-6)}`), note:String(raw?.note || raw?.description || ''), enabled:raw?.enabled !== false};
+    }).filter(Boolean);
+}
 function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
 function tr(key){ return window.StudioI18n ? window.StudioI18n.t(key) : key; }
 function trf(key, vars={}){
@@ -115,9 +125,49 @@ function isProviderTemporarilyHidden(item){
 function visibleProviders(){
     return (providers || []).filter(item => !isProviderTemporarilyHidden(item));
 }
+function modelKindLabel(kind){ return kind === 'image' ? '生图模型' : kind === 'video' ? '视频模型' : '聊天模型'; }
+function modelKindIcon(kind){ return kind === 'image' ? 'image' : kind === 'video' ? 'film' : 'message-square'; }
+function modelProtocol(item, name){
+    const override = String(item?.model_protocols?.[String(name || '').trim()] || '').toLowerCase();
+    return override || String(item?.protocol || 'openai').toLowerCase();
+}
+function activeModelProtocol(item){
+    const ref = selectedModelRef();
+    return ref && ref.item.id === item?.id ? modelProtocol(item, ref.name) : String(item?.protocol || 'openai').toLowerCase();
+}
+function providerModels(item){
+    const result = [];
+    [['image','image_models'],['chat','chat_models'],['video','video_models']].forEach(([kind,key]) => {
+        (item?.[key] || []).forEach((name, index) => {
+            const modelName = String(name || '').trim();
+            result.push({providerId:item.id, kind, index, name:modelName, label:modelName || '未命名模型', protocol:modelProtocol(item, modelName), hasKey:Boolean(item.has_key)});
+        });
+    });
+    return result;
+}
+function allModelEntries(){
+    return visibleProviders().filter(item => !['runninghub','comfyui'].includes(item.id)).flatMap(providerModels);
+}
+function protocolLabel(protocol){
+    return ({openai:'OpenAI', gemini:'Gemini', omnilojo:'Omnilojo', volcengine:'Volcengine', runninghub:'RunningHub'})[protocol] || String(protocol || 'OpenAI').toUpperCase();
+}
+function selectedModelRef(){
+    const item = providers.find(p => p.id === selectedModel.providerId);
+    if(!item) return null;
+    const key = selectedModel.kind === 'image' ? 'image_models' : selectedModel.kind === 'video' ? 'video_models' : 'chat_models';
+    const index = Number.isInteger(selectedModel.index) && selectedModel.index >= 0 && selectedModel.index < (item[key] || []).length
+        ? selectedModel.index
+        : (item[key] || []).findIndex(name => String(name || '').trim() === selectedModel.name);
+    const name = index < 0 ? '' : String(item[key][index] || '').trim();
+    return index < 0 || !name ? null : {item, key, index, name};
+}
 function isFixedProvider(itemOrId){
     const id = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
     return id === 'comfyui' || id === 'runninghub' || id === 'volcengine';
+}
+function isModelFirstProvider(itemOrId){
+    const id = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
+    return id !== 'runninghub' && id !== 'comfyui';
 }
 function unique(values){
     const seen = new Set();
@@ -145,7 +195,7 @@ function syncEditor(){
     item.id = nextId;
     if(oldId !== item.id) selectedId = item.id;
     item.name = nameInput.value.trim() || item.id;
-    const selectedProtocol = item.id === 'runninghub' ? 'runninghub' : item.id === 'volcengine' ? 'volcengine' : (protocolInput?.value || 'openai');
+    const selectedProtocol = item.id === 'runninghub' ? 'runninghub' : item.id === 'volcengine' ? 'volcengine' : (item.protocol || 'openai');
     item.base_url = baseInput.value.trim();
     // 固定平台不从协议下拉读取
     item.protocol = selectedProtocol;
@@ -170,12 +220,11 @@ function syncEditor(){
 function updateProtocolFromInput(){
     const item = provider();
     if(!item || !protocolInput || isFixedProvider(item)) return;
-    const value = String(protocolInput.value || 'openai').toLowerCase();
+    const value = activeModelProtocol(item);
     item.protocol = ['openai', 'gemini', 'omnilojo'].includes(value) ? value : 'openai';
     clearVerifyResult();
     // 不在 change 事件中整页重绘。重绘会从旧的 Provider 快照回填 select，
     // 导致 Omnilojo 刚被选中又显示成 OpenAI。
-    if(omnilojoUsageBlock) omnilojoUsageBlock.hidden = item.protocol !== 'omnilojo';
     renderModels('image');
     renderModels('chat');
     renderModels('video');
@@ -200,10 +249,9 @@ function providerDragAttrs(item){
     return ` draggable="true" data-provider-id="${id}" ondragstart="handleProviderDragStart(event,'${id}')" ondragover="handleProviderDragOver(event,'${id}')" ondrop="handleProviderDrop(event,'${id}')" ondragend="handleProviderDragEnd()"`;
 }
 function renderProviderList(){
-    providerList.innerHTML = sortedProviders().map(item => {
+    const specialCards = sortedProviders().filter(item => ['runninghub','comfyui'].includes(item.id)).map(item => {
         const active = item.id === selectedId ? 'active' : '';
         const stateClass = item.enabled === false ? 'is-disabled' : (item.has_key ? 'has-key' : 'missing-key');
-        const protocolLabel = item.id === 'runninghub' ? 'RH' : String(item.protocol || 'openai').toUpperCase();
         if(item.id === 'runninghub'){
             return `
                 <button class="provider-card provider-card-banner ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeHtml(item.id)}')">
@@ -218,20 +266,6 @@ function renderProviderList(){
                 </button>
             `;
         }
-        if(item.id === 'volcengine'){
-            return `
-                <button class="provider-card provider-card-banner ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeHtml(item.id)}')">
-                    <span class="provider-banner-inner">
-                        <span class="provider-logo-wrap">
-                            <img src="/static/images/volcengine-theme-light.svg" alt="火山引擎" class="volcengine-icon ms-icon-light">
-                            <img src="/static/images/volcengine-theme-dark.svg" alt="火山引擎" class="volcengine-icon ms-icon-dark">
-                            <span class="provider-logo-fallback">火山引擎</span>
-                        </span>
-                        <span class="provider-protocol-pill">Ark</span>
-                    </span>
-                </button>
-            `;
-        }
         if(item.id === 'comfyui'){
             return `
                 <button class="provider-card provider-card-banner ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeHtml(item.id)}')">
@@ -242,22 +276,40 @@ function renderProviderList(){
                 </button>
             `;
         }
-        return `
-            <button class="provider-card provider-card-sortable ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeHtml(item.id)}')"${providerDragAttrs(item)}>
-                <span class="provider-drag-handle" aria-hidden="true"><i data-lucide="grip-vertical" class="w-3.5 h-3.5"></i></span>
-                <span class="provider-mark"><i data-lucide="${item.has_key ? 'key-round' : 'key'}" class="w-4 h-4"></i></span>
-                <span class="provider-info">
-                    <div class="provider-name">${escapeHtml(item.name || item.id)}</div>
-                    <div class="provider-meta">${escapeHtml(item.base_url || '未配置地址')}</div>
-                </span>
-                <span class="provider-side-meta">
-                    <span class="provider-status-dot"></span>
-                    <span class="provider-protocol-pill">${escapeHtml(protocolLabel)}</span>
-                </span>
-            </button>
-        `;
+        return '';
     }).join('');
+    const entries = allModelEntries();
+    const modelGroups = ['image', 'chat', 'video'].map(kind => {
+        const models = entries.filter(model => model.kind === kind);
+        const expanded = expandedModelKinds.has(kind);
+        return `<section class="model-kind-group ${expanded ? 'expanded' : ''}">
+            <button class="model-kind-head" type="button" onclick="toggleModelKind('${kind}')">
+                <span class="model-kind-title"><i data-lucide="${modelKindIcon(kind)}" class="w-3.5 h-3.5"></i><span>${escapeHtml(modelKindLabel(kind))}</span></span>
+                <span class="model-kind-count">${models.length}</span>
+                <i data-lucide="chevron-down" class="model-kind-caret"></i>
+            </button>
+            <div class="model-kind-items">${models.map(model => {
+                const item = providers.find(providerItem => providerItem.id === model.providerId);
+                const activeModel = selectedModel.providerId === model.providerId && selectedModel.kind === model.kind && selectedModel.index === model.index;
+                const alias = item?.model_aliases?.[model.name] || '';
+                const source = `${item?.name || model.providerId} · ${protocolLabel(model.protocol)}`;
+                return `<button class="provider-model-card ${activeModel ? 'active' : ''}" type="button" onclick="selectModel('${escapeAttr(model.providerId)}','${model.kind}',${model.index})">
+                    <span class="provider-model-icon"><i data-lucide="${modelKindIcon(model.kind)}" class="w-3.5 h-3.5"></i></span>
+                    <span class="provider-model-info"><span class="provider-model-name">${escapeHtml(alias || model.label)}</span><span class="provider-model-meta">${escapeHtml(source)}${model.hasKey ? ' · 已配置 Key' : ' · 未配置 Key'}</span></span>
+                    <span class="provider-status-dot"></span>
+                </button>`;
+            }).join('') || `<div class="provider-model-empty">暂无${escapeHtml(modelKindLabel(kind))}</div>`}
+                <button class="model-kind-add" type="button" onclick="addModel('${kind}')"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>添加模型</span></button>
+            </div>
+        </section>`;
+    }).join('');
+    providerList.innerHTML = specialCards + modelGroups;
     refreshIcons();
+}
+function toggleModelKind(kind){
+    if(expandedModelKinds.has(kind)) expandedModelKinds.delete(kind);
+    else expandedModelKinds.add(kind);
+    renderProviderList();
 }
 function handleProviderDragStart(event, id){
     const item = providers.find(provider => provider.id === id);
@@ -301,7 +353,14 @@ function handleProviderDragEnd(){
 function renderEditor(){
     const item = provider();
     if(!item) return;
-    editorTitle.textContent = item.name || item.id;
+    const selectedRef = selectedModelRef();
+    if(selectedModelIdField) selectedModelIdField.hidden = !selectedRef;
+    if(selectedModelProtocolField) selectedModelProtocolField.hidden = !selectedRef;
+    if(isModelFirstProvider(item) && selectedRef){
+        editorTitle.textContent = item.model_aliases?.[selectedRef.name] || selectedRef.name || '未命名模型';
+    } else {
+        editorTitle.textContent = item.name || item.id;
+    }
     const enabledToggle = document.getElementById('enabledToggle');
     if(enabledToggle) enabledToggle.checked = item.enabled !== false;
     nameInput.value = item.name || '';
@@ -310,23 +369,22 @@ function renderEditor(){
     clearVerifyResult();
     baseInput.placeholder = EXAMPLE_BASE_URL;
     baseInput.value = item.base_url || '';
-    if(protocolInput) protocolInput.value = item.id === 'runninghub' ? 'openai' : item.id === 'volcengine' ? 'volcengine' : (item.protocol || 'openai');
+    if(protocolInput) protocolInput.value = activeModelProtocol(item);
     keyInput.value = '';
     keyInput.placeholder = item.has_key ? `${tr('api.keepCurrentKey')} ${item.key_preview || ''}` : tr('api.enterKey');
     keyHint.textContent = item.has_key ? `${tr('api.keySaved')}${item.key_env || 'API/.env'}` : tr('api.noKey');
     const isRunningHub = item.id === 'runninghub';
-    const isVolcengine = item.id === 'volcengine' || String(protocolInput?.value || item.protocol || '').toLowerCase() === 'volcengine';
+    const isVolcengine = item.id === 'volcengine' || activeModelProtocol(item) === 'volcengine';
     const isStandaloneVolcengine = item.id === 'volcengine';
     const isComfyui = item.id === 'comfyui';
-    const isOmnilojo = String(item.protocol || '').toLowerCase() === 'omnilojo';
+    const isOmnilojo = activeModelProtocol(item) === 'omnilojo';
+    renderSelectedModelConfig(item, selectedRef);
     if(isRunningHub){
-        ensureRunningHubLists(item);
         if(rhFreeKeyInput){
             rhFreeKeyInput.value = '';
             rhFreeKeyInput.placeholder = item.has_key ? `${tr('api.rhKeepKey')} ${item.key_preview || ''}` : tr('api.rhEnterKey');
         }
         if(rhFreeKeyHint) rhFreeKeyHint.textContent = rhFreeKeyHintText(item);
-        renderRunningHubCards();
     }
     if(isVolcengine){
         item.base_url = item.base_url || VOLCENGINE_DEFAULT_BASE_URL;
@@ -348,7 +406,6 @@ function renderEditor(){
         if(volcProjectInput) volcProjectInput.value = item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME;
         if(volcRegionInput) volcRegionInput.value = item.volcengine_region || VOLCENGINE_DEFAULT_REGION;
     }
-    if(omnilojoUsageBlock) omnilojoUsageBlock.hidden = !isOmnilojo;
     if(isOmnilojo){
     }
     document.body.classList.toggle('show-runninghub', isRunningHub);
@@ -358,7 +415,7 @@ function renderEditor(){
     renderProviderOnboarding(item);
     const editorSub = document.querySelector('#settingsContent .editor-sub');
     if(editorSub){
-        editorSub.textContent = isComfyui ? '管理工作流运行所使用的 ComfyUI 后端地址。' : tr('api.editorSub');
+        editorSub.textContent = isComfyui ? '管理工作流运行所使用的 ComfyUI 后端地址。' : isModelFirstProvider(item) ? '配置当前模型及其协议连接参数。' : tr('api.editorSub');
     }
     if(providerOnboardingCard && isComfyui) providerOnboardingCard.hidden = true;
     const showRunningHubApps = isRunningHub && isRunningHubAppsPage;
@@ -372,23 +429,100 @@ function renderEditor(){
         if(rhAppsCount) rhAppsCount.textContent = '0';
     }
     const deleteBtn = document.getElementById('deleteBtn');
-    if(deleteBtn) deleteBtn.style.display = isFixedProvider(item) ? 'none' : 'inline-flex';
+    if(deleteBtn) deleteBtn.style.display = isModelFirstProvider(item) || isFixedProvider(item) ? 'none' : 'inline-flex';
+    const deleteModelBtn = document.getElementById('deleteModelBtn');
+    if(deleteModelBtn) deleteModelBtn.style.display = isModelFirstProvider(item) && !isRunningHubAppsPage && Boolean(selectedRef) ? 'inline-flex' : 'none';
     if(enabledToggle) enabledToggle.disabled = isComfyui;
+    const enabledToggleWrap = enabledToggle?.closest('.provider-enable-toggle');
+    if(enabledToggleWrap) enabledToggleWrap.hidden = isModelFirstProvider(item);
     const contentActions = document.querySelector('.content-actions');
     if(contentActions) contentActions.hidden = isComfyui;
     const providerBasicBlock = document.getElementById('providerBasicBlock');
     if(providerBasicBlock) providerBasicBlock.hidden = isComfyui || isRunningHubAppsPage;
+    const providerIdentityField = document.getElementById('providerIdentityField');
+    if(providerIdentityField) providerIdentityField.hidden = isModelFirstProvider(item);
+    const providerBasicTitle = document.getElementById('providerBasicTitle');
+    const providerBasicDesc = document.getElementById('providerBasicDesc');
+    if(providerBasicTitle) providerBasicTitle.textContent = isModelFirstProvider(item) ? '连接配置' : '基本信息';
+    if(providerBasicDesc) providerBasicDesc.textContent = isModelFirstProvider(item) ? 'API协议、请求地址和 API Key' : (isComfyui ? '管理工作流运行所使用的 ComfyUI 后端地址。' : '平台显示名、唯一 ID 和请求地址');
     const comfyBackendBlock = document.getElementById('comfyBackendBlock');
     if(comfyBackendBlock) comfyBackendBlock.hidden = !isComfyui;
     const modelsHead = document.getElementById('modelsHead');
     if(modelsHead) modelsHead.hidden = isComfyui || isRunningHub;
     const modelGrid = document.querySelector('.model-grid');
     if(modelGrid) modelGrid.hidden = isComfyui || isRunningHub;
+    if(modelConfigBlock){
+        const hideModelConfig = !isModelFirstProvider(item) || isRunningHubAppsPage || !selectedRef;
+        modelConfigBlock.hidden = hideModelConfig;
+        modelConfigBlock.style.display = hideModelConfig ? 'none' : '';
+    }
+    if(modelGrid && isModelFirstProvider(item)) modelGrid.hidden = true;
     document.querySelectorAll('.model-list').forEach(list => list.closest('.block').hidden = isComfyui || isRunningHub);
     renderModels('image');
     renderModels('chat');
     renderModels('video');
     renderProviderList();
+}
+function renderSelectedModelConfig(item, ref){
+    if(!modelConfigBlock || !ref || !isModelFirstProvider(item)) return;
+    const model = ref.name;
+    const aliases = item.model_aliases || {};
+    const price = item.omnilojo_model_prices?.[model] || {};
+    selectedModelInput.value = item[ref.key][ref.index] || '';
+    selectedModelAliasInput.value = aliases[model] || '';
+    if(selectedModelProtocol) selectedModelProtocol.value = modelProtocol(item, model);
+    // 价格是模型维度的成本配置，不依赖请求协议；切换协议后仍应可编辑。
+    selectedModelPriceFields.hidden = false;
+    selectedModelInputPrice.value = price.input_per_million ?? '';
+    selectedModelOutputPrice.value = price.output_per_million ?? '';
+}
+function selectModel(providerId, kind, index){
+    syncEditor();
+    const item = providers.find(p => p.id === providerId);
+    const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
+    if(!item || typeof item[key]?.[index] === 'undefined') return;
+    selectedId = providerId;
+    selectedModel = {providerId, kind, index, name:String(item[key][index] || '').trim()};
+    renderEditor();
+}
+function updateSelectedModelName(value){
+    const ref = selectedModelRef();
+    if(!ref) return;
+    updateModel(selectedModel.kind, ref.index, value);
+    selectedModel.name = String(value || '').trim();
+    renderProviderList();
+}
+function updateSelectedModelAlias(value){
+    const ref = selectedModelRef();
+    if(!ref) return;
+    updateModelAlias(selectedModel.kind, ref.index, value);
+    renderProviderList();
+}
+function updateSelectedModelProtocol(value){
+    const ref = selectedModelRef();
+    if(!ref) return;
+    updateModelProtocol(ref.key === 'image_models' ? 'image' : ref.key === 'video_models' ? 'video' : 'chat', ref.index, value);
+    renderProviderList();
+}
+function updateSelectedModelPrice(field, value){
+    const ref = selectedModelRef();
+    if(!ref) return;
+    updateOmnilojoModelPrice(selectedModel.kind, ref.index, field, value);
+}
+async function deleteSelectedModel(){
+    const ref = selectedModelRef();
+    if(!ref) return;
+    if(!confirm(`确认删除模型“${ref.name || '未命名模型'}”？`)) return;
+    ref.item[ref.key].splice(ref.index, 1);
+    selectedModel = {providerId:'', kind:'', name:'', index:-1};
+    const first = providerModels(ref.item)[0];
+    if(first){ selectedId = ref.item.id; selectedModel = {providerId:ref.item.id, kind:first.kind, index:first.index, name:first.name}; }
+    renderEditor();
+    const saved = await saveProviders();
+    if(!saved){
+        await loadProviders();
+        setStatus('删除模型失败，已恢复服务器配置');
+    }
 }
 function showVerifyResult(html){ const el = document.getElementById('verifyResult'); if(el){ el.style.display = 'block'; el.innerHTML = html; } }
 function clearVerifyResult(){ const el = document.getElementById('verifyResult'); if(el){ el.style.display = 'none'; el.innerHTML = ''; } }
@@ -407,13 +541,20 @@ function isManualProtocol(protocol){
 function applyDetectedProtocol(protocol){
     const item = provider();
     const detected = String(protocol || '').toLowerCase();
-    if(!item || !protocolInput || isFixedProvider(item) || !['openai', 'gemini'].includes(detected)) return false;
+    if(!item || isFixedProvider(item) || !['openai', 'gemini', 'omnilojo'].includes(detected)) return false;
+    const selectedRef = selectedModelRef();
+    if(selectedRef){
+        updateModelProtocol(selectedRef.kind, selectedRef.index, detected);
+        renderSelectedModelConfig(item, selectedRef);
+        renderProviderList();
+        return true;
+    }
+    if(!protocolInput) return false;
     if(String(protocolInput.value || '').toLowerCase() === detected && String(item.protocol || '').toLowerCase() === detected) return false;
     protocolInput.value = detected;
     item.protocol = detected;
     item.base_url = baseInput?.value.trim() || item.base_url || '';
     if(detected === 'volcengine'){
-        item.video_models = unique([...(item.video_models || []), ...VOLCENGINE_DEFAULT_VIDEO_MODELS]);
         item.volcengine_project_name = item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME;
         item.volcengine_region = item.volcengine_region || VOLCENGINE_DEFAULT_REGION;
     }
@@ -431,7 +572,7 @@ async function probeAsync(){
     showVerifyResult(`<span style="color:var(--muted);font-size:11px;font-weight:700">正在检测协议类型...</span>`);
     try {
         const apiKey = currentProviderApiKey(item);
-        const currentProtocol = String(protocolInput?.value || item.protocol || 'openai').toLowerCase();
+        const currentProtocol = activeModelProtocol(item);
         const data = await fetch('/api/providers/probe-async', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -466,7 +607,7 @@ async function probeAsync(){
                 <pre style="margin-top:6px;padding:10px 12px;border-radius:10px;background:var(--soft);border:1px solid var(--line-2);font-size:10.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text);max-height:200px;overflow:auto">${escapeHtml(rawJson)}</pre>
             </details>`);
     } catch(e){
-        const keepManualProtocol = isManualProtocol(protocolInput?.value || item.protocol);
+        const keepManualProtocol = isManualProtocol(activeModelProtocol(item));
         if(protocolInput && !keepManualProtocol){ protocolInput.value = 'openai'; protocolInput.dispatchEvent(new Event('change')); }
         const suffix = keepManualProtocol ? '，已保留当前手动选择的协议' : '，协议已设为 OpenAI 兼容';
         showVerifyResult(`<div style="font-size:11px;font-weight:800;color:#b45309">⚠ ${escapeHtml(e.message || String(e))}${suffix}</div>`);
@@ -487,18 +628,19 @@ async function testConnection(){
         const apiKey = currentProviderApiKey(item);
         const data = await fetch('/api/providers/test-connection', {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, provider_id: item.id, protocol: protocolInput?.value || 'openai' })
+            body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, provider_id: item.id, protocol: activeModelProtocol(item) })
         }).then(async r => {
             if(!r.ok) throw new Error((await r.json()).detail || (tr('api.urlInvalid') || '验证失败'));
             return r.json();
         });
         if(data.ok){
             const detectedProtocol = String(data.protocol || '').toLowerCase();
-            if(detectedProtocol && !isManualProtocol(protocolInput?.value || item.protocol) && detectedProtocol !== String(protocolInput?.value || '').toLowerCase()){
+            if(detectedProtocol && !isManualProtocol(activeModelProtocol(item)) && detectedProtocol !== activeModelProtocol(item)){
                 applyDetectedProtocol(detectedProtocol);
             }
             // 存入 picker 状态并启用「选择模型」按钮，但不自动弹出
             lastFetchedAll = data.all || [];
+            lastFetchedProviderId = item.id;
             lastFetchedSuggestion = {
                 image: new Set(data.image_models || []),
                 chat: new Set(data.chat_models || []),
@@ -524,6 +666,8 @@ async function testConnection(){
 }
 let lastFetchedAll = [];          // 全部模型 id 列表
 let lastFetchedSuggestion = null; // 后端自动分类建议
+let lastFetchedProviderId = '';
+let pickerTargetKind = '';
 
 async function fetchModels(){
     const item = provider();
@@ -539,26 +683,27 @@ async function fetchModels(){
         const data = await fetch('/api/providers/fetch-models', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({base_url:baseUrl, api_key:apiKey, provider_id:item.id, protocol:protocolInput?.value || 'openai'})
+            body:JSON.stringify({base_url:baseUrl, api_key:apiKey, provider_id:item.id, protocol:activeModelProtocol(item)})
         }).then(async r => {
             if(!r.ok) throw new Error((await r.json()).detail || (tr('api.urlInvalid') || '拉取失败'));
             return r.json();
         });
         lastFetchedAll = data.all || [];
+        lastFetchedProviderId = item.id;
         lastFetchedSuggestion = {
             image: new Set(data.image_models || []),
             chat: new Set(data.chat_models || []),
             video: new Set(data.video_models || []),
         };
         const detectedProtocol = String(data.protocol || '').toLowerCase();
-        if(detectedProtocol && !isManualProtocol(protocolInput?.value || item.protocol) && detectedProtocol !== String(protocolInput?.value || '').toLowerCase()){
+        if(detectedProtocol && !isManualProtocol(activeModelProtocol(item)) && detectedProtocol !== activeModelProtocol(item)){
             applyDetectedProtocol(detectedProtocol);
         }
         // 启用「选择模型」按钮，并 statusbar 显示已拉取数量
         const openBtn = document.getElementById('openPickerBtn');
         if(openBtn){ openBtn.disabled = false; openBtn.style.opacity = '1'; }
         const extra = (detectedProtocol === 'volcengine' || isVolcengineProvider(item)) ? ' · 已识别方舟协议，火山聊天建议改填 ep-... 接入点' : '';
-        setStatus(`已拉取 ${data.total} 个模型 · 点「选择模型」勾选要导入的${extra}`);
+        setStatus(`已拉取 ${data.total} 个模型 · 选择一个模型添加${extra}`);
         openModelPicker();
     } catch(e){
         alert('拉取失败：' + (e.message || e));
@@ -572,24 +717,20 @@ async function fetchModels(){
 // 每个模型只归一类（根据用户已配置 或 关键字猜测）；勾选 = 纳入该分类
 let pickerState = { category: {}, selected: {} };
 let pickerVisibleIds = [];
-function openModelPicker(){
+function openModelPicker(kind=''){
     const item = provider();
     if(!item || !lastFetchedAll.length){ alert('没有拉取到模型'); return; }
-    const existing = { image: new Set(item.image_models||[]), chat: new Set(item.chat_models||[]), video: new Set(item.video_models||[]) };
-    const allIds = new Set([...lastFetchedAll, ...(item.image_models||[]), ...(item.chat_models||[]), ...(item.video_models||[])]);
+    if(lastFetchedProviderId && lastFetchedProviderId !== item.id){ alert('请先拉取当前连接的模型列表'); return; }
+    pickerTargetKind = kind || '';
+    const allIds = new Set(lastFetchedAll);
     pickerState = { category: {}, selected: {} };
     allIds.forEach(id => {
-        // 类别归属：用户已配置 > 关键字建议 > 默认 chat
         let cat;
-        if(existing.image.has(id)) cat = 'image';
-        else if(existing.video.has(id)) cat = 'video';
-        else if(existing.chat.has(id)) cat = 'chat';
-        else if(lastFetchedSuggestion?.image?.has(id)) cat = 'image';
+        if(lastFetchedSuggestion?.image?.has(id)) cat = 'image';
         else if(lastFetchedSuggestion?.video?.has(id)) cat = 'video';
         else cat = 'chat';
         pickerState.category[id] = cat;
-        // 默认勾选状态：已在用户配置里的 = 勾选；新拉的 = 不勾选（让用户主动选）
-        pickerState.selected[id] = existing.image.has(id) || existing.chat.has(id) || existing.video.has(id);
+        pickerState.selected[id] = false;
     });
     // 默认 tab 切回「全部」
     document.querySelectorAll('.picker-cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === 'all'));
@@ -634,18 +775,15 @@ function renderModelPicker(){
         `;
     }).join('');
     document.getElementById('pickerList').innerHTML = html || `<div style="padding:32px;text-align:center;color:var(--faint);font-size:12px">无匹配</div>`;
-    // 底部汇总
-    const sumImage = document.getElementById('sumImage');
-    const sumChat = document.getElementById('sumChat');
-    const sumVideo = document.getElementById('sumVideo');
-    const sumUnsel = document.getElementById('sumUnsel');
-    if(sumImage){ sumImage.textContent = `生图 ${selecteds.image}`; sumImage.classList.toggle('picker-sum-chip-empty', selecteds.image === 0); }
-    if(sumChat){ sumChat.textContent = `LLM ${selecteds.chat}`; sumChat.classList.toggle('picker-sum-chip-empty', selecteds.chat === 0); }
-    if(sumVideo){ sumVideo.textContent = `视频 ${selecteds.video}`; sumVideo.classList.toggle('picker-sum-chip-empty', selecteds.video === 0); }
-    if(sumUnsel){ sumUnsel.textContent = `未选 ${totals.all - selecteds.all}`; }
+    const selectedModelEl = document.getElementById('pickerSelectedModel');
+    const selectedId = Object.keys(pickerState.selected).find(id => pickerState.selected[id]);
+    if(selectedModelEl){
+        selectedModelEl.textContent = selectedId ? `${selectedId}${pickerTargetKind ? ` · ${modelKindLabel(pickerTargetKind)}` : ''}` : '未选择';
+        selectedModelEl.classList.toggle('picker-sum-chip-empty', !selectedId);
+    }
 }
 function togglePickerRow(id){
-    pickerState.selected[id] = !pickerState.selected[id];
+    Object.keys(pickerState.selected).forEach(key => { pickerState.selected[key] = key === id; });
     renderModelPicker();
 }
 function togglePickerRowByIndex(index){
@@ -659,19 +797,16 @@ function selectPickerCat(cat){
 }
 function applyModelPicker(){
     const item = provider(); if(!item) return;
-    const image = [], chat = [], video = [];
-    Object.entries(pickerState.selected).forEach(([id, sel]) => {
-        if(!sel) return;
-        const cat = pickerState.category[id];
-        if(cat === 'image') image.push(id);
-        else if(cat === 'video') video.push(id);
-        else chat.push(id);
-    });
-    item.image_models = image;
-    item.chat_models = chat;
-    item.video_models = video;
-    renderModels('image'); renderModels('chat'); renderModels('video');
-    setStatus(`已应用 · 生图 ${image.length} / LLM ${chat.length} / 视频 ${video.length}，点保存生效`);
+    const model = Object.keys(pickerState.selected).find(id => pickerState.selected[id]);
+    if(!model){ alert('请选择一个模型'); return; }
+    const kind = pickerTargetKind || pickerState.category[model] || 'chat';
+    const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
+    item[key] = unique((item[key] || []).filter((value, index) => !(index === selectedModel.index && !String(value || '').trim())));
+    item[key] = unique([...item[key], model]);
+    selectedId = item.id;
+    selectedModel = {providerId:item.id, kind, index:item[key].indexOf(model), name:model};
+    renderEditor();
+    setStatus(`已添加模型 ${model}，点保存生效`);
     closeModelPicker();
 }
 async function saveKeyOnly(){
@@ -701,10 +836,11 @@ function modelProtocolSelectHtml(kind, index, model, item){
     const map = (item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {};
     const current = String(map[String(model || '').trim()] || '').toLowerCase();
     const opt = (val, label) => `<option value="${val}" ${current === val ? 'selected' : ''}>${label}</option>`;
-    return `<select class="model-protocol-select" title="该模型使用的协议，默认跟随平台全局协议" onchange="updateModelProtocol('${kind}', ${index}, this.value)">
+    return `<select class="model-protocol-select" title="当前模型使用的 API协议" onchange="updateModelProtocol('${kind}', ${index}, this.value)">
         <option value="" ${current === '' ? 'selected' : ''}>默认</option>
         ${opt('openai', 'OpenAI')}
         ${opt('gemini', 'Gemini')}
+        ${opt('omnilojo', 'Omnilojo')}
     </select>`;
 }
 function renderModels(kind){
@@ -718,7 +854,7 @@ function renderModels(kind){
     }
     const aliases = item?.model_aliases || {};
     const showProtocol = kind !== 'video' && providerSupportsModelProtocol(item);
-    const showPrices = String(item?.protocol || '').toLowerCase() === 'omnilojo';
+    const showPrices = model => modelProtocol(item, model) === 'omnilojo';
     const prices = item?.omnilojo_model_prices || {};
     list.innerHTML = models.map((model, index) => {
         const alias = aliases[model] || '';
@@ -726,10 +862,10 @@ function renderModels(kind){
         return `
         <div class="model-row${showProtocol ? ' has-protocol' : ''}" draggable="true" data-kind="${kind}" data-index="${index}" ondragstart="handleModelDragStart(event,'${kind}',${index})" ondragover="handleModelDragOver(event,'${kind}',${index})" ondrop="handleModelDrop(event,'${kind}',${index})" ondragend="handleModelDragEnd(event)">
             <span class="model-drag-handle"><i data-lucide="grip-vertical" class="w-3.5 h-3.5"></i></span>
-            <input value="${escapeAttr(model)}" oninput="updateModel('${kind}', ${index}, this.value)" title="模型名">
+            <input value="${escapeAttr(model)}" readonly title="模型 ID">
             <input class="model-alias-input" value="${escapeAttr(alias)}" oninput="updateModelAlias('${kind}', ${index}, this.value)" placeholder="别名（选填）" title="画布中显示的名称">
             ${modelProtocolSelectHtml(kind, index, model, item)}
-            ${showPrices ? `<div class="model-price-fields"><label>入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.input_per_million ?? '')}" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'input_per_million', this.value)" title="输入 USD / 100 万 token"></label><label>出 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.output_per_million ?? '')}" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'output_per_million', this.value)" title="输出 USD / 100 万 token"></label></div>` : ''}
+            ${showPrices(model) ? `<div class="model-price-fields"><label>入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.input_per_million ?? '')}" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'input_per_million', this.value)" title="输入 USD / 100 万 token"></label><label>出 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.output_per_million ?? '')}" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'output_per_million', this.value)" title="输出 USD / 100 万 token"></label></div>` : ''}
             <button class="icon-btn" type="button" onclick="removeModel('${kind}', ${index})" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
         </div>
     `;}).join('');
@@ -739,16 +875,11 @@ function selectProvider(id){
     if(isProviderTemporarilyHidden(providers.find(item => item.id === id))) return;
     syncEditor();
     selectedId = id;
+    selectedModel = {providerId:'', kind:'', name:'', index:-1};
     renderEditor();
 }
 function addProvider(){
-    syncEditor();
-    let id = 'custom-api';
-    let index = 2;
-    while(providers.some(item => item.id === id)) id = `custom-api-${index++}`;
-    providers.push({id, name:'API', base_url:'', protocol:'openai', image_generation_endpoint:'', image_edit_endpoint:'', enabled:true, primary:false, image_models:[], chat_models:[], video_models:[], has_key:false, key_preview:''});
-    selectedId = id;
-    renderEditor();
+    addModel('chat');
 }
 function deleteProvider(){
     const item = provider();
@@ -804,10 +935,19 @@ async function clearVolcengineAssetKeys(){
     }
 }
 function addModel(kind){
-    const item = provider();
+    let item = provider();
+    if(!item || ['runninghub','comfyui'].includes(item.id)) item = visibleProviders().find(candidate => !['runninghub','comfyui'].includes(candidate.id));
+    if(!item){
+        item = {id:'api-openai', name:'OpenAI', base_url:'', protocol:'openai', image_generation_endpoint:'', image_edit_endpoint:'', enabled:true, primary:false, image_models:[], chat_models:[], video_models:[], has_key:false, key_preview:''};
+        let suffix = 2;
+        while(providers.some(candidate => candidate.id === item.id)) item.id = `api-openai-${suffix++}`;
+        providers.push(item);
+    }
     const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
     item[key] = [...(item[key] || []), ''];
-    renderModels(kind);
+    selectedId = item.id;
+    selectedModel = {providerId:item.id, kind, index:item[key].length - 1, name:''};
+    renderEditor();
 }
 function modelProtocolStillUsed(item, name){
     if(!item || !name) return false;
@@ -874,7 +1014,7 @@ function updateModelProtocol(kind, index, value){
     if(!name) return;
     if(!item.model_protocols || typeof item.model_protocols !== 'object') item.model_protocols = {};
     const proto = String(value || '').trim().toLowerCase();
-    if(proto === 'openai' || proto === 'gemini'){
+    if(proto === 'openai' || proto === 'gemini' || proto === 'omnilojo'){
         item.model_protocols[name] = proto;
     } else {
         delete item.model_protocols[name];
@@ -932,9 +1072,11 @@ async function loadProviders(){
         const data = await fetch('/api/providers').then(r => r.json());
         providers = (data.providers || []);
         providersVersion = Number.isInteger(data.version) ? data.version : null;
+        const firstModel = allModelEntries()[0];
         selectedId = isRunningHubAppsPage
             ? providers.find(item => item.id === 'runninghub')?.id || ''
-            : sortedProviders()[0]?.id || '';
+            : firstModel?.providerId || sortedProviders()[0]?.id || '';
+        selectedModel = firstModel ? {providerId:firstModel.providerId, kind:firstModel.kind, index:firstModel.index, name:firstModel.name} : {providerId:'', kind:'', name:'', index:-1};
         renderEditor();
         setStatus('');
     } catch(err) {
@@ -952,9 +1094,9 @@ async function saveProviders(){
             : ['openai', 'gemini', 'omnilojo'].includes(String(item.protocol || '').toLowerCase()) ? String(item.protocol).toLowerCase() : 'openai';
         item.image_generation_endpoint = '';
         item.image_edit_endpoint = '';
-        item.image_models = unique(item.image_models || []);
-        item.chat_models = unique(item.chat_models || []);
-        item.video_models = unique(item.video_models || []);
+        item.image_models = item.id === 'runninghub' ? [] : unique(item.image_models || []);
+        item.chat_models = item.id === 'runninghub' ? [] : unique(item.chat_models || []);
+        item.video_models = item.id === 'runninghub' ? [] : unique(item.video_models || []);
         item.rh_apps = normalizeRhEntries(item.rh_apps || [], 'app');
     });
     if(new Set(providers.map(item => item.id)).size !== providers.length){
@@ -979,11 +1121,12 @@ async function saveProviders(){
                 image_edit_endpoint:item.image_edit_endpoint || '',
                 enabled:item.enabled !== false,
                 primary:false,
-                image_models:item.image_models || [],
-                chat_models:item.chat_models || [],
-                video_models:item.video_models || [],
-                model_protocols:(item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {},
-                model_aliases:(item.model_aliases && typeof item.model_aliases === 'object') ? item.model_aliases : {},
+                image_models:item.id === 'runninghub' ? [] : (item.image_models || []),
+                chat_models:item.id === 'runninghub' ? [] : (item.chat_models || []),
+                video_models:item.id === 'runninghub' ? [] : (item.video_models || []),
+                model_protocols:item.id === 'runninghub' ? {} : ((item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {}),
+                model_aliases:item.id === 'runninghub' ? {} : ((item.model_aliases && typeof item.model_aliases === 'object') ? item.model_aliases : {}),
+                omnilojo_model_prices:(item.omnilojo_model_prices && typeof item.omnilojo_model_prices === 'object') ? item.omnilojo_model_prices : {},
                 rh_apps:item.id === 'runninghub' ? (item.rh_apps || []) : [],
                 volcengine_project_name:item.id === 'volcengine' ? (item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME) : '',
                 volcengine_region:item.id === 'volcengine' ? (item.volcengine_region || VOLCENGINE_DEFAULT_REGION) : '',
@@ -996,7 +1139,6 @@ async function saveProviders(){
                 omnilojo_usage_scope:item.omnilojo_usage_scope || 'token',
                 omnilojo_admin_user_id:item.omnilojo_admin_user_id || '',
                 omnilojo_quota_per_usd:item.omnilojo_quota_per_usd || 500000,
-                omnilojo_model_prices:(item.omnilojo_model_prices && typeof item.omnilojo_model_prices === 'object') ? item.omnilojo_model_prices : {},
                 clear_volcengine_access_key_id:item._clearVolcengineAccessKey === true,
                 clear_volcengine_secret_access_key:item._clearVolcengineSecretKey === true
             })))
@@ -1057,4 +1199,8 @@ window.onload = () => {
     [keyInput, rhFreeKeyInput].forEach(input => {
         if(input) input.addEventListener('input', refreshProviderOnboarding);
     });
+    selectedModelAliasInput?.addEventListener('input', event => updateSelectedModelAlias(event.target.value));
+    selectedModelProtocol?.addEventListener('change', event => updateSelectedModelProtocol(event.target.value));
+    selectedModelInputPrice?.addEventListener('input', event => updateSelectedModelPrice('input_per_million', event.target.value));
+    selectedModelOutputPrice?.addEventListener('input', event => updateSelectedModelPrice('output_per_million', event.target.value));
 };

@@ -35,15 +35,6 @@
 
             <div class="layout">
                 <aside class="sidebar">
-                    <div class="side-card workflow-panel workflow-panel-comfy">
-                        <div class="side-title" data-i18n="comfy.workflowList">工作流列表</div>
-                        <div id="workflowList" class="workflow-list"></div>
-                        <button class="upload-btn" type="button" onclick="document.getElementById('uploadInput').click()">
-                            <i data-lucide="upload" class="w-3.5 h-3.5"></i><span data-i18n="comfy.uploadWorkflow">上传工作流</span>
-                        </button>
-                        <input id="uploadInput" type="file" accept="application/json" style="display:none" onchange="onUpload(event)">
-                    </div>
-
                     <div class="side-card" id="previewCard">
                         <div class="preview-title-row">
                             <i data-lucide="eye" class="w-4 h-4" style="color:var(--muted)"></i>
@@ -68,9 +59,6 @@
                                     <div id="editorSub" class="editor-sub" data-i18n="comfy.editorSubDefault">从左侧列表选择，或上传新的 API 工作流</div>
                                 </div>
                                 <div class="content-actions">
-                                    <button id="deleteBtn" class="action-btn danger-btn" type="button" onclick="onDelete()" style="display:none">
-                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i><span data-i18n="common.delete">删除</span>
-                                    </button>
                                     <button id="saveBtn" class="action-btn save-btn" type="button" onclick="onSave()" style="display:none">
                                         <i data-lucide="save" class="w-3.5 h-3.5"></i><span data-i18n="comfy.saveConfig">保存配置</span>
                                     </button>

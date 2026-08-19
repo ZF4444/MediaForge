@@ -15,12 +15,12 @@ def build_image_adapter_registry(handlers: Mapping[str, ImageGenerationHandler])
 
 def select_image_adapter(
     provider: Mapping[str, object], model: str, *, runninghub: Callable[[Mapping[str, object]], bool],
-    omnilojo: Callable[[Mapping[str, object]], bool], gemini: Callable[[Mapping[str, object], str], bool],
+    omnilojo: Callable[[Mapping[str, object], str], bool], gemini: Callable[[Mapping[str, object], str], bool],
     volcengine: Callable[[Mapping[str, object]], bool],
 ) -> str:
     if runninghub(provider):
         return "runninghub"
-    if omnilojo(provider):
+    if omnilojo(provider, model):
         return "omnilojo"
     if gemini(provider, model):
         return "gemini"

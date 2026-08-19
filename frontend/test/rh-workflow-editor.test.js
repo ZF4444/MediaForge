@@ -141,6 +141,16 @@ describe('rhEditorSortedFields', () => {
     });
 });
 
+describe('renderRhMappedPreviewHtml', () => {
+    it('能渲染包含图片字段的预览统计', () => {
+        const ctx = createRhWorkflowEditorSandbox({
+            rhWorkflowEditorState: {previewStatus:'', previewOutputs:[], previewRunning:false, previewParams:{}}
+        });
+        const html = run(ctx, "renderRhMappedPreviewHtml({title:'测试应用', appId:'12345678', fields:[{nodeId:'1', fieldName:'image', fieldType:'IMAGE', enabled:true}]})");
+        expect(html).toContain('图片 1');
+    });
+});
+
 describe('mediaAcceptForRhKind', () => {
     it('按媒体类型返回对应的 accept 字符串', () => {
         const ctx = createRhWorkflowEditorSandbox();

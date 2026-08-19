@@ -457,7 +457,7 @@ M10 拆了 `generation-settings.js`，共135个函数。
   `asset-library.js` 之后、`main.js` 之前加载。物理上是连续的一整块
   （原文件 1753-3365 行区间），覆盖：
   1. 引擎/模型可用性判断：`syncEngineOptionsVisibility`/
-     `runningHubStandardImageModels`/`smartModelAllowed`/
+     `smartModelAllowed`/
      `providerHasAllowedImageModel`/`imageProviders`/`volcengineProvider`/
      `runningHubProvider` 等。
   2. RunningHub 工作流字段解析与渲染：`rhFieldKind`/`rhFieldRole`/
@@ -1526,6 +1526,5 @@ npm test        # 跑全部五个页面的 Vitest 回归测试
 如果只改了 `static/js/api-settings.js`/`static/js/asset-manager.js`/
 `static/js/comfyui-settings.js`/`static/js/index.js`，忘记
 `npm run build`，页面加载到的会是旧版本代码。
-
 
 

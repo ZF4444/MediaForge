@@ -13,7 +13,7 @@
 // comfy/runninghub）的可选模型/尺寸/比例/数量等参数如何渲染
 // 成 UI、如何响应用户操作写回 settings：
 //   1. 引擎/模型可用性判断：syncEngineOptionsVisibility /
-//      runningHubStandardImageModels / smartModelAllowed /
+//      smartModelAllowed /
 //      providerHasAllowedImageModel / providerHasAllowedVideoModel /
 //      sortProvidersByPermission / imageProviders / volcengineProvider /
 //      runningHubProvider / runningHubEntries 等
@@ -53,7 +53,6 @@
 function syncEngineOptionsVisibility(){
     if(!engineSelect) return;
     const has = id => (apiProviders || []).some(p => p.id === id && p.enabled !== false);
-    engineSelect.querySelector('option[value="volcengine"]').hidden = !has('volcengine');
     engineSelect.querySelector('option[value="runninghub"]').hidden = !has('runninghub');
     // api 引擎：至少有一个非特殊 provider 启用且有 image_models
     const apiHidden = !imageProviders().length;
@@ -64,13 +63,6 @@ function syncEngineOptionsVisibility(){
         if(visible) { settings.engine = visible.value; engineSelect.value = visible.value; }
     }
 }
-// RunningHub 标准模型 API：目前只把 GPT-Image2（rhart-image-g-2-official）暴露给通用「AI 生成」模型下拉，
-// 不影响 rh_apps 专属的 AI 应用引擎逻辑。
-const RUNNINGHUB_STANDARD_IMAGE_MODELS = ['rhart-image-g-2-official'];
-function runningHubStandardImageModels(provider){
-    const models = Array.isArray(provider?.image_models) ? provider.image_models : [];
-    return models.filter(m => RUNNINGHUB_STANDARD_IMAGE_MODELS.includes(String(m || '').trim()));
-}
 // 访问控制：window.__canvasAllowedModels 为 Set<"provider_id::model"> 时按白名单过滤；
 // null/未设置（未登录探测失败、admin、或用户未被限制）时视为全部放开。
 function smartModelAllowed(providerId, model){
@@ -79,7 +71,7 @@ function smartModelAllowed(providerId, model){
     return allowed.has(`${providerId}::${model}`);
 }
 function providerHasAllowedImageModel(provider){
-    const models = provider?.id === 'runninghub' ? runningHubStandardImageModels(provider) : (provider?.image_models || []);
+    const models = provider?.image_models || [];
     if(!models.length) return true;
     return models.some(model => smartModelAllowed(provider?.id || '', model));
 }
@@ -99,16 +91,14 @@ function sortProvidersByPermission(providers, kind='image'){
     });
 }
 function imageProviders(){
-    return sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'volcengine'
-        && (p.id === 'runninghub' ? runningHubStandardImageModels(p).length : (p.image_models || []).length))
-        .map(p => p.id === 'runninghub' ? {...p, image_models: runningHubStandardImageModels(p)} : p), 'image');
+    return sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && (p.image_models || []).length), 'image');
 }
 function volcengineProvider(){
     return (apiProviders || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
         id:'volcengine',
         name:'火山引擎',
         image_models:[],
-        video_models:DEFAULT_VIDEO_MODELS,
+        video_models:[],
         enabled:true
     };
 }
@@ -184,20 +174,10 @@ function resolveChatModel(model='', providerId=''){
     const models = providerChatModels(resolveChatProviderId(providerId));
     return models.includes(model) ? model : (models[0] || model || 'gpt-4o-mini');
 }
-function chatProviderOptions(selectedId=''){
-    const selected = resolveChatProviderId(selectedId);
-    return chatApiProviders().map(provider => `<option value="${escapeHtml(provider.id)}" ${provider.id === selected ? 'selected' : ''}>${escapeHtml(provider.name || provider.id)}</option>`).join('');
-}
 function modelDisplayName(model, providerId){
     const p = providerId ? (apiProviders || []).find(pp => pp.id === providerId) : null;
     if(p?.model_aliases?.[model]) return p.model_aliases[model];
     return model;
-}
-function chatModelOptions(selectedModel='', providerId=''){
-    const selectedProvider = resolveChatProviderId(providerId);
-    const models = providerChatModels(selectedProvider);
-    const selected = resolveChatModel(selectedModel, selectedProvider);
-    return [...new Set([selected, ...models].filter(Boolean))].map(model => `<option value="${escapeHtml(model)}" ${model === selected ? 'selected' : ''}>${escapeHtml(modelDisplayName(model, selectedProvider))}</option>`).join('');
 }
 function apiProviderById(providerId){
     if(providerId === 'volcengine') return volcengineProvider();
@@ -205,7 +185,7 @@ function apiProviderById(providerId){
 }
 function providerImageModels(providerId){
     if(providerId === 'volcengine') return volcengineProvider().image_models || [];
-    if(providerId === 'runninghub') return runningHubStandardImageModels(runningHubProvider());
+    if(providerId === 'runninghub') return [];
     return (apiProviders || []).find(p => p.id === providerId)?.image_models || [];
 }
 let _rhLastAttachedKindsKey = null;
@@ -230,9 +210,8 @@ function sanitizeSmartApiSelection(target=settings){
             const models = providerImageModels('volcengine');
             if(!models.includes(target.model)) target.model = models[0] || '';
         }
-        return target;
+        target.engine = 'api';
     }
-    clearVolcengineSelectionOutsideVolcengine(target);
     if(target.provider_id){
         const models = providerImageModels(target.provider_id);
         if(models.length && !models.includes(target.model)) target.model = models[0] || '';
@@ -243,11 +222,9 @@ function sanitizeSmartApiSelection(target=settings){
     }
     return target;
 }
-const DEFAULT_VIDEO_MODELS = ['veo3-fast','veo3','sora','runway','kling','pika','minimax-video','wan-v2','seedance-1.0-pro'];
 function videoApiProviders(){
-    const fromConfig = sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && p.id !== 'volcengine' && (p.video_models || []).length), 'video');
-    if(fromConfig.length) return fromConfig;
-    return [{id:'comfly', name:'Comfly', video_models:DEFAULT_VIDEO_MODELS, enabled:true}];
+    const fromConfig = sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && (p.video_models || []).length), 'video');
+    return fromConfig;
 }
 function videoProviderById(providerId){
     if(providerId === 'volcengine') return volcengineProvider();
@@ -256,39 +233,41 @@ function videoProviderById(providerId){
 function providerVideoModels(providerId){
     if(providerId === 'volcengine') return volcengineVideoModels();
     const provider = videoApiProviders().find(p => p.id === providerId);
-    const models = provider?.video_models || DEFAULT_VIDEO_MODELS;
-    return [...new Set(models)];
+    return [...new Set(provider?.video_models || [])];
+}
+// Normalize the mutually-exclusive video input modes used by the API payload
+// and by the compact generation settings popover.
+function videoGenerationMode(source=settings){
+    const value = source || settings || {};
+    if(value.videoUseFrameRoles) return 'frames';
+    if(value.videoMultimodal) return 'multimodal';
+    return 'text';
 }
 function volcengineVideoModels(){
     const provider = (apiProviders || []).find(p => p.id === 'volcengine');
-    return [...new Set(provider?.video_models || DEFAULT_VIDEO_MODELS)];
+    return [...new Set(provider?.video_models || [])];
 }
 function renderVideoModelSelector(providers, models, restricted){
     const currentProvider = (providers || []).find(p => p.id === settings.videoProvider) || videoProviderById(settings.videoProvider);
     const modelLabel = settings.videoModel ? modelDisplayName(settings.videoModel, settings.videoProvider) : tr('smart.model');
+    const entries = (models || []).map(model => ({
+        model,
+        locked: restricted && !smartModelAllowed(settings.videoProvider, model)
+    }));
     return `<div class="smart-control video-model-control">
         <button class="smart-pill video-model-summary" type="button" title="${escapeAttr(`${currentProvider?.name || settings.videoProvider || ''} · ${modelLabel}`)}">
             <i data-lucide="film"></i><span class="sub">${escapeHtml(modelLabel)}</span><i data-lucide="chevron-up" class="pill-caret"></i>
         </button>
         <div class="smart-popover video-model-popover">
             <div class="video-config-head">
-                <div><strong>${escapeHtml(tr('smart.videoModelSelect'))}</strong><span>${escapeHtml(currentProvider?.name || settings.videoProvider || tr('smart.platform'))}</span></div>
+                <div><strong>${escapeHtml(tr('smart.videoModelSelect'))}</strong></div>
             </div>
-            <section class="video-config-section">
-                <div class="video-config-label">${escapeHtml(tr('smart.videoPlatform'))}</div>
-                <div class="video-config-provider-grid">
-                    ${(providers || []).map(p => {
-                        const locked = restricted && (p.video_models || []).length > 0 && !(p.video_models || []).some(m => smartModelAllowed(p.id, m));
-                        return `<button type="button" class="video-config-option ${p.id === settings.videoProvider ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoProvider" data-smart-value="${escapeAttr(p.id)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(p.name || p.id)}</span>${locked ? '<i data-lucide="lock"></i>' : ''}</button>`;
-                    }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoPlatform'))}</div>`}
-                </div>
-            </section>
             <section class="video-config-section">
                 <div class="video-config-label">${escapeHtml(tr('smart.videoModel'))}</div>
                 <div class="video-config-model-grid">
-                    ${(models || []).map(m => {
-                        const locked = restricted && !smartModelAllowed(settings.videoProvider, m);
-                        return `<button type="button" class="video-config-option ${m === settings.videoModel ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoModel" data-smart-value="${escapeAttr(m)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(modelDisplayName(m, settings.videoProvider))}</span>${locked ? '<i data-lucide="lock"></i>' : ''}</button>`;
+                    ${entries.map(entry => {
+                        const active = entry.model === settings.videoModel;
+                        return `<button type="button" class="video-config-option ${active ? 'active' : ''} ${entry.locked ? 'is-locked' : ''}" data-smart-param="videoModel" data-smart-value="${escapeAttr(entry.model)}" ${entry.locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(modelDisplayName(entry.model, settings.videoProvider))}</span>${entry.locked ? '<i data-lucide="lock"></i>' : ''}</button>`;
                     }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
                 </div>
             </section>
@@ -434,7 +413,8 @@ function renderDynamicParams(){
     const node = activeSettingsSubject();
     const allowedEngines = allowedEnginesForNode(node);
     const unifiedWorkflowNode = ['image','video','workflow'].includes(node?.genKind);
-    settings.engine = ['api','volcengine','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
+    if(settings.engine === 'volcengine') settings.engine = 'api';
+    settings.engine = ['api','comfy','runninghub'].includes(settings.engine) ? settings.engine : 'api';
     // 定型生成节点：强制引擎落在允许列表内，避免继承到画布默认/最近使用的错误引擎（如图片节点误用工作流配置框）
     if(allowedEngines && !allowedEngines.includes(settings.engine)){
         settings.engine = allowedEngines.includes(defaultEngineForGenKind(node?.genKind)) ? defaultEngineForGenKind(node?.genKind) : allowedEngines[0];
@@ -443,7 +423,6 @@ function renderDynamicParams(){
     if(node?.genKind === 'image') settings.apiKind = 'image';
     else if(node?.genKind === 'video') settings.apiKind = 'video';
     else settings.apiKind = settings.apiKind === 'video' ? 'video' : 'image';
-    clearVolcengineSelectionOutsideVolcengine(settings);
     // 按节点类型过滤引擎下拉可选项
     Array.from(engineSelect.options).forEach(opt => {
         opt.hidden = unifiedWorkflowNode && opt.value === 'comfy'
@@ -458,7 +437,6 @@ function renderDynamicParams(){
     if(node?.genKind === 'workflow'){
         // 工作流节点在配置框中统一列出 ComfyUI 工作流与 RH 应用，避免再通过引擎下拉切换来源。
         engineSelect.style.display = 'none';
-        syncApiKindToggleVisibility();
         renderWorkflowNodeParams();
         bindDynamicParams();
         updatePromptPlaceholder();
@@ -471,14 +449,11 @@ function renderDynamicParams(){
     }
     // 图片和视频节点保留引擎选择；可选项由各自的 allowedEngines 过滤。
     engineSelect.style.display = '';
-    syncApiKindToggleVisibility();
     if(settings.engine === 'api'){
-        if(settings.apiKind === 'video') renderApiVideoParams();
+        if(node?.genKind === 'video') renderApiVideoParams();
+        else if(node?.genKind === 'image') renderApiParams();
+        else if(settings.apiKind === 'video') renderApiVideoParams();
         else renderApiParams();
-    }
-    else if(settings.engine === 'volcengine'){
-        if(settings.apiKind === 'video') renderVolcengineVideoParams();
-        else renderVolcengineParams();
     }
     else if(settings.engine === 'runninghub') renderRunningHubParams();
     else renderComfyParams();
@@ -496,17 +471,16 @@ function renderDynamicParams(){
     if(window.lucide) lucide.createIcons();
 }
 function renderApiParams(){
-    const providers = imageProviders();
-    const preferredProvider = providers.find(providerHasAllowedImageModel) || providers[0] || null;
-    if(!settings.provider_id || !providers.some(p => p.id === settings.provider_id)) settings.provider_id = preferredProvider?.id || '';
-    else if(!providerHasAllowedImageModel(providers.find(p => p.id === settings.provider_id)) && preferredProvider) settings.provider_id = preferredProvider.id;
-    const models = providerImageModels(settings.provider_id);
-    if(!settings.model || !models.includes(settings.model)) settings.model = models[0] || '';
+    const entries = apiImageModelEntries();
+    const selected = entries.find(entry => entry.providerId === settings.provider_id && entry.model === settings.model && !entry.locked)
+        || entries.find(entry => !entry.locked)
+        || entries[0];
+    settings.provider_id = selected?.providerId || '';
+    settings.model = selected?.model || '';
     normalizeApiSizeSettings('');
     const outpaintLocked = settings.outpaintResolutionLocked === true;
     dynamicParams.innerHTML = `
-        ${renderProviderControl(providers, true)}
-        ${renderModelControl(models, true)}
+        ${renderApiImageModelControl(entries, true)}
         ${renderResolutionControl('', false)}
         ${outpaintLocked ? '' : renderRatioControl('', true, false)}
         ${renderQualityControl()}
@@ -514,14 +488,14 @@ function renderApiParams(){
     `;
 }
 function renderApiVideoParams(){
-    const providers = videoApiProviders();
-    const preferredProvider = providers.find(providerHasAllowedVideoModel) || providers[0] || null;
-    if(!settings.videoProvider || !providers.some(p => p.id === settings.videoProvider)) settings.videoProvider = preferredProvider?.id || 'comfly';
-    else if(!providerHasAllowedVideoModel(providers.find(p => p.id === settings.videoProvider)) && preferredProvider) settings.videoProvider = preferredProvider.id;
-    const models = providerVideoModels(settings.videoProvider);
-    if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || 'veo3-fast';
+    const entries = apiVideoModelEntries();
+    const selected = entries.find(entry => entry.providerId === settings.videoProvider && entry.model === settings.videoModel && !entry.locked)
+        || entries.find(entry => !entry.locked)
+        || entries[0];
+    settings.videoProvider = selected?.providerId || '';
+    settings.videoModel = selected?.model || '';
     dynamicParams.innerHTML = `
-        ${renderVideoModelSelector(providers, models, true)}
+        ${renderApiVideoModelControl(entries, true)}
         ${renderVideoGenerationConfig()}
     `;
 }
@@ -549,7 +523,7 @@ function renderVolcengineVideoParams(){
     const providers = [provider];
     const models = volcengineVideoModels();
     settings.videoProvider = 'volcengine';
-    if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || 'seedance-1.0-pro';
+    if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || '';
     dynamicParams.innerHTML = `
         ${renderVideoModelSelector(providers, models, false)}
         ${renderVideoGenerationConfig()}
@@ -943,6 +917,54 @@ function renderCountVisualControl(){
 function renderCountControl(){
     return `<select data-param="count">${[1,2,3,4].map(n => optionHtml(n, `${n} 张`, Number(settings.count || 1))).join('')}</select>`;
 }
+function apiImageModelEntries(){
+    return imageProviders().flatMap(provider => (provider.image_models || []).map(model => ({
+        providerId: provider.id,
+        model,
+        label: modelDisplayName(model, provider.id),
+        locked: !smartModelAllowed(provider.id, model)
+    })));
+}
+function apiVideoModelEntries(){
+    return videoApiProviders().flatMap(provider => (provider.video_models || []).map(model => ({
+        providerId: provider.id,
+        model,
+        label: modelDisplayName(model, provider.id),
+        locked: !smartModelAllowed(provider.id, model)
+    })));
+}
+function renderApiImageModelControl(entries, restricted){
+    const current = entries.find(entry => entry.providerId === settings.provider_id && entry.model === settings.model);
+    return `<div class="smart-control model-control">
+        <button class="smart-pill" type="button"><i data-lucide="sparkles"></i><span class="sub">${escapeHtml(current?.label || tr('smart.model'))}</span></button>
+        <div class="smart-popover compact-popover">
+            <div class="smart-popover-title">${escapeHtml(tr('smart.imageModel'))}</div>
+            <div class="model-list">
+                ${entries.map(entry => {
+                    const locked = restricted && entry.locked;
+                    const active = entry.providerId === settings.provider_id && entry.model === settings.model;
+                    return `<button type="button" class="direct-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="model" data-smart-value="${escapeAttr(entry.model)}" data-smart-provider-id="${escapeAttr(entry.providerId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noImageModel'))}</div>`}
+            </div>
+        </div>
+    </div>`;
+}
+function renderApiVideoModelControl(entries, restricted){
+    const current = entries.find(entry => entry.providerId === settings.videoProvider && entry.model === settings.videoModel);
+    return `<div class="smart-control model-control video-model-control">
+        <button class="smart-pill" type="button"><i data-lucide="sparkles"></i><span class="sub">${escapeHtml(current?.label || tr('smart.model'))}</span></button>
+        <div class="smart-popover compact-popover">
+            <div class="smart-popover-title">${escapeHtml(tr('smart.videoModel'))}</div>
+            <div class="model-list">
+                ${entries.map(entry => {
+                    const locked = restricted && entry.locked;
+                    const active = entry.providerId === settings.videoProvider && entry.model === settings.videoModel;
+                    return `<button type="button" class="direct-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoModel" data-smart-value="${escapeAttr(entry.model)}" data-smart-provider-id="${escapeAttr(entry.providerId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
+            </div>
+        </div>
+    </div>`;
+}
 function renderCustomRatioControls(prefix=''){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     if(settings[ratioKey] !== 'custom' && settings[ratioKey] !== 'source') return '';
@@ -1288,9 +1310,11 @@ function smartComfyRandomValue(field){
     }
     return Math.floor(value);
 }
-function setDynamicSetting(key, value){
+function setDynamicSetting(key, value, providerId=''){
     const numericKeys = new Set(['count','videoDuration','customRatioWidth','customRatioHeight','customWidth','customHeight','msCustomRatioWidth','msCustomRatioHeight','msCustomWidth','msCustomHeight']);
     const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','workflowSource','comfyWorkflow','quality','count','rhConfigKey','rhInstanceType']);
+    if(key === 'model' && providerId) settings.provider_id = providerId;
+    if(key === 'videoModel' && providerId) settings.videoProvider = providerId;
     settings[key] = numericKeys.has(key) && value !== '' ? Number(value) : value;
     if(key === 'provider_id') settings.model = '';
     if(key === 'videoProvider') settings.videoModel = '';
@@ -1370,7 +1394,7 @@ function bindDynamicParams(){
             }
             if(btn.closest('.video-model-control')) reopenVideoControlAfterRender = 'model';
             else if(btn.closest('.video-generation-control')) reopenVideoControlAfterRender = 'config';
-            setDynamicSetting(btn.dataset.smartParam, btn.dataset.smartValue);
+            setDynamicSetting(btn.dataset.smartParam, btn.dataset.smartValue, btn.dataset.smartProviderId || '');
             if(btn.dataset.smartParam === 'videoDuration') renderDynamicParams();
         };
     });

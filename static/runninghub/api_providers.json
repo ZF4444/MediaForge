@@ -8,14 +8,8 @@
     "image_edit_endpoint": "",
     "enabled": true,
     "primary": false,
-    "image_models": [
-      "seedream-v5-lite/text-to-image",
-      "seedream-v5-lite/image-to-image",
-      "rhart-image-g-2-official"
-    ],
-    "model_aliases": {
-      "rhart-image-g-2-official": "GPT-Image2"
-    },
+    "image_models": [],
+    "model_aliases": {},
     "chat_models": [],
     "video_models": [],
     "rh_apps": [

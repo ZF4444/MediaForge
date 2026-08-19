@@ -17,7 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 
 const RH_WORKFLOW_EDITOR_SRC = fs.readFileSync(
-    path.resolve(repoRoot, 'frontend/src/api-settings/rh-workflow-editor.js'),
+    path.resolve(repoRoot, 'frontend/src/workflow-settings/rh-workflow-editor.js'),
     'utf8'
 );
 

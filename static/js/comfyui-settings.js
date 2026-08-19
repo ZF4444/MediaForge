@@ -27,6 +27,10 @@ const TYPES = [
     { v:'audio', zh:'音频', en:'Audio' },
     { v:'boolean', zh:'开关', en:'Switch' },
 ];
+const comfySettingsQuery = new URLSearchParams(window.location.search);
+const singleWorkflowName = comfySettingsQuery.get('workflow') || '';
+const isSingleWorkflowMode = Boolean(singleWorkflowName);
+if(isSingleWorkflowMode) document.body.classList.add('single-workflow-mode');
 function currentLang(){ return window.StudioI18n?.lang?.() === 'en' ? 'en' : 'zh'; }
 function typeLabel(type){
     const item = TYPES.find(t => t.v === type);
@@ -192,6 +196,11 @@ function mediaPreviewHtml(kind, url, name='', compact=false){
 
 async function loadList(){
     try {
+        if(isSingleWorkflowMode){
+            workflows = [{name:singleWorkflowName, title:singleWorkflowName.replace(/\.json$/i,'')}];
+            await selectWorkflow(singleWorkflowName);
+            return;
+        }
         const data = await fetch('/api/workflows').then(r=>r.json());
         workflows = data.workflows || [];
         renderList();
@@ -209,6 +218,8 @@ window.addEventListener('pageshow', () => {
 });
 
 function renderList(){
+    if(!listEl) return;
+    if(isSingleWorkflowMode){ listEl.innerHTML = ''; return; }
     listEl.innerHTML = workflows.map(w => `
         <button class="workflow-card ${w.name===selectedName?'active':''}" type="button" onclick="selectWorkflow('${escapeHtml(w.name)}')">
             <span class="workflow-icon"><i data-lucide="${w.builtin?'package':'file-json-2'}" class="w-3.5 h-3.5"></i></span>
@@ -263,7 +274,7 @@ function updateWorkflowTitle(value){
     currentConfig.title = value;
     const item = workflows.find(w => w.name === selectedName);
     if(item) item.title = value || selectedName.replace('.json','');
-    renderList();
+    if(!isSingleWorkflowMode) renderList();
 }
 
 function setWorkspaceMode(mode){
@@ -275,7 +286,7 @@ function setWorkspaceMode(mode){
 
 function renderEditor(){
     if(!currentWorkflow){
-        deleteBtn.style.display = 'none';
+        if(deleteBtn) deleteBtn.style.display = 'none';
         saveBtn.style.display = 'none';
         nodeListEl.innerHTML = '';
         document.getElementById('graphCard').style.display = 'none';
@@ -286,7 +297,7 @@ function renderEditor(){
     document.getElementById('nodesToggle').style.display = workspaceMode === 'graph' ? 'flex' : 'none';
     workflowTitleInput.value = currentConfig.title || selectedName.replace('.json','');
     subEl.textContent = tf('comfy.nodeStats', {nodes:Object.keys(currentWorkflow).length, fields:currentConfig.fields.length}) + (isBuiltin ? ` · ${tr('comfy.builtin')}` : '');
-    deleteBtn.style.display = isBuiltin ? 'none' : 'inline-flex';
+    if(deleteBtn) deleteBtn.style.display = isBuiltin ? 'none' : 'inline-flex';
     saveBtn.style.display = 'inline-flex';
 
     renderGraph();
