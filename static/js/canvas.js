@@ -1776,8 +1776,8 @@ function updateNodeElementDuringResize(node){
 function smartRunPlatformLabel(run){
     const s = run?.settings || {};
     if(s.engine === 'comfy') return 'ComfyUI';
-    if(run?.kind === 'video') return videoProviderById(s.videoProvider || '')?.name || s.videoProvider || 'Video';
-    return apiProviderById(s.provider_id || '')?.name || s.provider_id || 'API';
+    if(run?.kind === 'video') return s.videoProvider || 'Video';
+    return s.provider_id || 'API';
 }
 function smartRunRequestMeta(run){
     const s = run?.settings || {};

@@ -87,7 +87,7 @@ function sortProvidersByPermission(providers, kind='image'){
         const aAllowed = hasAccess(a) ? 0 : 1;
         const bAllowed = hasAccess(b) ? 0 : 1;
         if(aAllowed !== bAllowed) return aAllowed - bAllowed;
-        return String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, {numeric:true, sensitivity:'base'});
+        return String(a?.id || '').localeCompare(String(b?.id || ''), undefined, {numeric:true, sensitivity:'base'});
     });
 }
 function imageProviders(){
@@ -804,13 +804,13 @@ function videoAspectIconClass(value){
 function renderProviderControl(providers, restricted){
     const current = (providers || []).find(p => p.id === settings.provider_id) || apiProviderById(settings.provider_id);
     return `<div class="smart-control provider-control">
-        <button class="smart-pill" type="button"><i data-lucide="plug-zap"></i><span class="sub">${escapeHtml(current?.name || settings.provider_id || tr('smart.platform'))}</span></button>
+        <button class="smart-pill" type="button"><i data-lucide="plug-zap"></i><span class="sub">${escapeHtml(settings.provider_id || tr('smart.platform'))}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.apiPlatform'))}</div>
             <div class="model-list">
                 ${providers.map(p => {
                     const locked = restricted && (p.image_models || []).length > 0 && !(p.image_models || []).some(m => smartModelAllowed(p.id, m));
-                    return `<button type="button" class="direct-option ${p.id === settings.provider_id ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="provider_id" data-smart-value="${escapeHtml(p.id)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(p.name || p.id)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                    return `<button type="button" class="direct-option ${p.id === settings.provider_id ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="provider_id" data-smart-value="${escapeHtml(p.id)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(p.id)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
                 }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noApiPlatform'))}</div>`}
             </div>
         </div>

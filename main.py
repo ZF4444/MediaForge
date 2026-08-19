@@ -1256,6 +1256,8 @@ access_control.set_fallback_chat_models_provider(lambda: CHAT_MODELS)
 
 def public_provider(provider, *, include_credentials=False):
     item = {**provider}
+    # Provider display names are deprecated. Keep the legacy field in the API
+    # payload for compatibility with older clients; current UI ignores it.
     if not include_credentials:
         return item
     key = provider_env_key_value(provider["id"])
@@ -1333,7 +1335,7 @@ def get_api_provider(provider_id="comfly"):
     if not provider:
         raise HTTPException(status_code=400, detail=f"未找到 API 平台：{target}")
     if not provider.get("enabled", True):
-        raise HTTPException(status_code=400, detail=f"API 平台已禁用：{provider.get('name') or target}")
+        raise HTTPException(status_code=400, detail=f"API 平台已禁用：{target}")
     return provider
 
 def get_api_provider_exact(provider_id: str):
@@ -1343,7 +1345,7 @@ def get_api_provider_exact(provider_id: str):
     if not provider:
         raise HTTPException(status_code=400, detail=f"未找到 API 平台：{target or '(empty)'}。新增平台未保存时请使用当前表单拉取模型。")
     if not provider.get("enabled", True):
-        raise HTTPException(status_code=400, detail=f"API 平台已禁用：{provider.get('name') or target}")
+        raise HTTPException(status_code=400, detail=f"API 平台已禁用：{target}")
     return provider
 
 def env_quote(value):
@@ -1828,7 +1830,7 @@ def resolve_chat_provider(provider: str, model: str):
             raise HTTPException(status_code=400, detail='未配置可用于 Agent 的聊天 Provider，请先在 API 平台管理中配置聊天模型。')
     base_root = (api_provider.get("base_url") or AI_BASE_URL).rstrip("/")
     if not base_root:
-        raise HTTPException(status_code=400, detail=f"{api_provider.get('name') or api_provider['id']} 未配置 Base URL")
+        raise HTTPException(status_code=400, detail=f"{api_provider['id']} 未配置 Base URL")
     default_model = preferred_chat_model(api_provider)
     mdl = selected_model(model, default_model)
     protocol = effective_protocol(api_provider, mdl)
@@ -1845,7 +1847,7 @@ def api_headers(json_body=True, provider=None, model=""):
     if provider:
         key_env = provider_key_env(provider["id"])
         api_key = os.getenv(key_env, "")
-        provider_name = provider.get("name") or provider["id"]
+        provider_name = provider["id"]
         if not api_key:
             raise HTTPException(status_code=400, detail=f"未配置 {provider_name} 的 API Key，请在 API 平台管理中填写。")
     else:
@@ -2909,7 +2911,7 @@ def friendly_chat_error_detail(text, model="", provider=None):
 
     if is_volcengine_provider(provider):
         if code_lc in {"invalidendpointormodel.notfound", "invalidendpointormodel.modelidaccessdisabled"}:
-            provider_name = provider.get("name") or provider.get("id") or "火山方舟"
+            provider_name = provider.get("id") or "火山方舟"
             return (
                 f"{provider_name} 当前不接受模型名「{model_name or '未指定'}」直接调用聊天接口，"
                 f"请在火山方舟控制台创建并使用推理接入点 ID（形如 `ep-...`）作为聊天模型。\n\n"
@@ -3158,7 +3160,7 @@ def extract_image_from_chat_response(data):
 async def generate_omnilojo_provider_image(prompt, size, model, reference_images=None, provider=None):
     base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
     if not base_url:
-        raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
+        raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
     chat_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/chat/completions")
     content = [{"type": "text", "text": str(prompt or "").strip()}]
     for ref in (reference_images or [])[:16]:
@@ -3183,7 +3185,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
         quality = ""
     base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
     if not base_url:
-        raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
+        raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
     gen_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/images/generations")
     edit_url = provider_endpoint_url(provider, "image_edit_endpoint", "/v1/images/edits")
     refs = [ref for ref in (reference_images or []) if ref.get("url")]
@@ -4315,7 +4317,7 @@ async def fetch_upstream_models(provider_id: str):
     provider = get_api_provider_exact(provider_id)
     api_key = os.getenv(provider_key_env(provider["id"]), "")
     if not api_key:
-        raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider_id} 未配置 API Key")
+        raise HTTPException(status_code=400, detail=f"{provider_id} 未配置 API Key")
     protocol = provider_protocol(provider)
     async with provider_operation(protocol, "model_discovery", user_id=current_user_id()):
         return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, protocol)
@@ -4351,7 +4353,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
     local_urls = [item["url"] for item in media_items if item.get("url")]
     raw = generated[0][1] if generated else {}
     if not local_urls:
-        provider_name = provider.get("name") or provider["id"]
+        provider_name = provider["id"]
         raw_text = json.dumps(raw, ensure_ascii=False)[:800] if isinstance(raw, (dict, list)) else str(raw)[:800]
         raise HTTPException(status_code=502, detail=f"{provider_name} 没有返回图片：{raw_text}")
     result = {
@@ -4362,7 +4364,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
         "type": "online",
         "model": model,
         "provider_id": provider["id"],
-        "provider_name": provider.get("name") or provider["id"],
+        "provider_name": provider["id"],
         "task_id": extract_task_id(raw) if isinstance(raw, dict) else None,
         "request_id": raw.get("id") if isinstance(raw, dict) else None,
         "params": {"provider_id": provider["id"], "model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
@@ -4431,7 +4433,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "type": "online",
             "model": "",
             "provider_id": provider["id"],
-            "provider_name": provider.get("name") or provider["id"],
+            "provider_name": provider["id"],
             "task_id": task_id,
             "request_id": raw.get("id") if isinstance(raw, dict) else "",
             "params": {"provider_id": provider["id"]},
@@ -4446,7 +4448,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "status": "failed",
             "task_id": task_id,
             "provider_id": provider["id"],
-            "provider_name": provider.get("name") or provider["id"],
+            "provider_name": provider["id"],
             "error": image_task_fail_reason(raw),
             "raw": raw,
         }
@@ -4454,7 +4456,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         "status": "running",
         "task_id": task_id,
         "provider_id": provider["id"],
-        "provider_name": provider.get("name") or provider["id"],
+        "provider_name": provider["id"],
         "message": "任务仍在生成中",
         "raw": raw,
     }
@@ -5001,7 +5003,7 @@ def humanize_video_task_failure(reason) -> str:
 async def wait_for_video_task(client, provider, task_id, submit_url=""):
     base_url = video_api_root(provider)
     if not base_url:
-        raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
+        raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
     task_urls = video_task_url_candidates(provider, base_url, task_id, submit_url)
     deadline = time.monotonic() + VIDEO_POLL_TIMEOUT
     delay = max(2.0, IMAGE_POLL_INTERVAL)
@@ -5042,10 +5044,10 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
 async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     base_url = video_api_root(provider)
     if not base_url:
-        raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
+        raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
     api_key = os.getenv(provider_key_env(provider["id"]), "")
     if not api_key:
-        raise HTTPException(status_code=400, detail=f"未配置 {provider.get('name') or provider['id']} 的 API Key，请在 API 设置中填写。")
+        raise HTTPException(status_code=400, detail=f"未配置 {provider['id']} 的 API Key，请在 API 设置中填写。")
     is_volcengine = is_volcengine_provider(provider)
     submit_urls = video_submit_url_candidates(provider, base_url)
     submit_url = submit_urls[0]
@@ -5194,7 +5196,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
             requested_model = body.get("model", "") or payload.model or ""
         except NameError:
             requested_model = payload.model or ""
-        provider_name = provider.get('name') or provider['id']
+        provider_name = provider['id']
         # 1) 模型名不在上游支持范围 → 从错误信息里抽取合法列表展示
         valid_models_match = re.search(r"not in\s*\[([^\]]+)\]", text)
         if valid_models_match:

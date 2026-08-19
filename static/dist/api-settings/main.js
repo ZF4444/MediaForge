@@ -12,8 +12,6 @@ const expandedModelKinds = new Set(['image', 'chat', 'video']);
 const providerList = document.getElementById('providerList');
 const editorTitle = document.getElementById('editorTitle');
 const statusEl = document.getElementById('status');
-// Kept as a hidden compatibility hook for embedded settings scripts. Provider
-// names are deprecated and this value is never rendered or submitted.
 const nameInput = document.getElementById('nameInput');
 const idInput = document.getElementById('idInput');
 const baseInput = document.getElementById('baseInput');
@@ -100,6 +98,23 @@ function broadcastStudioApiChange(type='providers-changed'){
 function normalizeId(value){
     return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/^-+|-+$/g, '').replace(/-+/g, '-').slice(0, 40);
 }
+function deriveIdFromName(name, existingId){
+    if(existingId) return existingId;
+    let id = normalizeId(name) || `api-${Math.random().toString(36).slice(2, 8)}`;
+    let candidate = id, index = 2;
+    while(providers.some(item => item.id === candidate)) candidate = `${id}-${index++}`;
+    return candidate;
+}
+function updateIdPreview(){
+    const item = provider();
+    const idPreview = document.getElementById('idPreview');
+    if(!item || !idPreview) return;
+    if(['comfyui', 'runninghub', 'volcengine'].includes(item.id)){
+        idPreview.textContent = item.id;
+        return;
+    }
+    idPreview.textContent = deriveIdFromName(nameInput.value, item.id);
+}
 function provider(){
     return visibleProviders().find(item => item.id === selectedId) || visibleProviders()[0] || providers[0];
 }
@@ -173,9 +188,13 @@ function volcengineAssetKeyHintText(item){
 function syncEditor(){
     const item = provider();
     if(!item) return;
-    // Provider ID is the stable identity; display names are deprecated.
-    const nextId = item.id;
+    const oldId = item.id;
+    const isBuiltin = item.id === 'comfyui' || item.id === 'runninghub' || item.id === 'volcengine';
+    // 内置和自定义平台的 ID 都保持稳定；新建时若没有 ID 才生成一次。
+    const nextId = isBuiltin ? item.id : deriveIdFromName(nameInput.value, item.id);
     item.id = nextId;
+    if(oldId !== item.id) selectedId = item.id;
+    item.name = nameInput.value.trim() || item.id;
     const selectedProtocol = item.id === 'runninghub' ? 'runninghub' : item.id === 'volcengine' ? 'volcengine' : (item.protocol || 'openai');
     item.base_url = baseInput.value.trim();
     // 固定平台不从协议下拉读取
@@ -344,7 +363,9 @@ function renderEditor(){
     }
     const enabledToggle = document.getElementById('enabledToggle');
     if(enabledToggle) enabledToggle.checked = item.enabled !== false;
+    nameInput.value = item.name || '';
     idInput.value = item.id || '';
+    updateIdPreview();
     clearVerifyResult();
     baseInput.placeholder = EXAMPLE_BASE_URL;
     baseInput.value = item.base_url || '';
@@ -1172,6 +1193,7 @@ window.onload = () => {
         if(subtitle) subtitle.textContent = '管理可用于画布的 RunningHub AI 应用。';
     }
     loadProviders();
+    if(nameInput) nameInput.addEventListener('input', updateIdPreview);
     if(protocolInput) protocolInput.addEventListener('change', updateProtocolFromInput);
     [keyInput, rhFreeKeyInput].forEach(input => {
         if(input) input.addEventListener('input', refreshProviderOnboarding);

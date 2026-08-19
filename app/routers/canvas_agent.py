@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio
 import time
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.core.auth import safe_user_id
 from app.core.utils import now_ms
@@ -29,8 +29,16 @@ from app.services.canvas_agent.orchestration import build_specialist_plan, enfor
 from app.services.canvas_agent.executor import PatchConflictError, PatchPermissionError, apply_patch_idempotently
 from app.services.canvas_agent.task_dispatch import submit_run_requests
 from app.services.canvas_tasks import enqueue_canvas_task, get_canvas_task, release_canvas_task_dispatch, update_canvas_task
+from app.core.access_control import is_admin
+from app.core.auth import current_user_id
 
-router = APIRouter()
+def _require_admin() -> str:
+    user_id = current_user_id()
+    if not is_admin(user_id):
+        raise HTTPException(status_code=403, detail="画布 Agent 仅管理员可用。")
+    return user_id
+
+router = APIRouter(dependencies=[Depends(_require_admin)])
 logger = get_logger("canvas_agent")
 
 def _user(request: Request, x_user_id: str) -> str:
