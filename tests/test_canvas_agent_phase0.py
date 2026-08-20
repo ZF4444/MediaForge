@@ -52,8 +52,8 @@ def test_deep_agents_runtime_is_read_only_and_interrupts_plan_submission(monkeyp
     create_canvas_agent(model="provider:model", harness_key="provider:model")
     with pytest.raises(PermissionError): ReadOnlyCanvasBackend().write("x")
     assert captured["subagents"] == []
-    assert captured["interrupt_on"] == {"submit_semantic_plan": True}
-    assert {"write_file", "edit_file", "execute", "delete_file", "task"}.issubset(captured["profile"].excluded_tools)
+    assert "interrupt_on" not in captured
+    assert {"ls", "read_file", "write_file", "edit_file", "delete", "delete_file", "glob", "grep", "execute", "task"}.issubset(captured["profile"].excluded_tools)
     assert captured["profile"].general_purpose_subagent.enabled is False
 
 def test_langgraph_checkpoint_resumes_same_thread_with_command():
@@ -98,13 +98,16 @@ def test_model_planner_rejects_invalid_tool_calls_and_uses_command_resume(monkey
     from app.services.canvas_agent import planner, runtime
 
     calls = []
+    captured = {}
     class Agent:
         async def ainvoke(self, invocation, config):
             calls.append((invocation, config))
             return {"structured_response": {"goal": "safe plan", "steps": []}}
-    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: Agent())
+    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: captured.update(kwargs) or Agent())
     plan = asyncio.run(planner.plan_with_deep_agent(None, "answer", {"run_id": "run-1"}, harness_key="fake", resume=True))
     assert plan.goal == "safe plan"
+    assert "response_format" not in captured
+    assert captured["tools"] == []
     assert isinstance(calls[0][0], Command)
     assert calls[0][0].resume == "answer"
     assert calls[0][1]["configurable"]["thread_id"] == "run-1"
@@ -125,3 +128,5 @@ def test_provider_adapter_preserves_invalid_tool_calls_for_planner_blocking():
     assert valid[0]["args"]["goal"] == "x"
     assert invalid[0]["type"] == "invalid_tool_call"
     assert invalid[0]["args"] == '{"goal":'
+    assert MediaForgeChatModel._tool_choice("any") == "required"
+    assert MediaForgeChatModel._tool_choice("auto") == "auto"

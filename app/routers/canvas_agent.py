@@ -13,8 +13,8 @@ from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_agent.adapter import semantic_plan_to_patch
 from app.services.canvas_agent.context import build_canvas_context
 from app.services.canvas_agent.events import emit_agent_event
-from app.services.canvas_agent.model_resolver import resolve_canvas_agent_model
-from app.services.canvas_agent.planner import plan_with_deep_agent
+from app.services.canvas_agent.model_resolver import CanvasAgentUpstreamError, resolve_canvas_agent_model
+from app.services.canvas_agent.planner import classify_intent, plan_with_deep_agent
 from app.services.canvas_agent.checkpoint import create_async_checkpointer
 from app.services.canvas_agent.reliability import DEFAULT_RUN_LIMITS, canvas_structure_fingerprint, classify_failure, enforce_plan_limits
 from app.config import CANVAS_TASK_TIMEOUT_SECONDS
@@ -93,6 +93,12 @@ async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, re
         context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"], selected_node_ids=payload.selected_node_ids, mention_node_ids=payload.mention_node_ids)
         context["run_id"] = run_id
         model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
+        intent = await classify_intent(model, payload.content, context, harness_key="mediaforgechatmodel")
+        if intent.intent in {"chat", "clarification"}:
+            reply = intent.reply.strip() or ("请补充你希望对画布执行的操作。" if intent.intent == "clarification" else "我可以帮助你处理画布内容。")
+            await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"intent": intent.intent})
+            await emit_agent_event(user_id, run_id, "message.replied", {"intent": intent.intent, "reply": reply})
+            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "intent": intent.model_dump(mode="json"), "reply": reply}
         async with create_async_checkpointer() as checkpointer:
             plan = await plan_with_deep_agent(model, payload.content, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool((run.get("metadata_json") or {}).get("model_thread_started")))
         await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model})
@@ -103,6 +109,15 @@ async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, re
         enforce_plan_limits(plan_json, (run.get("metadata_json") or {}).get("limits"))
         saved = await asyncio.to_thread(save_plan, user_id, run_id, plan_json, status="awaiting_confirmation")
         await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], step_count=int(run.get("step_count") or 0) + 1, metadata_json={"planned_canvas_fingerprint": canvas_structure_fingerprint(await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"]))})
+    except CanvasAgentUpstreamError as exc:
+        logger.exception(
+            "canvas agent planning provider unavailable",
+            extra={"event": "canvas_agent_planning_provider_unavailable", "run_id": run_id, "canvas_id": run["canvas_id"], "phase": "message"},
+        )
+        AGENT_FAILURES.labels(stage="planning", category="transient").inc()
+        await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="planning")
+        await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc), "category": "transient"})
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "3"}) from exc
     except Exception as exc:
         logger.exception(
             "canvas agent planning failed",
@@ -131,6 +146,14 @@ async def answer_agent_question(run_id: str, payload: CanvasAgentAnswerRequest, 
         await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name})
         await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json"), "resumed": True})
         return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved}
+    except CanvasAgentUpstreamError as exc:
+        logger.exception(
+            "canvas agent planning provider unavailable",
+            extra={"event": "canvas_agent_planning_provider_unavailable", "run_id": run_id, "canvas_id": run["canvas_id"], "phase": "answer"},
+        )
+        await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="planning")
+        await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc), "category": "transient"})
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "3"}) from exc
     except Exception as exc:
         logger.exception(
             "canvas agent planning failed",

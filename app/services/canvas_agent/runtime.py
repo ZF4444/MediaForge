@@ -29,15 +29,18 @@ def create_canvas_agent(*, model: Any, tools: list[Any] | None = None, checkpoin
         raise RuntimeError("deepagents is required to create the Canvas Agent") from exc
     profile = HarnessProfile(
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-        excluded_tools=frozenset({"write_file", "edit_file", "execute", "delete_file", "task"}),
+        # Canvas Agent must never expose Deep Agents' default filesystem tools.
+        # Apart from being unnecessary, they can win a required tool-choice
+        # request intended for IntentDecision/SemanticPlan.
+        excluded_tools=frozenset({
+            "ls", "read_file", "write_file", "edit_file", "delete", "delete_file",
+            "glob", "grep", "execute", "task",
+        }),
     )
     register_harness_profile(_harness_key(model, harness_key), profile)
-    # Semantic-plan submission is the only model-facing handoff into the
-    # deterministic runtime. Require an explicit graph interruption there;
-    # subsequent Patch confirmation remains enforced by the API/Policy layer.
     kwargs = {
         "model": model, "tools": list(tools or []), "subagents": [], "backend": StateBackend(),
-        "checkpointer": checkpointer, "interrupt_on": {"submit_semantic_plan": True},
+        "checkpointer": checkpointer,
     }
     if response_format is not None: kwargs["response_format"] = response_format
     return create_deep_agent(**kwargs)
