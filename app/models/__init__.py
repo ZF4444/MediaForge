@@ -66,6 +66,8 @@ class AIReference(BaseModel):
     url: str = ""
     name: str = ""
     role: str = ""
+    kind: str = ""
+    mime: str = ""
 
 
 class OnlineImageRequest(BaseModel):

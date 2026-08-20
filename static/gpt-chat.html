@@ -1421,7 +1421,7 @@
             const kind = String(ref?.kind || '').toLowerCase();
             const mime = String(ref?.mime || '').toLowerCase();
             const url = String(ref?.url || '').toLowerCase();
-            return kind === 'image' || mime.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|tiff?)(\?|#|$)/.test(url);
+            return kind === 'image' || mime.startsWith('image/') || url.startsWith('/api/files/') || /\.(png|jpe?g|webp|gif|bmp|tiff?)(\?|#|$)/.test(url);
         }
 
         function attachmentName(ref){
