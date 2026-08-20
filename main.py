@@ -2729,6 +2729,11 @@ def parse_size_pair(size):
         return 0, 0
     return int(match.group(1)), int(match.group(2))
 
+def chat_system_prompt(payload):
+    """Resolve the per-request system prompt with the application fallback."""
+    prompt = str(getattr(payload, "system_prompt", "") or "").strip()
+    return prompt or SYSTEM_PROMPT
+
 def snap_size_to_multiple(size, multiple=16):
     width, height = parse_size_pair(size)
     if not width or not height:
