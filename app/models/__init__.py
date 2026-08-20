@@ -154,13 +154,18 @@ class ApiProviderPayload(BaseModel):
 class ChatRequest(BaseModel):
     conversation_id: str = ""
     message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
+    system_prompt: str = ""
     model: str = ""
     image_model: str = ""
+    image_provider: str = ""
     mode: str = "chat"
     size: str = "1024x1024"
+    aspect_ratio: str = ""
+    resolution: str = ""
     quality: str = "auto"
     reference_images: List[AIReference] = []
     provider: str = "comfly"
+    ms_model: str = ""
 
 
 
