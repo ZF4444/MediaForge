@@ -6,6 +6,7 @@ from .context import build_canvas_context
 from .store import latest_artifact
 
 def read_canvas_context(user_id: str, canvas_id: str, selected_node_ids: list[str] | None = None) -> dict[str, Any]:
+    """Read the current canvas context for the requested user and canvas."""
     return build_canvas_context(user_id, canvas_id, selected_node_ids=selected_node_ids or [])
 
 def read_capability_registry(registry: CapabilityRegistry) -> list[dict[str, Any]]:
@@ -20,4 +21,5 @@ def submit_semantic_plan(plan: dict[str, Any]) -> dict[str, Any]:
     return SemanticPlan.model_validate(plan).model_dump(mode="json")
 
 def request_clarification(question: str) -> dict[str, Any]:
+    """Return a clarification request that pauses planning for user input."""
     return {"schema_version": 1, "question": str(question)[:2000], "requires_user_input": True}

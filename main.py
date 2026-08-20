@@ -1364,6 +1364,16 @@ def get_api_provider_exact(provider_id: str):
     target = (provider_id or "").strip().lower()
     provider = next((p for p in providers if p["id"] == target), None)
     if not provider:
+        # Provider configuration is shared across workers. A request can land
+        # on a worker that has not yet consumed the cache invalidation event,
+        # so refresh from the persisted configuration before rejecting an
+        # explicit provider selection.
+        try:
+            providers = refresh_api_providers_cache()
+        except Exception:
+            providers = []
+        provider = next((p for p in providers if p["id"] == target), None)
+    if not provider:
         raise HTTPException(status_code=400, detail=f"未找到 API 平台：{target or '(empty)'}。新增平台未保存时请使用当前表单拉取模型。")
     if not provider.get("enabled", True):
         raise HTTPException(status_code=400, detail=f"API 平台已禁用：{target}")
@@ -1843,7 +1853,11 @@ def resolve_chat_provider(provider: str, model: str, ms_model: str = ""):
     if requested_provider == 'comfyui':
         raise HTTPException(status_code=400, detail='ComfyUI 仅用于工作流执行，不能作为 Agent 聊天模型 Provider。请在模型选择中选择可用的聊天 Provider。')
     if requested_provider:
-        api_provider = get_api_provider(requested_provider)
+        # get_api_provider() is intentionally permissive for legacy callers:
+        # an unknown ID becomes the primary provider. Agent requests carry an
+        # explicit user choice and must not silently turn custom-api-2 into
+        # ComfyUI (or any other primary provider).
+        api_provider = get_api_provider_exact(requested_provider)
     else:
         candidates = [item for item in load_api_providers() if item.get('enabled', True) and item.get('id') not in {'comfyui', 'runninghub'} and (item.get('chat_models') or item.get('base_url') or AI_BASE_URL)]
         api_provider = next((item for item in candidates if item.get('primary')), None) or (candidates[0] if candidates else None)
@@ -1866,8 +1880,11 @@ def resolve_chat_provider(provider: str, model: str, ms_model: str = ""):
 
 def api_headers(json_body=True, provider=None, model=""):
     if provider:
-        key_env = provider_key_env(provider["id"])
-        api_key = os.getenv(key_env, "")
+        # Provider keys are stored in the encrypted provider_secrets table
+        # when APP_SECRET_KEY is enabled. Never bypass provider_env_key_value()
+        # here by reading os.environ directly, otherwise Agent requests report
+        # a saved key as missing.
+        api_key = provider_env_key_value(provider["id"])
         provider_name = provider["id"]
         if not api_key:
             raise HTTPException(status_code=400, detail=f"未配置 {provider_name} 的 API Key，请在 API 平台管理中填写。")
