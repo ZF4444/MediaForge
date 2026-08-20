@@ -296,7 +296,7 @@ def effective_permissions(user_id: str) -> Dict[str, Any]:
         default = config.get("default")
         if isinstance(default, dict):
             sd = _sanitize_user_entry(default)
-            return {"is_admin": False, "pages": sd["pages"], "nodes": sd["nodes"]}
+            return {"is_admin": False, "pages": sorted(set(sd["pages"]) | {"gpt-chat"}), "nodes": sd["nodes"]}
         return {"is_admin": False, "pages": all_page_ids(), "nodes": all_node_ids()}
     sanitized = _sanitize_user_entry(entry)
-    return {"is_admin": False, "pages": sanitized["pages"], "nodes": sanitized["nodes"]}
+    return {"is_admin": False, "pages": sorted(set(sanitized["pages"]) | {"gpt-chat"}), "nodes": sanitized["nodes"]}

@@ -537,6 +537,7 @@ CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-4o-mini")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
 MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "30"))
+CHAT_ATTACHMENT_MAX = int(os.getenv("CHAT_ATTACHMENT_MAX", "20"))
 AI_REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "1800"))
 IMAGE_POLL_INTERVAL = float(os.getenv("IMAGE_POLL_INTERVAL", "2"))
 IMAGE_TASK_TIMEOUT = float(os.getenv("IMAGE_TASK_TIMEOUT", str(AI_REQUEST_TIMEOUT)))
@@ -1315,6 +1316,26 @@ def require_model_access(provider_id: str, model: str) -> str:
         provider = get_api_provider(provider_id)
     if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, provider["id"], model):
         raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员(@飞帆)在访问控制中开放。")
+    return uid
+
+
+def require_chat_model_access(provider_id: str, model: str) -> str:
+    """GPT 对话对所有登录用户开放，仍校验 Provider 和聊天模型有效性。"""
+    uid = current_user_id()
+    provider = get_api_provider(provider_id)
+    chat_models = {str(value or '').strip() for value in (provider.get('chat_models') or []) if str(value or '').strip()}
+    if chat_models and str(model or '').strip() not in chat_models:
+        raise HTTPException(status_code=400, detail='指定的聊天模型不属于当前 Provider。')
+    return uid
+
+
+def require_gpt_image_access(provider_id: str, model: str) -> str:
+    """GPT 对话的图片模型对所有登录用户开放，仍校验模型归属。"""
+    uid = current_user_id()
+    provider = get_api_provider(provider_id)
+    image_models = {str(value or '').strip() for value in (provider.get('image_models') or []) if str(value or '').strip()}
+    if image_models and str(model or '').strip() not in image_models:
+        raise HTTPException(status_code=400, detail='指定的图片模型不属于当前 Provider。')
     return uid
 
 def get_primary_provider_id(providers=None):
@@ -2247,9 +2268,14 @@ def convert_output_to_jpg(url, quality=88):
 
 def reference_to_data_url(ref, max_size=None):
     """把本地输出文件转为 data URL（base64）。max_size 限制最长边像素，避免 payload 过大。"""
-    path = output_file_from_url(ref.get("url", ""))
+    value = str((ref or {}).get("url", "") or "").strip()
+    path = output_file_from_url(value)
     if not path:
-        return ref.get("url", "")
+        # Relative app paths are only browser URLs; upstream multimodal APIs
+        # require an absolute URL or data URL and cannot resolve them.
+        if value.startswith("/") or (value and not value.startswith(("data:", "http://", "https://"))):
+            return ""
+        return value
     if max_size:
         try:
             with Image.open(path) as img:
@@ -3446,6 +3472,15 @@ def latest_chat_image_refs(conversation, limit=1):
             break
     return refs
 
+async def latest_chat_image_data_urls(conversation, limit=1):
+    """Return recent generated images as provider-neutral data URLs."""
+    result = []
+    for ref in latest_chat_image_refs(conversation, limit):
+        data_url = await run_storage_io(reference_to_data_url, ref, 1536)
+        if data_url and data_url not in result:
+            result.append(data_url)
+    return result
+
 def image_size_from_reference(ref):
     path = output_file_from_url(ref)
     if not path:
@@ -3519,10 +3554,19 @@ async def decide_chat_agent_action(payload, conversation, refs):
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
     messages = [{"role": "system", "content": "你是图片创作聊天 Agent 的意图路由器。只返回 JSON，不要 Markdown。action 只能是 chat、generate_image、edit_image。generate_image 用于生成新图，edit_image 用于修改上传图或上一张图。prompt 是交给图片工具的完整提示词。"}]
     for item in conversation.get("messages", [])[-10:]:
-        msg = upstream_message_from_record(item)
+        if item.get("role") == "user" and item.get("content") == payload.message and item is conversation.get("messages", [])[-1]:
+            continue
+        msg = await run_storage_io(upstream_message_from_record, item)
         if msg:
             messages.append(msg)
-    messages.append({"role": "user", "content": f"当前用户输入：{payload.message}\n用户系统提示词：{payload.system_prompt or '无'}\n上传参考图数量：{len(refs)}\n已有上一张图：{'是' if previous else '否'}\n请返回 JSON。"})
+    current_content = [{"type": "text", "text": f"当前用户输入：{payload.message}\n用户系统提示词：{payload.system_prompt or '无'}\n上传参考图数量：{len(refs)}\n已有上一张图：{'是' if previous else '否'}\n请返回 JSON。"}]
+    for data_url in await latest_chat_image_data_urls(conversation, 1):
+        current_content.append({"type": "image_url", "image_url": {"url": data_url}})
+    for ref in list(payload.reference_images or [])[:CHAT_ATTACHMENT_MAX]:
+        data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
+        if data_url:
+            current_content.append({"type": "image_url", "image_url": {"url": data_url}})
+    messages.append({"role": "user", "content": current_content if len(current_content) > 1 else current_content[0]["text"]})
     try:
         async with provider_operation(payload.provider, "llm", user_id=current_user_id()):
             async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
@@ -3539,10 +3583,21 @@ async def decide_chat_agent_action(payload, conversation, refs):
 async def build_chat_text_reply(payload, conversation):
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
     messages = [{"role": "system", "content": chat_system_prompt(payload)}]
-    for item in conversation.get("messages", [])[-MAX_HISTORY_MESSAGES:]:
-        msg = upstream_message_from_record(item)
+    history = conversation.get("messages", [])[-MAX_HISTORY_MESSAGES:]
+    for item in history:
+        if item.get("role") == "user" and item.get("content") == payload.message and item is history[-1]:
+            continue
+        msg = await run_storage_io(upstream_message_from_record, item)
         if msg:
             messages.append(msg)
+    current_content = [{"type": "text", "text": payload.message}]
+    for data_url in await latest_chat_image_data_urls(conversation, 1):
+        current_content.append({"type": "image_url", "image_url": {"url": data_url}})
+    for ref in list(payload.reference_images or [])[:CHAT_ATTACHMENT_MAX]:
+        data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
+        if data_url:
+            current_content.append({"type": "image_url", "image_url": {"url": data_url}})
+    messages.append({"role": "user", "content": current_content if len(current_content) > 1 else payload.message})
     try:
         async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
             response = await client.post(f"{chat_base}/chat/completions", headers=chat_hdrs, json={"model": model, "messages": messages})
@@ -5982,7 +6037,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         provider = get_api_provider(image_provider_id)
         default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
         model = selected_model(payload.image_model or payload.model, default_model)
-        require_model_access(provider["id"], model)
+        require_gpt_image_access(provider["id"], model)
         try:
             image_data, raw = await generate_ai_image(payload.message, payload.size, payload.quality, model, refs, provider["id"])
             local_url = await save_ai_image_to_output(image_data, prefix="chat_")
@@ -6007,15 +6062,25 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             await asyncio.to_thread(record_omnilojo_response_usage, user_id, provider, model, raw, operation="image_generation")
     else:
         chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model)
-        require_model_access(payload.provider, model)
+        require_chat_model_access(payload.provider, model)
         _conv_provider = get_api_provider(payload.provider)
         await assert_provider_budget_available(_conv_provider, user_id)
         history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
         upstream_messages = [{"role": "system", "content": (payload.system_prompt or "").strip() or SYSTEM_PROMPT}]
         for item in history:
+            if item is history[-1] and item.get("role") == "user" and item.get("content") == payload.message:
+                continue
             msg = await asyncio.to_thread(upstream_message_from_record, item)
             if msg:
                 upstream_messages.append(msg)
+        current_content = [{"type": "text", "text": payload.message}]
+        for data_url in await latest_chat_image_data_urls(conversation, 1):
+            current_content.append({"type": "image_url", "image_url": {"url": data_url}})
+        for ref in list(payload.reference_images or [])[:CHAT_ATTACHMENT_MAX]:
+            data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
+            if data_url:
+                current_content.append({"type": "image_url", "image_url": {"url": data_url}})
+        upstream_messages.append({"role": "user", "content": current_content if len(current_content) > 1 else payload.message})
         try:
             async with provider_operation(payload.provider, "llm", user_id=user_id):
                 async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
@@ -6094,7 +6159,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
         count = 1 if action == "edit_image" else chat_requested_image_count(payload.message)
         prompts = chat_split_parallel_prompts(prompt, count)
         local_urls, raw_items = [], []
-        require_model_access(image_provider["id"], model)
+        require_gpt_image_access(image_provider["id"], model)
         try:
             for item_prompt in prompts:
                 image_data, raw = await generate_ai_image(item_prompt, image_size, payload.quality, model, tool_refs, image_provider["id"])
@@ -6142,15 +6207,25 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     await asyncio.to_thread(save_conversation, user_id, conversation)
 
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model)
-    require_model_access(payload.provider, model)
+    require_chat_model_access(payload.provider, model)
     _stream_provider = get_api_provider(payload.provider)
     await assert_provider_budget_available(_stream_provider, user_id)
     history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
     upstream_messages = [{"role": "system", "content": (payload.system_prompt or "").strip() or SYSTEM_PROMPT}]
     for item in history:
+        if item is history[-1] and item.get("role") == "user" and item.get("content") == payload.message:
+            continue
         msg = await asyncio.to_thread(upstream_message_from_record, item)
         if msg:
             upstream_messages.append(msg)
+    current_content = [{"type": "text", "text": payload.message}]
+    for data_url in await latest_chat_image_data_urls(conversation, 1):
+        current_content.append({"type": "image_url", "image_url": {"url": data_url}})
+    for ref in list(payload.reference_images or [])[:CHAT_ATTACHMENT_MAX]:
+        data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
+        if data_url:
+            current_content.append({"type": "image_url", "image_url": {"url": data_url}})
+    upstream_messages.append({"role": "user", "content": current_content if len(current_content) > 1 else payload.message})
 
     async def stream():
         content_parts = []
