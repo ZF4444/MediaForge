@@ -1,47 +1,63 @@
-"""Minimal Deep Agents harness boundary for Phase 0.
-
-The runtime is intentionally lazy: deployments without the optional agent
-packages can still run the classic canvas, while startup fails clearly when
-the Agent runtime is requested.
-"""
+"""Tool-calling LangGraph runtime for the Canvas Agent."""
 from __future__ import annotations
-from typing import Any
-from dataclasses import dataclass
+from typing import Annotated, Any, Awaitable, Callable, TypedDict
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.tools import StructuredTool
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from langgraph.types import interrupt
+from .tools import build_canvas_tools
 
-@dataclass(frozen=True)
-class ReadOnlyCanvasBackend:
-    """Marker for a state-backed harness with all mutation tools excluded."""
-    def write(self, *_: Any, **__: Any) -> None: raise PermissionError("Agent filesystem writes are disabled")
-    def edit(self, *_: Any, **__: Any) -> None: raise PermissionError("Agent filesystem edits are disabled")
-    def delete(self, *_: Any, **__: Any) -> None: raise PermissionError("Agent filesystem deletes are disabled")
+class CanvasAgentState(TypedDict, total=False):
+    messages: Annotated[list[BaseMessage], add_messages]
+    run_id: str
+    user_id: str
+    canvas_id: str
+    confirmed: bool
+    execution_result: dict[str, Any]
 
-def _harness_key(model: Any, key: str) -> str:
-    if key: return key
-    if isinstance(model, str) and ":" in model: return model
-    raise ValueError("harness_key is required when model is not a provider:model string")
-
-def create_canvas_agent(*, model: Any, tools: list[Any] | None = None, checkpointer: Any = None, harness_key: str = "", response_format: Any = None, system_prompt: str | None = None):
-    """Create a constrained Deep Agent graph with no task or write capabilities."""
-    try:
-        from deepagents import GeneralPurposeSubagentProfile, HarnessProfile, create_deep_agent, register_harness_profile
-        from deepagents.backends import StateBackend
-    except ImportError as exc:
-        raise RuntimeError("deepagents is required to create the Canvas Agent") from exc
-    profile = HarnessProfile(
-        general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-        # Canvas Agent must never expose Deep Agents' default filesystem tools.
-        # Apart from being unnecessary, they can win a required tool-choice
-        # request intended for IntentDecision/SemanticPlan.
-        excluded_tools=frozenset({
-            "ls", "read_file", "write_file", "edit_file", "delete", "delete_file",
-            "glob", "grep", "execute", "task",
-        }),
-    )
-    register_harness_profile(_harness_key(model, harness_key), profile)
-    kwargs = {
-        "model": model, "tools": list(tools or []), "subagents": [], "backend": StateBackend(),
-        "checkpointer": checkpointer,
-    }
-    if response_format is not None: kwargs["response_format"] = response_format
-    if system_prompt is not None: kwargs["system_prompt"] = system_prompt
-    return create_deep_agent(**kwargs)
+def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canvas_id: str = "",
+                        checkpointer: Any = None, emit_progress: Callable[..., Awaitable[Any]] | None = None,
+                        get_canvas=None, execute_patch=None, tools: list[StructuredTool] | None = None):
+    scoped_tools = tools or build_canvas_tools(user_id=user_id, run_id=run_id, canvas_id=canvas_id, get_canvas=get_canvas, execute_patch=execute_patch)
+    tool_node = ToolNode(scoped_tools)
+    async def progress(phase: str, message: str):
+        if emit_progress: await emit_progress(run_id, {"phase": phase, "message": message})
+    async def agent_node(state: CanvasAgentState) -> dict[str, Any]:
+        await progress("agent", "正在分析请求并选择工具…")
+        system = SystemMessage(content=("你是画布工具型 Agent。必须通过工具读取画布和能力，不要臆造节点。"
+            "创建节点时 semantic_type 只能是 prompt、image_generation、video_generation、workflow_generation 或 group；"
+            "capability 必须填写 read_capability_registry 返回的能力名，绝不能写入 semantic_type。"
+            "例如图片节点使用 semantic_type=image_generation、capability=image.text_to_image。"
+            "需要修改时调用 propose_canvas_patch；该工具只生成提案，不会修改画布。"
+            "提案返回 awaiting_confirmation 后必须等待用户确认。确认恢复后调用 execute_canvas_patch。"
+            "缺少目标时调用 request_clarification。普通问答直接用中文回答。"))
+        response = await model.bind_tools(scoped_tools).ainvoke([system, *(state.get("messages") or [])])
+        return {"messages": [response]}
+    async def tools_node(state: CanvasAgentState) -> dict[str, Any]:
+        await progress("tool", "正在执行 Agent 工具…")
+        return await tool_node.ainvoke(state)
+    async def confirmation_node(state: CanvasAgentState) -> dict[str, Any]:
+        await progress("confirmation", "计划已生成，等待用户确认…")
+        decision = interrupt({"type": "canvas.confirmation_required", "run_id": run_id})
+        approved = bool(decision.get("approved")) if isinstance(decision, dict) else bool(decision)
+        if approved: await progress("confirmation", "用户已确认，继续执行…")
+        return {"confirmed": approved}
+    def route_agent(state: CanvasAgentState) -> str:
+        last = (state.get("messages") or [])[-1] if state.get("messages") else None
+        return "tools" if isinstance(last, AIMessage) and last.tool_calls else END
+    def route_tools(state: CanvasAgentState) -> str:
+        last = (state.get("messages") or [])[-1] if state.get("messages") else None
+        text = str(getattr(last, "content", ""))
+        return "confirmation" if "awaiting_confirmation" in text or "requires_confirmation" in text else "agent"
+    graph = StateGraph(CanvasAgentState)
+    graph.add_node("agent", agent_node); graph.add_node("tools", tools_node); graph.add_node("confirmation", confirmation_node)
+    graph.add_edge(START, "agent")
+    graph.add_conditional_edges("agent", route_agent, {"tools": "tools", END: END})
+    graph.add_conditional_edges("tools", route_tools, {"agent": "agent", "confirmation": "confirmation"})
+    # The HTTP confirmation endpoint owns the Patch Executor boundary. The
+    # graph records the approval and terminates; the endpoint then performs the
+    # idempotent business operation with its existing authorization checks.
+    graph.add_conditional_edges("confirmation", lambda state: END, {END: END})
+    return graph.compile(checkpointer=checkpointer)

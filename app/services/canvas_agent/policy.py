@@ -3,9 +3,13 @@ from app.models.canvas_agent import CanvasPatch
 
 SAFE_OPS = {"add_node", "move_node", "add_connection", "remove_connection", "add_group"}
 CONFIRM_OPS = {"update_node_params", "replace_node_content", "run_node", "run_group"}
+
+
 def assess_patch(patch: CanvasPatch) -> dict[str, object]:
     risks = ["confirm" if op.op in CONFIRM_OPS else "safe" for op in patch.operations]
     return {"risk": "confirm" if "confirm" in risks else "safe", "requires_confirmation": "confirm" in risks, "operation_count": len(risks)}
+
+
 def validate_patch(patch: CanvasPatch, *, allow_user_node_changes: bool = False, authorized_node_ids: set[str] | None = None) -> None:
     if not patch.canvas_id: raise ValueError("canvas_id is required")
     if patch.base_version < 1: raise ValueError("base_version must be positive")

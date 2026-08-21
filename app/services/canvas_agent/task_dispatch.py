@@ -15,12 +15,16 @@ async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, request
     nodes = {str(node.get("id")): node for node in canvas.get("nodes", []) if isinstance(node, dict)}
     registry = await asyncio.to_thread(from_provider_configuration)
     capability = registry.get("image.text_to_image")
-    if capability is None: return []
     submitted = []
     for item in requests:
         if item.get("op") != "run_node": continue
         node = nodes.get(str(item.get("node_id") or ""))
-        if not node or node.get("type") != "smart-image": continue
+        if not node: continue
+        if node.get("type") == "smart-prompt":
+            # Prompt generation is currently persisted on the node by the
+            # caller/model flow; it is not an online-image queue task.
+            continue
+        if node.get("type") != "smart-image" or capability is None: continue
         task_id = f"canvas_agent_img_{uuid.uuid4().hex}"
         request = {"prompt": (prompts_by_node or {}).get(node["id"], prompt), "provider_id": node.get("provider_id") or capability.provider_id, "model": node.get("model") or capability.model, "size": "1024x1792", "quality": "auto", "n": 1, "reference_images": []}
         # Reuse the existing access-control resolver; the Agent never chooses

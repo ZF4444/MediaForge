@@ -56,11 +56,20 @@ class ProtocolModel(BaseModel):
         _make_native_schema_strict(schema)
         return schema
 
+SemanticNodeType = Literal[
+    "prompt", "image_generation", "video_generation", "workflow_generation", "group",
+    "smart-prompt", "smart-image", "smart-group",
+]
+
+
 class SemanticNode(ProtocolModel):
-    semantic_type: str
-    title: str = ""
-    content: str = ""
-    capability: str = ""
+    semantic_type: SemanticNodeType = Field(
+        description="Canvas node kind. Use image_generation for image nodes, video_generation for video nodes, "
+        "workflow_generation for ComfyUI/RH workflow nodes, and prompt for prompt nodes. Never use a capability name here."
+    )
+    title: str = Field(default="", description="Short node title.")
+    content: str = Field(default="", description="Prompt text or replacement content.")
+    capability: str = Field(default="", description="Capability selected from read_capability_registry, for example image.text_to_image or prompt.generate.")
     params: NativeJsonObject = Field(default_factory=dict)
 
 class SemanticStep(ProtocolModel):

@@ -14,7 +14,8 @@ from app.services.canvas_agent.adapter import semantic_plan_to_patch
 from app.services.canvas_agent.context import build_canvas_context
 from app.services.canvas_agent.events import emit_agent_event
 from app.services.canvas_agent.model_resolver import CanvasAgentUpstreamError, resolve_canvas_agent_model
-from app.services.canvas_agent.planner import classify_intent, plan_with_deep_agent
+from app.services.canvas_agent.planner import run_canvas_agent
+from langgraph.types import Command
 from app.services.canvas_agent.checkpoint import create_async_checkpointer
 from app.services.canvas_agent.reliability import DEFAULT_RUN_LIMITS, canvas_structure_fingerprint, classify_failure, enforce_plan_limits
 from app.config import CANVAS_TASK_TIMEOUT_SECONDS
@@ -93,19 +94,22 @@ async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, re
         await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在读取画布上下文…"})
         context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"], selected_node_ids=payload.selected_node_ids, mention_node_ids=payload.mention_node_ids)
         context["run_id"] = run_id
+        context["user_id"] = user_id
+        context["canvas_id"] = run["canvas_id"]
         await emit_agent_event(user_id, run_id, "progress", {"phase": "model", "message": "正在准备模型…"})
         model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
-        await emit_agent_event(user_id, run_id, "progress", {"phase": "intent", "message": "正在理解你的请求…"})
-        # intent = await classify_intent(model, payload.content, context, harness_key="mediaforgechatmodel")
-        # if intent.intent in {"chat", "clarification"}:
-        #     reply = intent.reply.strip() or ("请补充你希望对画布执行的操作。" if intent.intent == "clarification" else "我可以帮助你处理画布内容。")
-        #     await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"intent": intent.intent})
-        #     await emit_agent_event(user_id, run_id, "message.replied", {"intent": intent.intent, "reply": reply})
-        #     return {"run": await asyncio.to_thread(get_run, user_id, run_id), "intent": intent.model_dump(mode="json"), "reply": reply}
-        # await emit_agent_event(user_id, run_id, "progress", {"phase": "planning", "message": "已确认需要操作画布，正在制定计划…"})
+        async def progress(event_run_id, progress_payload):
+            await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
         async with create_async_checkpointer() as checkpointer:
-            plan = await plan_with_deep_agent(model, payload.content, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool((run.get("metadata_json") or {}).get("model_thread_started")))
-        await emit_agent_event(user_id, run_id, "progress", {"phase": "validating", "message": "计划已生成，正在校验节点和参数…"})
+            graph_result = await run_canvas_agent(model, payload.content, context, checkpointer=checkpointer, emit_progress=progress)
+        latest = await asyncio.to_thread(latest_plan, user_id, run_id)
+        if not latest:
+            messages = graph_result.get("messages") or []
+            reply = str(getattr(messages[-1], "content", "我可以帮助你处理画布内容。")) if messages else "我可以帮助你处理画布内容。"
+            await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"kind": "tool_agent_reply"})
+            await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
+            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": reply}
+        plan = SemanticPlan.model_validate(latest["content_json"])
         await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model})
         plan_json = plan.model_dump(mode="json")
         estimate = estimate_plan_cost(plan_json)
@@ -143,10 +147,18 @@ async def answer_agent_question(run_id: str, payload: CanvasAgentAnswerRequest, 
     try:
         context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"])
         context["run_id"] = run_id
+        context["user_id"] = user_id
+        context["canvas_id"] = run["canvas_id"]
         provider, model_name = payload.provider or metadata.get("model_provider", ""), payload.model or metadata.get("model_name", "")
         model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
+        async def progress(event_run_id, progress_payload):
+            await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
         async with create_async_checkpointer() as checkpointer:
-            plan = await plan_with_deep_agent(model, payload.answer, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool(metadata.get("model_thread_started")))
+            graph_result = await run_canvas_agent(model, payload.answer, context, checkpointer=checkpointer, emit_progress=progress)
+        latest = await asyncio.to_thread(latest_plan, user_id, run_id)
+        if not latest:
+            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": "请补充你希望对画布执行的操作。"}
+        plan = SemanticPlan.model_validate(latest["content_json"])
         saved = await asyncio.to_thread(save_plan, user_id, run_id, plan.model_dump(mode="json"), status="awaiting_confirmation")
         await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name})
         await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json"), "resumed": True})
@@ -177,6 +189,20 @@ async def confirm_agent_plan(run_id: str, payload: CanvasAgentConfirmRequest, re
         await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="planning")
         await emit_agent_event(user_id, run_id, "run.blocked", {"reason": "user_rejected_plan", "plan_version": payload.plan_version})
         return {"run": await asyncio.to_thread(get_run, user_id, run_id), "approved": False}
+    # Resume the interrupted LangGraph confirmation using the same run_id
+    # thread. The existing Patch Executor below remains the mutation boundary.
+    metadata = run.get("metadata_json") or {}
+    provider, model_name = metadata.get("model_provider", ""), metadata.get("model_name", "")
+    model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
+    context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"])
+    context.update({"run_id": run_id, "user_id": user_id, "canvas_id": run["canvas_id"]})
+    async def progress(event_run_id, progress_payload):
+        await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
+    async with create_async_checkpointer() as checkpointer:
+        from app.services.canvas_agent.runtime import create_canvas_agent
+        graph = create_canvas_agent(model=model, user_id=user_id, run_id=run_id, canvas_id=run["canvas_id"], checkpointer=checkpointer, emit_progress=progress)
+        await graph.ainvoke(Command(resume={"approved": True}), config={"configurable": {"thread_id": run_id}})
+    await emit_agent_event(user_id, run_id, "progress", {"phase": "confirmation", "message": "用户已确认，正在执行画布变更…"})
     canvas = await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"])
     if not canvas: raise HTTPException(status_code=404, detail="画布不存在")
     current_version = int(canvas.get("version") or 1)

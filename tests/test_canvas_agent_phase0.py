@@ -19,15 +19,37 @@ def test_semantic_plan_converts_to_versioned_patch():
     assert [item.op for item in patch.operations] == ["add_node", "add_node", "add_connection"]
     validate_patch(patch)
 
+def test_semantic_node_type_is_constrained_and_generation_nodes_match_canvas_contract():
+    with pytest.raises(Exception):
+        SemanticPlan.model_validate({"goal": "invalid", "steps": [{"id": "bad", "action": "canvas.create_node", "node": {"semantic_type": "capability"}}]})
+    plan = SemanticPlan.model_validate({"goal": "image", "steps": [{"id": "image", "action": "canvas.create_node", "node": {"semantic_type": "image_generation", "capability": "image.text_to_image"}}]})
+    node = semantic_plan_to_patch(plan, "canvas-1", 1).operations[0].node
+    assert node["type"] == "smart-image"
+    assert node["genKind"] == "image"
+    assert node["runSettings"] == {"engine": "api", "apiKind": "image"}
+
 def test_policy_marks_execution_as_confirmation_required():
     plan = SemanticPlan.model_validate({"goal": "run", "steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "agent-node"}]})
     patch = semantic_plan_to_patch(plan, "canvas-1", 1)
     assert assess_patch(patch)["requires_confirmation"] is True
 
 def test_registry_hides_disabled_provider_and_exposes_semantics():
-    registry = CapabilityRegistry([{"id": "a", "enabled": True, "image_models": ["img"], "video_models": ["vid"]}, {"id": "b", "enabled": False, "image_models": ["hidden"]}])
+    registry = CapabilityRegistry([{"id": "a", "enabled": True, "chat_models": ["chat"], "image_models": ["img"], "video_models": ["vid"]}, {"id": "b", "enabled": False, "chat_models": ["hidden-chat"], "image_models": ["hidden"]}])
+    assert registry.get("prompt.generate").model == "chat"
     assert registry.get("image.text_to_image").model == "img"
     assert registry.get("video.text_to_video").cost_level == "high"
+
+def test_provider_registry_registers_enabled_comfyui_workflows():
+    from app.services.canvas_agent.capabilities import from_provider_configuration
+    registry = from_provider_configuration(
+        lambda: [{"id": "comfyui", "enabled": True}],
+        lambda: {"workflows": [
+            {"name": "custom/image.json", "title": "Image workflow", "media": "image", "field_count": 2},
+            {"name": "video.json", "title": "Video workflow", "media": "video", "field_count": 1},
+        ]},
+    )
+    assert registry.resolve("comfyui.workflow.image", requested_model="custom/image.json").provider_id == "comfyui"
+    assert registry.resolve("comfyui.workflow.video", requested_model="video.json").input_constraints["field_count"] == 1
 
 def test_fixed_evaluation_records_protocol_metrics():
     metrics = evaluate_plan("prompt-to-image", {"goal": "image", "steps": [

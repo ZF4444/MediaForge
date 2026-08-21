@@ -1,25 +1,56 @@
-"""Small read-only tool functions exposed to a future model planner."""
+"""Scoped LangChain tools for the Canvas Agent."""
 from __future__ import annotations
-from typing import Any
+import asyncio
+from typing import Any, Awaitable, Callable
+from langchain_core.tools import StructuredTool, tool
+from app.models.canvas_agent import SemanticPlan
 from .capabilities import CapabilityRegistry
 from .context import build_canvas_context
-from .store import latest_artifact
+from .policy import assess_patch
+from .adapter import semantic_plan_to_patch
+from .store import latest_artifact, latest_plan, save_plan
 
-def read_canvas_context(user_id: str, canvas_id: str, selected_node_ids: list[str] | None = None) -> dict[str, Any]:
-    """Read the current canvas context for the requested user and canvas."""
-    return build_canvas_context(user_id, canvas_id, selected_node_ids=selected_node_ids or [])
+def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
+                       get_canvas: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+                       execute_patch: Callable[[SemanticPlan, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+                       registry: CapabilityRegistry | None = None) -> list[StructuredTool]:
+    """Create tools scoped to one authenticated Agent Run."""
+    @tool
+    async def read_canvas_context(selected_node_ids: list[str] | None = None) -> dict[str, Any]:
+        """Read current canvas nodes, connections, and selected context."""
+        return await asyncio.to_thread(build_canvas_context, user_id, canvas_id, selected_node_ids=selected_node_ids or [])
 
-def read_capability_registry(registry: CapabilityRegistry) -> list[dict[str, Any]]:
-    return registry.as_dict()
+    @tool
+    async def read_capability_registry() -> list[dict[str, Any]]:
+        """List capabilities available to canvas nodes."""
+        return (registry or CapabilityRegistry()).as_dict()
 
-def read_artifact(user_id: str, run_id: str, artifact_type: str = "") -> dict[str, Any] | None:
-    return latest_artifact(user_id, run_id, artifact_type)
+    @tool
+    async def read_artifact(artifact_type: str = "") -> dict[str, Any] | None:
+        """Read the latest artifact owned by this Agent Run."""
+        return await asyncio.to_thread(latest_artifact, user_id, run_id, artifact_type)
 
-def submit_semantic_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    """Validate-only boundary: this never applies a Patch or submits a task."""
-    from app.models.canvas_agent import SemanticPlan
-    return SemanticPlan.model_validate(plan).model_dump(mode="json")
+    @tool(args_schema=SemanticPlan)
+    async def propose_canvas_patch(**plan_fields: Any) -> dict[str, Any]:
+        """Validate and persist a complete canvas plan without changing the canvas."""
+        semantic_plan = SemanticPlan.model_validate(plan_fields)
+        canvas = await (get_canvas() if get_canvas else read_canvas_context.ainvoke({}))
+        patch = semantic_plan_to_patch(semantic_plan, canvas_id, int(canvas.get("canvas_version") or canvas.get("version") or 1), canvas=canvas)
+        assessment = assess_patch(patch)
+        saved = await asyncio.to_thread(save_plan, user_id, run_id, semantic_plan.model_dump(mode="json"), status="awaiting_confirmation")
+        return {"status": "awaiting_confirmation", "plan_version": saved["version"], "plan": semantic_plan.model_dump(mode="json"), "risk": assessment["risk"], "requires_confirmation": True, "operation_count": assessment["operation_count"]}
 
-def request_clarification(question: str) -> dict[str, Any]:
-    """Return a clarification request that pauses planning for user input."""
-    return {"schema_version": 1, "question": str(question)[:2000], "requires_user_input": True}
+    @tool
+    async def request_clarification(question: str) -> dict[str, Any]:
+        """Ask the user for missing canvas information."""
+        return {"requires_user_input": True, "question": str(question)[:2000]}
+
+    @tool
+    async def execute_canvas_patch(plan_version: int, authorized_node_ids: list[str] | None = None) -> dict[str, Any]:
+        """Execute an approved plan through the existing Patch Executor."""
+        if execute_patch is None: raise RuntimeError("Canvas execution boundary is not configured")
+        row = await asyncio.to_thread(latest_plan, user_id, run_id)
+        if not row or int(row["version"]) != int(plan_version): raise ValueError("计划版本已过期")
+        return await execute_patch(SemanticPlan.model_validate(row["content_json"]), {"authorized_node_ids": authorized_node_ids or []})
+
+    return [read_canvas_context, read_capability_registry, read_artifact, propose_canvas_patch, request_clarification, execute_canvas_patch]
