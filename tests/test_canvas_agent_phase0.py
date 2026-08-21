@@ -106,7 +106,9 @@ def test_model_planner_rejects_invalid_tool_calls_and_uses_command_resume(monkey
     monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: captured.update(kwargs) or Agent())
     plan = asyncio.run(planner.plan_with_deep_agent(None, "answer", {"run_id": "run-1"}, harness_key="fake", resume=True))
     assert plan.goal == "safe plan"
-    assert "response_format" not in captured
+    from langchain.agents.structured_output import ProviderStrategy
+    assert isinstance(captured["response_format"], ProviderStrategy)
+    assert captured["response_format"].schema is SemanticPlan
     assert captured["tools"] == []
     assert isinstance(calls[0][0], Command)
     assert calls[0][0].resume == "answer"
@@ -114,10 +116,47 @@ def test_model_planner_rejects_invalid_tool_calls_and_uses_command_resume(monkey
     with pytest.raises(ValueError, match="无效工具参数"):
         planner.reject_invalid_tool_calls({"messages": [{"invalid_tool_calls": [{"name": "submit_semantic_plan"}]}]})
 
+
+def test_intent_router_defaults_to_chat_and_requires_explicit_canvas_action(monkeypatch):
+    import asyncio
+    from app.services.canvas_agent import planner, runtime
+
+    captured = {}
+
+    class Agent:
+        async def ainvoke(self, invocation, config):
+            captured["user"] = invocation["messages"][0]["content"]
+            return {"response": {"intent": "chat", "reply": "你好，我可以帮你分析画布或回答问题。"}}
+
+    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: captured.update(kwargs) or Agent())
+    decision = asyncio.run(planner.classify_intent(None, "你好", {"run_id": "run-1", "node_count": 2}, harness_key="fake"))
+
+    assert decision.intent == "chat"
+    assert "默认选择 chat" in captured["system_prompt"]
+    assert "必须同时满足" in captured["system_prompt"]
+    assert "在画布上新建一个文生图节点" in captured["system_prompt"]
+    assert "用户消息：你好" in captured["user"]
+    assert "画布上下文：节点数=2" in captured["user"]
+
 def test_semantic_plan_tool_blocks_invalid_parameters():
     from app.services.canvas_agent.tools import submit_semantic_plan
     with pytest.raises(Exception):
         submit_semantic_plan({"goal": "x", "steps": [{"id": "bad", "action": "delete_canvas"}]})
+
+
+def test_planner_normalizes_known_legacy_canvas_operations():
+    from app.services.canvas_agent.planner import _normalize_plan
+
+    plan = _normalize_plan({
+        "goal": "新建文生图节点",
+        "steps": [{"id": "s1", "name": "创建节点", "details": {"node_type": "smart-prompt"}}],
+        "execution": {"mode": "canvas_ops_plan", "operations": [{"op": "create_node", "client_ref": "prompt-1", "node": {"type": "smart-prompt", "text": "雨夜城市"}}]},
+        "confirmation": {"summary": "需要确认"},
+    }, {})
+
+    assert plan.steps[0].action == "canvas.create_node"
+    assert plan.steps[0].node.semantic_type == "prompt"
+    assert plan.steps[0].node.content == "雨夜城市"
 
 def test_provider_adapter_preserves_invalid_tool_calls_for_planner_blocking():
     from app.services.canvas_agent.model_resolver import MediaForgeChatModel
@@ -130,3 +169,53 @@ def test_provider_adapter_preserves_invalid_tool_calls_for_planner_blocking():
     assert invalid[0]["args"] == '{"goal":'
     assert MediaForgeChatModel._tool_choice("any") == "required"
     assert MediaForgeChatModel._tool_choice("auto") == "auto"
+
+
+def test_provider_adapter_forwards_native_response_format(monkeypatch):
+    import asyncio
+    from langchain.agents.structured_output import ProviderStrategy
+    from langchain_core.messages import HumanMessage
+    from app.models.canvas_agent import SemanticPlan
+    from app.services.canvas_agent.model_resolver import MediaForgeChatModel
+
+    model = MediaForgeChatModel(endpoint="https://example.invalid/v1/chat/completions", model_name="gpt-test")
+    captured = {}
+
+    async def post(body):
+        captured["body"] = body
+        return {"choices": [{"message": {"content": '{"goal":"ok","steps":[]}'}}]}
+
+    monkeypatch.setattr(model, "_post_with_retry", post)
+    strategy = ProviderStrategy(SemanticPlan)
+    result = asyncio.run(model._agenerate([HumanMessage(content="plan")], response_format=strategy.to_model_kwargs()["response_format"]))
+
+    assert captured["body"]["response_format"]["type"] == "json_schema"
+    assert captured["body"]["response_format"]["json_schema"]["name"] == "SemanticPlan"
+    assert result.generations[0].message.content == '{"goal":"ok","steps":[]}'
+
+
+def test_semantic_plan_native_schema_is_azure_strict_compatible():
+    from langchain.agents.structured_output import ProviderStrategy
+
+    schema = ProviderStrategy(SemanticPlan).to_model_kwargs()["response_format"]["json_schema"]["schema"]
+
+    def assert_strict(node):
+        if isinstance(node, dict):
+            assert "default" not in node
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                assert node["required"] == list(properties)
+                assert node["additionalProperties"] is False
+            for value in node.values():
+                assert_strict(value)
+        elif isinstance(node, list):
+            for value in node:
+                assert_strict(value)
+
+    assert_strict(schema)
+    node_schema = schema["$defs"]["SemanticNode"]["properties"]
+    assert node_schema["params"]["type"] == "string"
+    assert schema["$defs"]["SemanticStep"]["properties"]["placement"]["type"] == "string"
+    plan = SemanticPlan.model_validate({"goal": "x", "steps": [{"id": "n", "action": "canvas.create_node", "node": {"semantic_type": "prompt", "params": "{\"model\":\"demo\"}"}, "placement": "{\"x\":1}"}]})
+    assert plan.steps[0].node.params == {"model": "demo"}
+    assert plan.steps[0].placement == {"x": 1}

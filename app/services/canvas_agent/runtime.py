@@ -20,7 +20,7 @@ def _harness_key(model: Any, key: str) -> str:
     if isinstance(model, str) and ":" in model: return model
     raise ValueError("harness_key is required when model is not a provider:model string")
 
-def create_canvas_agent(*, model: Any, tools: list[Any] | None = None, checkpointer: Any = None, harness_key: str = "", response_format: Any = None):
+def create_canvas_agent(*, model: Any, tools: list[Any] | None = None, checkpointer: Any = None, harness_key: str = "", response_format: Any = None, system_prompt: str | None = None):
     """Create a constrained Deep Agent graph with no task or write capabilities."""
     try:
         from deepagents import GeneralPurposeSubagentProfile, HarnessProfile, create_deep_agent, register_harness_profile
@@ -43,4 +43,5 @@ def create_canvas_agent(*, model: Any, tools: list[Any] | None = None, checkpoin
         "checkpointer": checkpointer,
     }
     if response_format is not None: kwargs["response_format"] = response_format
+    if system_prompt is not None: kwargs["system_prompt"] = system_prompt
     return create_deep_agent(**kwargs)

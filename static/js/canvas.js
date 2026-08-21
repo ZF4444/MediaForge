@@ -4106,7 +4106,7 @@ function shellWheelHandler(e){
         e.stopPropagation();
         return;
     }
-    if(e.target.closest('.composer,.image-edit-modal,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal')) return;
+    if(e.target.closest('.composer,.image-edit-modal,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal')) return;
     e.preventDefault();
     viewportInteractionActive = true;
     const rect = shell.getBoundingClientRect();

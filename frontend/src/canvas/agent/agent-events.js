@@ -15,7 +15,8 @@
   function applyEvent(event) {
     if (!event || Number(event.sequence) <= state.sequence) return;
     state.sequence = Number(event.sequence); const type = String(event.type || '').replace(/^agent\./, ''); const data = event.payload_json || event.data || {};
-    window.CanvasAgentPanel.status(type);
+    if (type === 'progress') window.CanvasAgentPanel.status(data.message || '处理中…');
+    else window.CanvasAgentPanel.status(type);
     if (type === 'plan.created' && data.plan) window.CanvasAgentPlan.render({version:data.plan_version, content_json:data.plan});
     if (type.startsWith('task.') || type === 'patch.applied') window.CanvasAgentBridge.refreshCanvas();
     if (['run.failed','run.blocked','run.cancelled'].includes(type)) window.CanvasAgentPanel.system(data.error || data.reason || type);

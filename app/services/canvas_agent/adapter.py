@@ -17,7 +17,7 @@ def semantic_plan_to_patch(plan: SemanticPlan, canvas_id: str, base_version: int
             if node is None:
                 raise ValueError(f"create_node step {step.id} requires node")
             refs[step.id] = step.id
-            operations.append({"op": "add_node", "client_ref": step.id, "placement": {"x": next_x + (create_index % 3) * 360, "y": next_y + (create_index // 3) * 260}, "node": {"type": _NODE_TYPES.get(node.semantic_type, node.semantic_type), "title": node.title, "text": node.content, "capability": node.capability, **node.params}})
+            operations.append({"op": "add_node", "client_ref": step.id, "placement": step.placement or {"x": next_x + (create_index % 3) * 360, "y": next_y + (create_index // 3) * 260}, "node": {"type": _NODE_TYPES.get(node.semantic_type, node.semantic_type), "title": node.title, "text": node.content, "capability": node.capability, **node.params}})
             create_index += 1
         elif step.action in {"canvas.update_node_params", "canvas.replace_node_content", "canvas.run_node", "canvas.run_group"}:
             operations.append({"op": step.action.removeprefix("canvas."), "node_id": step.target_node_id, "params": (step.node.params if step.node else {}), "content": (step.node.content if step.node else "")})

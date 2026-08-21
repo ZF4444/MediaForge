@@ -90,17 +90,22 @@ async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, re
     if run["status"] in {"cancelled", "completed", "failed", "blocked"}: raise HTTPException(status_code=409, detail="Run 当前状态不可继续规划")
     await asyncio.to_thread(append_message, user_id, run_id, "user", payload.content, {"selected_node_ids": payload.selected_node_ids, "mention_node_ids": payload.mention_node_ids})
     try:
+        await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在读取画布上下文…"})
         context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"], selected_node_ids=payload.selected_node_ids, mention_node_ids=payload.mention_node_ids)
         context["run_id"] = run_id
+        await emit_agent_event(user_id, run_id, "progress", {"phase": "model", "message": "正在准备模型…"})
         model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
-        intent = await classify_intent(model, payload.content, context, harness_key="mediaforgechatmodel")
-        if intent.intent in {"chat", "clarification"}:
-            reply = intent.reply.strip() or ("请补充你希望对画布执行的操作。" if intent.intent == "clarification" else "我可以帮助你处理画布内容。")
-            await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"intent": intent.intent})
-            await emit_agent_event(user_id, run_id, "message.replied", {"intent": intent.intent, "reply": reply})
-            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "intent": intent.model_dump(mode="json"), "reply": reply}
+        await emit_agent_event(user_id, run_id, "progress", {"phase": "intent", "message": "正在理解你的请求…"})
+        # intent = await classify_intent(model, payload.content, context, harness_key="mediaforgechatmodel")
+        # if intent.intent in {"chat", "clarification"}:
+        #     reply = intent.reply.strip() or ("请补充你希望对画布执行的操作。" if intent.intent == "clarification" else "我可以帮助你处理画布内容。")
+        #     await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"intent": intent.intent})
+        #     await emit_agent_event(user_id, run_id, "message.replied", {"intent": intent.intent, "reply": reply})
+        #     return {"run": await asyncio.to_thread(get_run, user_id, run_id), "intent": intent.model_dump(mode="json"), "reply": reply}
+        # await emit_agent_event(user_id, run_id, "progress", {"phase": "planning", "message": "已确认需要操作画布，正在制定计划…"})
         async with create_async_checkpointer() as checkpointer:
             plan = await plan_with_deep_agent(model, payload.content, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool((run.get("metadata_json") or {}).get("model_thread_started")))
+        await emit_agent_event(user_id, run_id, "progress", {"phase": "validating", "message": "计划已生成，正在校验节点和参数…"})
         await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model})
         plan_json = plan.model_dump(mode="json")
         estimate = estimate_plan_cost(plan_json)

@@ -100,6 +100,11 @@ class MediaForgeChatModel(BaseChatModel):
 
     async def _agenerate(self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
         body: dict[str, Any] = {"model": self.model_name, "messages": [self._message(message) for message in messages], "stream": False}
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            if not isinstance(response_format, dict):
+                raise TypeError("response_format must be a provider request dictionary")
+            body["response_format"] = response_format
         tools = kwargs.get("_bound_tools")
         if tools:
             body["tools"] = [convert_to_openai_tool(tool) for tool in tools]
