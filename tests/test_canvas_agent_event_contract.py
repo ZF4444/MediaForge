@@ -17,3 +17,17 @@ def test_event_envelope_has_stable_client_fields():
     assert envelope["schema_version"] == 1
     assert envelope["run_id"] == "run"
     assert envelope["payload"]["message"] == "working"
+
+
+def test_worker_auth_context_is_available_in_to_thread():
+    import asyncio
+    from app.core.auth import current_user_id, current_user_var
+
+    async def check() -> str:
+        token = current_user_var.set("agent-owner")
+        try:
+            return await asyncio.to_thread(current_user_id)
+        finally:
+            current_user_var.reset(token)
+
+    assert asyncio.run(check()) == "agent-owner"

@@ -9,6 +9,8 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.config import AGENT_COMMAND_POLL_SECONDS
+from app.core.auth import USERS, current_user_var
+from app.core.log_context import reset_log_context, set_log_context
 from app.services.canvas_agent.event_bus import AgentEventService
 from app.services.canvas_agent.store import claim_next_command, command_cancel_requested, finish_command, refresh_command_lease, update_run
 
@@ -48,6 +50,9 @@ async def execute_command(operation: dict[str, Any]) -> None:
         await _emit(user_id, run_id, operation_id, "operation.cancelled", phase="cancelling", payload={"message": "Agent 命令已取消"})
         return
     phase = "confirmation" if kind == "agent.confirm" else "planning"
+    username = str((USERS.get(user_id) or {}).get("username") or user_id)
+    user_token = current_user_var.set(user_id)
+    log_token = set_log_context(user_id=user_id, username=username, task_id=operation_id, run_id=run_id, operation_id=operation_id)
     await _emit(user_id, run_id, operation_id, "operation.started", phase=phase, payload={"message": "Agent 命令开始执行"})
     token = set_current_operation(operation_id)
     async def renew_lease() -> None:
@@ -81,6 +86,8 @@ async def execute_command(operation: dict[str, Any]) -> None:
     finally:
         lease_task.cancel()
         reset_current_operation(token)
+        reset_log_context(log_token)
+        current_user_var.reset(user_token)
 
 
 async def agent_command_worker_loop() -> None:
