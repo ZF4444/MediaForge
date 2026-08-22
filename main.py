@@ -858,30 +858,26 @@ def merge_default_api_providers(providers):
             current["rh_apps"] = merge_runninghub_system_entries(rh_default.get("rh_apps") or [], current.get("rh_apps") or [], "app")
             current["model_aliases"] = {}
             current["model_protocols"] = {}
+    # Volcengine is an optional Provider. Keep its established defaults when it
+    # exists, but do not recreate it after a user has deleted the platform.
     volc_default = next((d for d in default_api_providers() if d["id"] == "volcengine"), None)
-    if volc_default:
-        current = next((item for item in merged if item.get("id") == "volcengine"), None)
-        legacy = next((item for item in merged if item.get("id") != "volcengine" and str(item.get("protocol") or "").lower() == "volcengine"), None)
-        if not current:
-            if legacy:
-                legacy_image_models = model_list_from_values(legacy.get("image_models") or [])
-                legacy_video_models = model_list_from_values(legacy.get("video_models") or [])
-                current = {
-                    **volc_default,
-                    "base_url": legacy.get("base_url") or volc_default["base_url"],
-                    "image_models": legacy_image_models or model_list_from_values(volc_default.get("image_models") or []),
-                    "chat_models": model_list_from_values(legacy.get("chat_models") or []),
-                    "video_models": legacy_video_models,
-                }
-                merged.append(current)
-            else:
-                merged.append(volc_default)
-        else:
-            if not current.get("base_url"):
-                current["base_url"] = volc_default["base_url"]
-            current["protocol"] = "volcengine"
-            current["volcengine_project_name"] = str(current.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME
-            current["volcengine_region"] = str(current.get("volcengine_region") or VOLCENGINE_DEFAULT_REGION).strip() or VOLCENGINE_DEFAULT_REGION
+    current = next((item for item in merged if item.get("id") == "volcengine"), None)
+    legacy = next((item for item in merged if item.get("id") != "volcengine" and str(item.get("protocol") or "").lower() == "volcengine"), None)
+    if volc_default and not current and legacy:
+        current = {
+            **volc_default,
+            "base_url": legacy.get("base_url") or volc_default["base_url"],
+            "image_models": model_list_from_values(legacy.get("image_models") or []) or model_list_from_values(volc_default.get("image_models") or []),
+            "chat_models": model_list_from_values(legacy.get("chat_models") or []),
+            "video_models": model_list_from_values(legacy.get("video_models") or []),
+        }
+        merged.append(current)
+    if volc_default and current:
+        if not current.get("base_url"):
+            current["base_url"] = volc_default["base_url"]
+        current["protocol"] = "volcengine"
+        current["volcengine_project_name"] = str(current.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME
+        current["volcengine_region"] = str(current.get("volcengine_region") or VOLCENGINE_DEFAULT_REGION).strip() or VOLCENGINE_DEFAULT_REGION
     comfy_default = next((d for d in default_api_providers() if d["id"] == "comfyui"), None)
     if comfy_default:
         current = next((item for item in merged if item.get("id") == "comfyui"), None)
@@ -1174,6 +1170,11 @@ def normalize_provider(item):
                 "output_per_million": normalize_nonnegative_number(raw_price.get("output_per_million"), 0, "Omnilojo 输出单价"),
             }
     rh_apps = normalize_runninghub_entries(item.get("rh_apps") or [], "app")
+    try:
+        from app.services.provider_parameters import normalize_parameter_schema
+        parameter_schema = normalize_parameter_schema(item.get("parameter_schema"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Provider 参数 schema 不合法：{exc}") from exc
     model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("image_models") or [])
     chat_model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("chat_models") or [])
     video_model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("video_models") or [])
@@ -1205,6 +1206,7 @@ def normalize_provider(item):
         "video_models": video_model_values,
         "model_protocols": {} if provider_id == "runninghub" else model_protocols,
         "model_aliases": {} if provider_id == "runninghub" else {str(k).strip(): str(v).strip() for k, v in (item.get("model_aliases") or {}).items() if isinstance(k, str) and isinstance(v, str) and str(k).strip() and str(v).strip()},
+        "parameter_schema": parameter_schema,
         "rh_apps": rh_apps,
         "volcengine_project_name": volc_project,
         "volcengine_region": volc_region,
@@ -4048,6 +4050,42 @@ async def api_providers():
     _value, version = await asyncio.to_thread(get_app_setting_with_version, "api_providers", [])
     return {"providers": public_api_providers(include_credentials=access_control.is_admin(current_user_id())), "version": version}
 
+@app.get("/api/canvas/capability-parameters")
+async def canvas_capability_parameters(capability: str, provider_id: str = "", model: str = ""):
+    """The single field contract consumed by canvas UI and Canvas Agent tools."""
+    from app.services.provider_parameters import capability_parameters
+    try:
+        return await asyncio.to_thread(
+            capability_parameters,
+            capability=capability,
+            provider_id=provider_id,
+            model=model,
+            # Do not let the shared resolver import ``main`` to find a loader.
+            # Depending on the ASGI entrypoint that can create a second module
+            # namespace with a stale Provider cache. The schema endpoint must
+            # always resolve against the same persisted configuration exposed by
+            # the Provider settings API.
+            provider_loader=refresh_api_providers_cache,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+@app.get("/api/canvas/parameter-schema/definitions")
+async def canvas_parameter_schema_definitions():
+    """Backend-owned editable definitions and their execution contract."""
+    from app.services.provider_parameters import parameter_schema_definitions
+    return {"schemas": parameter_schema_definitions()}
+
+@app.post("/api/canvas/parameter-schema/validate")
+async def validate_canvas_parameter_schema(payload: Dict[str, Any]):
+    """Validate one Provider's model-scoped parameter overrides before save."""
+    require_admin()
+    from app.services.provider_parameters import normalize_parameter_schema
+    try:
+        return {"parameter_schema": normalize_parameter_schema(payload.get("parameter_schema"))}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 @app.put("/api/providers")
 def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = Header(None, alias="If-Match")):
     require_admin()
@@ -4629,9 +4667,136 @@ async def build_online_image_result(payload: OnlineImageRequest):
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
     return result
 
+CANVAS_IMAGE_SIZE_MAP = {
+    "1:1": {"1k": "1024x1024", "2k": "2048x2048", "4k": "4096x4096"},
+    "3:2": {"1k": "1536x1024", "2k": "2048x1360", "4k": "3520x2336"},
+    "2:3": {"1k": "1024x1536", "2k": "1360x2048", "4k": "2336x3520"},
+    "4:3": {"1k": "1024x768", "2k": "2048x1536", "4k": "3312x2480"},
+    "3:4": {"1k": "768x1024", "2k": "1536x2048", "4k": "2480x3312"},
+    "16:9": {"1k": "1536x864", "2k": "2048x1152", "4k": "3840x2160"},
+    "9:16": {"1k": "864x1536", "2k": "1152x2048", "4k": "2160x3840"},
+    "21:9": {"1k": "1536x656", "2k": "2048x880", "4k": "3840x1648"},
+    "9:21": {"1k": "656x1536", "2k": "880x2048", "4k": "1648x3840"},
+}
+CANVAS_IMAGE_LONG_SIDE = {"1k": 1024, "2k": 2048, "4k": 3840}
+CANVAS_IMAGE_PIXEL_LIMIT = {"1k": 2359296, "2k": 4194304, "4k": 8294400}
+
+
+def _canvas_settings(payload) -> dict:
+    settings = getattr(payload, "run_settings", None)
+    return settings if isinstance(settings, dict) else {}
+
+
+def _canvas_string(settings: dict, key: str, fallback: str = "") -> str:
+    value = settings.get(key, fallback)
+    return str(value or "").strip()
+
+
+def _canvas_int(settings: dict, key: str, fallback: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(float(settings.get(key, fallback)))
+    except (TypeError, ValueError):
+        value = fallback
+    return max(minimum, min(maximum, value))
+
+
+def _canvas_bool(settings: dict, key: str, fallback: bool = False) -> bool:
+    value = settings.get(key, fallback)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def canvas_image_size_from_settings(settings: dict) -> str:
+    resolution = _canvas_string(settings, "resolution", "1k").lower() or "1k"
+    ratio = _canvas_string(settings, "ratio", "1:1") or "1:1"
+    if resolution == "custom":
+        return _canvas_string(settings, "customSize") or "1024x1024"
+    if ratio == "source":
+        ratio = _canvas_string(settings, "ratioMatched", "1:1")
+    if ratio == "custom":
+        parts = re.split(r"[:xX*]", _canvas_string(settings, "customRatio"))
+        try:
+            width_ratio, height_ratio = float(parts[0]), float(parts[1])
+            aspect = width_ratio / height_ratio if width_ratio > 0 and height_ratio > 0 else 0
+        except (IndexError, TypeError, ValueError, ZeroDivisionError):
+            aspect = 0
+        if aspect > 0:
+            long_side = CANVAS_IMAGE_LONG_SIDE.get(resolution, 1024)
+            pixel_limit = CANVAS_IMAGE_PIXEL_LIMIT.get(resolution, long_side * long_side)
+            raw_width = long_side if aspect >= 1 else min(long_side * aspect, math.sqrt(pixel_limit * aspect))
+            raw_height = min(long_side / aspect, math.sqrt(pixel_limit / aspect)) if aspect >= 1 else long_side
+            width = max(64, math.floor(raw_width / 16) * 16)
+            height = max(64, math.floor(raw_height / 16) * 16)
+            return f"{width}x{height}"
+    ratio_sizes = CANVAS_IMAGE_SIZE_MAP.get(ratio) or CANVAS_IMAGE_SIZE_MAP["1:1"]
+    return ratio_sizes.get(resolution) or CANVAS_IMAGE_SIZE_MAP["1:1"]["1k"]
+
+
+def normalize_canvas_image_request(payload: OnlineImageRequest) -> OnlineImageRequest:
+    settings = _canvas_settings(payload)
+    if not settings:
+        return payload
+    provider_id = _canvas_string(settings, "provider_id", payload.provider_id)
+    if provider_id in {"runninghub", "comfyui"}:
+        return payload
+    model = _canvas_string(settings, "model", payload.model)
+    try:
+        from app.services.provider_parameters import validate_run_settings
+        resolved = validate_run_settings(
+            kind="image", provider_id=provider_id, model=model,
+            settings=settings, provider_loader=load_api_providers,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"画布图片参数不合法：{exc}") from exc
+    values = resolved["values"]
+    updates: dict[str, Any] = {}
+    for field in resolved["fields"]:
+        execution = field.get("execution") or {}
+        target, transform = execution.get("target"), execution.get("transform")
+        if not execution.get("supported", False) or not target:
+            continue
+        if transform == "image_size":
+            updates[target] = canvas_image_size_from_settings(values)
+        else:
+            updates[target] = values.get(field["id"])
+    return payload.model_copy(update=updates)
+
+
+def normalize_canvas_video_request(payload: CanvasVideoRequest) -> CanvasVideoRequest:
+    settings = _canvas_settings(payload)
+    if not settings:
+        return payload
+    provider_id = _canvas_string(settings, "videoProvider", payload.provider_id)
+    if provider_id in {"runninghub", "comfyui"}:
+        return payload
+    model = _canvas_string(settings, "videoModel", payload.model)
+    try:
+        from app.services.provider_parameters import validate_run_settings
+        resolved = validate_run_settings(
+            kind="video", provider_id=provider_id, model=model,
+            settings=settings, provider_loader=load_api_providers,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"画布视频参数不合法：{exc}") from exc
+    values = resolved["values"]
+    updates: dict[str, Any] = {}
+    for field in resolved["fields"]:
+        execution = field.get("execution") or {}
+        target = execution.get("target")
+        if execution.get("supported", False) and target:
+            updates[target] = values.get(field["id"])
+    if updates.pop("frame_roles", False):
+        updates["images"] = [
+            image.model_copy(update={"role": "first_frame" if index == 0 else "last_frame" if index == 1 else image.role})
+            for index, image in enumerate(payload.images)
+        ]
+    return payload.model_copy(update=updates)
+
+
 @app.post("/api/online-image")
 async def online_image(payload: OnlineImageRequest):
-    return await build_online_image_result(payload)
+    return await build_online_image_result(normalize_canvas_image_request(payload))
 
 @app.post("/api/image-task-query")
 async def query_image_task(payload: ImageTaskQueryRequest):
@@ -4772,6 +4937,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
+    payload = normalize_canvas_image_request(payload)
     require_model_access(payload.provider_id, payload.model)
     await assert_provider_budget_available(get_api_provider(payload.provider_id), current_user_id())
     owner_id = current_user_id()
@@ -4820,7 +4986,7 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             "canvas image batch submitted",
             extra={"event": "task_batch_submitted", "task_id": parent_task_id, "provider": payload.provider_id, "operation": "image_generation", "status": "queued", "count": count},
         )
-        return {"task_id": parent_task_id, "child_task_ids": child_tasks, "status": "queued"}
+        return {"task_id": parent_task_id, "child_task_ids": child_tasks, "status": "queued", "count": count}
 
     task_id = f"canvas_img_{uuid.uuid4().hex}"
     await create_canvas_task({
@@ -4841,7 +5007,7 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
         extra={"event": "task_submitted", "task_id": task_id, "provider": payload.provider_id, "operation": "image_generation", "status": "queued"},
     )
     await enqueue_canvas_task(task_id)
-    return {"task_id": task_id, "status": "queued"}
+    return {"task_id": task_id, "status": "queued", "count": count}
 
 
 async def _canvas_image_batch_view(task: dict):
@@ -5494,6 +5660,7 @@ AI_PROVIDER_RUNTIME.register("video_generation", "default", _video_provider_adap
 
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
+    payload = normalize_canvas_video_request(payload)
     require_model_access(payload.provider_id, payload.model)
     provider = get_api_provider(payload.provider_id)
     async with provider_operation(provider["id"], "video_generation", user_id=current_user_id()):

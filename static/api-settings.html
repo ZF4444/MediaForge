@@ -35,8 +35,9 @@
 
             <div class="layout">
                 <aside class="sidebar">
-                    <div class="side-section-title">模型列表</div>
+                    <div class="side-section-title">平台列表</div>
                     <div id="providerList" class="provider-list"></div>
+                    <button class="add-btn" type="button" onclick="addProvider()"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>添加平台</span></button>
                 </aside>
 
                 <main id="settingsContent" class="content">
@@ -177,10 +178,6 @@
                                 <div class="runninghub-hint">
                                 </div>
                             </label>
-                            <label id="selectedModelProtocolField" class="field full" hidden>
-                                <span class="label">API协议</span>
-                                <div class="field-frame"><select id="selectedModelProtocol"><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="omnilojo">Omnilojo</option></select></div>
-                            </label>
                             <!-- 验证操作行 -->
                             <div class="verify-action-row">
                                 <button id="testUrlBtn" class="action-btn" type="button" onclick="testConnection()">
@@ -194,33 +191,10 @@
                         </div>
                     </section>
 
-                    <section id="modelConfigBlock" class="block model-config-block" hidden>
-                        <div class="block-head">
-                            <div>
-                                <div class="block-title">模型配置</div>
-                                <div class="block-desc">当前模型的连接、显示别名和价格配置。</div>
-                            </div>
-                        </div>
-                        <div class="model-config-grid">
-                            <label class="field">
-                                <span class="label">显示别名</span>
-                                <div class="field-frame"><input id="selectedModelAliasInput" type="text" placeholder="画布中显示的名称（选填）"></div>
-                            </label>
-                        </div>
-                        <div id="selectedModelPriceFields" class="model-config-prices" hidden>
-                            <label class="field"><span class="label">输入 USD / 100 万 token</span><div class="field-frame"><input id="selectedModelInputPrice" type="number" min="0" step="0.0001"></div></label>
-                            <label class="field"><span class="label">输出 USD / 100 万 token</span><div class="field-frame"><input id="selectedModelOutputPrice" type="number" min="0" step="0.0001"></div></label>
-                        </div>
-                    </section>
-
                     <div id="modelsHead" class="block models-toolbar">
                         <div>
-                                <div class="block-title">选择模型</div>
-                                <div class="block-desc">从上游 API 获取模型 ID，选择后进入模型配置。</div>
-                                <label id="selectedModelIdField" class="selected-model-id-field" hidden>
-                                    <span class="label">当前模型 ID</span>
-                                    <div class="field-frame"><input id="selectedModelInput" type="text" readonly></div>
-                                </label>
+                                <div class="block-title">平台模型</div>
+                                <div class="block-desc">从当前平台的上游 API 获取模型 ID，并按生图、聊天和视频分类配置。</div>
                         </div>
                         <div class="models-toolbar-actions">
                             <button id="fetchModelsBtn" class="action-btn primary-btn" type="button" onclick="fetchModels()">
@@ -265,7 +239,55 @@
                             <div id="videoModelList" class="model-list"></div>
                         </section>
 
-                </div>
+                    </div>
+
+                    <section id="modelConfigBlock" class="block model-config-block" hidden>
+                        <div class="block-head">
+                            <div>
+                                <div class="block-title">当前模型</div>
+                                <div class="block-desc">模型协议、归属平台、显示名称和价格配置。</div>
+                            </div>
+                        </div>
+                        <div class="model-config-grid">
+                            <label id="selectedModelIdField" class="field full" hidden>
+                                <span class="label">模型 ID</span>
+                                <div class="field-frame"><input id="selectedModelInput" type="text" readonly></div>
+                            </label>
+                            <label id="selectedModelProtocolField" class="field" hidden>
+                                <span class="label">API 协议</span>
+                                <div class="field-frame"><select id="selectedModelProtocol"><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="omnilojo">Omnilojo</option></select></div>
+                            </label>
+                            <label id="connectionProviderField" class="field" hidden>
+                                <span class="label">所属 Provider</span>
+                                <div class="field-frame"><select id="connectionProviderSelect" onchange="migrateSelectedModelProvider(this.value)"></select></div>
+                                <span class="hint">切换会迁移当前模型；目标 Provider 的地址和 Key 不会被覆盖。</span>
+                            </label>
+                            <label class="field">
+                                <span class="label">显示别名</span>
+                                <div class="field-frame"><input id="selectedModelAliasInput" type="text" placeholder="画布中显示的名称（选填）"></div>
+                            </label>
+                        </div>
+                        <div id="selectedModelPriceFields" class="model-config-prices" hidden>
+                            <label class="field"><span class="label">输入 USD / 100 万 token</span><div class="field-frame"><input id="selectedModelInputPrice" type="number" min="0" step="0.0001"></div></label>
+                            <label class="field"><span class="label">输出 USD / 100 万 token</span><div class="field-frame"><input id="selectedModelOutputPrice" type="number" min="0" step="0.0001"></div></label>
+                        </div>
+                    </section>
+
+                    <section id="parameterSchemaBlock" class="block" hidden>
+                        <div class="block-head">
+                            <div>
+                                <div class="block-title">画布参数</div>
+                                <div class="block-desc">当前模型独立的画布参数配置。未启用覆盖的字段继续使用系统默认值。</div>
+                            </div>
+                            <div class="schema-actions">
+                                <button class="action-btn" type="button" onclick="exportParameterSchema()"><i data-lucide="download" class="w-3.5 h-3.5"></i><span>导出 JSON</span></button>
+                                <button class="action-btn" type="button" onclick="document.getElementById('parameterSchemaImport').click()"><i data-lucide="upload" class="w-3.5 h-3.5"></i><span>导入 JSON</span></button>
+                                <button class="action-btn" type="button" onclick="resetParameterSchema()"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i><span>重置覆盖</span></button>
+                                <input id="parameterSchemaImport" type="file" accept="application/json,.json" hidden onchange="importParameterSchema(event)">
+                            </div>
+                        </div>
+                        <div id="parameterSchemaEditor"></div>
+                    </section>
             </main>
         </div>
         </div>
@@ -304,6 +326,6 @@
     <script src="/static/js/upload-quota-dialog.js"></script>
     <script src="/static/dist/api-settings/comfy-instances.js"></script>
     <script src="/static/dist/api-settings/provider-onboarding.js"></script>
-    <script src="/static/dist/api-settings/main.js?v=20260819-provider-id-1"></script>
+    <script src="/static/dist/api-settings/main.js"></script>
 </body>
 </html>

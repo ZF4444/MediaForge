@@ -8,7 +8,6 @@ let providers = [];
 let providersVersion = null;
 let selectedId = '';
 let selectedModel = { providerId:'', kind:'', name:'', index:-1 };
-const expandedModelKinds = new Set(['image', 'chat', 'video']);
 const providerList = document.getElementById('providerList');
 const editorTitle = document.getElementById('editorTitle');
 const statusEl = document.getElementById('status');
@@ -16,6 +15,8 @@ const statusEl = document.getElementById('status');
 // names are deprecated and this value is never rendered or submitted.
 const nameInput = document.getElementById('nameInput');
 const idInput = document.getElementById('idInput');
+const connectionProviderField = document.getElementById('connectionProviderField');
+const connectionProviderSelect = document.getElementById('connectionProviderSelect');
 const baseInput = document.getElementById('baseInput');
 const protocolInput = document.getElementById('protocolInput');
 const keyInput = document.getElementById('keyInput');
@@ -55,11 +56,16 @@ const selectedModelProtocolField = document.getElementById('selectedModelProtoco
 const selectedModelPriceFields = document.getElementById('selectedModelPriceFields');
 const selectedModelInputPrice = document.getElementById('selectedModelInputPrice');
 const selectedModelOutputPrice = document.getElementById('selectedModelOutputPrice');
+const parameterSchemaBlock = document.getElementById('parameterSchemaBlock');
+const parameterSchemaEditor = document.getElementById('parameterSchemaEditor');
+const parameterSchemaImport = document.getElementById('parameterSchemaImport');
 const VOLCENGINE_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const VOLCENGINE_DEFAULT_PROJECT_NAME = 'default';
 const VOLCENGINE_DEFAULT_REGION = 'cn-beijing';
 const RH_DEFAULT_BASE_URL = 'https://www.runninghub.cn';
 const EXAMPLE_BASE_URL = 'https://api.example.com/v1';
+let canvasSchemaDefinitions = {image:{fields:[]}, video:{fields:[]}};
+const SCHEMA_OVERRIDE_KEYS = new Set(['id','name','default','options','option_labels','min','max','step']);
 const ONBOARDING_GUIDES = {
     runninghub:{
         titleKey:'api.rhOnboardingTitle',
@@ -130,9 +136,6 @@ function providerModels(item){
     });
     return result;
 }
-function allModelEntries(){
-    return visibleProviders().filter(item => !['runninghub','comfyui'].includes(item.id)).flatMap(providerModels);
-}
 function protocolLabel(protocol){
     return ({openai:'OpenAI', gemini:'Gemini', omnilojo:'Omnilojo', volcengine:'Volcengine', runninghub:'RunningHub'})[protocol] || String(protocol || 'OpenAI').toUpperCase();
 }
@@ -146,9 +149,21 @@ function selectedModelRef(){
     const name = index < 0 ? '' : String(item[key][index] || '').trim();
     return index < 0 || !name ? null : {item, key, index, name};
 }
+function connectionProviderCandidates(currentId=''){
+    return visibleProviders().filter(item => isModelFirstProvider(item) && (item.enabled !== false || item.id === currentId));
+}
+function renderConnectionProviderSelect(ref){
+    if(!connectionProviderField || !connectionProviderSelect) return;
+    const visible = Boolean(ref) && !isRunningHubAppsPage;
+    connectionProviderField.hidden = !visible;
+    if(!visible) return;
+    connectionProviderSelect.innerHTML = connectionProviderCandidates(ref.item.id).map(item =>
+        `<option value="${escapeAttr(item.id)}" ${item.id === ref.item.id ? 'selected' : ''}>${escapeHtml(item.id)}</option>`
+    ).join('');
+}
 function isFixedProvider(itemOrId){
     const id = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
-    return id === 'comfyui' || id === 'runninghub' || id === 'volcengine';
+    return id === 'comfyui' || id === 'runninghub';
 }
 function isModelFirstProvider(itemOrId){
     const id = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
@@ -214,14 +229,11 @@ function isVolcengineProvider(item){
     return String(item?.protocol || '').toLowerCase() === 'volcengine';
 }
 function sortedProviders(){
-    const order = ['volcengine', 'runninghub', 'comfyui'];
-    return visibleProviders().sort((a, b) => {
-        const ai = order.indexOf(a.id);
-        const bi = order.indexOf(b.id);
-        if(ai === -1 && bi === -1) return 0;
-        if(ai === -1) return 1;
-        if(bi === -1) return -1;
-        return ai - bi;
+    const fixedOrder = {runninghub: 0, comfyui: 1};
+    return [...visibleProviders()].sort((a, b) => {
+        const ai = fixedOrder[a.id], bi = fixedOrder[b.id];
+        if(ai !== undefined || bi !== undefined) return (ai ?? 99) - (bi ?? 99);
+        return String(a.id || '').localeCompare(String(b.id || ''), undefined, {numeric:true, sensitivity:'base'});
     });
 }
 function providerDragAttrs(item){
@@ -230,67 +242,22 @@ function providerDragAttrs(item){
     return ` draggable="true" data-provider-id="${id}" ondragstart="handleProviderDragStart(event,'${id}')" ondragover="handleProviderDragOver(event,'${id}')" ondrop="handleProviderDrop(event,'${id}')" ondragend="handleProviderDragEnd()"`;
 }
 function renderProviderList(){
-    const specialCards = sortedProviders().filter(item => ['runninghub','comfyui'].includes(item.id)).map(item => {
+    providerList.innerHTML = sortedProviders().map(item => {
         const active = item.id === selectedId ? 'active' : '';
         const stateClass = item.enabled === false ? 'is-disabled' : (item.has_key ? 'has-key' : 'missing-key');
-        if(item.id === 'runninghub'){
-            return `
-                <button class="provider-card provider-card-banner ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeHtml(item.id)}')">
-                    <span class="provider-banner-inner">
-                        <span class="provider-logo-wrap">
-                            <img src="/static/images/RunningHub-B.png" alt="RunningHub" class="runninghub-icon ms-icon-light">
-                            <img src="/static/images/RunningHub-W.png" alt="RunningHub" class="runninghub-icon ms-icon-dark">
-                            <span class="provider-logo-fallback">RunningHub</span>
-                        </span>
-                        <span class="provider-protocol-pill">RH</span>
-                    </span>
-                </button>
-            `;
-        }
-        if(item.id === 'comfyui'){
-            return `
-                <button class="provider-card provider-card-banner ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeHtml(item.id)}')">
-                    <span class="provider-banner-inner">
-                        <span class="provider-logo-wrap"><span class="comfyui-wordmark">ComfyUI</span></span>
-                        <span class="provider-protocol-pill">Local</span>
-                    </span>
-                </button>
-            `;
-        }
-        return '';
+        const fixed = isFixedProvider(item);
+        const count = (item.image_models || []).length + (item.chat_models || []).length + (item.video_models || []).length;
+        const detail = item.id === 'runninghub' ? 'AI 应用' : item.id === 'comfyui' ? '本地工作流' : `${count} 个模型`;
+        const protocol = item.id === 'runninghub' ? 'RunningHub' : item.id === 'comfyui' ? 'Local' : protocolLabel(item.protocol);
+        return `<button class="provider-card provider-card-sortable ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeAttr(item.id)}')" ${providerDragAttrs(item)}>
+            <span class="provider-drag-handle">${fixed ? '' : '<i data-lucide="grip-vertical" class="w-3.5 h-3.5"></i>'}</span>
+            <span class="provider-mark"><i data-lucide="${item.id === 'runninghub' ? 'sparkles' : item.id === 'comfyui' ? 'box' : item.id === 'volcengine' ? 'flame' : 'plug-zap'}" class="w-3.5 h-3.5"></i></span>
+            <span class="provider-info"><span class="provider-name">${escapeHtml(item.id)}</span><span class="provider-meta">${escapeHtml(detail)}</span></span>
+            <span class="provider-protocol-badge">${escapeHtml(protocol)}</span>
+            <span class="provider-status-dot ${item.enabled === false ? 'disabled' : ''}"></span>
+        </button>`;
     }).join('');
-    const entries = allModelEntries();
-    const modelGroups = ['image', 'chat', 'video'].map(kind => {
-        const models = entries.filter(model => model.kind === kind);
-        const expanded = expandedModelKinds.has(kind);
-        return `<section class="model-kind-group ${expanded ? 'expanded' : ''}">
-            <button class="model-kind-head" type="button" onclick="toggleModelKind('${kind}')">
-                <span class="model-kind-title"><i data-lucide="${modelKindIcon(kind)}" class="w-3.5 h-3.5"></i><span>${escapeHtml(modelKindLabel(kind))}</span></span>
-                <span class="model-kind-count">${models.length}</span>
-                <i data-lucide="chevron-down" class="model-kind-caret"></i>
-            </button>
-            <div class="model-kind-items">${models.map(model => {
-                const item = providers.find(providerItem => providerItem.id === model.providerId);
-                const activeModel = selectedModel.providerId === model.providerId && selectedModel.kind === model.kind && selectedModel.index === model.index;
-                const alias = item?.model_aliases?.[model.name] || '';
-                const source = `${model.providerId} · ${protocolLabel(model.protocol)}`;
-                return `<button class="provider-model-card ${activeModel ? 'active' : ''}" type="button" onclick="selectModel('${escapeAttr(model.providerId)}','${model.kind}',${model.index})">
-                    <span class="provider-model-icon"><i data-lucide="${modelKindIcon(model.kind)}" class="w-3.5 h-3.5"></i></span>
-                    <span class="provider-model-info"><span class="provider-model-name">${escapeHtml(alias || model.label)}</span><span class="provider-model-meta">${escapeHtml(source)}${model.hasKey ? ' · 已配置 Key' : ' · 未配置 Key'}</span></span>
-                    <span class="provider-status-dot"></span>
-                </button>`;
-            }).join('') || `<div class="provider-model-empty">暂无${escapeHtml(modelKindLabel(kind))}</div>`}
-                <button class="model-kind-add" type="button" onclick="addModel('${kind}')"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>添加模型</span></button>
-            </div>
-        </section>`;
-    }).join('');
-    providerList.innerHTML = specialCards + modelGroups;
     refreshIcons();
-}
-function toggleModelKind(kind){
-    if(expandedModelKinds.has(kind)) expandedModelKinds.delete(kind);
-    else expandedModelKinds.add(kind);
-    renderProviderList();
 }
 function handleProviderDragStart(event, id){
     const item = providers.find(provider => provider.id === id);
@@ -337,11 +304,7 @@ function renderEditor(){
     const selectedRef = selectedModelRef();
     if(selectedModelIdField) selectedModelIdField.hidden = !selectedRef;
     if(selectedModelProtocolField) selectedModelProtocolField.hidden = !selectedRef;
-    if(isModelFirstProvider(item) && selectedRef){
-        editorTitle.textContent = item.model_aliases?.[selectedRef.name] || selectedRef.name || '未命名模型';
-    } else {
-        editorTitle.textContent = item.id;
-    }
+    editorTitle.textContent = item.id;
     const enabledToggle = document.getElementById('enabledToggle');
     if(enabledToggle) enabledToggle.checked = item.enabled !== false;
     idInput.value = item.id || '';
@@ -357,6 +320,9 @@ function renderEditor(){
     const isStandaloneVolcengine = item.id === 'volcengine';
     const isComfyui = item.id === 'comfyui';
     const isOmnilojo = activeModelProtocol(item) === 'omnilojo';
+    renderConnectionProviderSelect(selectedRef);
+    if(parameterSchemaBlock) parameterSchemaBlock.hidden = isRunningHub || isComfyui || !selectedRef || !['image', 'video'].includes(selectedRef.key === 'image_models' ? 'image' : selectedRef.key === 'video_models' ? 'video' : 'chat');
+    renderParameterSchemaEditor();
     renderSelectedModelConfig(item, selectedRef);
     if(isRunningHub){
         if(rhFreeKeyInput){
@@ -394,7 +360,7 @@ function renderEditor(){
     renderProviderOnboarding(item);
     const editorSub = document.querySelector('#settingsContent .editor-sub');
     if(editorSub){
-        editorSub.textContent = isComfyui ? '管理工作流运行所使用的 ComfyUI 后端地址。' : isModelFirstProvider(item) ? '配置当前模型及其协议连接参数。' : tr('api.editorSub');
+        editorSub.textContent = isComfyui ? '管理工作流运行所使用的 ComfyUI 后端地址。' : isModelFirstProvider(item) ? '先配置平台连接，再管理并选择该平台的模型。' : tr('api.editorSub');
     }
     if(providerOnboardingCard && isComfyui) providerOnboardingCard.hidden = true;
     const showRunningHubApps = isRunningHub && isRunningHubAppsPage;
@@ -408,12 +374,12 @@ function renderEditor(){
         if(rhAppsCount) rhAppsCount.textContent = '0';
     }
     const deleteBtn = document.getElementById('deleteBtn');
-    if(deleteBtn) deleteBtn.style.display = isModelFirstProvider(item) || isFixedProvider(item) ? 'none' : 'inline-flex';
+    if(deleteBtn) deleteBtn.style.display = isFixedProvider(item) ? 'none' : 'inline-flex';
     const deleteModelBtn = document.getElementById('deleteModelBtn');
     if(deleteModelBtn) deleteModelBtn.style.display = isModelFirstProvider(item) && !isRunningHubAppsPage && Boolean(selectedRef) ? 'inline-flex' : 'none';
     if(enabledToggle) enabledToggle.disabled = isComfyui;
     const enabledToggleWrap = enabledToggle?.closest('.provider-enable-toggle');
-    if(enabledToggleWrap) enabledToggleWrap.hidden = isModelFirstProvider(item);
+    if(enabledToggleWrap) enabledToggleWrap.hidden = isComfyui;
     const contentActions = document.querySelector('.content-actions');
     if(contentActions) contentActions.hidden = isComfyui;
     const providerBasicBlock = document.getElementById('providerBasicBlock');
@@ -435,12 +401,183 @@ function renderEditor(){
         modelConfigBlock.hidden = hideModelConfig;
         modelConfigBlock.style.display = hideModelConfig ? 'none' : '';
     }
-    if(modelGrid && isModelFirstProvider(item)) modelGrid.hidden = true;
     document.querySelectorAll('.model-list').forEach(list => list.closest('.block').hidden = isComfyui || isRunningHub);
     renderModels('image');
     renderModels('chat');
     renderModels('video');
     renderProviderList();
+}
+function parameterSchemaKind(){
+    const ref = selectedModelRef();
+    return ref?.key === 'video_models' ? 'video' : 'image';
+}
+function schemaScope(item, create=false){
+    const ref = selectedModelRef();
+    if(!item || !ref || !['image_models', 'video_models'].includes(ref.key)) return null;
+    if(!item.parameter_schema || typeof item.parameter_schema !== 'object' || Array.isArray(item.parameter_schema)){
+        if(!create) return null;
+        item.parameter_schema = {};
+    }
+    const schema = item.parameter_schema;
+    const kind = parameterSchemaKind();
+    if(!schema.models && create) schema.models = {};
+    if(!schema.models?.[ref.name] && create) schema.models[ref.name] = {};
+    const modelSchema = schema.models?.[ref.name];
+    if(!modelSchema) return null;
+    if(!modelSchema[kind] && create) modelSchema[kind] = {fields:[]};
+    return modelSchema[kind] || null;
+}
+function schemaFields(item){ return Array.isArray(schemaScope(item)?.fields) ? schemaScope(item).fields : []; }
+function schemaDefinitions(kind=parameterSchemaKind()){
+    return (canvasSchemaDefinitions?.[kind]?.fields || []).filter(field => field?.ui?.configurable !== false);
+}
+function schemaOverride(field){
+    return Object.fromEntries(Object.entries(field || {}).filter(([key]) => SCHEMA_OVERRIDE_KEYS.has(key)));
+}
+function normalizeParameterSchema(item){
+    const schema = item?.parameter_schema;
+    if(!schema || typeof schema !== 'object') return;
+    delete schema.image;
+    delete schema.video;
+    if(schema.models && typeof schema.models === 'object'){
+        Object.keys(schema.models).forEach(model => {
+            ['image','video'].forEach(kind => {
+                const supported = new Set(schemaDefinitions(kind).map(field => field.id));
+                const fields = schema.models[model]?.[kind]?.fields;
+                if(Array.isArray(fields)) schema.models[model][kind].fields = fields
+                    .filter(field => supported.has(field?.id))
+                    .map(schemaOverride);
+                if(!Array.isArray(schema.models[model]?.[kind]?.fields) || !schema.models[model][kind].fields.length) delete schema.models[model][kind];
+            });
+            if(!Object.keys(schema.models[model] || {}).length) delete schema.models[model];
+        });
+        if(!Object.keys(schema.models).length) delete schema.models;
+    }
+}
+function schemaPreset(fieldId){ return schemaDefinitions().find(field => field.id === fieldId); }
+function schemaField(fieldId){ return schemaFields(provider()).find(field => field?.id === fieldId); }
+function schemaFieldValue(field, preset){ return {...(preset || {}), ...(field || {})}; }
+function renderParameterSchemaEditor(){
+    const item = provider();
+    const ref = selectedModelRef();
+    if(!parameterSchemaEditor || !item || !ref || !['image_models', 'video_models'].includes(ref.key)) return;
+    const kind = parameterSchemaKind();
+    const overrides = schemaFields(item);
+    const presets = schemaDefinitions(kind);
+    const fields = presets.map(field => ({preset:field, field:overrides.find(item => item?.id === field.id)}));
+    parameterSchemaEditor.innerHTML = `
+        <div class="schema-model-note"><i data-lucide="${kind === 'video' ? 'film' : 'image'}" class="w-3.5 h-3.5"></i><span>当前模型：${escapeHtml(ref.name)} · ${kind === 'video' ? '视频生成参数' : '图片生成参数'}</span></div>
+        <div class="schema-field-list">${fields.map(({preset, field}) => renderParameterSchemaField(preset, field)).join('')}</div>`;
+    refreshIcons();
+}
+function renderParameterSchemaField(preset, field){
+    const value = schemaFieldValue(field, preset);
+    const enabled = Boolean(field);
+    const fieldId = String(value.id || '');
+    const options = Array.isArray(value.options) ? value.options.join(', ') : '';
+    const optionLabels = Array.isArray(value.option_labels) ? value.option_labels.join(', ') : options;
+    const disabled = enabled ? '' : 'disabled';
+    const type = value.type || 'text';
+    const isBoolean = type === 'boolean';
+    const hasOptions = Array.isArray(value.options) && value.options.length > 0;
+    const hasRange = ['number','slider'].includes(type);
+    return `<section class="schema-field-card ${enabled ? 'enabled' : ''}">
+        <div class="schema-field-head">
+            <label class="schema-enable"><input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleParameterSchemaField('${escapeAttr(fieldId)}',this.checked)"><span class="check-box"></span><strong>${escapeHtml(value.label || value.name || fieldId)}</strong></label>
+            <span class="schema-inherit">${enabled ? '已覆盖' : '使用系统默认'}</span>
+        </div>
+        <div class="schema-field-grid">
+            <label><span>字段 ID</span><input type="text" value="${escapeAttr(fieldId)}" readonly ${disabled}></label>
+            <label><span>显示名称</span><input type="text" value="${escapeAttr(value.name || value.label || '')}" ${disabled} onchange="updateParameterSchemaField('${escapeAttr(fieldId)}','name',this.value)"></label>
+            <label><span>类型</span><input type="text" value="${escapeAttr(type)}" readonly ${disabled}></label>
+            ${isBoolean ? `<label class="schema-default-toggle"><span>默认值</span><select ${disabled} onchange="updateParameterSchemaField('${escapeAttr(fieldId)}','default',this.value === 'true')"><option value="false" ${value.default === false ? 'selected' : ''}>关闭</option><option value="true" ${value.default === true ? 'selected' : ''}>开启</option></select></label>` : `<label><span>默认值</span><input type="${hasRange ? 'number' : 'text'}" value="${escapeAttr(value.default ?? '')}" ${disabled} onchange="updateParameterSchemaField('${escapeAttr(fieldId)}','default',this.value)"></label>`}
+            ${hasOptions ? `<label class="schema-wide"><span>可选值（逗号分隔）</span><input type="text" value="${escapeAttr(options)}" ${disabled} onchange="updateParameterSchemaField('${escapeAttr(fieldId)}','options',this.value)"></label>` : ''}
+            ${hasOptions ? `<label class="schema-wide"><span>选项显示名称（逗号分隔）</span><input type="text" value="${escapeAttr(optionLabels)}" ${disabled} onchange="updateParameterSchemaField('${escapeAttr(fieldId)}','option_labels',this.value)"></label>` : ''}
+            ${hasRange ? `<label><span>最小值</span><input type="number" value="${escapeAttr(value.min ?? '')}" ${disabled} onchange="updateParameterSchemaField('${escapeAttr(fieldId)}','min',this.value)"></label><label><span>最大值</span><input type="number" value="${escapeAttr(value.max ?? '')}" ${disabled} onchange="updateParameterSchemaField('${escapeAttr(fieldId)}','max',this.value)"></label><label><span>步长</span><input type="number" value="${escapeAttr(value.step ?? '')}" ${disabled} onchange="updateParameterSchemaField('${escapeAttr(fieldId)}','step',this.value)"></label>` : ''}
+        </div>
+    </section>`;
+}
+function toggleParameterSchemaField(fieldId, enabled){
+    const item = provider();
+    if(!item) return;
+    const fields = schemaScope(item, enabled)?.fields;
+    if(!fields) return;
+    const index = fields.findIndex(field => field?.id === fieldId);
+    if(enabled && index < 0) fields.push({id:fieldId});
+    if(!enabled && index >= 0) fields.splice(index, 1);
+    normalizeParameterSchema(item);
+    renderParameterSchemaEditor();
+    setStatus('参数 Schema 已更新，点击保存生效');
+}
+function updateParameterSchemaField(fieldId, key, rawValue){
+    const item = provider();
+    if(!item || !fieldId) return;
+    const fields = schemaScope(item, true).fields;
+    const field = fields.find(entry => entry?.id === fieldId);
+    if(!field) return;
+    const preset = schemaPreset(fieldId);
+    if(!preset) return;
+    if(key === 'options') {
+        field.options = String(rawValue || '').split(',').map(value => value.trim()).filter(Boolean).map(value => preset.type === 'number' && !Number.isNaN(Number(value)) ? Number(value) : value);
+        if(Array.isArray(field.option_labels)){
+            field.option_labels = field.options.map((value, index) => field.option_labels[index] || String(value));
+        }
+    } else if(key === 'option_labels') {
+        field.option_labels = String(rawValue || '').split(',').map(value => value.trim());
+    } else if(['min','max','step'].includes(key)) {
+        if(rawValue === '') delete field[key];
+        else field[key] = Number(rawValue);
+    } else if(key === 'default' && preset.type === 'number') {
+        field.default = rawValue === '' ? '' : Number(rawValue);
+    } else field[key] = rawValue;
+    renderParameterSchemaEditor();
+    setStatus('参数 Schema 已更新，点击保存生效');
+}
+function exportParameterSchema(){
+    const item = provider();
+    const ref = selectedModelRef();
+    const scope = schemaScope(item);
+    if(!item || !ref) return;
+    const blob = new Blob([JSON.stringify(scope || {fields:[]}, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${item.id || 'provider'}-${ref.name}-parameter-schema.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+}
+function importParameterSchema(event){
+    const file = event?.target?.files?.[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+        try {
+            const schema = JSON.parse(String(reader.result || ''));
+            if(!schema || Array.isArray(schema) || typeof schema !== 'object' || !Array.isArray(schema.fields)) throw new Error('JSON 必须是包含 fields 数组的模型参数 Schema。');
+            const item = provider();
+            const scope = schemaScope(item, true);
+            if(!scope) return;
+            const check = await fetch('/api/canvas/parameter-schema/validate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({parameter_schema:{models:{[selectedModel.name]:{[parameterSchemaKind()]:schema}}}})});
+            const checked = await check.json();
+            if(!check.ok) throw new Error(checked.detail || '参数 Schema 未通过后端校验');
+            scope.fields = checked.parameter_schema?.models?.[selectedModel.name]?.[parameterSchemaKind()]?.fields || [];
+            normalizeParameterSchema(item);
+            renderParameterSchemaEditor();
+            setStatus('参数 Schema 已导入，点击保存生效');
+        } catch(err) { alert(`导入失败：${err.message || '无效的 JSON 文件'}`); }
+        if(parameterSchemaImport) parameterSchemaImport.value = '';
+    };
+    reader.readAsText(file);
+}
+function resetParameterSchema(){
+    const item = provider();
+    const ref = selectedModelRef();
+    if(!item || !ref || !confirm(`重置模型“${ref.name}”的画布参数覆盖？系统默认值不会被删除。`)) return;
+    const kind = parameterSchemaKind();
+    if(item.parameter_schema?.models?.[ref.name]) delete item.parameter_schema.models[ref.name][kind];
+    normalizeParameterSchema(item);
+    renderParameterSchemaEditor();
+    setStatus('参数 Schema 覆盖已重置，点击保存生效');
 }
 function renderSelectedModelConfig(item, ref){
     if(!modelConfigBlock || !ref || !isModelFirstProvider(item)) return;
@@ -487,6 +624,64 @@ function updateSelectedModelPrice(field, value){
     const ref = selectedModelRef();
     if(!ref) return;
     updateOmnilojoModelPrice(selectedModel.kind, ref.index, field, value);
+}
+function moveModelScopedSchema(source, target, model, kind){
+    if(!['image','video'].includes(kind)) return;
+    const sourceScope = source.parameter_schema?.models?.[model]?.[kind];
+    if(!sourceScope) return;
+    target.parameter_schema = target.parameter_schema && typeof target.parameter_schema === 'object' ? target.parameter_schema : {};
+    target.parameter_schema.models = target.parameter_schema.models && typeof target.parameter_schema.models === 'object' ? target.parameter_schema.models : {};
+    target.parameter_schema.models[model] = target.parameter_schema.models[model] && typeof target.parameter_schema.models[model] === 'object' ? target.parameter_schema.models[model] : {};
+    if(!target.parameter_schema.models[model][kind]) target.parameter_schema.models[model][kind] = sourceScope;
+    delete source.parameter_schema.models[model][kind];
+    normalizeParameterSchema(source);
+    normalizeParameterSchema(target);
+}
+function migrateSelectedModelProvider(targetId){
+    syncEditor();
+    const ref = selectedModelRef();
+    const source = ref?.item;
+    const target = providers.find(item => item.id === targetId);
+    if(!ref || !source || !target || source.id === target.id){ renderConnectionProviderSelect(ref); return; }
+    if(!isModelFirstProvider(target)){
+        alert('只能迁移到普通 API 或火山引擎 Provider。');
+        renderConnectionProviderSelect(ref);
+        return;
+    }
+    const model = ref.name;
+    const targetModels = Array.isArray(target[ref.key]) ? target[ref.key] : (target[ref.key] = []);
+    const duplicateIndex = targetModels.findIndex(name => String(name || '').trim() === model);
+    if(duplicateIndex >= 0 && !confirm(`目标 Provider 已包含模型“${model}”。继续会合并到已有模型，是否继续？`)){
+        renderConnectionProviderSelect(ref);
+        return;
+    }
+    const protocol = source.model_protocols?.[model];
+    const alias = source.model_aliases?.[model];
+    const price = source.omnilojo_model_prices?.[model];
+    source[ref.key].splice(ref.index, 1);
+    const nextIndex = duplicateIndex >= 0 ? duplicateIndex : targetModels.push(model) - 1;
+    if(protocol && !target.model_protocols?.[model]){
+        target.model_protocols = target.model_protocols || {};
+        target.model_protocols[model] = protocol;
+    }
+    if(alias && !target.model_aliases?.[model]){
+        target.model_aliases = target.model_aliases || {};
+        target.model_aliases[model] = alias;
+    }
+    if(price && !target.omnilojo_model_prices?.[model]){
+        target.omnilojo_model_prices = target.omnilojo_model_prices || {};
+        target.omnilojo_model_prices[model] = price;
+    }
+    if(!modelProtocolStillUsed(source, model)) delete source.model_protocols?.[model];
+    if(!providerModels(source).some(entry => entry.name === model)) {
+        delete source.model_aliases?.[model];
+        delete source.omnilojo_model_prices?.[model];
+    }
+    moveModelScopedSchema(source, target, model, ref.kind);
+    selectedId = target.id;
+    selectedModel = {providerId:target.id, kind:ref.kind, index:nextIndex, name:model};
+    renderEditor();
+    setStatus(`已将模型 ${model} 迁移到 ${target.id}，点击保存生效`);
 }
 async function deleteSelectedModel(){
     const ref = selectedModelRef();
@@ -815,7 +1010,7 @@ function modelProtocolSelectHtml(kind, index, model, item){
     const map = (item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {};
     const current = String(map[String(model || '').trim()] || '').toLowerCase();
     const opt = (val, label) => `<option value="${val}" ${current === val ? 'selected' : ''}>${label}</option>`;
-    return `<select class="model-protocol-select" title="当前模型使用的 API协议" onchange="updateModelProtocol('${kind}', ${index}, this.value)">
+    return `<select class="model-protocol-select" title="当前模型使用的 API协议" onclick="event.stopPropagation()" onchange="updateModelProtocol('${kind}', ${index}, this.value)">
         <option value="" ${current === '' ? 'selected' : ''}>默认</option>
         ${opt('openai', 'OpenAI')}
         ${opt('gemini', 'Gemini')}
@@ -839,13 +1034,13 @@ function renderModels(kind){
         const alias = aliases[model] || '';
         const price = prices[String(model || '').trim()] || {};
         return `
-        <div class="model-row${showProtocol ? ' has-protocol' : ''}" draggable="true" data-kind="${kind}" data-index="${index}" ondragstart="handleModelDragStart(event,'${kind}',${index})" ondragover="handleModelDragOver(event,'${kind}',${index})" ondrop="handleModelDrop(event,'${kind}',${index})" ondragend="handleModelDragEnd(event)">
+        <div class="model-row${showProtocol ? ' has-protocol' : ''}${selectedModel.providerId === item?.id && selectedModel.kind === kind && selectedModel.index === index ? ' selected' : ''}" draggable="true" data-kind="${kind}" data-index="${index}" onclick="selectModel('${escapeAttr(item?.id || '')}','${kind}',${index})" ondragstart="handleModelDragStart(event,'${kind}',${index})" ondragover="handleModelDragOver(event,'${kind}',${index})" ondrop="handleModelDrop(event,'${kind}',${index})" ondragend="handleModelDragEnd(event)">
             <span class="model-drag-handle"><i data-lucide="grip-vertical" class="w-3.5 h-3.5"></i></span>
-            <input value="${escapeAttr(model)}" readonly title="模型 ID">
-            <input class="model-alias-input" value="${escapeAttr(alias)}" oninput="updateModelAlias('${kind}', ${index}, this.value)" placeholder="别名（选填）" title="画布中显示的名称">
+            <input value="${escapeAttr(model)}" readonly title="模型 ID" onclick="event.stopPropagation()">
+            <input class="model-alias-input" value="${escapeAttr(alias)}" onclick="event.stopPropagation()" oninput="updateModelAlias('${kind}', ${index}, this.value)" placeholder="别名（选填）" title="画布中显示的名称">
             ${modelProtocolSelectHtml(kind, index, model, item)}
-            ${showPrices(model) ? `<div class="model-price-fields"><label>入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.input_per_million ?? '')}" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'input_per_million', this.value)" title="输入 USD / 100 万 token"></label><label>出 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.output_per_million ?? '')}" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'output_per_million', this.value)" title="输出 USD / 100 万 token"></label></div>` : ''}
-            <button class="icon-btn" type="button" onclick="removeModel('${kind}', ${index})" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+            ${showPrices(model) ? `<div class="model-price-fields"><label>入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.input_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'input_per_million', this.value)" title="输入 USD / 100 万 token"></label><label>出 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.output_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'output_per_million', this.value)" title="输出 USD / 100 万 token"></label></div>` : ''}
+            <button class="icon-btn" type="button" onclick="event.stopPropagation();removeModel('${kind}', ${index})" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
         </div>
     `;}).join('');
     refreshIcons();
@@ -858,7 +1053,18 @@ function selectProvider(id){
     renderEditor();
 }
 function addProvider(){
-    addModel('chat');
+    let suffix = 1;
+    let id = 'custom-api';
+    while(providers.some(item => item.id === id)) id = `custom-api-${++suffix}`;
+    providers.push({
+        id, name:id, base_url:'', protocol:'openai', image_generation_endpoint:'', image_edit_endpoint:'',
+        enabled:true, primary:false, image_models:[], chat_models:[], video_models:[],
+        model_protocols:{}, model_aliases:{}, parameter_schema:{}, rh_apps:[], has_key:false, key_preview:''
+    });
+    selectedId = id;
+    selectedModel = {providerId:'', kind:'', name:'', index:-1};
+    renderEditor();
+    setStatus(`已添加平台 ${id}，填写连接配置后点击保存`);
 }
 function deleteProvider(){
     const item = provider();
@@ -917,10 +1123,8 @@ function addModel(kind){
     let item = provider();
     if(!item || ['runninghub','comfyui'].includes(item.id)) item = visibleProviders().find(candidate => !['runninghub','comfyui'].includes(candidate.id));
     if(!item){
-        item = {id:'api-openai', name:'OpenAI', base_url:'', protocol:'openai', image_generation_endpoint:'', image_edit_endpoint:'', enabled:true, primary:false, image_models:[], chat_models:[], video_models:[], has_key:false, key_preview:''};
-        let suffix = 2;
-        while(providers.some(candidate => candidate.id === item.id)) item.id = `api-openai-${suffix++}`;
-        providers.push(item);
+        addProvider();
+        item = provider();
     }
     const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
     item[key] = [...(item[key] || []), ''];
@@ -1009,6 +1213,7 @@ function removeModel(kind, index){
         delete item.model_protocols[removed];
     }
     if(removed && item.omnilojo_model_prices && typeof item.omnilojo_model_prices === 'object' && !modelProtocolStillUsed(item, removed)) delete item.omnilojo_model_prices[removed];
+    if(removed && item.parameter_schema?.models && !modelProtocolStillUsed(item, removed)) delete item.parameter_schema.models[removed];
     renderModels(kind);
 }
 let modelDragState = null;
@@ -1048,18 +1253,36 @@ function handleModelDragEnd(event){
 async function loadProviders(){
     setStatus(tr('api.loading'));
     try {
-        const data = await fetch('/api/providers').then(r => r.json());
+        const [providerResponse, definitionResponse] = await Promise.all([
+            fetch('/api/providers'), fetch('/api/canvas/parameter-schema/definitions')
+        ]);
+        const data = await providerResponse.json();
+        if(!providerResponse.ok) throw new Error(data.detail || tr('api.loadFailed'));
+        const definitions = await definitionResponse.json();
+        if(!definitionResponse.ok) throw new Error(definitions.detail || '参数 Schema 定义加载失败');
+        canvasSchemaDefinitions = definitions.schemas || canvasSchemaDefinitions;
         providers = (data.providers || []);
         providersVersion = Number.isInteger(data.version) ? data.version : null;
-        const firstModel = allModelEntries()[0];
         selectedId = isRunningHubAppsPage
             ? providers.find(item => item.id === 'runninghub')?.id || ''
-            : firstModel?.providerId || sortedProviders()[0]?.id || '';
-        selectedModel = firstModel ? {providerId:firstModel.providerId, kind:firstModel.kind, index:firstModel.index, name:firstModel.name} : {providerId:'', kind:'', name:'', index:-1};
+            : sortedProviders()[0]?.id || '';
+        selectedModel = {providerId:'', kind:'', name:'', index:-1};
         renderEditor();
         setStatus('');
     } catch(err) {
         setStatus(tr('api.loadFailed'));
+    }
+}
+async function validateProviderParameterSchemas(){
+    for(const item of providers){
+        if(item.id === 'runninghub' || item.id === 'comfyui') continue;
+        const response = await fetch('/api/canvas/parameter-schema/validate', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({parameter_schema:item.parameter_schema || {}})
+        });
+        const data = await response.json();
+        if(!response.ok) throw new Error(`${item.id || 'Provider'}：${data.detail || '参数 Schema 未通过后端校验'}`);
+        item.parameter_schema = data.parameter_schema || {};
     }
 }
 async function saveProviders(){
@@ -1084,6 +1307,7 @@ async function saveProviders(){
     }
     setStatus(tr('api.saving'));
     try {
+        await validateProviderParameterSchemas();
         if(providersVersion === null){
             await loadProviders();
             throw new Error('Provider configuration version is unavailable; reload before saving.');
@@ -1104,6 +1328,7 @@ async function saveProviders(){
                 video_models:item.id === 'runninghub' ? [] : (item.video_models || []),
                 model_protocols:item.id === 'runninghub' ? {} : ((item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {}),
                 model_aliases:item.id === 'runninghub' ? {} : ((item.model_aliases && typeof item.model_aliases === 'object') ? item.model_aliases : {}),
+                parameter_schema:item.id === 'runninghub' ? {} : ((item.parameter_schema && typeof item.parameter_schema === 'object') ? item.parameter_schema : {}),
                 omnilojo_model_prices:(item.omnilojo_model_prices && typeof item.omnilojo_model_prices === 'object') ? item.omnilojo_model_prices : {},
                 rh_apps:item.id === 'runninghub' ? (item.rh_apps || []) : [],
                 volcengine_project_name:item.id === 'volcengine' ? (item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME) : '',

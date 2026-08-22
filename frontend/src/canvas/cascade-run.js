@@ -171,10 +171,9 @@ function comfyFieldKind(field){
 }
 async function runApiGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.provider_id || !runSettings.model) throw new Error(tr('smart.errNoApiModel'));
-    const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
-    // The API returns one batch parent plus one independently scheduled child
-    // task per image. Polling children lets the canvas show partial results.
-    const payload = {prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:count, reference_images:imageRefsOnly(refs)};
+    // Keep the canvas contract intact. Provider-specific field mapping belongs
+    // to the backend, where it is shared by direct runs and Agent executions.
+    const payload = {prompt, run_settings:runSettings, reference_images:imageRefsOnly(refs)};
     const task = await fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
         if(!r.ok) throw await smartResponseError(r);
         return r.json();
@@ -182,7 +181,7 @@ async function runApiGeneration(prompt, refs, runSettings=settings){
     const taskIds = Array.isArray(task?.child_task_ids) && task.child_task_ids.length
         ? task.child_task_ids
         : (task?.task_id ? [task.task_id] : []);
-    return {taskIds, count, providerId:runSettings.provider_id, model:runSettings.model};
+    return {taskIds, count:Number(task?.count || 1), providerId:runSettings.provider_id, model:runSettings.model};
 }
 async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const ref = selectedRunningHubRef(runSettings);
@@ -252,26 +251,15 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
     const generationMode = videoGenerationMode(runSettings);
     const useReferences = generationMode !== 'text';
-    const refImages = (useReferences ? imageRefsOnly(refs) : []).map((ref, i) => {
-        const item = {url:ref.url, name:ref.name || `图${i + 1}`};
-        if(runSettings.videoUseFrameRoles){
-            if(i === 0) item.role = 'first_frame';
-            else if(i === 1) item.role = 'last_frame';
-        }
-        return item;
-    });
+    const refImages = (useReferences ? imageRefsOnly(refs) : []).map((ref, i) => ({
+        url:ref.url, name:ref.name || `图${i + 1}`
+    }));
     const payload = {
         prompt,
-        provider_id: runSettings.videoProvider || 'comfly',
-        model: runSettings.videoModel || 'veo3-fast',
-        duration: Math.max(1, Math.min(60, Number(runSettings.videoDuration) || 5)),
-        aspect_ratio: runSettings.videoAspect || '16:9',
-        resolution: runSettings.videoResolution || '',
+        run_settings: runSettings,
         images: refImages,
         videos: useReferences ? videoRefsOnly(refs).map(ref => ref.url).filter(Boolean) : [],
-        audios: useReferences ? audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3) : [],
-        generate_audio: Boolean(runSettings.videoGenerateAudio),
-        multimodal: Boolean(runSettings.videoMultimodal)
+        audios: useReferences ? audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3) : []
     };
     const result = await fetch('/api/canvas-video', {
         method:'POST',

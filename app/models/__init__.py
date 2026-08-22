@@ -78,6 +78,7 @@ class OnlineImageRequest(BaseModel):
     quality: str = "auto"
     n: int = 1
     reference_images: List[AIReference] = []
+    run_settings: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ImageTaskQueryRequest(BaseModel):
@@ -100,6 +101,7 @@ class CanvasVideoRequest(BaseModel):
     return_last_frame: bool = False
     generate_audio: bool = False
     multimodal: bool = False
+    run_settings: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TempShUploadRequest(BaseModel):
@@ -135,6 +137,7 @@ class ApiProviderPayload(BaseModel):
     video_models: List[str] = []
     model_protocols: Dict[str, str] = {}
     model_aliases: Dict[str, str] = {}
+    parameter_schema: Dict[str, Any] = {}
     rh_apps: List[Dict[str, Any]] = []
     volcengine_project_name: str = VOLCENGINE_DEFAULT_PROJECT_NAME
     volcengine_region: str = VOLCENGINE_DEFAULT_REGION
