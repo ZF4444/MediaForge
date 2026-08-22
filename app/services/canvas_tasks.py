@@ -212,7 +212,7 @@ async def _emit_agent_task_event(task: dict[str, Any]) -> None:
     if not run_id or not user_id:
         return
     status = str(task.get("status") or "")
-    event_type = {"queued": "task.queued", "running": "task.running", "succeeded": "task.succeeded", "failed": "task.failed", "interrupted": "task.cancelled", "timed_out": "task.timed_out"}.get(status)
+    event_type = {"queued": "task.queued", "running": "task.running", "succeeded": "task.succeeded", "failed": "task.failed", "interrupted": "task.cancelled", "cancelled": "task.cancelled", "timed_out": "task.timed_out"}.get(status)
     if not event_type:
         return
     try:

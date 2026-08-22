@@ -231,17 +231,20 @@ class CanvasAgentMessageRequest(BaseModel):
     use_model: bool = True
     provider: str = ""
     model: str = ""
+    client_request_id: str = Field(default="", max_length=128)
 
 class CanvasAgentAnswerRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=20000)
     use_model: bool = True
     provider: str = ""
     model: str = ""
+    client_request_id: str = Field(default="", max_length=128)
 
 class CanvasAgentConfirmRequest(BaseModel):
     plan_version: int = Field(ge=1)
     approved: bool = True
     authorized_node_ids: List[str] = []
+    client_request_id: str = Field(default="", max_length=128)
 
 class CanvasAgentRetryRequest(BaseModel):
     operation_id: str = ""

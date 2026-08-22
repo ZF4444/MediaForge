@@ -71,7 +71,7 @@ def test_canvas_agent_api_lifecycle_conflict_tasks_events_and_permissions(monkey
                 assert submitted and submitted[-1]["run_id"] == task_run["id"]
 
                 # 4. Event clients can reconnect from a persisted sequence.
-                append_event(uid, task_run["id"], "test.one", {"value": 1}); append_event(uid, task_run["id"], "test.two", {"value": 2})
+                append_event(uid, task_run["id"], "progress.agent", {"value": 1}); append_event(uid, task_run["id"], "progress.agent", {"value": 2})
                 replay = client.get(f"/api/canvas-agent/runs/{task_run['id']}/events?after_sequence=1", headers=headers).json()["events"]
                 assert [event["sequence"] for event in replay] == sorted(event["sequence"] for event in replay)
                 assert all(event["sequence"] > 1 for event in replay)

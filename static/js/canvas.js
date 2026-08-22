@@ -1429,7 +1429,6 @@ let canvasMetaPollTimer = null;
 // （被 scheduleSave/saveCanvas 共享读写，原因同 state.js 的顾虑），
 // canvas-sync.js 通过共享脚本作用域访问。
 function connectAssetLibrarySyncSocket(){
-    if(window.parent && window.parent !== window) return;
     const host = window.location.host;
     if(!host) return;
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1448,7 +1447,7 @@ function connectAssetLibrarySyncSocket(){
                 const data = JSON.parse(event.data);
                 if(data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(data);
                 if(data?.type === 'canvas_updated') handleCanvasUpdatedMessage(data);
-                if(data?.type?.startsWith('agent.') && window.canvasAgentHandleEvent) window.canvasAgentHandleEvent(data);
+                if((data?.type === 'agent.event' || data?.type?.startsWith('agent.')) && window.canvasAgentHandleEvent) window.canvasAgentHandleEvent(data);
             } catch(e) {}
         };
         socket.onclose = () => {

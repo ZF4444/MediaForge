@@ -163,7 +163,10 @@ STORAGE_CACHE_CLEANUP_TASK = None
 SESSION_LAST_SEEN_TASK = None
 CANVAS_TASK_RECOVERY_TASK = None
 CANVAS_TASK_WORKER_TASK = None
+AGENT_COMMAND_WORKER_TASK = None
 WEBSOCKET_PUBSUB_TASK = None
+AGENT_EVENT_PUBSUB_TASK = None
+AGENT_EVENT_OUTBOX_TASK = None
 PROVIDER_CONFIG_SYNC_TASK = None
 APP_VERSION = "2026.05.19"
 RUN_BACKGROUND_MAINTENANCE = os.getenv("RUN_BACKGROUND_MAINTENANCE", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -181,6 +184,9 @@ from app.core.storage_io import StorageIOOverloaded, refresh_storage_io_metrics,
 from app.core.http_client import close_http_client, get_http_client, new_outbound_http_client, open_http_client, shared_http_client
 from app.core.outbound import validate_external_http_url, validate_public_http_url
 from app.core.ws_pubsub import publish_websocket_event, websocket_pubsub_loop
+from app.core.agent_event_pubsub import agent_event_pubsub_loop
+from app.services.canvas_agent.event_bus import agent_event_outbox_loop
+from app.workers.agent_commands import agent_command_worker_loop
 from app.core.provider_config_events import provider_config_event_loop, publish_provider_config_changed
 from app.ai.gateway import provider_operation
 from app.ai.registry import ImageGenerationRequest
@@ -209,7 +215,7 @@ from app.services.canvas_tasks import (
 
 @app.on_event("startup")
 async def startup_event():
-    global GLOBAL_LOOP, SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, PROVIDER_CONFIG_SYNC_TASK
+    global GLOBAL_LOOP, SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, AGENT_COMMAND_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, PROVIDER_CONFIG_SYNC_TASK, AGENT_EVENT_PUBSUB_TASK, AGENT_EVENT_OUTBOX_TASK
     try:
         await open_database_pool()
         await open_redis_client()
@@ -240,6 +246,12 @@ async def startup_event():
             SESSION_LAST_SEEN_TASK = asyncio.create_task(session_last_seen_flush_loop())
         if RUN_BACKGROUND_MAINTENANCE and WEBSOCKET_PUBSUB_TASK is None:
             WEBSOCKET_PUBSUB_TASK = asyncio.create_task(websocket_pubsub_loop(manager))
+        if RUN_BACKGROUND_MAINTENANCE and AGENT_EVENT_PUBSUB_TASK is None:
+            AGENT_EVENT_PUBSUB_TASK = asyncio.create_task(agent_event_pubsub_loop(manager))
+        if RUN_BACKGROUND_MAINTENANCE and AGENT_EVENT_OUTBOX_TASK is None:
+            AGENT_EVENT_OUTBOX_TASK = asyncio.create_task(agent_event_outbox_loop())
+        if RUN_BACKGROUND_MAINTENANCE and AGENT_COMMAND_WORKER_ENABLED and AGENT_COMMAND_WORKER_TASK is None:
+            AGENT_COMMAND_WORKER_TASK = asyncio.create_task(agent_command_worker_loop())
         if PROVIDER_CONFIG_SYNC_TASK is None:
             PROVIDER_CONFIG_SYNC_TASK = asyncio.create_task(provider_config_event_loop(refresh_api_providers_cache))
         # API-only replicas do not consume or recover stream messages.  Avoid
@@ -261,7 +273,7 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, PROVIDER_CONFIG_SYNC_TASK
+    global SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, AGENT_COMMAND_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, PROVIDER_CONFIG_SYNC_TASK, AGENT_EVENT_PUBSUB_TASK, AGENT_EVENT_OUTBOX_TASK
     if STORAGE_CLEANUP_TASK is not None:
         STORAGE_CLEANUP_TASK.cancel()
         STORAGE_CLEANUP_TASK = None
@@ -277,9 +289,18 @@ async def shutdown_event():
     if CANVAS_TASK_WORKER_TASK is not None:
         CANVAS_TASK_WORKER_TASK.cancel()
         CANVAS_TASK_WORKER_TASK = None
+    if AGENT_COMMAND_WORKER_TASK is not None:
+        AGENT_COMMAND_WORKER_TASK.cancel()
+        AGENT_COMMAND_WORKER_TASK = None
     if WEBSOCKET_PUBSUB_TASK is not None:
         WEBSOCKET_PUBSUB_TASK.cancel()
         WEBSOCKET_PUBSUB_TASK = None
+    if AGENT_EVENT_PUBSUB_TASK is not None:
+        AGENT_EVENT_PUBSUB_TASK.cancel()
+        AGENT_EVENT_PUBSUB_TASK = None
+    if AGENT_EVENT_OUTBOX_TASK is not None:
+        AGENT_EVENT_OUTBOX_TASK.cancel()
+        AGENT_EVENT_OUTBOX_TASK = None
     if PROVIDER_CONFIG_SYNC_TASK is not None:
         PROVIDER_CONFIG_SYNC_TASK.cancel()
         PROVIDER_CONFIG_SYNC_TASK = None
@@ -363,6 +384,7 @@ from app.config import (
     CANVAS_TASK_RECOVERY_ENABLED,
     CANVAS_TASK_WORKER_CONCURRENCY,
     CANVAS_TASK_WORKER_ENABLED,
+    AGENT_COMMAND_WORKER_ENABLED,
     CANVAS_TASK_TIMEOUT_SECONDS,
     HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
     REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS,

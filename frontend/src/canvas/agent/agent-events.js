@@ -14,8 +14,11 @@
   }
   function applyEvent(event) {
     if (!event || Number(event.sequence) <= state.sequence) return;
-    state.sequence = Number(event.sequence); const type = String(event.type || '').replace(/^agent\./, ''); const data = event.payload_json || event.data || {};
-    if (type === 'progress') window.CanvasAgentPanel.status(data.message || '处理中…');
+    state.sequence = Number(event.sequence); const type = String(event.type || '').replace(/^agent\./, ''); const data = event.payload || event.payload_json || event.data || {};
+    state.lastEvent = event;
+    if (['operation.succeeded','operation.failed','operation.cancelled'].includes(type)) state.operationId = '';
+    if (type.startsWith('progress')) window.CanvasAgentPanel.status(data.message || '处理中…');
+    else if (type.startsWith('operation.') && data.message) window.CanvasAgentPanel.status(data.message);
     else window.CanvasAgentPanel.status(type);
     if (type === 'plan.created' && data.plan) window.CanvasAgentPlan.render({version:data.plan_version, content_json:data.plan});
     if (type.startsWith('task.') || type === 'patch.applied') window.CanvasAgentBridge.refreshCanvas();
@@ -43,16 +46,19 @@
       }
     }
   }
-  async function tick() { try { await catchUp(); const data=await window.CanvasAgentClient.getRun(); window.CanvasAgentPanel.renderRun(data); if (!active(data.run?.status)) stop(); } catch (_) { window.CanvasAgentPanel.status('连接中断，等待重连'); } }
-  function start() { if (!state.pollTimer) state.pollTimer=setInterval(tick, 2500); tick(); }
-  function stop() { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer=null; } }
+  async function tick() { try { await catchUp(); const data=await window.CanvasAgentClient.getRun(); window.CanvasAgentPanel.renderRun(data); if (!active(data.run?.status) && !state.operationId) stop(); } catch (_) { window.CanvasAgentPanel.status('连接中断，等待重连'); } }
+  function start() { const interval=state.operationId ? 1000 : 10000; if (state.pollTimer && state.pollInterval !== interval) { clearInterval(state.pollTimer); state.pollTimer=null; } if (!state.pollTimer) { state.pollTimer=setInterval(tick, interval); state.pollInterval=interval; } tick(); }
+  function stop() { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer=null; } state.pollInterval=0; }
   async function switchRun(runId) {
     if (!runId || runId === state.runId) return;
     stop(); state.runId = runId; state.sequence = 0; saveRun();
     window.CanvasAgentPanel.clearRun();
     await recover();
   }
-  window.canvasAgentHandleEvent = message => { if (message?.run_id === state.runId) applyEvent({sequence:message.sequence,type:message.type,data:message.data}); };
+  window.canvasAgentHandleEvent = message => {
+    const event = message?.type === 'agent.event' ? message.data : {sequence:message?.sequence,type:message?.type,data:message?.data,run_id:message?.run_id};
+    if (event?.run_id === state.runId) applyEvent(event);
+  };
   window.addEventListener('online', recover); document.addEventListener('visibilitychange', () => { if (!document.hidden) recover(); });
   window.CanvasAgentEvents = { applyEvent, catchUp, recover, start, stop, saveRun, switchRun };
 })();

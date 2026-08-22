@@ -43,8 +43,20 @@ def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canv
         response = await model.bind_tools(scoped_tools).ainvoke([system, *(state.get("messages") or [])])
         return {"messages": [response]}
     async def tools_node(state: CanvasAgentState) -> dict[str, Any]:
-        await progress("tool", "正在执行 Agent 工具…")
-        return await tool_node.ainvoke(state)
+        last = (state.get("messages") or [])[-1] if state.get("messages") else None
+        calls = list(getattr(last, "tool_calls", []) or [])
+        # This only reports a tool after the model emitted a real tool call.
+        for call in calls:
+            await progress("tool_started", f"正在执行工具 {call.get('name') or 'unknown'}…")
+        try:
+            result = await tool_node.ainvoke(state)
+        except Exception:
+            for call in calls:
+                await progress("tool_failed", f"工具 {call.get('name') or 'unknown'} 执行失败")
+            raise
+        for call in calls:
+            await progress("tool_completed", f"工具 {call.get('name') or 'unknown'} 已完成")
+        return result
     async def confirmation_node(state: CanvasAgentState) -> dict[str, Any]:
         await progress("confirmation", "计划已生成，等待用户确认…")
         decision = interrupt({"type": "canvas.confirmation_required", "run_id": run_id})
