@@ -45,6 +45,12 @@ logger = get_logger("canvas_agent")
 def _user(request: Request, x_user_id: str) -> str:
     return safe_user_id(x_user_id, request)
 
+
+def _can_continue_planning(status: str) -> bool:
+    """A completed execution ends one turn, not the Agent conversation."""
+    return str(status or "") not in {"cancelled", "failed", "blocked"}
+
+
 async def _require_run(user_id: str, run_id: str) -> dict:
     run = await asyncio.to_thread(get_run, user_id, run_id)
     if not run: raise HTTPException(status_code=404, detail="Agent Run 不存在")
@@ -88,7 +94,12 @@ async def get_agent_run(run_id: str, request: Request, x_user_id: str = Header(d
 @router.post("/api/canvas-agent/runs/{run_id}/messages")
 async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, request: Request, x_user_id: str = Header(default="")):
     user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
-    if run["status"] in {"cancelled", "completed", "failed", "blocked"}: raise HTTPException(status_code=409, detail="Run 当前状态不可继续规划")
+    if not _can_continue_planning(run["status"]): raise HTTPException(status_code=409, detail="Run 当前状态不可继续规划")
+    if run["status"] == "completed":
+        # A new user request starts the next planning turn on the same
+        # LangGraph thread. The completed status only describes the previous
+        # patch execution, not the lifetime of the conversation.
+        run = await asyncio.to_thread(update_run, user_id, run_id, status="planning", phase="planning") or run
     await asyncio.to_thread(append_message, user_id, run_id, "user", payload.content, {"selected_node_ids": payload.selected_node_ids, "mention_node_ids": payload.mention_node_ids})
     try:
         await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在读取画布上下文…"})

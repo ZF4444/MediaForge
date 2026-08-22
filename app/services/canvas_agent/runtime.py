@@ -19,8 +19,12 @@ class CanvasAgentState(TypedDict, total=False):
 
 def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canvas_id: str = "",
                         checkpointer: Any = None, emit_progress: Callable[..., Awaitable[Any]] | None = None,
-                        get_canvas=None, execute_patch=None, tools: list[StructuredTool] | None = None):
-    scoped_tools = tools or build_canvas_tools(user_id=user_id, run_id=run_id, canvas_id=canvas_id, get_canvas=get_canvas, execute_patch=execute_patch)
+                        get_canvas=None, execute_patch=None, tools: list[StructuredTool] | None = None,
+                        provider_loader=None):
+    scoped_tools = tools or build_canvas_tools(
+        user_id=user_id, run_id=run_id, canvas_id=canvas_id,
+        get_canvas=get_canvas, execute_patch=execute_patch, provider_loader=provider_loader,
+    )
     tool_node = ToolNode(scoped_tools)
     async def progress(phase: str, message: str):
         if emit_progress: await emit_progress(run_id, {"phase": phase, "message": message})
@@ -30,6 +34,9 @@ def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canv
             "创建节点时 semantic_type 只能是 prompt、image_generation、video_generation、workflow_generation 或 group；"
             "capability 必须填写 read_capability_registry 返回的能力名，绝不能写入 semantic_type。"
             "例如图片节点使用 semantic_type=image_generation、capability=image.text_to_image。"
+            "选择 capability、provider 或 model 后，必须先调用 read_capability_parameters 获取字段、枚举、默认值和范围，再调用 propose_canvas_patch。"
+            "参数工具返回的 params_path 指定字段写入位置；图片/视频写入 node.params.runSettings，"
+            "ComfyUI 写入 node.params.runSettings.comfyParams，提示词节点字段直接写入 node.params。"
             "需要修改时调用 propose_canvas_patch；该工具只生成提案，不会修改画布。"
             "提案返回 awaiting_confirmation 后必须等待用户确认。确认恢复后调用 execute_canvas_patch。"
             "缺少目标时调用 request_clarification。普通问答直接用中文回答。"))

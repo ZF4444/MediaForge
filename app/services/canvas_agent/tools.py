@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable
 from langchain_core.tools import StructuredTool, tool
 from app.models.canvas_agent import SemanticPlan
 from .capabilities import CapabilityRegistry
+from app.services.provider_parameters import capability_parameters
 from .context import build_canvas_context
 from .policy import assess_patch
 from .adapter import semantic_plan_to_patch
@@ -13,7 +14,8 @@ from .store import latest_artifact, latest_plan, save_plan
 def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
                        get_canvas: Callable[[], Awaitable[dict[str, Any]]] | None = None,
                        execute_patch: Callable[[SemanticPlan, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
-                       registry: CapabilityRegistry | None = None) -> list[StructuredTool]:
+                       registry: CapabilityRegistry | None = None,
+                       provider_loader: Callable[[], list[dict[str, Any]]] | None = None) -> list[StructuredTool]:
     """Create tools scoped to one authenticated Agent Run."""
     @tool
     async def read_canvas_context(selected_node_ids: list[str] | None = None) -> dict[str, Any]:
@@ -24,6 +26,17 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
     async def read_capability_registry() -> list[dict[str, Any]]:
         """List capabilities available to canvas nodes."""
         return (registry or CapabilityRegistry()).as_dict()
+
+    @tool
+    async def read_capability_parameters(capability: str, provider_id: str = "", model: str = "") -> dict[str, Any]:
+        """Read the same node parameter schema used by the canvas configuration UI."""
+        return await asyncio.to_thread(
+            capability_parameters,
+            capability=capability,
+            provider_id=provider_id,
+            model=model,
+            provider_loader=provider_loader,
+        )
 
     @tool
     async def read_artifact(artifact_type: str = "") -> dict[str, Any] | None:
@@ -53,4 +66,4 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
         if not row or int(row["version"]) != int(plan_version): raise ValueError("计划版本已过期")
         return await execute_patch(SemanticPlan.model_validate(row["content_json"]), {"authorized_node_ids": authorized_node_ids or []})
 
-    return [read_canvas_context, read_capability_registry, read_artifact, propose_canvas_patch, request_clarification, execute_canvas_patch]
+    return [read_canvas_context, read_capability_registry, read_capability_parameters, read_artifact, propose_canvas_patch, request_clarification, execute_canvas_patch]

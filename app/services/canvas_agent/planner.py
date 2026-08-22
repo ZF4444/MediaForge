@@ -7,6 +7,12 @@ from .runtime import create_canvas_agent
 from .capabilities import from_provider_configuration
 from .tools import build_canvas_tools
 
+
+def _load_canvas_parameter_providers() -> list[dict[str, Any]]:
+    """Use the same refreshed Provider source as the canvas schema API."""
+    from main import refresh_api_providers_cache
+    return refresh_api_providers_cache()
+
 async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *, checkpointer: Any = None,
                            emit_progress=None, tools=None, execute_patch=None) -> dict[str, Any]:
     run_id = str(context.get("run_id") or "canvas-agent")
@@ -14,14 +20,15 @@ async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *,
     canvas_id = str(context.get("canvas_id") or "")
     # Build the registry from the active provider configuration once per graph
     # invocation. The model only sees its public capability metadata.
-    registry = await asyncio.to_thread(from_provider_configuration)
+    registry = await asyncio.to_thread(from_provider_configuration, provider_loader=_load_canvas_parameter_providers)
     tools = build_canvas_tools(user_id=user_id, run_id=run_id, canvas_id=canvas_id,
                                get_canvas=context.get("get_canvas"), execute_patch=execute_patch,
-                               registry=registry)
+                               registry=registry, provider_loader=_load_canvas_parameter_providers)
     graph = create_canvas_agent(model=model, user_id=user_id, run_id=run_id,
                                 canvas_id=canvas_id, checkpointer=checkpointer,
                                 emit_progress=emit_progress, get_canvas=context.get("get_canvas"),
-                                execute_patch=execute_patch, tools=tools)
+                                execute_patch=execute_patch, tools=tools,
+                                provider_loader=_load_canvas_parameter_providers)
     return await graph.ainvoke({"run_id": run_id, "messages": [HumanMessage(content=message)]},
                                config={"configurable": {"thread_id": run_id}})
 

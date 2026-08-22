@@ -51,6 +51,50 @@ def test_provider_registry_registers_enabled_comfyui_workflows():
     assert registry.resolve("comfyui.workflow.image", requested_model="custom/image.json").provider_id == "comfyui"
     assert registry.resolve("comfyui.workflow.video", requested_model="video.json").input_constraints["field_count"] == 1
 
+def test_capability_parameters_use_workflow_and_provider_sources():
+    from app.services.provider_parameters import capability_parameters
+    comfy = capability_parameters(
+        capability="comfyui.workflow.image", model="custom/demo.json",
+        provider_loader=lambda: [{"id": "comfyui", "enabled": True}],
+        workflow_loader=lambda _name: {"config": {"fields": [{"id": "seed", "type": "dropdown", "options": [1, 2]}]}},
+    )
+    assert comfy["fields"][0]["options"] == [1, 2]
+    assert comfy["params_path"] == "runSettings.comfyParams"
+    prompt = capability_parameters(
+        capability="prompt.generate", provider_id="chat", model="chat-1",
+        provider_loader=lambda: [{"id": "chat", "enabled": True, "chat_models": ["chat-1"]}],
+    )
+    assert prompt["fields"][1]["options"] == ["chat-1"]
+    assert prompt["params_path"] == "node"
+    rh = capability_parameters(
+        capability="runninghub.app.image", provider_id="runninghub", model="app-1",
+        provider_loader=lambda: [{"id": "runninghub", "enabled": True, "rh_apps": [{"id": "app-1", "fields": [{"nodeId": "1", "fieldName": "ratio", "fieldType": "SELECT", "fieldData": ["1:1", "16:9"]}]}]}],
+    )
+    assert rh["fields"][0]["options"] == ["1:1", "16:9"]
+
+
+def test_agent_parameter_tool_uses_injected_canvas_provider_source():
+    import asyncio
+    from app.services.canvas_agent.tools import build_canvas_tools
+
+    provider = {
+        "id": "custom-api-2", "enabled": True, "image_models": ["gemini-3-pro-image-preview"],
+        "parameter_schema": {"models": {"gemini-3-pro-image-preview": {"image": {"fields": [{
+            "id": "resolution", "options": ["1k", "2k", "4k"], "option_labels": ["1P", "2P", "4P"],
+        }]}}}},
+    }
+    tools = build_canvas_tools(
+        user_id="user", run_id="run", canvas_id="canvas", provider_loader=lambda: [provider],
+    )
+    read_parameters = next(item for item in tools if item.name == "read_capability_parameters")
+    schema = asyncio.run(read_parameters.ainvoke({
+        "capability": "image.text_to_image", "provider_id": "custom-api-2", "model": "gemini-3-pro-image-preview",
+    }))
+
+    resolution = next(field for field in schema["fields"] if field["id"] == "resolution")
+    assert schema["source"] == ["system.default", "provider.parameter_schema.models"]
+    assert resolution["option_labels"] == ["1P", "2P", "4P"]
+
 def test_fixed_evaluation_records_protocol_metrics():
     metrics = evaluate_plan("prompt-to-image", {"goal": "image", "steps": [
         {"id": "prompt", "action": "canvas.create_node", "node": {"semantic_type": "smart-prompt"}},

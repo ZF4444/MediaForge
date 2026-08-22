@@ -40,6 +40,16 @@ def test_confirm_endpoint_rejects_stale_plan_version(monkeypatch):
     assert exc.value.status_code == 409
 
 
+def test_completed_run_can_start_the_next_planning_turn():
+    from app.routers.canvas_agent import _can_continue_planning
+
+    assert _can_continue_planning("completed") is True
+    assert _can_continue_planning("running") is True
+    assert _can_continue_planning("cancelled") is False
+    assert _can_continue_planning("failed") is False
+    assert _can_continue_planning("blocked") is False
+
+
 @pytest.mark.parametrize("error,category", [("upstream timeout", "transient"), ("canvas version conflict", "conflict"), ("budget limit exceeded", "quota"), ("permission denied", "permission"), ("invalid schema", "permanent")])
 def test_failure_classification(error, category):
     assert classify_failure(error) == category

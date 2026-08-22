@@ -31,8 +31,10 @@ class CapabilityRegistry:
         for model in provider.get("image_models", []): self.register(Capability("image.text_to_image", {"model": model}, "medium", True, pid, str(model)))
         for model in provider.get("video_models", []): self.register(Capability("video.text_to_video", {"model": model}, "high", True, pid, str(model)))
         for app in provider.get("rh_apps", []):
-            name = str(app.get("capability") or app.get("type") or "image.text_to_image")
-            self.register(Capability(name, {"app_id": app.get("webappId") or app.get("id", "")}, "high", True, pid, str(app.get("model") or "")))
+            app_id = str(app.get("webappId") or app.get("appId") or app.get("id") or "")
+            media = "video" if app.get("media") == "video" else "image"
+            name = str(app.get("capability") or app.get("type") or f"runninghub.app.{media}")
+            self.register(Capability(name, {"app_id": app_id, "title": str(app.get("title") or app_id)}, "high", True, pid, str(app.get("model") or app_id)))
     def get(self, name: str) -> Capability | None: return self._items.get(name)
     def resolve(self, name: str, *, requested_model: str = "") -> Capability | None:
         capability = self._items.get(name)
@@ -50,8 +52,8 @@ def from_provider_configuration(provider_loader=None, workflow_loader=None) -> C
     remain inside the existing provider runtime.
     """
     if provider_loader is None:
-        from main import load_api_providers
-        provider_loader = load_api_providers
+        from main import refresh_api_providers_cache
+        provider_loader = refresh_api_providers_cache
     providers = provider_loader() or []
     registry = CapabilityRegistry(providers)
     comfyui_enabled = any(
