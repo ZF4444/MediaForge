@@ -23,6 +23,8 @@
     if (type === 'patch.applied') window.CanvasAgentPanel.liveStatus('画布变更已应用');
     else if (type === 'tasks.queued') window.CanvasAgentPanel.liveStatus('生成任务已提交');
     else if (type === 'run.completed') window.CanvasAgentPanel.liveStatus('执行完成');
+    if (type === 'task.queued') window.CanvasAgentBridge.startNodeTask?.(data);
+    if (['task.succeeded','task.failed','task.cancelled'].includes(type)) window.CanvasAgentBridge.finishNodeTask?.(data);
     if (type === 'message.replied' && data.reply) {
       document.querySelector('#canvasAgentMessages .canvas-agent-live-status')?.remove();
       window.CanvasAgentPanel.clearLiveStatus?.();
@@ -34,7 +36,7 @@
       if (!state.skills.some(skill => `${skill.name}:${skill.version || ''}` === key)) state.skills.push({name:data.skill.name,version:data.skill.version || ''});
       window.CanvasAgentPanel.renderSkills();
     }
-    if (type.startsWith('task.') || type === 'patch.applied') window.CanvasAgentBridge.refreshCanvas();
+    if ((type.startsWith('task.') && !['task.succeeded','task.failed','task.cancelled'].includes(type)) || type === 'patch.applied') window.CanvasAgentBridge.refreshCanvas();
     if (['run.failed','run.blocked','run.cancelled'].includes(type)) window.CanvasAgentPanel.system(data.error || data.reason || type);
   }
   async function catchUp() {

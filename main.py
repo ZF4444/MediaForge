@@ -2241,6 +2241,14 @@ def media_response_item(url: str = "", name: str = "", kind: str = "") -> Dict[s
         item["file_id"] = entry.get("file_id") or ""
         item["name"] = item["name"] or entry.get("original_name") or entry.get("filename") or ""
         item["kind"] = item["kind"] or entry.get("kind") or ""
+        if item["kind"] == "image":
+            try:
+                payload = get_object_bytes(str(entry.get("bucket") or ""), str(entry.get("object_key") or ""))
+                with Image.open(BytesIO(payload)) as image:
+                    item["natural_w"] = int(image.width)
+                    item["natural_h"] = int(image.height)
+            except Exception:
+                logger.warning("failed to read media dimensions", exc_info=True, extra={"event": "media_dimensions_read_failed", "file_id": item["file_id"]})
     return item
 
 

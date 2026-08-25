@@ -220,9 +220,13 @@ async def _emit_agent_task_event(task: dict[str, Any]) -> None:
         from app.services.canvas_agent.reliability import classify_failure
         await emit_agent_event(user_id, run_id, event_type, {"task_id": task.get("id"), "node_id": task.get("agent_node_id"), "status": status, "error": task.get("error") or "", "failure_category": classify_failure(task.get("error") or "") if status in {"failed", "timed_out"} else "", "result": task.get("result") if status == "succeeded" else None})
     except Exception:
-        # Task completion must remain durable in Redis even if Agent event
-        # projection is temporarily unavailable.
-        return
+        # Task completion remains durable in Redis, but a missing projection
+        # must be visible: otherwise generated media never reaches its node.
+        import logging
+        logging.getLogger("aistudio.app.canvas_tasks").exception(
+            "failed to project canvas task result to Agent run",
+            extra={"event": "canvas_agent_task_projection_failed", "task_id": task.get("id"), "run_id": run_id, "node_id": task.get("agent_node_id")},
+        )
 
 
 async def claim_canvas_task(task_id: str, worker_id: str) -> str | None:

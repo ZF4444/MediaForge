@@ -1507,6 +1507,11 @@ async function loadCanvas({renderCanvas=true}={}){
         document.title = canvas.title || tr('canvas.title');
         document.getElementById('canvasTitle').textContent = canvas.title || tr('canvas.title');
         nodes = (Array.isArray(canvas.nodes) ? canvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
+        // A canvas refresh replaces node objects. Rebuild the composer from
+        // the refreshed node settings instead of retaining a stale global
+        // settings object from the previously selected node.
+        activeComposerSubject = null;
+        lastComposerNodeId = '';
         nodes.forEach(n => {
             const pendingTasks = smartPendingTasks(n);
             if(pendingTasks.length){
@@ -2160,7 +2165,6 @@ function savePromptDraftForCurrent(){
     }
     subject.promptDraftHtml = promptInput.innerHTML;
     subject.promptDraftText = promptPlainText();
-    subject.runSettings = cloneSmartSettings(settings);
 }
 function setPromptDraftForNode(node, text){
     if(!isSmartImageNode(node)) return;
@@ -3514,6 +3518,7 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     if(!node || !taskId) return;
     const pendingTasks = smartPendingTasks(node);
     if(!pendingTasks.some(task => task.taskId === taskId)) return;
+    delete node.queued;
     node.pendingTasks = pendingTasks.filter(task => task.taskId !== taskId);
     node.pending = Math.max(0, Number(node.pending || 0) - 1);
     const additions = normalizeOutputMediaItems(images, kind, imageRunMetaForNodeFallback(node));

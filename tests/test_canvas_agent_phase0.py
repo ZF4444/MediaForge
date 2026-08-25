@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.models.canvas_agent import SemanticPlan
@@ -5,7 +7,7 @@ from app.services.canvas_agent.adapter import semantic_plan_to_patch
 from app.services.canvas_agent.capabilities import CapabilityRegistry
 from app.services.canvas_agent.policy import assess_patch, validate_patch
 from app.services.canvas_agent.evaluation import evaluate_plan
-from app.services.canvas_agent.runtime import ReadOnlyCanvasBackend, create_canvas_agent
+from app.services.canvas_agent.runtime import create_canvas_agent
 
 def test_semantic_plan_converts_to_versioned_patch():
     plan = SemanticPlan.model_validate({"goal": "create visual", "steps": [
@@ -199,6 +201,61 @@ def test_agent_run_request_uses_the_target_image_node_settings():
     assert request["model"] == "configured-model"
     assert request["prompt"] == "节点提示词"
     assert request["n"] == 3
+    assert request["size"] == "1024x1024"
+    assert request["run_settings"]["quality"] == "high"
+
+
+def test_agent_run_request_uses_canvas_size_rules_for_custom_ratio_and_size():
+    from app.services.canvas_agent.task_dispatch import _image_request_for_node
+
+    capability = CapabilityRegistry([{
+        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
+    }]).get("image.text_to_image")
+    base = {"id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词"}
+
+    custom_ratio = _image_request_for_node({**base, "runSettings": {
+        "provider_id": "configured", "model": "configured-model", "ratio": "custom",
+        "customRatio": "3:2", "resolution": "1k",
+    }}, capability, "", None)
+    custom_size = _image_request_for_node({**base, "runSettings": {
+        "provider_id": "configured", "model": "configured-model", "resolution": "custom",
+        "customSize": "1200x800",
+    }}, capability, "", None)
+
+    assert custom_ratio["size"] == "1024x672"
+    assert custom_size["size"] == "1200x800"
+
+
+def test_agent_task_projects_queued_state_before_enqueue(monkeypatch):
+    from app.services.canvas_agent import task_dispatch
+    from app.services.canvas_agent import events
+    import main
+
+    capability = CapabilityRegistry([{
+        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
+    }]).get("image.text_to_image")
+    node = {"id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词"}
+    order = []
+
+    monkeypatch.setattr(task_dispatch, "load_canvas_payload", lambda *_args: {"nodes": [node]})
+    monkeypatch.setattr(task_dispatch, "from_provider_configuration", lambda: type("Registry", (), {"get": lambda *_args: capability})())
+    monkeypatch.setattr(task_dispatch, "_image_request_for_node", lambda *_args: {"provider_id": "provider", "model": "model", "n": 1})
+
+    async def create_task(_task): order.append("create")
+    async def enqueue_task(_task_id): order.append("enqueue")
+    async def emit_event(*_args, **_kwargs): order.append("queued_event")
+    async def assert_budget(*_args, **_kwargs): return None
+
+    monkeypatch.setattr(task_dispatch, "create_canvas_task", create_task)
+    monkeypatch.setattr(task_dispatch, "enqueue_canvas_task", enqueue_task)
+    monkeypatch.setattr(events, "emit_agent_event", emit_event)
+    monkeypatch.setattr(main, "require_model_access", lambda *_args: None)
+    monkeypatch.setattr(main, "get_api_provider", lambda *_args: {})
+    monkeypatch.setattr(main, "assert_provider_budget_available", assert_budget)
+
+    asyncio.run(task_dispatch.submit_run_requests("user", "canvas", "run", [{"op": "run_node", "node_id": "image-1"}], prompt=""))
+
+    assert order == ["create", "queued_event", "enqueue"]
 
 def test_fixed_evaluation_records_protocol_metrics():
     metrics = evaluate_plan("prompt-to-image", {"goal": "image", "steps": [
@@ -210,22 +267,10 @@ def test_fixed_evaluation_records_protocol_metrics():
     assert metrics["patch_validation_passed"] is True
     assert metrics["confirmation_consistent"] is True
 
-def test_deep_agents_harness_builds_without_general_purpose_subagent():
+def test_runtime_uses_explicit_planning_and_execution_graph():
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
-    agent = create_canvas_agent(model=FakeListChatModel(responses=["ok"]), harness_key="fakelistchatmodel")
-    assert "tools" in agent.nodes
-
-def test_deep_agents_runtime_is_read_only_and_interrupts_plan_submission(monkeypatch):
-    import deepagents
-    captured = {}
-    monkeypatch.setattr(deepagents, "create_deep_agent", lambda **kwargs: captured.update(kwargs) or object())
-    monkeypatch.setattr(deepagents, "register_harness_profile", lambda _key, profile: captured.setdefault("profile", profile))
-    create_canvas_agent(model="provider:model", harness_key="provider:model")
-    with pytest.raises(PermissionError): ReadOnlyCanvasBackend().write("x")
-    assert captured["subagents"] == []
-    assert "interrupt_on" not in captured
-    assert {"ls", "read_file", "write_file", "edit_file", "delete", "delete_file", "glob", "grep", "execute", "task"}.issubset(captured["profile"].excluded_tools)
-    assert captured["profile"].general_purpose_subagent.enabled is False
+    agent = create_canvas_agent(model=FakeListChatModel(responses=["ok"]))
+    assert {"agent", "tools", "confirmation", "execute", "dispatch_tasks"}.issubset(agent.nodes)
 
 def test_langgraph_checkpoint_resumes_same_thread_with_command():
     from langgraph.checkpoint.memory import InMemorySaver

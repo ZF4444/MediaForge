@@ -29,10 +29,31 @@ def _project_task_to_canvas(user_id: str, run_id: str, payload: dict[str, Any]) 
         node = dict(row["data_json"] or {})
         node["generation_task_id"] = payload.get("task_id") or node.get("generation_task_id")
         node["generation_status"] = status
-        if payload.get("error"): node["generation_error"] = str(payload["error"])[:2000]
+        if status in {"queued", "running"}:
+            try:
+                pending = int(node.get("pending") or 0)
+            except (TypeError, ValueError):
+                pending = 0
+            node["pending"] = max(1, pending)
+            node["queued"] = status == "queued"
+            node["running"] = status == "running"
+            node.pop("generation_error", None)
+        elif status == "succeeded":
+            node["pending"] = 0
+            node.pop("queued", None)
+            node.pop("running", None)
+            node.pop("generation_error", None)
+        else:
+            node["pending"] = 0
+            node.pop("queued", None)
+            node.pop("running", None)
+            if payload.get("error"): node["generation_error"] = str(payload["error"])[:2000]
         result = payload.get("result")
         if status == "succeeded" and isinstance(result, dict):
-            if result.get("images"): node["images"] = result["images"]
+            # Prefer the structured media entries: URLs alone discard the
+            # intrinsic dimensions required to preserve canvas node ratios.
+            if result.get("image_items"): node["images"] = result["image_items"]
+            elif result.get("images"): node["images"] = result["images"]
             if result.get("image_items"): node["image_items"] = result["image_items"]
         cur.execute("UPDATE smart_canvas_nodes SET data_json=%s,updated_at=EXTRACT(EPOCH FROM clock_timestamp())*1000 WHERE id=%s AND canvas_id=%s", (json_value(node), node_id, run["canvas_id"]))
         cur.execute("UPDATE smart_canvases SET version=version+1,updated_at=EXTRACT(EPOCH FROM clock_timestamp())*1000 WHERE id=%s RETURNING version", (run["canvas_id"],)); return int(cur.fetchone()["version"])

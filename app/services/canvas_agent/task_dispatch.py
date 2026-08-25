@@ -28,15 +28,24 @@ def _image_request_for_node(node: dict[str, Any], fallback_capability: Any, fall
         count = min(4, max(1, int(count)))
     except (TypeError, ValueError):
         count = 1
-    return {
+    # Keep the raw canvas settings with the task. The normal canvas endpoint
+    # resolves provider parameter mappings from this object before execution.
+    request = {
         "prompt": prompt,
         "provider_id": provider_id,
         "model": model,
-        "size": str(settings.get("size") or "1024x1792"),
+        "size": "1024x1024",
         "quality": str(settings.get("quality") or "auto"),
         "n": count,
         "reference_images": [],
+        "run_settings": settings,
     }
+    # Agent tasks enter the Redis queue directly, whereas manual canvas runs
+    # pass through this normalizer in the HTTP endpoint. Reuse it here so
+    # both paths use identical ratio/size and provider-field conversion.
+    from app.models import OnlineImageRequest
+    from main import normalize_canvas_image_request
+    return normalize_canvas_image_request(OnlineImageRequest.model_validate(request)).model_dump(mode="json")
 
 
 async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, requests: list[dict[str, Any]], *, prompt: str, prompts_by_node: dict[str, str] | None = None) -> list[dict[str, Any]]:
@@ -64,9 +73,26 @@ async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, request
         request = _image_request_for_node(node, capability, prompt, prompts_by_node)
         # Reuse the existing access-control resolver; the Agent never chooses
         # an unapproved provider/model pair directly.
-        from main import require_model_access
+        from main import assert_provider_budget_available, get_api_provider, require_model_access
         await asyncio.to_thread(require_model_access, request["provider_id"], request["model"])
+        await assert_provider_budget_available(get_api_provider(request["provider_id"]), user_id)
         await create_canvas_task({"id": task_id, "type": "online-image", "status": "queued", "provider_id": request["provider_id"], "model": request["model"], "owner_id": user_id, "agent_run_id": run_id, "agent_node_id": node["id"], "deadline_at": time.time() + CANVAS_TASK_TIMEOUT_SECONDS, "attempt": 1, "request": request})
+        # Queue submission is the first authoritative lifecycle transition.
+        # Project it immediately so the canvas node shows a pending state
+        # before a worker claims the task and begins image generation.
+        from .events import emit_agent_event
+        await emit_agent_event(user_id, run_id, "task.queued", {
+            "task_id": task_id,
+            "node_id": node["id"],
+            "status": "queued",
+            "provider_id": request["provider_id"],
+            "model": request["model"],
+            "kind": "image",
+            "expected_count": request["n"],
+        })
+        # The queued projection must be committed before workers can claim the
+        # task. Otherwise a fast success can be overwritten by a late queued
+        # event and leave the node permanently disabled.
         await enqueue_canvas_task(task_id)
         submitted.append({"task_id": task_id, "node_id": node["id"], "status": "queued"})
     return submitted
