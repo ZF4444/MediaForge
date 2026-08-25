@@ -1,11 +1,45 @@
 import asyncio
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from typing import Annotated, TypedDict
 from app.services.canvas_agent.runtime import create_canvas_agent
 
 from app.services.canvas_agent import skills
 from app.services.canvas_agent.tools import build_canvas_tools
+
+
+def test_execution_tool_records_a_tool_message_and_execution_result():
+    class State(TypedDict):
+        messages: Annotated[list, add_messages]
+        execution_result: dict
+
+    async def execute_patch(plan_version, authorized_node_ids):
+        assert plan_version == 1
+        assert authorized_node_ids == ["node-1"]
+        return {"version": 2, "node_refs": {"create-image": "node-1"}, "run_requests": []}
+
+    tools = build_canvas_tools(
+        user_id="user", run_id="run", canvas_id="canvas",
+        execute_patch=execute_patch, include_execution=True,
+    )
+    execute_tool = next(item for item in tools if item.name == "execute_canvas_patch")
+    graph_builder = StateGraph(State)
+    graph_builder.add_node("execute", ToolNode([execute_tool]))
+    graph_builder.add_edge(START, "execute")
+    graph_builder.add_edge("execute", END)
+    result = asyncio.run(graph_builder.compile().ainvoke({"messages": [AIMessage(content="", tool_calls=[{
+        "id": "execute-call", "name": "execute_canvas_patch",
+        "args": {"plan_version": 1, "authorized_node_ids": ["node-1"]}, "type": "tool_call",
+    }])]}))
+
+    assert result["execution_result"]["node_refs"] == {"create-image": "node-1"}
+    message = next(item for item in result["messages"] if isinstance(item, ToolMessage))
+    assert message.tool_call_id == "execute-call"
+    assert '"node-1"' in message.content
 
 
 def test_skill_document_reads_complete_body_and_metadata_prompt():

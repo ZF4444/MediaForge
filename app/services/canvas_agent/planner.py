@@ -15,7 +15,7 @@ def _load_canvas_parameter_providers() -> list[dict[str, Any]]:
     return load_api_providers()
 
 async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *, checkpointer: Any = None,
-                           emit_progress=None, tools=None, execute_patch=None) -> dict[str, Any]:
+                           emit_progress=None, tools=None, execute_patch=None, dispatch_tasks=None) -> dict[str, Any]:
     run_id = str(context.get("run_id") or "canvas-agent")
     user_id = str(context.get("user_id") or "")
     canvas_id = str(context.get("canvas_id") or "")
@@ -23,13 +23,13 @@ async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *,
     # invocation. The model only sees its public capability metadata.
     registry = await asyncio.to_thread(from_provider_configuration, provider_loader=_load_canvas_parameter_providers)
     tools = build_canvas_tools(user_id=user_id, run_id=run_id, canvas_id=canvas_id,
-                               get_canvas=context.get("get_canvas"), execute_patch=execute_patch,
+                               get_canvas=context.get("get_canvas"),
                                registry=registry, provider_loader=_load_canvas_parameter_providers,
                                emit_skill_event=context.get("emit_skill_event"))
     graph = create_canvas_agent(model=model, user_id=user_id, run_id=run_id,
                                 canvas_id=canvas_id, checkpointer=checkpointer,
                                 emit_progress=emit_progress, get_canvas=context.get("get_canvas"),
-                                execute_patch=execute_patch, tools=tools,
+                                execute_patch=execute_patch, dispatch_tasks=dispatch_tasks, tools=tools,
                                 provider_loader=_load_canvas_parameter_providers,
                                 emit_skill_event=context.get("emit_skill_event"))
     if context.get("emit_skill_event"):

@@ -1,6 +1,7 @@
 """Scoped LangChain tools for the Canvas Agent."""
 from __future__ import annotations
 import asyncio
+import json
 from typing import Any, Awaitable, Callable
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
@@ -12,7 +13,7 @@ from app.services.provider_parameters import capability_parameters
 from .context import build_canvas_context
 from .policy import assess_patch
 from .adapter import semantic_plan_to_patch
-from .store import latest_artifact, latest_plan, save_plan
+from .store import latest_artifact, save_plan
 from .skills import (
     MAX_RESOURCES_PER_TURN,
     list_enabled_skill_summaries,
@@ -22,7 +23,8 @@ from .skills import (
 
 def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
                        get_canvas: Callable[[], Awaitable[dict[str, Any]]] | None = None,
-                       execute_patch: Callable[[SemanticPlan, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+                       execute_patch: Callable[[int, list[str]], Awaitable[dict[str, Any]]] | None = None,
+                       include_execution: bool = False,
                        registry: CapabilityRegistry | None = None,
                        provider_loader: Callable[[], list[dict[str, Any]]] | None = None,
                        emit_skill_event: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None) -> list[StructuredTool]:
@@ -171,21 +173,26 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
         return {"requires_user_input": True, "question": str(question)[:2000]}
 
     @tool
-    async def execute_canvas_patch(plan_version: int, authorized_node_ids: list[str] | None = None) -> dict[str, Any]:
+    async def execute_canvas_patch(plan_version: int, authorized_node_ids: list[str] | None, runtime: ToolRuntime) -> Command:
         """Execute an approved plan through the existing Patch Executor."""
         if execute_patch is None: raise RuntimeError("Canvas execution boundary is not configured")
-        row = await asyncio.to_thread(latest_plan, user_id, run_id)
-        if not row or int(row["version"]) != int(plan_version): raise ValueError("计划版本已过期")
-        return await execute_patch(SemanticPlan.model_validate(row["content_json"]), {"authorized_node_ids": authorized_node_ids or []})
+        result = await execute_patch(int(plan_version), list(authorized_node_ids or []))
+        return Command(update={
+            "execution_result": result,
+            "messages": [ToolMessage(
+                content=json.dumps(result, ensure_ascii=False),
+                tool_call_id=runtime.tool_call_id,
+                name="execute_canvas_patch",
+            )],
+        })
 
     tools = [
         read_canvas_context, read_capability_registry, read_capability_parameters, read_artifact,
         list_canvas_skills, read_canvas_skill, read_canvas_skill_resource,
         propose_canvas_patch, request_clarification,
     ]
-    # Planning graphs must not expose the mutation tool. The confirmation
-    # endpoint owns the Patch Executor boundary and applies the approved plan
-    # after its canvas-version and authorization checks.
-    if execute_patch is not None:
+    # Planning graphs must not expose the mutation tool. The graph only adds
+    # it to its deterministic post-confirmation ToolNode.
+    if include_execution and execute_patch is not None:
         tools.append(execute_canvas_patch)
     return tools
