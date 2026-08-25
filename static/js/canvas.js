@@ -1535,6 +1535,11 @@ async function loadCanvas({renderCanvas=true}={}){
         applyViewport();
         if(renderCanvas){
             render();
+            // Agent refreshes replace the node DOM. Browser-cached images have
+            // already completed loading, so explicitly measure them here and
+            // persist their intrinsic dimensions instead of falling back to a
+            // generic landscape node on the next render.
+            measureSmartNodeImages({applyReady:true});
             resumeSmartPendingTasks();
             startCanvasMetaPoll();
         }
