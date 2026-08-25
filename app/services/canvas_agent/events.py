@@ -74,9 +74,22 @@ def _project_task_to_canvas(user_id: str, run_id: str, payload: dict[str, Any]) 
         node["generation_status"] = status
         if status in {"queued", "running"}:
             _sync_node_task_state(node, payload, status)
+            if not isinstance(node.get("runStartedAt"), (int, float)) or node["runStartedAt"] <= 0:
+                node["runStartedAt"] = now_ms()
+            node["runTimerHidden"] = False
+            node.pop("runFinishedAt", None)
+            node.pop("runElapsedMs", None)
             node.pop("generation_error", None)
         else:
             _sync_node_task_state(node, payload, status)
+            finished_at = now_ms()
+            started_at = node.get("runStartedAt")
+            if not isinstance(started_at, (int, float)) or started_at <= 0:
+                started_at = finished_at
+                node["runStartedAt"] = started_at
+            node["runFinishedAt"] = finished_at
+            node["runElapsedMs"] = max(0, finished_at - started_at)
+            node["runTimerHidden"] = False
         if status == "succeeded":
             node.pop("generation_error", None)
         elif status not in {"queued", "running"}:

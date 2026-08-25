@@ -68,6 +68,8 @@ def test_agent_task_projection_keeps_structured_media_and_clears_terminal_state(
     assert events._project_task_to_canvas("user", "run", queued) == 2
     assert updates[-1]["pendingTasks"] == [{"taskId": "task-1", "kind": "image", "providerId": "", "model": "", "expectedCount": 1, "status": "queued"}]
     assert updates[-1]["queued"] is True
+    assert updates[-1]["runStartedAt"] > 0
+    started_at = updates[-1]["runStartedAt"]
 
     assert events._project_task_to_canvas("user", "run", {"task_id": "task-1", "node_id": "node-1", "status": "running"}) == 2
     assert updates[-1]["pendingTasks"][0]["expectedCount"] == 1
@@ -80,3 +82,6 @@ def test_agent_task_projection_keeps_structured_media_and_clears_terminal_state(
     assert "pendingTasks" not in updates[-1]
     assert "queued" not in updates[-1]
     assert "running" not in updates[-1]
+    assert updates[-1]["runStartedAt"] == started_at
+    assert updates[-1]["runFinishedAt"] >= started_at
+    assert updates[-1]["runElapsedMs"] >= 0
