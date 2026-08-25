@@ -6,7 +6,6 @@ from langchain_core.messages import HumanMessage
 from .runtime import create_canvas_agent
 from .capabilities import from_provider_configuration
 from .tools import build_canvas_tools
-from .skills import list_enabled_skill_summaries
 
 
 def _load_canvas_parameter_providers() -> list[dict[str, Any]]:
@@ -32,11 +31,6 @@ async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *,
                                 execute_patch=execute_patch, dispatch_tasks=dispatch_tasks, tools=tools,
                                 provider_loader=_load_canvas_parameter_providers,
                                 emit_skill_event=context.get("emit_skill_event"))
-    if context.get("emit_skill_event"):
-        await context["emit_skill_event"](
-            "skill.discovered",
-            {"skills": [{"name": skill.name, "version": skill.version} for skill in list_enabled_skill_summaries()]},
-        )
     return await graph.ainvoke({"run_id": run_id, "messages": [HumanMessage(content=message)]},
                                config={"configurable": {"thread_id": run_id}})
 

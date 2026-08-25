@@ -41,9 +41,23 @@ def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canv
     execution_tool_node = ToolNode(execution_tools) if execution_tools else None
     async def progress(phase: str, message: str):
         if emit_progress: await emit_progress(run_id, {"phase": phase, "message": message})
+
+    def tool_progress_message(call: dict[str, Any]) -> str:
+        messages = {
+            "read_canvas_context": "正在读取画布上下文…",
+            "read_capability_registry": "正在查询可用能力…",
+            "read_capability_parameters": "正在读取节点配置…",
+            "read_artifact": "正在读取关联素材…",
+            "list_canvas_skills": "正在查询可用技能…",
+            "read_canvas_skill": "正在读取技能说明…",
+            "read_canvas_skill_resource": "正在读取技能资源…",
+            "propose_canvas_patch": "正在生成执行计划…",
+            "request_clarification": "正在整理需要补充的信息…",
+        }
+        return messages.get(str(call.get("name") or ""), "正在调用画布工具…")
+
     async def agent_node(state: CanvasAgentState) -> dict[str, Any]:
-        await progress("agent", "正在分析请求并选择工具…")
-        await progress("model", "正在调用模型生成下一步…")
+        await progress("agent", "正在分析你的请求…")
         system = SystemMessage(content=("你是画布工具型 Agent。必须通过工具读取画布和能力，不要臆造节点。"
             "创建节点时 semantic_type 只能是 prompt、image_generation、video_generation、workflow_generation 或 group；"
             "capability 必须填写 read_capability_registry 返回的能力名，绝不能写入 semantic_type。"
@@ -60,26 +74,21 @@ def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canv
             "用户请求明显匹配某个 Skill 时，先调用 read_canvas_skill。只有该正文明确引用的已登记资源才可调用 "
             "read_canvas_skill_resource；资源和 scripts 都只可用于规划参考，不能执行。"))
         response = await model.bind_tools(planning_tools).ainvoke([system, *(state.get("messages") or [])])
-        if getattr(response, "tool_calls", None):
-            await progress("agent", "已完成决策，准备执行工具…")
-        else:
-            await progress("agent", "正在整理模型响应…")
         return {"messages": [response]}
 
     async def tools_node(state: CanvasAgentState) -> dict[str, Any]:
         last = (state.get("messages") or [])[-1] if state.get("messages") else None
         calls = list(getattr(last, "tool_calls", []) or [])
-        # This only reports a tool after the model emitted a real tool call.
+        # Report only real user-meaningful tool invocations. Tool completion is
+        # deliberately omitted: the next analysis step or Agent reply closes it.
         for call in calls:
-            await progress("tool_started", f"正在执行工具 {call.get('name') or 'unknown'}…")
+            await progress("tool_started", tool_progress_message(call))
         try:
             result = await planning_tool_node.ainvoke(state)
         except Exception:
             for call in calls:
                 await progress("tool_failed", f"工具 {call.get('name') or 'unknown'} 执行失败")
             raise
-        for call in calls:
-            await progress("tool_completed", f"工具 {call.get('name') or 'unknown'} 已完成")
         return result
 
     async def confirmation_node(state: CanvasAgentState) -> dict[str, Any]:

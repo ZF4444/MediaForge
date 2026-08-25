@@ -16,9 +16,9 @@
     if (!event || Number(event.sequence) <= state.sequence) return;
     state.sequence = Number(event.sequence); const type = String(event.type || '').replace(/^agent\./, ''); const data = event.payload || event.payload_json || event.data || {};
     state.lastEvent = event;
-    window.CanvasAgentPanel.liveEvent?.({sequence:event.sequence,type,data});
+    if (window.CanvasAgentPanel.isConversationEvent?.(type)) window.CanvasAgentPanel.liveEvent?.({sequence:event.sequence,type,data});
     if (['operation.succeeded','operation.failed','operation.cancelled'].includes(type)) state.operationId = '';
-    if (type.startsWith('progress')) { window.CanvasAgentPanel.status(data.message || '处理中…'); if (data.message) window.CanvasAgentPanel.liveStatus(data.message); }
+    if (type.startsWith('progress')) window.CanvasAgentPanel.status(data.message || '处理中…');
     else if (type.startsWith('operation.') && data.message) window.CanvasAgentPanel.status(data.message);
     else window.CanvasAgentPanel.status(type);
     if (type === 'patch.applied') window.CanvasAgentPanel.liveStatus('画布变更已应用');

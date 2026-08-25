@@ -58,6 +58,14 @@ async def _require_run(user_id: str, run_id: str) -> dict:
     return run
 
 
+async def _append_plan_reply(user_id: str, run_id: str) -> str:
+    """Persist the user-facing end of a planning turn before rendering its plan."""
+    reply = "我已整理好执行计划，请确认后继续。"
+    await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"kind": "plan_ready"})
+    await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
+    return reply
+
+
 async def _execute_approved_canvas_patch(user_id: str, run_id: str, canvas_id: str, plan_version: int, authorized_node_ids: list[str]) -> dict:
     """The graph-owned mutation boundary invoked only after confirmation."""
     run = await _require_run(user_id, run_id)
@@ -182,7 +190,6 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
         context["run_id"] = run_id
         context["user_id"] = user_id
         context["canvas_id"] = run["canvas_id"]
-        await emit_agent_event(user_id, run_id, "progress", {"phase": "model", "message": "正在准备模型…"})
         model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
         async def progress(event_run_id, progress_payload):
             await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
@@ -229,8 +236,9 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
         await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="planning")
         await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc)[:500]})
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    reply = await _append_plan_reply(user_id, run_id)
     await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json")})
-    return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved}
+    return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved, "reply": reply}
 
 async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgentAnswerRequest):
     run = await _require_run(user_id, run_id)
@@ -242,7 +250,6 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
         context["user_id"] = user_id
         context["canvas_id"] = run["canvas_id"]
         provider, model_name = payload.provider or metadata.get("model_provider", ""), payload.model or metadata.get("model_name", "")
-        await emit_agent_event(user_id, run_id, "progress", {"phase": "model", "message": "正在恢复 Agent 模型…"})
         model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
         async def progress(event_run_id, progress_payload):
             await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
@@ -261,8 +268,9 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
         plan = SemanticPlan.model_validate(latest["content_json"])
         saved = await asyncio.to_thread(save_plan, user_id, run_id, plan.model_dump(mode="json"), status="awaiting_confirmation")
         await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name})
+        reply = await _append_plan_reply(user_id, run_id)
         await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json"), "resumed": True})
-        return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved}
+        return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved, "reply": reply}
     except CanvasAgentUpstreamError as exc:
         logger.exception(
             "canvas agent planning provider unavailable",

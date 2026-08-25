@@ -10,6 +10,8 @@
   const isNearMessageBottom = box => (box.scrollHeight - box.scrollTop - box.clientHeight) < 48;
   const captureMessageScroll = box => ({top:box.scrollTop,follow:isNearMessageBottom(box)});
   const restoreMessageScroll = (box, snapshot) => { box.scrollTop=snapshot?.follow ? box.scrollHeight : Math.min(snapshot?.top || 0, Math.max(0,box.scrollHeight-box.clientHeight)); };
+  const conversationEventTypes = new Set(['progress.context','progress.agent','progress.tool_started','progress.tool_failed','skill.loaded','skill.resource_loaded']);
+  const isConversationEvent = type => conversationEventTypes.has(String(type || '').replace(/^agent\./,''));
   const escapeRegExp = value => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const renderMessageContent = (body, content) => {
     const candidates = (window.CanvasAgentBridge.nodeMentionCandidates?.() || []).sort((a,b)=>b.label.length-a.label.length || b.id.length-a.id.length);
@@ -38,6 +40,7 @@
     const message = String(data?.message || fallback || '').trim();
     if (message) return message.replace(/…$/, '');
     if (type === 'skill.loaded') return `已读取 ${data?.skill?.name || 'Skill'} 技能`;
+    if (type === 'skill.resource_loaded') return `已读取 ${data?.resource?.path || 'Skill 资源'}`;
     if (type === 'task.queued') return '生成任务已提交';
     if (type === 'task.succeeded') return '生成任务已完成';
     if (type === 'task.failed' || type === 'task.timed_out') return data?.error || '生成任务失败';
@@ -141,18 +144,20 @@
     (data.events||[]).forEach(event=>{
       const type=String(event.type||'').replace(/^agent\./,''); const payload=event.payload||event.payload_json||{};
       const live={sequence:Number(event.sequence)||0,type,data:payload,message:payload.message||''};
-      timeline.push({kind:'event',at:Number(event.created_at)||0,item:live});
+      if(isConversationEvent(type)) timeline.push({kind:'event',at:Number(event.created_at)||0,item:live});
       if(type==='skill.loaded'){const skill=payload.skill||{};if(skill.name)loaded.set(`${skill.name}:${skill.version||''}`,{name:skill.name,version:skill.version||''});}
     });
     timeline.sort((a,b)=>a.at-b.at || (a.kind==='event' ? -1 : 1));
-    let pending=[];
+    let pending=[]; let turnOpen=false;
     timeline.forEach(entry=>{
-      if(entry.kind==='event'){ pending.push(entry.item); latestProgress=liveEventText(entry.item.type,entry.item.data,entry.item.message); return; }
+      if(entry.kind==='event'){ if(turnOpen){ pending.push(entry.item); latestProgress=liveEventText(entry.item.type,entry.item.data,entry.item.message); } return; }
       const kind=entry.item.role==='user'?'user':entry.item.role==='system'?'system':'agent';
+      if(kind==='user'){ pending=[]; turnOpen=true; }
       if(kind==='agent' && pending.length){ messages.appendChild(createLiveStatus(pending)); pending=[]; }
       message(entry.item.content,kind);
+      if(kind==='agent' || kind==='system') turnOpen=false;
     });
-    liveEvents=pending;
+    liveEvents=turnOpen ? pending : [];
     if(liveEvents.length){ lastLiveStatus=latestProgress; renderLiveStatus(); }
     state.skills=[...loaded.values()]; renderSkills();
     const activeOperation=(data.operations||[]).find(item=>['accepted','queued','running'].includes(item.status));
@@ -169,5 +174,5 @@
   async function cancel() { if (!state.runId) return; try { renderRun(await window.CanvasAgentClient.cancel()); window.CanvasAgentEvents.stop(); } catch(e) { system(e.message); } }
   function addSelectedMentions() { const ids=window.CanvasAgentBridge.selectedNodeIds(); state.mentions=[...new Set([...state.mentions,...ids])]; renderMentions(); if (!ids.length) system('请先在画布上选中节点。'); }
   async function init() { try { const response=await fetch('/api/access-control/me',{credentials:'same-origin'}); const me=response.ok ? await response.json() : {}; if(!me.is_admin){ $('canvasAgentToggle')?.remove(); panel?.remove(); return; } $('canvasAgentToggle').hidden=false; } catch (_) { $('canvasAgentToggle')?.remove(); panel?.remove(); return; } loadModelSelection(); $('canvasAgentToggle').addEventListener('click',()=>{panel.hidden=!panel.hidden;if(!panel.hidden){ensureModelsLoaded();refreshRuns();window.CanvasAgentEvents.recover();}}); ['pointerdown','mousedown','dblclick'].forEach(type=>panel.addEventListener(type,event=>event.stopPropagation())); panel.addEventListener('click', event=>{ const link=event.target.closest('.canvas-agent-node-link'); if(link){ event.preventDefault(); event.stopPropagation(); window.CanvasAgentBridge.focusNode(link.dataset.nodeId); } else event.stopPropagation(); }); panel.addEventListener('wheel', event=>event.stopPropagation(), {capture:true,passive:true}); $('canvasAgentClose').addEventListener('click',()=>panel.hidden=true); $('canvasAgentRunSelect').addEventListener('change',event=>window.CanvasAgentEvents.switchRun(event.target.value)); $('canvasAgentNewRun').addEventListener('click',newRun); $('canvasAgentModelSelect').addEventListener('change',onModelChange); $('canvasAgentSend').addEventListener('click',send); $('canvasAgentCancel').addEventListener('click',cancel); $('canvasAgentMention').addEventListener('click',addSelectedMentions); $('canvasAgentInput').placeholder='和画布 Agent 聊聊，或描述要在画布上完成的操作'; $('canvasAgentInput').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}}); window.addEventListener('beforeunload',window.CanvasAgentEvents.stop); renderMentions(); ensureModelsLoaded(); refreshRuns(); window.CanvasAgentEvents.recover(); }
-  window.CanvasAgentPanel={init,status,message,liveStatus,liveEvent,clearLiveStatus,system,renderRun,renderSkills,clearRun,refreshRuns,send,answer,confirm,cancel}; init();
+  window.CanvasAgentPanel={init,status,message,liveStatus,liveEvent,clearLiveStatus,isConversationEvent,system,renderRun,renderSkills,clearRun,refreshRuns,send,answer,confirm,cancel}; init();
 })();
