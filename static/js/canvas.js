@@ -1512,6 +1512,7 @@ async function loadCanvas({renderCanvas=true}={}){
         // settings object from the previously selected node.
         activeComposerSubject = null;
         lastComposerNodeId = '';
+        let repairedTerminalTaskState = false;
         nodes.forEach(n => {
             const pendingTasks = smartPendingTasks(n);
             if(pendingTasks.length){
@@ -1521,8 +1522,15 @@ async function loadCanvas({renderCanvas=true}={}){
             } else if(n.pending){
                 n.pending = 0;
                 delete n.pendingCandidatePool;
+            } else if(n.queued && (n.images || []).some(image => image?.url)){
+                // Older Agent completion events can persist media with a stale
+                // queued flag. Completed media with no pending task is terminal.
+                delete n.queued;
+                n.running = false;
+                repairedTerminalTaskState = true;
             }
         });
+        canvas.nodes = nodes;
         canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
         viewport = {...viewport, ...(canvas.viewport || {})};
         viewport.scale = safeScale(viewport.scale);
@@ -1535,11 +1543,13 @@ async function loadCanvas({renderCanvas=true}={}){
         applyViewport();
         if(renderCanvas){
             render();
-            // Agent refreshes replace the node DOM. Browser-cached images have
-            // already completed loading, so explicitly measure them here and
-            // persist their intrinsic dimensions instead of falling back to a
-            // generic landscape node on the next render.
-            measureSmartNodeImages({applyReady:true});
+            // Refreshing replaces the image metadata with the server copy.
+            // Cached previews may already be loaded, so measure and render
+            // immediately instead of retaining the fallback node layout.
+            if(measureSmartNodeImages({applyReady:true, renderOnChange:false}) || repairedTerminalTaskState){
+                render();
+                scheduleSave();
+            }
             resumeSmartPendingTasks();
             startCanvasMetaPoll();
         }
