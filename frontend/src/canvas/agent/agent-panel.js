@@ -139,7 +139,13 @@
     if(!runs.length){ const empty=document.createElement('option'); empty.value=''; empty.textContent='暂无 Run，点击 + 新建'; select.appendChild(empty); return; }
     runs.forEach(run=>{ const option=document.createElement('option'); option.value=run.id; option.textContent=runLabel(run); option.title=run.title || run.id; option.selected=run.id===state.runId; select.appendChild(option); });
   }
-  function clearRun() { lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear(); $('canvasAgentMessages').innerHTML=''; $('canvasAgentPlan').innerHTML=''; $('canvasAgentPlan').hidden=true; $('canvasAgentArtifacts').innerHTML=''; $('canvasAgentArtifacts').hidden=true; state.plan=null; state.tasks=[]; }
+  function clearRun() {
+    lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear();
+    const messages=$('canvasAgentMessages'), plan=$('canvasAgentPlan'), artifacts=$('canvasAgentArtifacts');
+    messages.innerHTML=''; messages.append(plan, artifacts);
+    plan.innerHTML=''; plan.hidden=true; artifacts.innerHTML=''; artifacts.hidden=true;
+    state.plan=null; state.tasks=[];
+  }
   function renderSkills() { const box=$('canvasAgentSkills'); box.innerHTML=''; state.skills.forEach(skill=>{const tag=document.createElement('span');tag.className='canvas-agent-skill';tag.textContent=`${skill.name}${skill.version ? ` v${skill.version}` : ''}`;box.appendChild(tag);});box.hidden=!state.skills.length; }
   function renderMentions() { const box=$('canvasAgentMentions'); box.innerHTML=''; state.mentions.forEach(id => { const chip=document.createElement('span'); chip.className='canvas-agent-mention'; chip.textContent=`@${window.CanvasAgentBridge.nodeLabel(id)}`; const remove=document.createElement('button'); remove.type='button'; remove.textContent='×'; remove.addEventListener('click',()=>{state.mentions=state.mentions.filter(item=>item!==id);renderMentions();}); chip.appendChild(remove); box.appendChild(chip); }); }
   function renderRun(data) {
@@ -148,7 +154,7 @@
     if(data.plan?.version && data.plan.version !== state.plan?.version) confirmationAccepted=false;
     if(run.status !== 'awaiting_confirmation') confirmationAccepted=false;
     if(!state.operationId) status(`${run.status || 'unknown'} · ${run.phase || ''}`);
-    const messages=$('canvasAgentMessages'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
+    const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'), artifactsBox=$('canvasAgentArtifacts'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; messages.append(planBox, artifactsBox); liveEvents=[]; lastLiveStatus='';
     const loaded=new Map(); let latestProgress=''; const timeline=[];
     (data.messages||[]).forEach(item=>timeline.push({kind:'message',at:Number(item.created_at)||0,item}));
     (data.events||[]).forEach(event=>{
@@ -174,6 +180,7 @@
     state.sequence=Math.max(state.sequence,...(data.events||[]).map(event=>Number(event.sequence)||0)); state.operationId=activeOperation?.id || '';
     window.CanvasAgentPlan.render(data.plan,{interactive:run.status==='awaiting_confirmation'&&!confirmationAccepted});
     window.CanvasAgentArtifacts.render(data.tasks||[],data.artifacts||[]); if((data.artifacts||[]).length)window.CanvasAgentArtifacts.renderDocChain(data.artifacts);
+    messages.append(planBox, artifactsBox);
     rebuildingMessages=false; restoreMessageScroll(messages,scrollSnapshot);
   }
   async function ensureRun() { if (state.runId) return state.runId; status('正在创建会话'); const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); await refreshRuns(); return state.runId; }
