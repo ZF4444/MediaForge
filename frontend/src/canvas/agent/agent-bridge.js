@@ -57,26 +57,13 @@
     if(!record) return Promise.resolve(false);
     return enqueue(async () => {
       activeTasks.delete(record.taskId);
-      let node=nodes.find(item=>item?.id===record.nodeId);
-      if(!node && window.loadCanvas){ await window.loadCanvas({renderCanvas:true}); node=nodes.find(item=>item?.id===record.nodeId); }
-      if(!node) return false;
-      const result=task?.result && typeof task.result==='object' ? task.result : {};
-      // The queued event can be persisted before this terminal event arrives.
-      // Clear it locally as well, otherwise the subsequent save re-locks Run.
-      delete node.queued;
-      if(String(task?.status || '') === 'succeeded') {
-        const media=result.image_items?.length ? result.image_items : (result.images?.length ? result.images : result);
-        finalizeSmartPendingTask(node, record.taskId, resultMediaUrls(media), record.kind);
-      } else {
-        node.pendingTasks=smartPendingTasks(node).filter(item=>item.taskId!==record.taskId);
-        node.pending=Math.max(0, Number(node.pending || 0)-1);
-        if(!node.pending && !smartPendingTasks(node).length) { delete node.pendingTasks; delete node.pendingCandidatePool; node.running=false; }
-      }
-      render();
-      // Persist only the completed output. Unlike queue registration, this
-      // state contains the actual result and is safe to merge back to canvas.
-      scheduleSave();
-      return true;
+      // The backend transaction has already projected the terminal task state
+      // and structured media (including natural dimensions) onto the node.
+      // Never merge this event into the stale client node or save it back:
+      // that can discard dimensions and overwrite the terminal projection.
+      const loaded=await window.loadCanvas?.({renderCanvas:true});
+      if(loaded) await restoreActiveTasks();
+      return Boolean(loaded);
     });
   }
   function refreshCanvas() {

@@ -17,6 +17,49 @@ def reset_current_operation(token) -> None:
 def current_operation_id() -> str:
     return _operation_id.get()
 
+
+def _task_projection(node: dict[str, Any], payload: dict[str, Any], status: str) -> tuple[list[dict[str, Any]], int]:
+    """Apply one task lifecycle event to the node's durable task projection."""
+    task_id = str(payload.get("task_id") or "")
+    existing = node.get("pendingTasks") if isinstance(node.get("pendingTasks"), list) else []
+    previous = next((dict(item) for item in existing if isinstance(item, dict) and str(item.get("taskId") or "") == task_id), {})
+    tasks = [dict(item) for item in existing if isinstance(item, dict) and str(item.get("taskId") or "") and str(item.get("taskId") or "") != task_id]
+    if status in {"queued", "running"} and task_id:
+        try:
+            expected_count = max(1, int(payload.get("expected_count") or previous.get("expectedCount") or 1))
+        except (TypeError, ValueError):
+            expected_count = 1
+        tasks.append({
+            "taskId": task_id,
+            "kind": str(payload.get("kind") or previous.get("kind") or "image"),
+            "providerId": str(payload.get("provider_id") or previous.get("providerId") or ""),
+            "model": str(payload.get("model") or previous.get("model") or ""),
+            "expectedCount": expected_count,
+            "status": status,
+        })
+    pending = max([len(tasks), *[
+        max(1, int(item.get("expectedCount") or 1))
+        for item in tasks
+    ]], default=0)
+    return tasks, pending
+
+
+def _sync_node_task_state(node: dict[str, Any], payload: dict[str, Any], status: str) -> None:
+    tasks, pending = _task_projection(node, payload, status)
+    if tasks:
+        node["pendingTasks"] = tasks
+        node["pending"] = pending
+        node["pendingCandidatePool"] = any((item.get("kind") or "image") == "image" for item in tasks)
+        node["queued"] = any(item.get("status") == "queued" for item in tasks)
+        node["running"] = any(item.get("status") == "running" for item in tasks)
+        return
+    node["pending"] = 0
+    node.pop("pendingTasks", None)
+    node.pop("pendingCandidatePool", None)
+    node.pop("queued", None)
+    node.pop("running", None)
+
+
 def _project_task_to_canvas(user_id: str, run_id: str, payload: dict[str, Any]) -> int | None:
     node_id = str(payload.get("node_id") or "")
     if not node_id: return None
@@ -30,23 +73,13 @@ def _project_task_to_canvas(user_id: str, run_id: str, payload: dict[str, Any]) 
         node["generation_task_id"] = payload.get("task_id") or node.get("generation_task_id")
         node["generation_status"] = status
         if status in {"queued", "running"}:
-            try:
-                pending = int(node.get("pending") or 0)
-            except (TypeError, ValueError):
-                pending = 0
-            node["pending"] = max(1, pending)
-            node["queued"] = status == "queued"
-            node["running"] = status == "running"
-            node.pop("generation_error", None)
-        elif status == "succeeded":
-            node["pending"] = 0
-            node.pop("queued", None)
-            node.pop("running", None)
+            _sync_node_task_state(node, payload, status)
             node.pop("generation_error", None)
         else:
-            node["pending"] = 0
-            node.pop("queued", None)
-            node.pop("running", None)
+            _sync_node_task_state(node, payload, status)
+        if status == "succeeded":
+            node.pop("generation_error", None)
+        elif status not in {"queued", "running"}:
             if payload.get("error"): node["generation_error"] = str(payload["error"])[:2000]
         result = payload.get("result")
         if status == "succeeded" and isinstance(result, dict):
