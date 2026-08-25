@@ -51,6 +51,23 @@ def test_normalize_provider_keeps_only_model_parameter_schema():
     }
 
 
+def test_provider_cache_keeps_valid_entries_when_one_saved_provider_is_invalid(monkeypatch):
+    valid = {"id": "custom-api-2", "enabled": True, "image_models": ["image-model"]}
+    invalid = {"id": "invalid-provider", "enabled": True, "parameter_schema": "invalid"}
+
+    cached = main._normalized_provider_cache([invalid, valid], [])
+
+    assert [item["id"] for item in cached] == ["custom-api-2"]
+
+
+def test_explicit_provider_resolution_refreshes_a_cold_cache(monkeypatch):
+    provider = {"id": "custom-api-2", "enabled": True, "base_url": "https://example.test", "chat_models": ["chat-model"]}
+    monkeypatch.setattr(main, "load_api_providers", lambda: [])
+    monkeypatch.setattr(main, "refresh_api_providers_cache", lambda: [provider])
+
+    assert main.get_api_provider_exact("custom-api-2") == provider
+
+
 def test_canvas_parameter_schema_endpoint_uses_refreshed_provider_configuration(monkeypatch):
     provider = {
         "id": "custom-api-2", "enabled": True, "image_models": ["gemini-3-pro-image-preview"],

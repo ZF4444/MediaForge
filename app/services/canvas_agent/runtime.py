@@ -8,40 +8,55 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langgraph.types import interrupt
 from .tools import build_canvas_tools
+from .skills import skill_metadata_prompt
 
 class CanvasAgentState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
     run_id: str
     user_id: str
     canvas_id: str
+    loaded_skills: list[dict[str, str]]
+    loaded_skill_resources: list[dict[str, str]]
     confirmed: bool
     execution_result: dict[str, Any]
 
 def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canvas_id: str = "",
                         checkpointer: Any = None, emit_progress: Callable[..., Awaitable[Any]] | None = None,
                         get_canvas=None, execute_patch=None, tools: list[StructuredTool] | None = None,
-                        provider_loader=None):
+                        provider_loader=None, emit_skill_event: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None):
     scoped_tools = tools or build_canvas_tools(
         user_id=user_id, run_id=run_id, canvas_id=canvas_id,
         get_canvas=get_canvas, execute_patch=execute_patch, provider_loader=provider_loader,
+        emit_skill_event=emit_skill_event,
     )
     tool_node = ToolNode(scoped_tools)
     async def progress(phase: str, message: str):
         if emit_progress: await emit_progress(run_id, {"phase": phase, "message": message})
     async def agent_node(state: CanvasAgentState) -> dict[str, Any]:
         await progress("agent", "正在分析请求并选择工具…")
+        await progress("model", "正在调用模型生成下一步…")
         system = SystemMessage(content=("你是画布工具型 Agent。必须通过工具读取画布和能力，不要臆造节点。"
             "创建节点时 semantic_type 只能是 prompt、image_generation、video_generation、workflow_generation 或 group；"
             "capability 必须填写 read_capability_registry 返回的能力名，绝不能写入 semantic_type。"
             "例如图片节点使用 semantic_type=image_generation、capability=image.text_to_image。"
             "选择 capability、provider 或 model 后，必须先调用 read_capability_parameters 获取字段、枚举、默认值和范围，再调用 propose_canvas_patch。"
+            "read_capability_registry 和 read_capability_parameters 返回的 provider_name、model_label、display_name、display_fields 是给用户看的名称；"
+            "优先使用这些展示名称理解和描述参数，display_fields[].display_options 中的 label 是选项显示值，value 是提交执行时必须保留的原始值。"
             "参数工具返回的 params_path 指定字段写入位置；图片/视频写入 node.params.runSettings，"
             "ComfyUI 写入 node.params.runSettings.comfyParams，提示词节点字段直接写入 node.params。"
             "需要修改时调用 propose_canvas_patch；该工具只生成提案，不会修改画布。"
-            "提案返回 awaiting_confirmation 后必须等待用户确认。确认恢复后调用 execute_canvas_patch。"
-            "缺少目标时调用 request_clarification。普通问答直接用中文回答。"))
+            "提案返回 awaiting_confirmation 后必须等待用户确认；不要在规划阶段调用任何执行工具。确认接口会在用户批准后负责应用计划。"
+            "缺少目标时调用 request_clarification。普通问答直接用中文回答。"
+            "\n\n" + skill_metadata_prompt() + "\n"
+            "用户请求明显匹配某个 Skill 时，先调用 read_canvas_skill。只有该正文明确引用的已登记资源才可调用 "
+            "read_canvas_skill_resource；资源和 scripts 都只可用于规划参考，不能执行。"))
         response = await model.bind_tools(scoped_tools).ainvoke([system, *(state.get("messages") or [])])
+        if getattr(response, "tool_calls", None):
+            await progress("agent", "已完成决策，准备执行工具…")
+        else:
+            await progress("agent", "正在整理模型响应…")
         return {"messages": [response]}
+
     async def tools_node(state: CanvasAgentState) -> dict[str, Any]:
         last = (state.get("messages") or [])[-1] if state.get("messages") else None
         calls = list(getattr(last, "tool_calls", []) or [])
@@ -57,6 +72,7 @@ def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canv
         for call in calls:
             await progress("tool_completed", f"工具 {call.get('name') or 'unknown'} 已完成")
         return result
+
     async def confirmation_node(state: CanvasAgentState) -> dict[str, Any]:
         await progress("confirmation", "计划已生成，等待用户确认…")
         decision = interrupt({"type": "canvas.confirmation_required", "run_id": run_id})

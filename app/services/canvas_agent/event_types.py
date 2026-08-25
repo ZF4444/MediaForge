@@ -6,7 +6,7 @@ from typing import Any
 EVENT_SCHEMA_VERSION = 1
 MAX_EVENT_PAYLOAD_BYTES = 24_000
 
-PHASES = {"", "context", "model", "agent", "tool", "validation", "confirmation", "execution", "reviewing", "running", "planning", "applying", "cancelling", "message", "answer"}
+PHASES = {"", "context", "model", "agent", "tool", "skill", "validation", "confirmation", "execution", "reviewing", "running", "planning", "applying", "cancelling", "message", "answer"}
 SEVERITIES = {"info", "warning", "error"}
 
 EVENT_TYPES = {
@@ -15,6 +15,7 @@ EVENT_TYPES = {
     "progress", "progress.context", "progress.model", "progress.agent", "progress.tool_started", "progress.tool_completed", "progress.tool_failed", "progress.validation", "progress.confirmation", "progress.execution",
     "message.replied", "plan.created", "patch.applied", "tasks.queued", "task.queued", "task.running", "task.succeeded", "task.failed", "task.timed_out", "task.cancelled", "task.retrying",
     "artifact.created", "artifact.advanced", "artifact.status_changed", "artifact.quality_evaluated", "prompt_pack.compiled", "prompt_pack.tasks_queued", "orchestration.proposed", "template.instantiated", "project_asset.shared",
+    "skill.discovered", "skill.loaded", "skill.resource_loaded", "skill.rejected", "skill.resource_rejected", "skill.invalidated",
 }
 
 _SENSITIVE_KEYS = {"api_key", "apikey", "authorization", "cookie", "password", "secret", "token", "access_key", "private_key"}

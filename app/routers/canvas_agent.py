@@ -24,7 +24,7 @@ from app.core.logging import audit_event, get_logger
 from app.core.metrics import AGENT_RUNS, AGENT_OPERATION_SECONDS, AGENT_FAILURES
 from app.services.canvas_agent.store import append_message, create_run, create_template, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, request_run_command_cancellation, save_artifact, save_plan, set_artifact_status, share_project_asset, submit_command, update_run
 from app.services.canvas_agent.artifacts import ARTIFACT_STAGES, compile_prompt, normalize_anchors, validate_stage
-from app.services.canvas_agent.skills import get_skill, list_skill_summaries, read_skill
+from app.services.canvas_agent.skills import get_enabled_skill, list_enabled_skill_summaries, read_skill
 from app.services.canvas_agent.doc_chain import stage_sources, validate_stage_sources
 from app.services.canvas_agent.evaluation import evaluate_artifact_quality, record_evaluation
 from app.services.canvas_agent.orchestration import build_specialist_plan, enforce_budget, estimate_plan_cost
@@ -110,6 +110,9 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
         model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
         async def progress(event_run_id, progress_payload):
             await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
+        async def emit_skill_event(event_type, event_payload):
+            await emit_agent_event(user_id, run_id, event_type, event_payload, phase="skill")
+        context["emit_skill_event"] = emit_skill_event
         async with create_async_checkpointer() as checkpointer:
             graph_result = await run_canvas_agent(model, payload.content, context, checkpointer=checkpointer, emit_progress=progress)
         latest = await asyncio.to_thread(latest_plan, user_id, run_id)
@@ -163,6 +166,9 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
         model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
         async def progress(event_run_id, progress_payload):
             await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
+        async def emit_skill_event(event_type, event_payload):
+            await emit_agent_event(user_id, run_id, event_type, event_payload, phase="skill")
+        context["emit_skill_event"] = emit_skill_event
         async with create_async_checkpointer() as checkpointer:
             graph_result = await run_canvas_agent(model, payload.answer, context, checkpointer=checkpointer, emit_progress=progress)
         latest = await asyncio.to_thread(latest_plan, user_id, run_id)
@@ -468,11 +474,11 @@ async def generate_from_prompt_pack(run_id: str, artifact_id: str, payload: Canv
 
 @router.get("/api/canvas-agent/skills")
 async def list_agent_skills():
-    return {"skills": [summary.__dict__ for summary in list_skill_summaries()]}
+    return {"skills": [summary.__dict__ for summary in list_enabled_skill_summaries()]}
 
 @router.get("/api/canvas-agent/skills/{name}")
 async def read_agent_skill(name: str):
-    if not get_skill(name): raise HTTPException(status_code=404, detail="Skill 不存在")
+    if not get_enabled_skill(name): raise HTTPException(status_code=404, detail="Skill 不存在或未启用")
     return {"name": name, "content": read_skill(name)}
 
 @router.post("/api/canvas-agent/runs/{run_id}/cost-estimate")

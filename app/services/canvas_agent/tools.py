@@ -2,7 +2,10 @@
 from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable
+from langchain.tools import ToolRuntime
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool, tool
+from langgraph.types import Command
 from app.models.canvas_agent import SemanticPlan
 from .capabilities import CapabilityRegistry
 from app.services.provider_parameters import capability_parameters
@@ -10,13 +13,41 @@ from .context import build_canvas_context
 from .policy import assess_patch
 from .adapter import semantic_plan_to_patch
 from .store import latest_artifact, latest_plan, save_plan
+from .skills import (
+    MAX_RESOURCES_PER_TURN,
+    list_enabled_skill_summaries,
+    read_skill_document,
+    read_skill_resource,
+)
 
 def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
                        get_canvas: Callable[[], Awaitable[dict[str, Any]]] | None = None,
                        execute_patch: Callable[[SemanticPlan, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
                        registry: CapabilityRegistry | None = None,
-                       provider_loader: Callable[[], list[dict[str, Any]]] | None = None) -> list[StructuredTool]:
+                       provider_loader: Callable[[], list[dict[str, Any]]] | None = None,
+                       emit_skill_event: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None) -> list[StructuredTool]:
     """Create tools scoped to one authenticated Agent Run."""
+    def agent_display_schema(schema: dict[str, Any], provider_id: str, model: str) -> dict[str, Any]:
+        providers = [item for item in (provider_loader() if provider_loader else []) if isinstance(item, dict)]
+        provider = next((item for item in providers if str(item.get("id") or "") == str(provider_id or "")), {})
+        aliases = provider.get("model_aliases") if isinstance(provider.get("model_aliases"), dict) else {}
+        model_label = str(aliases.get(model) or model or "")
+        result = dict(schema)
+        result["display_provider"] = str(provider.get("name") or provider_id or "")
+        result["display_model"] = model_label
+        result["display_fields"] = []
+        for field in schema.get("fields") or []:
+            item = dict(field)
+            options = list(field.get("options") or [])
+            labels = list(field.get("option_labels") or [])
+            if len(labels) != len(options): labels = [str(value) for value in options]
+            item["display_name"] = str(field.get("name") or field.get("id") or "")
+            item["display_options"] = [{"value": value, "label": labels[index]} for index, value in enumerate(options)]
+            default = field.get("default")
+            item["display_default"] = labels[options.index(default)] if default in options else default
+            result["display_fields"].append(item)
+        return result
+
     @tool
     async def read_canvas_context(selected_node_ids: list[str] | None = None) -> dict[str, Any]:
         """Read current canvas nodes, connections, and selected context."""
@@ -30,18 +61,99 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
     @tool
     async def read_capability_parameters(capability: str, provider_id: str = "", model: str = "") -> dict[str, Any]:
         """Read the same node parameter schema used by the canvas configuration UI."""
-        return await asyncio.to_thread(
+        schema = await asyncio.to_thread(
             capability_parameters,
             capability=capability,
             provider_id=provider_id,
             model=model,
             provider_loader=provider_loader,
         )
+        return agent_display_schema(schema, provider_id, model)
 
     @tool
     async def read_artifact(artifact_type: str = "") -> dict[str, Any] | None:
         """Read the latest artifact owned by this Agent Run."""
         return await asyncio.to_thread(latest_artifact, user_id, run_id, artifact_type)
+
+    async def skill_event(event_type: str, payload: dict[str, Any]) -> None:
+        if emit_skill_event:
+            await emit_skill_event(event_type, payload)
+
+    @tool
+    async def list_canvas_skills() -> list[dict[str, Any]]:
+        """List enabled Skills available in this Run. Returns metadata only."""
+        skills = [
+            {
+                "name": skill.name,
+                "version": skill.version,
+                "description": skill.description,
+                "triggers": list(skill.triggers),
+            }
+            for skill in list_enabled_skill_summaries()
+        ]
+        await skill_event("skill.discovered", {"skills": [{"name": item["name"], "version": item["version"]} for item in skills]})
+        return skills
+
+    @tool
+    async def read_canvas_skill(name: str, runtime: ToolRuntime) -> Command:
+        """Read one enabled Skill body after permission and integrity validation."""
+        try:
+            document = await asyncio.to_thread(read_skill_document, name)
+        except Exception as exc:
+            await skill_event("skill.rejected", {"skill": {"name": str(name)[:64]}, "reason": str(exc)[:500]})
+            return Command(update={"messages": [ToolMessage(content=f"Skill 读取被拒绝：{exc}", tool_call_id=runtime.tool_call_id)]})
+        loaded = list(runtime.state.get("loaded_skills") or [])
+        item = {"name": document.name, "version": document.version, "content_sha256": document.content_sha256}
+        if item not in loaded:
+            loaded.append(item)
+        await skill_event("skill.loaded", {"skill": {"name": document.name, "version": document.version, "content_sha256": document.content_sha256}})
+        return Command(update={
+            "loaded_skills": loaded,
+            "messages": [ToolMessage(
+                content=document.content,
+                tool_call_id=runtime.tool_call_id,
+                name="read_canvas_skill",
+                artifact={"name": document.name, "version": document.version, "content_sha256": document.content_sha256},
+            )],
+        })
+
+    @tool
+    async def read_canvas_skill_resource(skill_name: str, resource_path: str, runtime: ToolRuntime) -> Command:
+        """Read one registered text resource from an already loaded enabled Skill."""
+        loaded_skills = list(runtime.state.get("loaded_skills") or [])
+        if not any(item.get("name") == skill_name for item in loaded_skills):
+            reason = "必须先读取该 Skill 正文，才能读取其资源"
+            await skill_event("skill.resource_rejected", {"skill": {"name": str(skill_name)[:64]}, "path": str(resource_path)[:256], "reason": reason})
+            return Command(update={"messages": [ToolMessage(content=f"Skill 资源读取被拒绝：{reason}", tool_call_id=runtime.tool_call_id)]})
+        loaded_resources = list(runtime.state.get("loaded_skill_resources") or [])
+        if len(loaded_resources) >= MAX_RESOURCES_PER_TURN:
+            reason = "本轮 Skill 资源加载数量已达上限"
+            await skill_event("skill.resource_rejected", {"skill": {"name": str(skill_name)[:64]}, "path": str(resource_path)[:256], "reason": reason})
+            return Command(update={"messages": [ToolMessage(content=f"Skill 资源读取被拒绝：{reason}", tool_call_id=runtime.tool_call_id)]})
+        try:
+            resource = await asyncio.to_thread(read_skill_resource, skill_name, resource_path)
+        except Exception as exc:
+            await skill_event("skill.resource_rejected", {"skill": {"name": str(skill_name)[:64]}, "path": str(resource_path)[:256], "reason": str(exc)[:500]})
+            return Command(update={"messages": [ToolMessage(content=f"Skill 资源读取被拒绝：{exc}", tool_call_id=runtime.tool_call_id)]})
+        item = {
+            "skill_name": resource.skill_name,
+            "skill_version": resource.skill_version,
+            "path": resource.path,
+            "sha256": resource.content_sha256,
+            "media_type": resource.media_type,
+        }
+        if item not in loaded_resources:
+            loaded_resources.append(item)
+        await skill_event("skill.resource_loaded", {"skill": {"name": resource.skill_name, "version": resource.skill_version}, "resource": item})
+        return Command(update={
+            "loaded_skill_resources": loaded_resources,
+            "messages": [ToolMessage(
+                content=resource.content,
+                tool_call_id=runtime.tool_call_id,
+                name="read_canvas_skill_resource",
+                artifact=item,
+            )],
+        })
 
     @tool(args_schema=SemanticPlan)
     async def propose_canvas_patch(**plan_fields: Any) -> dict[str, Any]:
@@ -66,4 +178,14 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
         if not row or int(row["version"]) != int(plan_version): raise ValueError("计划版本已过期")
         return await execute_patch(SemanticPlan.model_validate(row["content_json"]), {"authorized_node_ids": authorized_node_ids or []})
 
-    return [read_canvas_context, read_capability_registry, read_capability_parameters, read_artifact, propose_canvas_patch, request_clarification, execute_canvas_patch]
+    tools = [
+        read_canvas_context, read_capability_registry, read_capability_parameters, read_artifact,
+        list_canvas_skills, read_canvas_skill, read_canvas_skill_resource,
+        propose_canvas_patch, request_clarification,
+    ]
+    # Planning graphs must not expose the mutation tool. The confirmation
+    # endpoint owns the Patch Executor boundary and applies the approved plan
+    # after its canvas-version and authorization checks.
+    if execute_patch is not None:
+        tools.append(execute_canvas_patch)
+    return tools

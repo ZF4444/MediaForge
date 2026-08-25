@@ -231,7 +231,7 @@ async def startup_event():
             await asyncio.to_thread(initialize_provider_secrets)
         await asyncio.to_thread(load_users_registry)
         await asyncio.to_thread(load_sessions)
-        await asyncio.to_thread(refresh_api_providers_cache)
+        await refresh_api_providers_cache_async()
         if os.getenv("APP_SECRET_KEY"):
             await asyncio.to_thread(migrate_provider_secrets_from_legacy_env)
         await asyncio.to_thread(access_control.warm_access_control_cache)
@@ -253,7 +253,7 @@ async def startup_event():
         if RUN_BACKGROUND_MAINTENANCE and AGENT_COMMAND_WORKER_ENABLED and AGENT_COMMAND_WORKER_TASK is None:
             AGENT_COMMAND_WORKER_TASK = asyncio.create_task(agent_command_worker_loop())
         if PROVIDER_CONFIG_SYNC_TASK is None:
-            PROVIDER_CONFIG_SYNC_TASK = asyncio.create_task(provider_config_event_loop(refresh_api_providers_cache))
+            PROVIDER_CONFIG_SYNC_TASK = asyncio.create_task(provider_config_event_loop(refresh_api_providers_cache_async))
         # API-only replicas do not consume or recover stream messages.  Avoid
         # requiring stream ACL commands in that mode; the dedicated worker (or
         # a combined single-process deployment) initializes the group instead.
@@ -1242,14 +1242,45 @@ def normalize_provider(item):
 _API_PROVIDERS_CACHE = None
 
 
+def _normalized_provider_cache(raw: Any, defaults: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    providers = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            providers.append(normalize_provider(item))
+        except Exception as exc:
+            logger.warning(
+                "skipping invalid API provider config entry",
+                extra={"event": "api_provider_config_entry_invalid", "provider_id": str(item.get("id") or "")[:80], "error": str(exc)[:300]},
+            )
+    return merge_default_api_providers(providers or defaults)
+
+
 def refresh_api_providers_cache():
     global _API_PROVIDERS_CACHE
     defaults = default_api_providers()
     try:
         from app.services.business_metadata import get_app_setting
         raw = get_app_setting("api_providers", [])
-        providers = [normalize_provider(item) for item in raw if isinstance(item, dict)]
-        _API_PROVIDERS_CACHE = merge_default_api_providers(providers or defaults)
+        _API_PROVIDERS_CACHE = _normalized_provider_cache(raw, defaults)
+    except Exception:
+        logger.exception("failed to load API provider config", extra={"event": "api_provider_config_load_failed"})
+        _API_PROVIDERS_CACHE = defaults
+    return [dict(item) for item in _API_PROVIDERS_CACHE]
+
+
+async def refresh_api_providers_cache_async():
+    """Refresh the process-local Provider cache through the async DB pool."""
+    global _API_PROVIDERS_CACHE
+    defaults = default_api_providers()
+    try:
+        from app.core.database import database_connection
+        async with database_connection() as conn, conn.cursor() as cur:
+            await cur.execute("SELECT value_json FROM app_settings WHERE key=%s", ("api_providers",))
+            row = await cur.fetchone()
+        raw = row["value_json"] if row else []
+        _API_PROVIDERS_CACHE = _normalized_provider_cache(raw, defaults)
     except Exception:
         logger.exception("failed to load API provider config", extra={"event": "api_provider_config_load_failed"})
         _API_PROVIDERS_CACHE = defaults
@@ -1388,17 +1419,14 @@ def get_api_provider_exact(provider_id: str):
     target = (provider_id or "").strip().lower()
     provider = next((p for p in providers if p["id"] == target), None)
     if not provider:
-        # Provider configuration is shared across workers. A request can land
-        # on a worker that has not yet consumed the cache invalidation event,
-        # so refresh from the persisted configuration before rejecting an
-        # explicit provider selection.
-        try:
-            providers = refresh_api_providers_cache()
-        except Exception:
-            providers = []
+        # This resolver is only called from synchronous request/worker-thread
+        # boundaries (for example ``resolve_canvas_agent_model`` via
+        # ``asyncio.to_thread``). Refreshing here fixes a cold or stale
+        # process-local cache without using the sync bridge on the event loop.
+        providers = refresh_api_providers_cache()
         provider = next((p for p in providers if p["id"] == target), None)
     if not provider:
-        raise HTTPException(status_code=400, detail=f"未找到 API 平台：{target or '(empty)'}。新增平台未保存时请使用当前表单拉取模型。")
+        raise HTTPException(status_code=400, detail=f"未找到 API 平台：{target or '(empty)'}。请确认平台已保存。")
     if not provider.get("enabled", True):
         raise HTTPException(status_code=400, detail=f"API 平台已禁用：{target}")
     return provider
@@ -1883,7 +1911,16 @@ def resolve_chat_provider(provider: str, model: str, ms_model: str = ""):
         # ComfyUI (or any other primary provider).
         api_provider = get_api_provider_exact(requested_provider)
     else:
-        candidates = [item for item in load_api_providers() if item.get('enabled', True) and item.get('id') not in {'comfyui', 'runninghub'} and (item.get('chat_models') or item.get('base_url') or AI_BASE_URL)]
+        # A default Provider may have a built-in Base URL even when the user
+        # has never configured its credentials. It must not win automatic
+        # selection, otherwise Agent reports a missing API key after planning.
+        candidates = [
+            item for item in load_api_providers()
+            if item.get('enabled', True)
+            and item.get('id') not in {'comfyui', 'runninghub'}
+            and (item.get('chat_models') or item.get('base_url') or AI_BASE_URL)
+            and provider_env_key_value(str(item.get('id') or ''))
+        ]
         api_provider = next((item for item in candidates if item.get('primary')), None) or (candidates[0] if candidates else None)
         if api_provider is None:
             raise HTTPException(status_code=400, detail='未配置可用于 Agent 的聊天 Provider，请先在 API 平台管理中配置聊天模型。')

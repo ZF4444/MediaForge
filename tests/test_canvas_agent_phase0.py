@@ -28,6 +28,82 @@ def test_semantic_node_type_is_constrained_and_generation_nodes_match_canvas_con
     assert node["genKind"] == "image"
     assert node["runSettings"] == {"engine": "api", "apiKind": "image"}
 
+
+def test_agent_generation_node_preserves_manual_run_settings_contract():
+    plan = SemanticPlan.model_validate({
+        "goal": "猫狗大战",
+        "steps": [{
+            "id": "step_create_catdog_2k_t2i_v2",
+            "action": "canvas.create_node",
+            "node": {
+                "semantic_type": "image_generation",
+                "title": "猫狗大战（2K生图）",
+                "content": "猫狗大战",
+                "capability": "image.text_to_image",
+                "params": {"runSettings": {
+                    "count": 1,
+                    "model": "gemini-3.1-flash-image-preview",
+                    "ratio": "1:1",
+                    "quality": "auto",
+                    "resolution": "2k",
+                    "provider_id": "custom-api-2",
+                }},
+            },
+        }],
+    })
+    node = semantic_plan_to_patch(plan, "canvas-1", 36).operations[0].node
+    assert node["genKind"] == "image"
+    assert node["runSettings"]["engine"] == "api"
+    assert node["runSettings"]["apiKind"] == "image"
+    assert node["runSettings"]["provider_id"] == "custom-api-2"
+    assert node["runSettings"]["resolution"] == "2k"
+    assert node["text"] == "猫狗大战"
+    assert "provider_id" not in node
+
+
+def test_agent_generation_node_accepts_legacy_flat_settings():
+    plan = SemanticPlan.model_validate({
+        "goal": "image",
+        "steps": [{
+            "id": "image",
+            "action": "canvas.create_node",
+            "node": {
+                "semantic_type": "image_generation",
+                "params": {"provider_id": "custom-api-2", "model": "demo", "ratio": "1:1"},
+            },
+        }],
+    })
+    node = semantic_plan_to_patch(plan, "canvas-1", 1).operations[0].node
+    assert node["runSettings"]["provider_id"] == "custom-api-2"
+    assert node["runSettings"]["model"] == "demo"
+    assert node["runSettings"]["ratio"] == "1:1"
+
+
+def test_agent_node_placement_avoids_existing_and_same_patch_overlaps():
+    plan = SemanticPlan.model_validate({
+        "goal": "create images",
+        "steps": [
+            {"id": "first", "action": "canvas.create_node", "placement": {"x": 560, "y": 640}, "node": {"semantic_type": "image_generation"}},
+            {"id": "second", "action": "canvas.create_node", "placement": {"x": 560, "y": 640}, "node": {"semantic_type": "image_generation"}},
+        ],
+    })
+    canvas = {"nodes": [
+        {"id": "a", "x": 560, "y": 640, "type": "smart-image"},
+        {"id": "b", "x": 760, "y": 820, "type": "smart-image"},
+    ]}
+    patch = semantic_plan_to_patch(plan, "canvas-1", 36, canvas)
+    placements = [operation.placement for operation in patch.operations]
+    assert placements == [{"x": 1120.0, "y": 820.0}, {"x": 1480.0, "y": 820.0}]
+
+
+def test_agent_node_placement_preserves_non_overlapping_model_suggestion():
+    plan = SemanticPlan.model_validate({
+        "goal": "create image",
+        "steps": [{"id": "image", "action": "canvas.create_node", "placement": {"x": 2000, "y": 100}, "node": {"semantic_type": "image_generation"}}],
+    })
+    patch = semantic_plan_to_patch(plan, "canvas-1", 1, {"nodes": [{"x": 0, "y": 0}]})
+    assert patch.operations[0].placement == {"x": 2000.0, "y": 100.0}
+
 def test_policy_marks_execution_as_confirmation_required():
     plan = SemanticPlan.model_validate({"goal": "run", "steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "agent-node"}]})
     patch = semantic_plan_to_patch(plan, "canvas-1", 1)
@@ -38,6 +114,18 @@ def test_registry_hides_disabled_provider_and_exposes_semantics():
     assert registry.get("prompt.generate").model == "chat"
     assert registry.get("image.text_to_image").model == "img"
     assert registry.get("video.text_to_video").cost_level == "high"
+
+
+def test_provider_registry_default_loader_reads_cached_provider_configuration(monkeypatch):
+    import main
+    from app.services.canvas_agent import capabilities
+
+    monkeypatch.setattr(main, "load_api_providers", lambda: [{"id": "cached", "enabled": True, "image_models": ["image"]}])
+    monkeypatch.setattr(main, "refresh_api_providers_cache", lambda: (_ for _ in ()).throw(AssertionError("must not refresh from an async task path")))
+
+    registry = capabilities.from_provider_configuration()
+
+    assert registry.get("image.text_to_image").provider_id == "cached"
 
 def test_provider_registry_registers_enabled_comfyui_workflows():
     from app.services.canvas_agent.capabilities import from_provider_configuration
@@ -94,6 +182,23 @@ def test_agent_parameter_tool_uses_injected_canvas_provider_source():
     resolution = next(field for field in schema["fields"] if field["id"] == "resolution")
     assert schema["source"] == ["system.default", "provider.parameter_schema.models"]
     assert resolution["option_labels"] == ["1P", "2P", "4P"]
+
+
+def test_agent_run_request_uses_the_target_image_node_settings():
+    from app.services.canvas_agent.task_dispatch import _image_request_for_node
+
+    capability = CapabilityRegistry([{
+        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
+    }]).get("image.text_to_image")
+    request = _image_request_for_node({
+        "id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词",
+        "runSettings": {"provider_id": "configured", "model": "configured-model", "count": 3, "quality": "high"},
+    }, capability, "计划提示词", None)
+
+    assert request["provider_id"] == "configured"
+    assert request["model"] == "configured-model"
+    assert request["prompt"] == "节点提示词"
+    assert request["n"] == 3
 
 def test_fixed_evaluation_records_protocol_metrics():
     metrics = evaluate_plan("prompt-to-image", {"goal": "image", "steps": [

@@ -6,12 +6,13 @@ from langchain_core.messages import HumanMessage
 from .runtime import create_canvas_agent
 from .capabilities import from_provider_configuration
 from .tools import build_canvas_tools
+from .skills import list_enabled_skill_summaries
 
 
 def _load_canvas_parameter_providers() -> list[dict[str, Any]]:
-    """Use the same refreshed Provider source as the canvas schema API."""
-    from main import refresh_api_providers_cache
-    return refresh_api_providers_cache()
+    """Read the Provider cache safely from the Agent command worker."""
+    from main import load_api_providers
+    return load_api_providers()
 
 async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *, checkpointer: Any = None,
                            emit_progress=None, tools=None, execute_patch=None) -> dict[str, Any]:
@@ -23,12 +24,19 @@ async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *,
     registry = await asyncio.to_thread(from_provider_configuration, provider_loader=_load_canvas_parameter_providers)
     tools = build_canvas_tools(user_id=user_id, run_id=run_id, canvas_id=canvas_id,
                                get_canvas=context.get("get_canvas"), execute_patch=execute_patch,
-                               registry=registry, provider_loader=_load_canvas_parameter_providers)
+                               registry=registry, provider_loader=_load_canvas_parameter_providers,
+                               emit_skill_event=context.get("emit_skill_event"))
     graph = create_canvas_agent(model=model, user_id=user_id, run_id=run_id,
                                 canvas_id=canvas_id, checkpointer=checkpointer,
                                 emit_progress=emit_progress, get_canvas=context.get("get_canvas"),
                                 execute_patch=execute_patch, tools=tools,
-                                provider_loader=_load_canvas_parameter_providers)
+                                provider_loader=_load_canvas_parameter_providers,
+                                emit_skill_event=context.get("emit_skill_event"))
+    if context.get("emit_skill_event"):
+        await context["emit_skill_event"](
+            "skill.discovered",
+            {"skills": [{"name": skill.name, "version": skill.version} for skill in list_enabled_skill_summaries()]},
+        )
     return await graph.ainvoke({"run_id": run_id, "messages": [HumanMessage(content=message)]},
                                config={"configurable": {"thread_id": run_id}})
 

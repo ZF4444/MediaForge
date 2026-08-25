@@ -17,10 +17,23 @@
     state.sequence = Number(event.sequence); const type = String(event.type || '').replace(/^agent\./, ''); const data = event.payload || event.payload_json || event.data || {};
     state.lastEvent = event;
     if (['operation.succeeded','operation.failed','operation.cancelled'].includes(type)) state.operationId = '';
-    if (type.startsWith('progress')) window.CanvasAgentPanel.status(data.message || '处理中…');
+    if (type.startsWith('progress')) { window.CanvasAgentPanel.status(data.message || '处理中…'); if (data.message) window.CanvasAgentPanel.liveStatus(data.message); }
     else if (type.startsWith('operation.') && data.message) window.CanvasAgentPanel.status(data.message);
     else window.CanvasAgentPanel.status(type);
+    if (type === 'patch.applied') window.CanvasAgentPanel.liveStatus('画布变更已应用');
+    else if (type === 'tasks.queued') window.CanvasAgentPanel.liveStatus('生成任务已提交');
+    else if (type === 'run.completed') window.CanvasAgentPanel.liveStatus('执行完成');
+    if (type === 'message.replied' && data.reply) {
+      document.querySelector('#canvasAgentMessages .canvas-agent-live-status')?.remove();
+      window.CanvasAgentPanel.clearLiveStatus?.();
+      window.CanvasAgentPanel.message(data.reply, 'agent');
+    }
     if (type === 'plan.created' && data.plan) window.CanvasAgentPlan.render({version:data.plan_version, content_json:data.plan});
+    if (type === 'skill.loaded' && data.skill?.name) {
+      const key = `${data.skill.name}:${data.skill.version || ''}`;
+      if (!state.skills.some(skill => `${skill.name}:${skill.version || ''}` === key)) state.skills.push({name:data.skill.name,version:data.skill.version || ''});
+      window.CanvasAgentPanel.renderSkills();
+    }
     if (type.startsWith('task.') || type === 'patch.applied') window.CanvasAgentBridge.refreshCanvas();
     if (['run.failed','run.blocked','run.cancelled'].includes(type)) window.CanvasAgentPanel.system(data.error || data.reason || type);
   }
@@ -51,7 +64,7 @@
   function stop() { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer=null; } state.pollInterval=0; }
   async function switchRun(runId) {
     if (!runId || runId === state.runId) return;
-    stop(); state.runId = runId; state.sequence = 0; saveRun();
+    stop(); state.runId = runId; state.sequence = 0; state.skills = []; saveRun();
     window.CanvasAgentPanel.clearRun();
     await recover();
   }

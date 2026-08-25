@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 from collections.abc import Callable
 
@@ -16,6 +17,13 @@ from app.core.redis_client import RedisUnavailableError, get_redis_client
 
 
 logger = get_logger("provider_config_events")
+
+
+async def _refresh_cache(refresh: Callable[[], object]) -> None:
+    if inspect.iscoroutinefunction(refresh):
+        await refresh()
+    else:
+        await asyncio.to_thread(refresh)
 
 
 async def publish_provider_config_changed() -> None:
@@ -38,7 +46,7 @@ async def _listen_once(refresh: Callable[[], object]) -> None:
                 envelope = json.loads(message.get("data") or "{}")
                 if envelope.get("origin") == CLIENT_ID or envelope.get("event") != "providers_changed":
                     continue
-                await asyncio.to_thread(refresh)
+                await _refresh_cache(refresh)
                 logger.info("provider config cache refreshed from peer", extra={"event": "provider_config_peer_refresh"})
             except (TypeError, ValueError):
                 logger.warning("ignored malformed provider config event", extra={"event": "provider_config_event_malformed"})
@@ -57,7 +65,7 @@ async def provider_config_event_loop(refresh: Callable[[], object]) -> None:
             # The Redis ACL user may be intentionally restricted to data
             # commands. Keep cache invalidation functional through polling.
             try:
-                await asyncio.to_thread(refresh)
+                await _refresh_cache(refresh)
             except Exception:
                 logger.exception("provider config periodic refresh failed", extra={"event": "provider_config_periodic_refresh_failed"})
             await asyncio.sleep(PROVIDER_CONFIG_CACHE_REFRESH_SECONDS)
@@ -68,7 +76,7 @@ async def provider_config_event_loop(refresh: Callable[[], object]) -> None:
             )
         except TimeoutError:
             try:
-                await asyncio.to_thread(refresh)
+                await _refresh_cache(refresh)
             except Exception:
                 logger.exception("provider config periodic refresh failed", extra={"event": "provider_config_periodic_refresh_failed"})
         except asyncio.CancelledError:

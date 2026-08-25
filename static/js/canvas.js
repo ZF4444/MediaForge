@@ -1281,6 +1281,19 @@ function centerViewportOnWorldPoint(point){
     applyViewport();
     scheduleSave();
 }
+function focusCanvasNode(nodeId){
+    const node = nodes.find(item => String(item?.id || '') === String(nodeId || ''));
+    if(!node) return false;
+    selectedId = node.id;
+    selectedIds = [];
+    selectedImage = {nodeId:'', index:-1};
+    render();
+    const rect = nodeRect(node);
+    centerViewportOnWorldPoint({x:rect.x + rect.width / 2, y:rect.y + rect.height / 2});
+    syncSelectionUi();
+    return true;
+}
+window.focusCanvasNode = focusCanvasNode;
 function flushDeferredViewportRendering(){
     viewportInteractionActive = false;
     if(pendingMinimapRefreshAfterInteraction){
@@ -2166,10 +2179,15 @@ function loadPromptDraft(subject){
         promptInput.innerHTML = hasToken
             ? subject.promptDraftHtml
             : (promptHtmlWithMentionTokens(subject.runPrompt || subject.promptDraftText || '', subject.runPromptRefs || []) || subject.promptDraftHtml);
-    } else if(typeof subject?.runPrompt === 'string'){
+    } else if(typeof subject?.runPrompt === 'string' && subject.runPrompt.trim()){
         const rebuilt = promptHtmlWithMentionTokens(subject.runPrompt, subject.runPromptRefs || []);
         if(rebuilt) promptInput.innerHTML = rebuilt;
         else setPromptText(subject.runPrompt);
+    } else if(typeof subject?.text === 'string'){
+        // Agent-created generation nodes persist their requested prompt in
+        // node.text. They have no browser-side draft yet, so show that source
+        // of truth when the configuration panel first opens.
+        setPromptText(subject.text);
     } else {
         setPromptText('');
     }
@@ -3209,7 +3227,7 @@ function loadNodePromptDraftToInput(node){
     } else {
         const rebuilt = promptHtmlWithMentionTokens(node?.runPrompt || '', node?.runPromptRefs || []);
         if(rebuilt) promptInput.innerHTML = rebuilt;
-        else setPromptText(node?.runPrompt || '');
+        else setPromptText(node?.runPrompt || node?.text || '');
     }
 }
 // M5 拆分（第2批）：createSmartComfyTask / waitSmartComfyTaskResult /
