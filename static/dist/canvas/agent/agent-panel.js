@@ -2,6 +2,7 @@
   const state=window.CanvasAgentState, $=id=>document.getElementById(id), panel=$('canvasAgentPanel');
   let lastLiveStatus = '';
   let liveEvents = [];
+  const expandedEventGroups = new Set();
   let rebuildingMessages = false;
   let confirmationPending = false;
   let confirmationAccepted = false;
@@ -57,9 +58,14 @@
     if (!ms) return '';
     return `${Math.max(0, Math.round(ms / 1000))}s`;
   };
+  const eventGroupKey = events => {
+    const first = events[0] || {};
+    return first.sequence ? `sequence:${first.sequence}` : `content:${first.type || 'status'}:${first.message || first.data?.message || ''}`;
+  };
   const createLiveStatus = events => {
     const el=document.createElement('div'); el.className='canvas-agent-live-status';
-    let expanded=false;
+    const groupKey=eventGroupKey(events);
+    let expanded=expandedEventGroups.has(groupKey);
     const render = () => {
     el.innerHTML='';
     const latest=events[events.length - 1] || {type:'status',message:lastLiveStatus,data:{}};
@@ -68,7 +74,7 @@
     const text=document.createElement('span'); text.className='canvas-agent-live-text'; text.textContent=liveEventText(latest.type, latest.data, latest.message);
     const duration=document.createElement('span'); duration.className='canvas-agent-live-duration'; duration.textContent=liveEventDuration(latest.data);
     const chevron=document.createElement('i'); chevron.className='canvas-agent-live-chevron'; chevron.setAttribute('data-lucide', expanded ? 'chevron-up' : 'chevron-down');
-    toggle.append(icon, text, duration, chevron); toggle.addEventListener('click', () => { expanded=!expanded; render(); }); el.appendChild(toggle);
+    toggle.append(icon, text, duration, chevron); toggle.addEventListener('click', () => { expanded=!expanded; if(expanded) expandedEventGroups.add(groupKey); else expandedEventGroups.delete(groupKey); render(); }); el.appendChild(toggle);
     const details=document.createElement('div'); details.className='canvas-agent-live-details'; details.hidden=!expanded;
     [...events].reverse().forEach(item => {
       const row=document.createElement('div'); row.className='canvas-agent-live-row';
@@ -129,7 +135,7 @@
     if(!runs.length){ const empty=document.createElement('option'); empty.value=''; empty.textContent='暂无 Run，点击 + 新建'; select.appendChild(empty); return; }
     runs.forEach(run=>{ const option=document.createElement('option'); option.value=run.id; option.textContent=runLabel(run); option.title=run.title || run.id; option.selected=run.id===state.runId; select.appendChild(option); });
   }
-  function clearRun() { lastLiveStatus=''; liveEvents=[]; $('canvasAgentMessages').innerHTML=''; $('canvasAgentPlan').innerHTML=''; $('canvasAgentPlan').hidden=true; $('canvasAgentArtifacts').innerHTML=''; $('canvasAgentArtifacts').hidden=true; state.plan=null; state.tasks=[]; }
+  function clearRun() { lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear(); $('canvasAgentMessages').innerHTML=''; $('canvasAgentPlan').innerHTML=''; $('canvasAgentPlan').hidden=true; $('canvasAgentArtifacts').innerHTML=''; $('canvasAgentArtifacts').hidden=true; state.plan=null; state.tasks=[]; }
   function renderSkills() { const box=$('canvasAgentSkills'); box.innerHTML=''; state.skills.forEach(skill=>{const tag=document.createElement('span');tag.className='canvas-agent-skill';tag.textContent=`${skill.name}${skill.version ? ` v${skill.version}` : ''}`;box.appendChild(tag);});box.hidden=!state.skills.length; }
   function renderMentions() { const box=$('canvasAgentMentions'); box.innerHTML=''; state.mentions.forEach(id => { const chip=document.createElement('span'); chip.className='canvas-agent-mention'; chip.textContent=`@${window.CanvasAgentBridge.nodeLabel(id)}`; const remove=document.createElement('button'); remove.type='button'; remove.textContent='×'; remove.addEventListener('click',()=>{state.mentions=state.mentions.filter(item=>item!==id);renderMentions();}); chip.appendChild(remove); box.appendChild(chip); }); }
   function renderRun(data) {
