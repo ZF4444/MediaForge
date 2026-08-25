@@ -70,11 +70,11 @@
     const render = () => {
     el.innerHTML='';
     const ordered=orderedEvents(events);
-    const latest=ordered[ordered.length - 1] || {type:'status',message:lastLiveStatus,data:{}};
+    const first=ordered[0] || {type:'status',message:lastLiveStatus,data:{}};
     const toggle=document.createElement('button'); toggle.type='button'; toggle.className='canvas-agent-live-toggle'; toggle.setAttribute('aria-expanded', String(expanded));
-    const icon=document.createElement('i'); icon.setAttribute('data-lucide', liveEventIcon(latest.type));
-    const text=document.createElement('span'); text.className='canvas-agent-live-text'; text.textContent=liveEventText(latest.type, latest.data, latest.message);
-    const duration=document.createElement('span'); duration.className='canvas-agent-live-duration'; duration.textContent=liveEventDuration(latest.data);
+    const icon=document.createElement('i'); icon.setAttribute('data-lucide', liveEventIcon(first.type));
+    const text=document.createElement('span'); text.className='canvas-agent-live-text'; text.textContent=liveEventText(first.type, first.data, first.message);
+    const duration=document.createElement('span'); duration.className='canvas-agent-live-duration'; duration.textContent=liveEventDuration(first.data);
     const chevron=document.createElement('i'); chevron.className='canvas-agent-live-chevron'; chevron.setAttribute('data-lucide', expanded ? 'chevron-up' : 'chevron-down');
     toggle.append(icon, text, duration, chevron); toggle.addEventListener('click', () => { expanded=!expanded; if(expanded) expandedEventGroups.add(groupKey); else expandedEventGroups.delete(groupKey); render(); }); el.appendChild(toggle);
     const details=document.createElement('div'); details.className='canvas-agent-live-details'; details.hidden=!expanded; details.style.display=expanded ? '' : 'none';
