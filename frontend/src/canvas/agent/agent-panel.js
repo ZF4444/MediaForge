@@ -63,6 +63,7 @@
     return first.sequence ? `sequence:${first.sequence}` : `content:${first.type || 'status'}:${first.message || first.data?.message || ''}`;
   };
   const orderedEvents = events => [...events].sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
+  const renderLiveIcons = root => { if(window.lucide) window.lucide.createIcons({root}); };
   const createLiveStatus = events => {
     const el=document.createElement('div'); el.className='canvas-agent-live-status';
     const groupKey=eventGroupKey(events);
@@ -86,7 +87,7 @@
       row.append(rowIcon, rowText, rowDuration); details.appendChild(row);
     });
     el.appendChild(details);
-    if(window.lucide) window.lucide.createIcons();
+    if(el.isConnected) renderLiveIcons(el);
     };
     render();
     return el;
@@ -98,6 +99,7 @@
     next.classList.add('is-active');
     const follow=isNearMessageBottom(box);
     if(el) el.replaceWith(next); else box.appendChild(next);
+    renderLiveIcons(next);
     if(!rebuildingMessages && follow) box.scrollTop=box.scrollHeight;
   };
   const liveEvent = event => {
@@ -161,7 +163,7 @@
       if(entry.kind==='event'){ if(turnOpen){ pending.push(entry.item); latestProgress=liveEventText(entry.item.type,entry.item.data,entry.item.message); } return; }
       const kind=entry.item.role==='user'?'user':entry.item.role==='system'?'system':'agent';
       if(kind==='user'){ pending=[]; turnOpen=true; }
-      if(kind==='agent' && pending.length){ messages.appendChild(createLiveStatus(pending)); pending=[]; }
+      if(kind==='agent' && pending.length){ const liveStatus=createLiveStatus(pending); messages.appendChild(liveStatus); renderLiveIcons(liveStatus); pending=[]; }
       message(entry.item.content,kind);
       if(kind==='agent' || kind==='system') turnOpen=false;
     });
