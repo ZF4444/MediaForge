@@ -27,8 +27,6 @@
     if (type === 'task.queued') window.CanvasAgentBridge.startNodeTask?.(data);
     if (['task.succeeded','task.failed','task.cancelled','task.timed_out'].includes(type)) window.CanvasAgentBridge.finishNodeTask?.(data);
     if (type === 'message.replied' && data.reply) {
-      document.querySelector('#canvasAgentMessages .canvas-agent-live-status')?.remove();
-      window.CanvasAgentPanel.clearLiveStatus?.();
       window.CanvasAgentPanel.message(data.reply, 'agent');
     }
     if (type === 'plan.created' && data.plan) window.CanvasAgentPlan.render({version:data.plan_version, content_json:data.plan});
