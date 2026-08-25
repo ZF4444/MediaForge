@@ -62,13 +62,15 @@
     const first = events[0] || {};
     return first.sequence ? `sequence:${first.sequence}` : `content:${first.type || 'status'}:${first.message || first.data?.message || ''}`;
   };
+  const orderedEvents = events => [...events].sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
   const createLiveStatus = events => {
     const el=document.createElement('div'); el.className='canvas-agent-live-status';
     const groupKey=eventGroupKey(events);
     let expanded=expandedEventGroups.has(groupKey);
     const render = () => {
     el.innerHTML='';
-    const latest=events[events.length - 1] || {type:'status',message:lastLiveStatus,data:{}};
+    const ordered=orderedEvents(events);
+    const latest=ordered[ordered.length - 1] || {type:'status',message:lastLiveStatus,data:{}};
     const toggle=document.createElement('button'); toggle.type='button'; toggle.className='canvas-agent-live-toggle'; toggle.setAttribute('aria-expanded', String(expanded));
     const icon=document.createElement('i'); icon.setAttribute('data-lucide', liveEventIcon(latest.type));
     const text=document.createElement('span'); text.className='canvas-agent-live-text'; text.textContent=liveEventText(latest.type, latest.data, latest.message);
@@ -76,7 +78,7 @@
     const chevron=document.createElement('i'); chevron.className='canvas-agent-live-chevron'; chevron.setAttribute('data-lucide', expanded ? 'chevron-up' : 'chevron-down');
     toggle.append(icon, text, duration, chevron); toggle.addEventListener('click', () => { expanded=!expanded; if(expanded) expandedEventGroups.add(groupKey); else expandedEventGroups.delete(groupKey); render(); }); el.appendChild(toggle);
     const details=document.createElement('div'); details.className='canvas-agent-live-details'; details.hidden=!expanded; details.style.display=expanded ? '' : 'none';
-    [...events].reverse().forEach(item => {
+    [...ordered].reverse().forEach(item => {
       const row=document.createElement('div'); row.className='canvas-agent-live-row';
       const rowIcon=document.createElement('i'); rowIcon.setAttribute('data-lucide', liveEventIcon(item.type));
       const rowText=document.createElement('span'); rowText.textContent=liveEventText(item.type, item.data, item.message);
