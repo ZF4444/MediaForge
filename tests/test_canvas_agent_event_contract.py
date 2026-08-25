@@ -38,6 +38,8 @@ def test_worker_auth_context_is_available_in_to_thread():
 def test_agent_task_projection_keeps_structured_media_and_clears_terminal_state(monkeypatch):
     from app.services.canvas_agent import events
 
+    timer_values = iter([1000, 2000, 3000])
+    monkeypatch.setattr(events, "now_ms", lambda: next(timer_values))
     node = {"id": "node-1", "type": "smart-image"}
     updates = []
 
@@ -85,3 +87,7 @@ def test_agent_task_projection_keeps_structured_media_and_clears_terminal_state(
     assert updates[-1]["runStartedAt"] == started_at
     assert updates[-1]["runFinishedAt"] >= started_at
     assert updates[-1]["runElapsedMs"] >= 0
+
+    rerun = {"task_id": "task-2", "node_id": "node-1", "status": "queued", "kind": "image", "expected_count": 1}
+    assert events._project_task_to_canvas("user", "run", rerun) == 2
+    assert updates[-1]["runStartedAt"] == 3000

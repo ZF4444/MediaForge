@@ -72,9 +72,14 @@ def _project_task_to_canvas(user_id: str, run_id: str, payload: dict[str, Any]) 
         node = dict(row["data_json"] or {})
         node["generation_task_id"] = payload.get("task_id") or node.get("generation_task_id")
         node["generation_status"] = status
+        task_id = str(payload.get("task_id") or "")
+        existing_tasks = node.get("pendingTasks") if isinstance(node.get("pendingTasks"), list) else []
+        continuing_task = any(str(item.get("taskId") or "") == task_id for item in existing_tasks if isinstance(item, dict))
         if status in {"queued", "running"}:
             _sync_node_task_state(node, payload, status)
-            if not isinstance(node.get("runStartedAt"), (int, float)) or node["runStartedAt"] <= 0:
+            if status == "queued" and not continuing_task:
+                node["runStartedAt"] = now_ms()
+            elif not isinstance(node.get("runStartedAt"), (int, float)) or node["runStartedAt"] <= 0:
                 node["runStartedAt"] = now_ms()
             node["runTimerHidden"] = False
             node.pop("runFinishedAt", None)
