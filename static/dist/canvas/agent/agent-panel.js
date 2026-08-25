@@ -75,7 +75,7 @@
     const duration=document.createElement('span'); duration.className='canvas-agent-live-duration'; duration.textContent=liveEventDuration(latest.data);
     const chevron=document.createElement('i'); chevron.className='canvas-agent-live-chevron'; chevron.setAttribute('data-lucide', expanded ? 'chevron-up' : 'chevron-down');
     toggle.append(icon, text, duration, chevron); toggle.addEventListener('click', () => { expanded=!expanded; if(expanded) expandedEventGroups.add(groupKey); else expandedEventGroups.delete(groupKey); render(); }); el.appendChild(toggle);
-    const details=document.createElement('div'); details.className='canvas-agent-live-details'; details.hidden=!expanded;
+    const details=document.createElement('div'); details.className='canvas-agent-live-details'; details.hidden=!expanded; details.style.display=expanded ? '' : 'none';
     [...events].reverse().forEach(item => {
       const row=document.createElement('div'); row.className='canvas-agent-live-row';
       const rowIcon=document.createElement('i'); rowIcon.setAttribute('data-lucide', liveEventIcon(item.type));
