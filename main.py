@@ -389,8 +389,6 @@ from app.config import (
     HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
     REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS,
     BASE_DIR,
-    WORKFLOW_DIR,
-    WORKFLOW_PATH,
     STATIC_DIR,
     STATIC_RUNNINGHUB_DIR,
     STATIC_RUNNINGHUB_THUMBNAIL_DIR,
@@ -1486,7 +1484,6 @@ def update_env_values(updates):
 BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 
 os.makedirs(STATIC_DIR, exist_ok=True)
-os.makedirs(WORKFLOW_DIR, exist_ok=True)
 
 # 注意：此路由必须在 app.mount("/static", ...) 之前注册，
 # 否则 StaticFiles 挂载会先匹配 /static/*.html，导致无法动态注入版本号。
@@ -3789,12 +3786,11 @@ from app.services.pose_studio import (
 SAM3D_WORKFLOW_JSON = "custom/Sam3DBody.json"
 
 def _sam3d_workflow_info() -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    if not os.path.isfile(os.path.join(WORKFLOW_DIR, SAM3D_WORKFLOW_JSON)):
+    stored = get_comfy_workflow(SAM3D_WORKFLOW_JSON)
+    if not stored:
         return None, None, None
-    workflow_path = os.path.join(WORKFLOW_DIR, SAM3D_WORKFLOW_JSON)
     try:
-        with open(workflow_path, "r", encoding="utf-8") as f:
-            workflow = json.load(f)
+        workflow = stored.get("workflow") or {}
         image_node_id = None
         export_node_id = None
         for node_id, node in workflow.items():
@@ -3856,7 +3852,7 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
     if success_count <= 0:
         raise HTTPException(status_code=502, detail=f"上传图片到 ComfyUI 失败：{last_error or 'no available backend'}")
 
-    workflow_json, image_node_id, export_node_id = _sam3d_workflow_info()
+    workflow_json, image_node_id, export_node_id = await asyncio.to_thread(_sam3d_workflow_info)
     if not workflow_json:
         raise HTTPException(status_code=500, detail=f"Sam3D-Body 工作流文件不存在：{SAM3D_WORKFLOW_JSON}")
     if not image_node_id:

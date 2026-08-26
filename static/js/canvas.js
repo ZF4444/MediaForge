@@ -832,6 +832,7 @@ function smartSettingsForNode(node){
         ...recentSettings,
         ...nodeSettings
     };
+    if(base.comfyWorkflow) base.comfyWorkflow = normalizeComfyWorkflowName(base.comfyWorkflow);
     // Keep settings mode aligned with the node type after reload or legacy
     // migration, so stale workflow settings cannot drive an API node panel.
     if(node?.genKind === 'video' && isApiLikeEngine(base.engine)) base.apiKind = 'video';

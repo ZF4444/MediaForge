@@ -458,6 +458,13 @@ function normalizeApiSizeSettings(prefix=''){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';
 }
+function normalizeComfyWorkflowName(name){
+    const value = String(name || '');
+    if(!value || !Array.isArray(comfyWorkflows)) return value;
+    if(comfyWorkflows.some(item => item?.name === value)) return value;
+    const withExtension = `${value}.json`;
+    return comfyWorkflows.some(item => item?.name === withExtension) ? withExtension : value;
+}
 async function ensureComfyWorkflow(name){
     if(!name) return null;
     // Workflow settings are editable from a separate page. Never reuse a

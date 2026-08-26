@@ -166,7 +166,10 @@ function comfyParamsFromWorkflowValues(config, values={}){
 function comfyFieldKind(field){
     if(['image','video','audio'].includes(field?.type)) return field.type;
     const key = `${field?.input || ''} ${field?.name || ''}`.toLowerCase();
-    if(field?.type === 'textarea' || /prompt|text|提示词|正向|负向/.test(key)) return 'prompt';
+    // Textareas are also used for workflow settings (for example a LoRA
+    // model name). Classify by the semantic field name/input instead of the
+    // UI control type alone.
+    if(/prompt|text|positive|negative|提示词|正向|负向/.test(key)) return 'prompt';
     return 'setting';
 }
 async function runApiGeneration(prompt, refs, runSettings=settings){
