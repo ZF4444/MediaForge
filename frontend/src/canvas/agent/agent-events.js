@@ -21,9 +21,6 @@
     if (type.startsWith('progress')) window.CanvasAgentPanel.status(data.message || '处理中…');
     else if (type.startsWith('operation.') && data.message) window.CanvasAgentPanel.status(data.message);
     else window.CanvasAgentPanel.status(type);
-    if (type === 'patch.applied') window.CanvasAgentPanel.liveStatus('画布变更已应用');
-    else if (type === 'tasks.queued') window.CanvasAgentPanel.liveStatus('生成任务已提交');
-    else if (type === 'run.completed') window.CanvasAgentPanel.liveStatus('执行完成');
     if (type === 'task.queued') window.CanvasAgentBridge.startNodeTask?.(data);
     if (['task.succeeded','task.failed','task.cancelled','task.timed_out'].includes(type)) window.CanvasAgentBridge.finishNodeTask?.(data);
     if (type === 'message.replied' && data.reply) {
