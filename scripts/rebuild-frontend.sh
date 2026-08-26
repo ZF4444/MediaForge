@@ -16,9 +16,9 @@ if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
 fi
 
 next_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((10#${BASH_REMATCH[3]} + 1))"
-printf '%s\n' "$next_version" > "$VERSION_FILE"
 
 printf 'Version: %s -> %s\n' "$version" "$next_version"
 printf 'Building frontend assets...\n'
 (cd "$PROJECT_DIR/frontend" && npm run build)
+printf '%s\n' "$next_version" > "$VERSION_FILE"
 printf 'Frontend build completed.\n'
