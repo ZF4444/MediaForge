@@ -4,6 +4,7 @@
   let liveEvents = [];
   const expandedEventGroups = new Set();
   let rebuildingMessages = false;
+  let lastRunRenderKey = '';
   let confirmationPending = false;
   let confirmationAccepted = false;
   const status = value => { $('canvasAgentStatus').textContent=value || ''; };
@@ -148,6 +149,7 @@
   }
   function clearRun() {
     lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear();
+    lastRunRenderKey='';
     const messages=$('canvasAgentMessages'), plan=$('canvasAgentPlan'), artifacts=$('canvasAgentArtifacts');
     messages.innerHTML='';
     plan.innerHTML=''; plan.hidden=true; artifacts.innerHTML=''; artifacts.hidden=true;
@@ -162,6 +164,21 @@
     if(data.plan?.version && data.plan.version !== state.plan?.version) confirmationAccepted=false;
     if(run.status !== 'awaiting_confirmation') confirmationAccepted=false;
     if(!state.operationId) status(`${run.status || 'unknown'} · ${run.phase || ''}`);
+    const activeOperation=(data.operations||[]).find(item=>['accepted','queued','running'].includes(item.status));
+    state.sequence=Math.max(state.sequence,...(data.events||[]).map(event=>Number(event.sequence)||0));
+    state.operationId=activeOperation?.id || '';
+    // Do not detach an unchanged confirmation form on every polling cycle.
+    // Removing a native select from the DOM closes its option list.
+    const renderKey=JSON.stringify({
+      run:[run.id||'',run.status||'',run.phase||''],
+      messages:(data.messages||[]).map(item=>[item.id||'',item.role||'',item.content||'',item.created_at||'']),
+      events:(data.events||[]).map(event=>[event.sequence||'',event.type||'',event.created_at||'']),
+      plan:[data.plan?.version||'',data.plan?.status||''],
+      tasks:(data.tasks||[]).map(item=>[item.id||item.task_id||'',item.status||'',item.updated_at||'']),
+      artifacts:(data.artifacts||[]).map(item=>[item.id||'',item.version||'',item.status||'',item.stale||false])
+    });
+    if(renderKey===lastRunRenderKey) return;
+    lastRunRenderKey=renderKey;
     const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'), artifactsBox=$('canvasAgentArtifacts'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
     const loaded=new Map(); let latestProgress=''; const timeline=[];
     (data.messages||[]).forEach(item=>timeline.push({kind:'message',at:Number(item.created_at)||0,item}));
@@ -184,8 +201,6 @@
     liveEvents=turnOpen ? pending : [];
     if(liveEvents.length){ lastLiveStatus=latestProgress; renderLiveStatus(); }
     state.skills=[...loaded.values()]; renderSkills();
-    const activeOperation=(data.operations||[]).find(item=>['accepted','queued','running'].includes(item.status));
-    state.sequence=Math.max(state.sequence,...(data.events||[]).map(event=>Number(event.sequence)||0)); state.operationId=activeOperation?.id || '';
     // The plan and artifacts live in the message flow. Restore their DOM nodes
     // before their renderers resolve them by id after rebuilding the timeline.
     messages.append(planBox, artifactsBox);
