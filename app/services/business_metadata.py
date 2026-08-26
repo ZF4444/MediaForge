@@ -303,7 +303,7 @@ def migrate_local_workflows() -> int:
                 if os.path.exists(cfg_path):
                     with open(cfg_path, encoding='utf-8') as f:
                         config = json.load(f) or {}
-                rows.append((rel, json_value(workflow), json_value(config), rel in {'Z-Image.json','Z-Image-Enhance.json','2511.json','klein-enhance.json','Flux2-Klein.json','upscale.json'}, now))
+                rows.append((rel, json_value(workflow), json_value(config), rel in {'Z-Image.json','Z-Image-Enhance.json','2511.json','klein-enhance.json','Flux2-Klein.json','upscale.json'}, now, now))
             except (OSError, ValueError, TypeError):
                 continue
     if not rows:
