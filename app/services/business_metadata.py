@@ -311,8 +311,9 @@ def migrate_local_workflows() -> int:
     with metadata_connection() as conn, conn.cursor() as cur:
         for row in rows:
             cur.execute("""INSERT INTO comfy_workflows(name,workflow_json,config_json,builtin,created_at,updated_at)
-                VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(name) DO NOTHING""", row)
-            imported += cur.rowcount
+                VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(name) DO NOTHING RETURNING name""", row)
+            if cur.fetchone():
+                imported += 1
     return imported
 
 
