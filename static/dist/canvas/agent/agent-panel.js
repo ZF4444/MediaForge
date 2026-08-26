@@ -209,9 +209,9 @@
     state.skills=[...loaded.values()]; renderSkills();
     // The plan and artifacts live in the message flow. Restore their DOM nodes
     // before their renderers resolve them by id after rebuilding the timeline.
-    if(data.plan && String(data.plan.version||'')!==renderedPlanVersion){ messages.append(planBox); window.CanvasAgentPlan.render(data.plan,{interactive:run.status==='awaiting_confirmation'&&!confirmationAccepted}); }
+    if(data.plan && String(data.plan.version||'')!==renderedPlanVersion){ window.CanvasAgentPlan.render(data.plan,{interactive:run.status==='awaiting_confirmation'&&!confirmationAccepted}); }
     else { planBox.innerHTML=''; planBox.hidden=true; }
-    messages.append(artifactsBox);
+    messages.append(planBox, artifactsBox);
     window.CanvasAgentArtifacts.render(data.tasks||[],data.artifacts||[]); if((data.artifacts||[]).length)window.CanvasAgentArtifacts.renderDocChain(data.artifacts);
     rebuildingMessages=false; restoreMessageScroll(messages,scrollSnapshot);
   }
