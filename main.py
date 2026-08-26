@@ -3589,7 +3589,13 @@ async def decide_chat_agent_action(payload, conversation, refs):
             async with shared_http_client(timeout=AI_REQUEST_TIMEOUT) as client:
                 response = await client.post(f"{chat_base}/chat/completions", headers=chat_hdrs, json={"model": model, "messages": messages})
                 response.raise_for_status()
-                decision = parse_agent_decision(text_from_chat_response(response.json()), payload.message, refs, previous)
+                raw = response.json()
+                if effective_protocol(provider_cfg, model) == "omnilojo":
+                    from app.services.usage import record_omnilojo_response_usage
+                    usage_payload = dict(raw) if isinstance(raw, dict) else {}
+                    usage_payload.setdefault("id", uuid.uuid4().hex)
+                    await asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider_cfg, model, usage_payload, operation="agent_router")
+                decision = parse_agent_decision(text_from_chat_response(raw), payload.message, refs, previous)
                 decision["router_model"] = model
                 return decision
     except Exception as exc:
@@ -3599,6 +3605,7 @@ async def decide_chat_agent_action(payload, conversation, refs):
 
 async def build_chat_text_reply(payload, conversation):
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    provider = get_api_provider(payload.provider)
     messages = [{"role": "system", "content": chat_system_prompt(payload)}]
     history = conversation.get("messages", [])[-MAX_HISTORY_MESSAGES:]
     for item in history:
@@ -3626,6 +3633,11 @@ async def build_chat_text_reply(payload, conversation):
         raise HTTPException(status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body[:300]}") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游接口失败：{exc}") from exc
+    if effective_protocol(provider, model) == "omnilojo":
+        from app.services.usage import record_omnilojo_response_usage
+        usage_payload = dict(raw) if isinstance(raw, dict) else {}
+        usage_payload.setdefault("id", uuid.uuid4().hex)
+        await asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider, model, usage_payload, operation="chat")
     return {"id": uuid.uuid4().hex, "role": "assistant", "content": text_from_chat_response(raw).strip() or "接口返回了空回复。", "created_at": now_ms(), "model": model, "raw_usage": raw.get("usage") if isinstance(raw, dict) else None}
 
 # --- 路由接口 ---
@@ -5618,7 +5630,7 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
                 headers=chat_hdrs,
                 json={
                     "model": model, "messages": upstream_messages, "stream": True,
-                    **({"stream_options": {"include_usage": True}} if is_omnilojo_provider(_llm_provider) else {}),
+                    **({"stream_options": {"include_usage": True}} if effective_protocol(_llm_provider, model) == "omnilojo" else {}),
                 },
             ) as response:
                 if response.status_code >= 400:
@@ -5655,11 +5667,11 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"解析上游响应失败：{exc}") from exc
     text = "".join(content_parts_acc).strip() or "接口返回了空回复。"
-    if is_omnilojo_provider(_llm_provider):
+    if effective_protocol(_llm_provider, model) == "omnilojo":
         from app.services.usage import record_omnilojo_response_usage
         await asyncio.to_thread(
             record_omnilojo_response_usage, current_user_id(), _llm_provider, model,
-            {"id": response_id, "usage": raw_usage}, operation="canvas_llm",
+            {"id": response_id or uuid.uuid4().hex, "usage": raw_usage}, operation="canvas_llm",
         )
     return {"text": text, "model": model, "raw_usage": raw_usage}
 
@@ -6124,9 +6136,11 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "model": model,
             "raw_usage": raw_data.get("usage") if isinstance(raw_data, dict) else None,
         }
-        if is_omnilojo_provider(_conv_provider):
+        if effective_protocol(_conv_provider, model) == "omnilojo":
             from app.services.usage import record_omnilojo_response_usage
-            await asyncio.to_thread(record_omnilojo_response_usage, user_id, _conv_provider, model, raw_data, operation="chat")
+            usage_payload = dict(raw_data) if isinstance(raw_data, dict) else {}
+            usage_payload.setdefault("id", uuid.uuid4().hex)
+            await asyncio.to_thread(record_omnilojo_response_usage, user_id, _conv_provider, model, usage_payload, operation="chat")
 
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
@@ -6258,7 +6272,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
                         headers=chat_hdrs,
                         json={
                             "model": model, "messages": upstream_messages, "stream": True,
-                            **({"stream_options": {"include_usage": True}} if is_omnilojo_provider(_stream_provider) else {}),
+                            **({"stream_options": {"include_usage": True}} if effective_protocol(_stream_provider, model) == "omnilojo" else {}),
                         },
                     ) as response:
                         if response.status_code >= 400:
@@ -6303,9 +6317,9 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         conversation["messages"].append(assistant_message)
         conversation["updated_at"] = now_ms()
         await asyncio.to_thread(save_conversation, user_id, conversation)
-        if is_omnilojo_provider(_stream_provider):
+        if effective_protocol(_stream_provider, model) == "omnilojo":
             from app.services.usage import record_omnilojo_response_usage
-            await asyncio.to_thread(record_omnilojo_response_usage, user_id, _stream_provider, model, {"id": response_id, "usage": raw_usage}, operation="chat")
+            await asyncio.to_thread(record_omnilojo_response_usage, user_id, _stream_provider, model, {"id": response_id or uuid.uuid4().hex, "usage": raw_usage}, operation="chat")
         yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
