@@ -110,6 +110,16 @@ def save_plan(user_id: str, run_id: str, content: dict[str, Any], *, status: str
         cur.execute("SELECT COALESCE(MAX(version),0)+1 AS version FROM canvas_agent_plans WHERE run_id=%s", (run_id,)); version = int(cur.fetchone()["version"])
         cur.execute("INSERT INTO canvas_agent_plans(id,run_id,version,status,content_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *", (new_id(),run_id,version,status,json_value(body),now,now)); return cur.fetchone()
 
+def replace_plan_content(user_id: str, run_id: str, version: int, content: dict[str, Any]) -> dict[str, Any] | None:
+    """Update the still-pending version after the user edits its displayed fields."""
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "UPDATE canvas_agent_plans SET content_json=%s,updated_at=%s "
+            "WHERE run_id=%s AND version=%s AND EXISTS (SELECT 1 FROM canvas_agent_runs WHERE id=%s AND user_id=%s AND status='awaiting_confirmation') RETURNING *",
+            (json_value(_json(content)), now_ms(), run_id, version, run_id, user_id),
+        )
+        return cur.fetchone()
+
 def begin_operation(user_id: str, run_id: str, idempotency_key: str, operation_type: str, input_data: dict[str, Any], *, risk: str = "safe") -> dict[str, Any]:
     now = now_ms(); body = _json(input_data)
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:

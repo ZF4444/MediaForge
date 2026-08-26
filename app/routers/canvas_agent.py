@@ -22,7 +22,7 @@ from app.services.canvas_agent.reliability import DEFAULT_RUN_LIMITS, canvas_str
 from app.config import CANVAS_TASK_TIMEOUT_SECONDS
 from app.core.logging import audit_event, get_logger
 from app.core.metrics import AGENT_RUNS, AGENT_OPERATION_SECONDS, AGENT_FAILURES
-from app.services.canvas_agent.store import append_message, create_run, create_template, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, request_run_command_cancellation, save_artifact, save_plan, set_artifact_status, share_project_asset, submit_command, update_run
+from app.services.canvas_agent.store import append_message, create_run, create_template, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, request_run_command_cancellation, replace_plan_content, save_artifact, save_plan, set_artifact_status, share_project_asset, submit_command, update_run
 from app.services.canvas_agent.artifacts import ARTIFACT_STAGES, compile_prompt, normalize_anchors, validate_stage
 from app.services.canvas_agent.skills import get_enabled_skill, list_enabled_skill_summaries, read_skill
 from app.services.canvas_agent.doc_chain import stage_sources, validate_stage_sources
@@ -64,6 +64,47 @@ async def _append_plan_reply(user_id: str, run_id: str) -> str:
     await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"kind": "plan_ready"})
     await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
     return reply
+
+def _merge_existing_params(current: dict, incoming: dict) -> dict:
+    """Apply only keys already proposed by the model; do not accept new execution fields from the browser."""
+    merged = dict(current)
+    for key, value in incoming.items():
+        if key not in current:
+            continue
+        if isinstance(current[key], dict) and isinstance(value, dict):
+            merged[key] = _merge_existing_params(current[key], value)
+        elif isinstance(value, (str, int, float, bool)) or value is None:
+            merged[key] = value
+    return merged
+
+async def _apply_confirmation_overrides(user_id: str, run_id: str, plan_row: dict, overrides: list[dict]) -> None:
+    if not overrides:
+        return
+    plan = SemanticPlan.model_validate(plan_row["content_json"])
+    steps = {step.id: step for step in plan.steps if step.node is not None}
+    if len(overrides) > len(steps):
+        raise HTTPException(status_code=422, detail="节点配置数量无效")
+    seen: set[str] = set()
+    for override in overrides:
+        step_id = str(override.get("step_id") or "")
+        step = steps.get(step_id)
+        if not step or step_id in seen:
+            raise HTTPException(status_code=422, detail="节点配置目标无效")
+        seen.add(step_id)
+        node = step.node
+        assert node is not None
+        if "title" in override:
+            node.title = str(override["title"] or "")[:200]
+        if "content" in override:
+            node.content = str(override["content"] or "")[:20000]
+        params = override.get("params")
+        if params is not None:
+            if not isinstance(params, dict):
+                raise HTTPException(status_code=422, detail="节点参数格式无效")
+            node.params = _merge_existing_params(node.params, params)
+    saved = await asyncio.to_thread(replace_plan_content, user_id, run_id, int(plan_row["version"]), plan.model_dump(mode="json"))
+    if not saved:
+        raise HTTPException(status_code=409, detail="计划版本已过期")
 
 
 async def _execute_approved_canvas_patch(user_id: str, run_id: str, canvas_id: str, plan_version: int, authorized_node_ids: list[str]) -> dict:
@@ -296,6 +337,7 @@ async def execute_confirm_command(user_id: str, run_id: str, payload: CanvasAgen
         await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="planning")
         await emit_agent_event(user_id, run_id, "run.blocked", {"reason": "user_rejected_plan", "plan_version": payload.plan_version})
         return {"run": await asyncio.to_thread(get_run, user_id, run_id), "approved": False}
+    await _apply_confirmation_overrides(user_id, run_id, plan_row, payload.node_overrides)
     # Resume the same graph thread. The graph deterministically emits the
     # execution tool call, records its ToolMessage, then dispatches tasks.
     metadata = run.get("metadata_json") or {}

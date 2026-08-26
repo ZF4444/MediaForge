@@ -244,6 +244,7 @@ class CanvasAgentConfirmRequest(BaseModel):
     plan_version: int = Field(ge=1)
     approved: bool = True
     authorized_node_ids: List[str] = []
+    node_overrides: List[Dict[str, Any]] = Field(default_factory=list, max_length=32)
     client_request_id: str = Field(default="", max_length=128)
 
 class CanvasAgentRetryRequest(BaseModel):
