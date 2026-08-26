@@ -174,7 +174,7 @@ RUN_BACKGROUND_MAINTENANCE = os.getenv("RUN_BACKGROUND_MAINTENANCE", "true").str
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
 from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup, check_storage_quota
-from app.services.business_metadata import archive_ai_task, initialize_business_metadata
+from app.services.business_metadata import archive_ai_task, initialize_business_metadata, get_comfy_workflow
 from app.services.canvas_agent.skills import register_builtin_skills
 from app.services.provider_secrets import initialize_provider_secrets, get_provider_secret, set_provider_secret
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
@@ -6621,14 +6621,10 @@ def generate(req: GenerateRequest):
                     except Exception:
                         logger.exception("ComfyUI sync upload failed", extra={"event": "upload_failed", "provider": "comfyui", "operation": "sync_upload", "endpoint": target_backend})
 
-        workflow_path = os.path.join(WORKFLOW_DIR, req.workflow_json)
-        if not os.path.exists(workflow_path) and req.workflow_json == "Z-Image.json":
-            workflow_path = WORKFLOW_PATH
-        if not os.path.exists(workflow_path):
+        stored_workflow = get_comfy_workflow(req.workflow_json)
+        if not stored_workflow:
             raise Exception(f"Workflow file not found: {req.workflow_json}")
-
-        with open(workflow_path, 'r', encoding='utf-8') as f:
-            workflow = json.load(f)
+        workflow = json.loads(json.dumps(stored_workflow["workflow"]))
 
         seed = random.randint(1, 10**15)
 
@@ -6783,13 +6779,7 @@ def generate(req: GenerateRequest):
 # 常量与 helper 已迁移至 app/routers/workflows.py（原样迁移），5 个管理路由亦在该 router。
 # /api/workflows/{name}/run 仍在 main.py（调用 generate），故此处导入以保持原模块级名称可用。
 from app.routers.workflows import (
-    BUILTIN_WORKFLOWS,
-    CUSTOM_WORKFLOW_FOLDER,
-    LEGACY_CUSTOM_WORKFLOW_FOLDER,
     WORKFLOW_NAME_RE,
-    workflow_path_from_name,
-    workflow_config_path,
-    is_builtin_workflow,
 )
 
 def runninghub_normalize_field(raw, fallback=None):
@@ -6885,7 +6875,7 @@ def save_comfyui_instances(payload: ComfyInstancesPayload):
 def run_workflow(name: str, payload: WorkflowRunRequest):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
-    if not os.path.exists(workflow_path_from_name(name)):
+    if not get_comfy_workflow(name):
         raise HTTPException(status_code=404, detail="Workflow not found")
     # 根据 config 的字段把值映射成 params 节点覆盖
     params: Dict[str, Dict[str, Any]] = {}

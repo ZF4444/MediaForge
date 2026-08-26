@@ -7,6 +7,8 @@ explicit file references. PostgreSQL is required; there is no JSON fallback.
 from __future__ import annotations
 
 import json
+import os
+import time
 import uuid
 from typing import Any, Dict, Iterable, Optional
 
@@ -172,6 +174,11 @@ CREATE TABLE IF NOT EXISTS app_settings (
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL DEFAULT 1
 );
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS comfy_workflows (
+    name TEXT PRIMARY KEY, workflow_json JSONB NOT NULL, config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    builtin BOOLEAN NOT NULL DEFAULT FALSE, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_comfy_workflows_updated ON comfy_workflows(updated_at DESC);
 CREATE TABLE IF NOT EXISTS ai_task_archive (
     task_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT '',
     provider_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
@@ -262,6 +269,7 @@ def initialize_business_metadata() -> bool:
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(BUSINESS_METADATA_SQL)
+    migrate_local_workflows()
     return True
 
 
@@ -271,6 +279,81 @@ def new_id() -> str:
 
 def json_value(value: Any) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False)
+
+
+def migrate_local_workflows() -> int:
+    """Import legacy workflow JSON/config files without overwriting DB edits."""
+    from app.config import WORKFLOW_DIR
+    now = int(time.time() * 1000)
+    imported = 0
+    if not os.path.isdir(WORKFLOW_DIR):
+        return 0
+    rows = []
+    for root, _, files in os.walk(WORKFLOW_DIR):
+        for filename in files:
+            if not filename.endswith('.json') or filename.endswith('.config.json'):
+                continue
+            path = os.path.join(root, filename)
+            rel = os.path.relpath(path, WORKFLOW_DIR).replace(os.sep, '/')
+            try:
+                with open(path, encoding='utf-8') as f:
+                    workflow = json.load(f)
+                cfg_path = path[:-5] + '.config.json'
+                config = {}
+                if os.path.exists(cfg_path):
+                    with open(cfg_path, encoding='utf-8') as f:
+                        config = json.load(f) or {}
+                rows.append((rel, json_value(workflow), json_value(config), rel in {'Z-Image.json','Z-Image-Enhance.json','2511.json','klein-enhance.json','Flux2-Klein.json','upscale.json'}, now))
+            except (OSError, ValueError, TypeError):
+                continue
+    if not rows:
+        return 0
+    with metadata_connection() as conn, conn.cursor() as cur:
+        for row in rows:
+            cur.execute("""INSERT INTO comfy_workflows(name,workflow_json,config_json,builtin,created_at,updated_at)
+                VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(name) DO NOTHING""", row)
+            imported += cur.rowcount
+    return imported
+
+
+def list_comfy_workflows() -> list[dict[str, Any]]:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT name,config_json,builtin FROM comfy_workflows WHERE builtin=FALSE")
+        rows = cur.fetchall()
+    result = []
+    for row in rows:
+        config = row['config_json'] or {}
+        result.append({'name': row['name'], 'title': config.get('title') or row['name'].replace('.json', ''), 'builtin': bool(row['builtin']), 'field_count': len(config.get('fields') or []), 'media': config.get('media') if config.get('media') in {'image','video'} else 'image'})
+    return sorted(result, key=lambda item: (0 if item['name'].startswith('custom/') else 1, item['title']))
+
+
+def get_comfy_workflow(name: str) -> dict[str, Any] | None:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT name,workflow_json,config_json,builtin FROM comfy_workflows WHERE name=%s", (name,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    config = dict(row['config_json'] or {})
+    config.setdefault('title', name.replace('.json', ''))
+    config.setdefault('fields', [])
+    config['media'] = config.get('media') if config.get('media') in {'image','video'} else 'image'
+    return {'name': row['name'], 'workflow': row['workflow_json'], 'config': config, 'builtin': bool(row['builtin'])}
+
+
+def save_comfy_workflow_config(name: str, config: dict[str, Any]) -> dict[str, Any] | None:
+    from app.core.utils import now_ms
+    config = dict(config or {})
+    config['media'] = config.get('media') if config.get('media') in {'image','video'} else 'image'
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE comfy_workflows SET config_json=%s,updated_at=%s WHERE name=%s RETURNING config_json", (json_value(config), now_ms(), name))
+        row = cur.fetchone()
+    return row['config_json'] if row else None
+
+
+def delete_comfy_workflow(name: str) -> bool:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM comfy_workflows WHERE name=%s AND builtin=FALSE", (name,))
+        return cur.rowcount > 0
 
 
 def _file_refs(value: Any, field_name: str = ""):

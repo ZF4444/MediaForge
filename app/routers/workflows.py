@@ -10,15 +10,21 @@
 - app.config：WORKFLOW_DIR
 - app.models：WorkflowUploadRequest / WorkflowConfig
 """
-import json
-import os
 import re
-import tempfile
+import os
 
 from fastapi import APIRouter, HTTPException
 
-from app.config import WORKFLOW_DIR
 from app.models import WorkflowConfig, WorkflowUploadRequest
+from app.services.business_metadata import (
+    delete_comfy_workflow,
+    get_comfy_workflow,
+    json_value,
+    list_comfy_workflows,
+    metadata_connection,
+    save_comfy_workflow_config,
+)
+from app.core.utils import now_ms
 
 router = APIRouter()
 
@@ -28,93 +34,23 @@ LEGACY_CUSTOM_WORKFLOW_FOLDER = "自定义"
 WORKFLOW_NAME_RE = re.compile(rf"^(?:(?:{CUSTOM_WORKFLOW_FOLDER}|{LEGACY_CUSTOM_WORKFLOW_FOLDER})/)?[a-zA-Z0-9_一-龥\.\-]+\.json$")
 
 
-def workflow_path_from_name(name: str) -> str:
-    if not WORKFLOW_NAME_RE.match(name):
-        raise HTTPException(status_code=400, detail="Invalid workflow name")
-    path = os.path.abspath(os.path.join(WORKFLOW_DIR, *name.split("/")))
-    workflow_root = os.path.abspath(WORKFLOW_DIR)
-    if os.path.commonpath([workflow_root, path]) != workflow_root:
-        raise HTTPException(status_code=400, detail="Invalid workflow name")
-    return path
-
-
-def workflow_config_path(name: str) -> str:
-    return workflow_path_from_name(name).replace(".json", ".config.json")
-
-
-def _write_json_atomic(path: str, payload):
-    """Write a config atomically so a concurrent/read during save never sees partial JSON."""
-    directory = os.path.dirname(path)
-    fd, temp_path = tempfile.mkstemp(prefix=".workflow-config-", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, path)
-    finally:
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-
-
 def is_builtin_workflow(name: str) -> bool:
     return "/" not in name and os.path.basename(name) in BUILTIN_WORKFLOWS
 
 
 @router.get("/api/workflows")
 def list_workflows():
-    if not os.path.isdir(WORKFLOW_DIR):
-        return {"workflows": []}
-    items = []
-    for root, dirs, files in os.walk(WORKFLOW_DIR):
-        if os.path.abspath(root) == os.path.abspath(WORKFLOW_DIR):
-            dirs[:] = [d for d in dirs if d in {CUSTOM_WORKFLOW_FOLDER, LEGACY_CUSTOM_WORKFLOW_FOLDER}]
-        for fn in sorted(files):
-            if not fn.endswith(".json") or fn.endswith(".config.json"):
-                continue
-            rel = os.path.relpath(os.path.join(root, fn), WORKFLOW_DIR).replace("\\", "/")
-            if is_builtin_workflow(rel):
-                continue
-            cfg = {}
-            cfg_path = workflow_config_path(rel)
-            if os.path.exists(cfg_path):
-                try:
-                    with open(cfg_path, "r", encoding="utf-8") as f:
-                        cfg = json.load(f) or {}
-                except Exception:
-                    cfg = {}
-            items.append({
-                "name": rel,
-                "title": cfg.get("title") or fn.replace(".json", ""),
-                "builtin": False,
-                "field_count": len(cfg.get("fields") or []),
-                "media": cfg.get("media") if cfg.get("media") in {"image", "video"} else "image",
-            })
-    items.sort(key=lambda item: (0 if item["name"].startswith(f"{CUSTOM_WORKFLOW_FOLDER}/") else 1, item["title"]))
-    return {"workflows": items}
+    return {"workflows": list_comfy_workflows()}
 
 
 @router.get("/api/workflows/{name:path}")
 def get_workflow(name: str):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
-    workflow_path = workflow_path_from_name(name)
-    if not os.path.exists(workflow_path):
+    data = get_comfy_workflow(name)
+    if not data:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    with open(workflow_path, "r", encoding="utf-8") as f:
-        workflow = json.load(f)
-    cfg = {"title": name.replace(".json", ""), "fields": [], "media": "image"}
-    cfg_path = workflow_config_path(name)
-    if os.path.exists(cfg_path):
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = json.load(f) or cfg
-        except Exception:
-            pass
-    if cfg.get("media") not in {"image", "video"}:
-        cfg["media"] = "image"
-    return {"name": name, "workflow": workflow, "config": cfg, "builtin": is_builtin_workflow(name)}
+    return data
 
 
 @router.post("/api/workflows")
@@ -130,12 +66,10 @@ def upload_workflow(payload: WorkflowUploadRequest):
     sample = next(iter(payload.workflow.values()), None)
     if not isinstance(sample, dict) or "class_type" not in sample:
         raise HTTPException(status_code=400, detail="不是有效的 ComfyUI API 工作流 JSON（需包含 class_type）")
-    custom_dir = os.path.join(WORKFLOW_DIR, CUSTOM_WORKFLOW_FOLDER)
-    os.makedirs(custom_dir, exist_ok=True)
     stored_name = f"{CUSTOM_WORKFLOW_FOLDER}/{name}"
-    path = workflow_path_from_name(stored_name)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload.workflow, f, ensure_ascii=False, indent=2)
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO comfy_workflows(name,workflow_json,config_json,builtin,created_at,updated_at)
+            VALUES(%s,%s,%s,FALSE,%s,%s) ON CONFLICT(name) DO UPDATE SET workflow_json=EXCLUDED.workflow_json,updated_at=EXCLUDED.updated_at""", (stored_name, json_value(payload.workflow), json_value({'title': name.replace('.json',''), 'fields': [], 'media': 'image'}), now_ms(), now_ms()))
     return {"name": stored_name}
 
 
@@ -143,14 +77,9 @@ def upload_workflow(payload: WorkflowUploadRequest):
 def save_workflow_config(name: str, payload: WorkflowConfig):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
-    workflow_path = workflow_path_from_name(name)
-    if not os.path.exists(workflow_path):
+    if not get_comfy_workflow(name):
         raise HTTPException(status_code=404, detail="Workflow not found")
-    cfg_path = workflow_config_path(name)
-    config = payload.dict()
-    if config.get("media") not in {"image", "video"}:
-        config["media"] = "image"
-    _write_json_atomic(cfg_path, config)
+    config = save_comfy_workflow_config(name, payload.dict())
     return {"config": config}
 
 
@@ -160,11 +89,8 @@ def delete_workflow(name: str):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
     if is_builtin_workflow(name):
         raise HTTPException(status_code=400, detail="内置工作流不可删除")
-    workflow_path = workflow_path_from_name(name)
-    cfg_path = workflow_config_path(name)
-    if not os.path.exists(workflow_path):
+    if not get_comfy_workflow(name):
         raise HTTPException(status_code=404, detail="Workflow not found")
-    os.remove(workflow_path)
-    if os.path.exists(cfg_path):
-        os.remove(cfg_path)
+    if not delete_comfy_workflow(name):
+        raise HTTPException(status_code=400, detail="内置工作流不可删除")
     return {"ok": True}
