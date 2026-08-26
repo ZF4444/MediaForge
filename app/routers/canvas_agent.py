@@ -334,9 +334,17 @@ async def execute_confirm_command(user_id: str, run_id: str, payload: CanvasAgen
     if not plan_row or int(plan_row["version"]) != payload.plan_version: raise HTTPException(status_code=409, detail="计划版本已过期")
     if run["status"] != "awaiting_confirmation": raise HTTPException(status_code=409, detail="Run 不在等待确认状态")
     if not payload.approved:
-        await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="planning")
-        await emit_agent_event(user_id, run_id, "run.blocked", {"reason": "user_rejected_plan", "plan_version": payload.plan_version})
+        # A rejected plan ends only the interrupted planning turn. Resume the
+        # graph so its confirmation interrupt is consumed before accepting the
+        # next user message on this Run.
+        async with create_async_checkpointer() as checkpointer:
+            from app.services.canvas_agent.runtime import create_canvas_agent
+            graph = create_canvas_agent(model=None, user_id=user_id, run_id=run_id, canvas_id=run["canvas_id"], checkpointer=checkpointer)
+            await graph.ainvoke(Command(resume={"approved": False}), config={"configurable": {"thread_id": run_id}})
+        await asyncio.to_thread(update_run, user_id, run_id, status="planning", phase="planning")
+        await emit_agent_event(user_id, run_id, "plan.rejected", {"plan_version": payload.plan_version})
         return {"run": await asyncio.to_thread(get_run, user_id, run_id), "approved": False}
+    await emit_agent_event(user_id, run_id, "plan.confirmed", {"plan_version": payload.plan_version})
     await _apply_confirmation_overrides(user_id, run_id, plan_row, payload.node_overrides)
     # Resume the same graph thread. The graph deterministically emits the
     # execution tool call, records its ToolMessage, then dispatches tasks.

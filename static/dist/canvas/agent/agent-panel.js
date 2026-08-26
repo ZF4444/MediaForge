@@ -4,15 +4,20 @@
   let liveEvents = [];
   const expandedEventGroups = new Set();
   let rebuildingMessages = false;
+  let messageFollow = true;
   let lastRunRenderKey = '';
   let confirmationPending = false;
   let confirmationAccepted = false;
   const status = value => { $('canvasAgentStatus').textContent=value || ''; };
   const timeLabel = () => new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit'}).format(new Date());
   const isNearMessageBottom = box => (box.scrollHeight - box.scrollTop - box.clientHeight) < 48;
-  const captureMessageScroll = box => ({top:box.scrollTop,follow:isNearMessageBottom(box)});
+  const captureMessageScroll = box => ({top:box.scrollTop,follow:messageFollow});
   const restoreMessageScroll = (box, snapshot) => { box.scrollTop=snapshot?.follow ? box.scrollHeight : Math.min(snapshot?.top || 0, Math.max(0,box.scrollHeight-box.clientHeight)); };
-  const attachAuxiliaryPanels = () => $('canvasAgentMessages').append($('canvasAgentPlan'), $('canvasAgentArtifacts'));
+  const attachAuxiliaryPanels = () => {
+    const messages=$('canvasAgentMessages');
+    messages.append($('canvasAgentPlan'), $('canvasAgentArtifacts'));
+    messages.addEventListener('scroll',()=>{if(!rebuildingMessages)messageFollow=isNearMessageBottom(messages);});
+  };
   const conversationEventTypes = new Set(['progress.context','progress.agent','progress.tool_started','progress.tool_failed','skill.loaded','skill.resource_loaded']);
   const isConversationEvent = type => conversationEventTypes.has(String(type || '').replace(/^agent\./,''));
   const escapeRegExp = value => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -37,7 +42,7 @@
     const el=document.createElement('div'); el.className=`canvas-agent-message ${kind}`;
     const body=document.createElement('div'); body.className='canvas-agent-message-body'; renderMessageContent(body, content); el.appendChild(body);
     if (kind === 'user') { const time=document.createElement('div'); time.className='canvas-agent-message-time'; time.textContent=timeLabel(); el.appendChild(time); }
-    const box=$('canvasAgentMessages'); const follow=isNearMessageBottom(box); box.appendChild(el); if(!rebuildingMessages && follow) box.scrollTop=box.scrollHeight;
+    const box=$('canvasAgentMessages'); box.appendChild(el); if(!rebuildingMessages && messageFollow) box.scrollTop=box.scrollHeight;
   };
   const liveEventText = (type, data, fallback='') => {
     const message = String(data?.message || fallback || '').trim();
@@ -99,10 +104,9 @@
     if (!liveEvents.length && !lastLiveStatus) { el?.remove(); return; }
     const next=createLiveStatus(liveEvents.length ? liveEvents : [{type:'status',message:lastLiveStatus,data:{}}]);
     next.classList.add('is-active');
-    const follow=isNearMessageBottom(box);
     if(el) el.replaceWith(next); else box.appendChild(next);
     renderLiveIcons(next);
-    if(!rebuildingMessages && follow) box.scrollTop=box.scrollHeight;
+    if(!rebuildingMessages && messageFollow) box.scrollTop=box.scrollHeight;
   };
   const liveEvent = event => {
     const item={sequence:Number(event?.sequence || 0),type:String(event?.type || 'status').replace(/^agent\./,''),data:event?.data || {},message:event?.message || ''};
@@ -148,7 +152,7 @@
     runs.forEach(run=>{ const option=document.createElement('option'); option.value=run.id; option.textContent=runLabel(run); option.title=run.title || run.id; option.selected=run.id===state.runId; select.appendChild(option); });
   }
   function clearRun() {
-    lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear();
+    lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear(); messageFollow=true;
     lastRunRenderKey='';
     const messages=$('canvasAgentMessages'), plan=$('canvasAgentPlan'), artifacts=$('canvasAgentArtifacts');
     messages.innerHTML='';
@@ -180,23 +184,27 @@
     if(renderKey===lastRunRenderKey) return;
     lastRunRenderKey=renderKey;
     const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'), artifactsBox=$('canvasAgentArtifacts'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
-    const loaded=new Map(); let latestProgress=''; const timeline=[];
+    const loaded=new Map(), planStates=new Map(); let latestProgress=''; const timeline=[];
     (data.messages||[]).forEach(item=>timeline.push({kind:'message',at:Number(item.created_at)||0,item}));
-    let renderedPlanVersion='';
     (data.events||[]).forEach(event=>{
       const type=String(event.type||'').replace(/^agent\./,''); const payload=event.payload||event.payload_json||{};
       const live={sequence:Number(event.sequence)||0,type,data:payload,message:payload.message||''};
+      if(type==='plan.confirmed')planStates.set(String(payload.plan_version||''),'已确认');
+      if(type==='plan.rejected')planStates.set(String(payload.plan_version||''),'已取消');
       if(isConversationEvent(type)) timeline.push({kind:'event',at:Number(event.created_at)||0,item:live});
       if(type==='plan.created' && payload.plan) timeline.push({kind:'plan',at:Number(event.created_at)||0,item:{version:payload.plan_version,content_json:payload.plan}});
       if(type==='skill.loaded'){const skill=payload.skill||{};if(skill.name)loaded.set(`${skill.name}:${skill.version||''}`,{name:skill.name,version:skill.version||''});}
     });
     timeline.sort((a,b)=>a.at-b.at || (a.kind==='event' ? -1 : 1));
-    let pending=[]; let turnOpen=false;
+    const activePlan=run.status==='awaiting_confirmation'&&!confirmationAccepted; let pending=[]; let turnOpen=false; let planRendered=false;
     timeline.forEach(entry=>{
       if(entry.kind==='event'){ if(turnOpen){ pending.push(entry.item); latestProgress=liveEventText(entry.item.type,entry.item.data,entry.item.message); } return; }
       if(entry.kind==='plan'){
+        if(data.plan && String(entry.item.version||'')===String(data.plan.version||'')&&activePlan){
+          messages.appendChild(planBox); window.CanvasAgentPlan.render(data.plan,{interactive:true,status:planStates.get(String(entry.item.version||''))||''}); planRendered=true; return;
+        }
         const snapshot=document.createElement('div'); snapshot.className='canvas-agent-plan canvas-agent-plan-history'; snapshot.hidden=false;
-        messages.appendChild(snapshot); window.CanvasAgentPlan.render(entry.item,{interactive:false,container:snapshot}); renderedPlanVersion=String(entry.item.version||''); return;
+        messages.appendChild(snapshot); window.CanvasAgentPlan.render(data.plan&&String(entry.item.version||'')===String(data.plan.version||'')?data.plan:entry.item,{interactive:false,container:snapshot,status:planStates.get(String(entry.item.version||''))||''}); planRendered=true; return;
       }
       const kind=entry.item.role==='user'?'user':entry.item.role==='system'?'system':'agent';
       if(kind==='user'){ pending=[]; turnOpen=true; }
@@ -209,17 +217,21 @@
     state.skills=[...loaded.values()]; renderSkills();
     // The plan and artifacts live in the message flow. Restore their DOM nodes
     // before their renderers resolve them by id after rebuilding the timeline.
-    if(data.plan && String(data.plan.version||'')!==renderedPlanVersion){ messages.append(planBox); window.CanvasAgentPlan.render(data.plan,{interactive:run.status==='awaiting_confirmation'&&!confirmationAccepted}); }
-    else { planBox.innerHTML=''; planBox.hidden=true; }
+    if(data.plan && !planRendered){
+      if(activePlan){ messages.appendChild(planBox); window.CanvasAgentPlan.render(data.plan,{interactive:true,status:planStates.get(String(data.plan.version||''))||''}); }
+      else { const snapshot=document.createElement('div'); snapshot.className='canvas-agent-plan canvas-agent-plan-history'; snapshot.hidden=false; messages.appendChild(snapshot); window.CanvasAgentPlan.render(data.plan,{interactive:false,container:snapshot,status:planStates.get(String(data.plan.version||''))||''}); }
+    }
+    else if(!planRendered) { planBox.innerHTML=''; planBox.hidden=true; messages.appendChild(planBox); }
+    if(!planBox.isConnected){ planBox.innerHTML=''; planBox.hidden=true; messages.appendChild(planBox); }
     messages.append(artifactsBox);
     window.CanvasAgentArtifacts.render(data.tasks||[],data.artifacts||[]); if((data.artifacts||[]).length)window.CanvasAgentArtifacts.renderDocChain(data.artifacts);
-    rebuildingMessages=false; restoreMessageScroll(messages,scrollSnapshot);
+    restoreMessageScroll(messages,scrollSnapshot); rebuildingMessages=false; messageFollow=scrollSnapshot.follow;
   }
   async function ensureRun() { if (state.runId) return state.runId; status('正在创建会话'); const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); await refreshRuns(); return state.runId; }
   async function newRun() { if (state.busy) return; state.busy=true; window.CanvasAgentEvents.stop(); state.runId=''; state.sequence=0; state.skills=[]; clearRun(); renderSkills(); status('正在创建会话'); try { const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); renderRun({run:data.run,messages:[],events:[],tasks:[],artifacts:[]}); await refreshRuns(); } catch (e) { system(e.message); status('创建失败'); } finally { state.busy=false; } }
-  async function send() { const input=$('canvasAgentInput'), content=input.value.trim(); if (!content || state.busy) return; state.busy=true; input.value=''; message(content,'user'); status('正在受理请求…'); try { await ensureModelsLoaded(); await ensureRun(); window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.send({content,provider:selection.provider,model:selection.model,selected_node_ids:window.CanvasAgentBridge.selectedNodeIds(),mention_node_ids:state.mentions}); state.operationId=data.operation_id || ''; status('请求已受理，正在准备 Agent…'); window.CanvasAgentEvents.start(); } catch(e) { system(e.message); status('error'); } finally { state.busy=false; } }
+  async function send() { const input=$('canvasAgentInput'), content=input.value.trim(); if (!content || state.busy) return; state.busy=true; input.value=''; messageFollow=true; message(content,'user'); status('正在受理请求…'); try { await ensureModelsLoaded(); await ensureRun(); window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.send({content,provider:selection.provider,model:selection.model,selected_node_ids:window.CanvasAgentBridge.selectedNodeIds(),mention_node_ids:state.mentions}); state.operationId=data.operation_id || ''; status('请求已受理，正在准备 Agent…'); window.CanvasAgentEvents.start(); } catch(e) { system(e.message); status('error'); } finally { state.busy=false; } }
   async function answer(answer) { if (!answer?.trim() || !state.runId) return; try { window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.answer(answer.trim(),selection.provider,selection.model); state.operationId=data.operation_id || ''; status('回答已受理，正在继续规划…'); } catch(e) { system(e.message); } }
-  async function confirm(approved) { if (!state.plan || !state.runId || confirmationPending) return; const authorize=$('canvasAgentAuthorizeNodes')?.checked; const nodeOverrides=approved ? window.CanvasAgentPlan.collectOverrides() : []; confirmationPending=true; confirmationAccepted=true; window.CanvasAgentPlan.render(state.plan, {interactive:false}); try { const steps=state.plan.content_json?.steps || []; const targetIds=steps.filter(step=>['canvas.update_node_params','canvas.replace_node_content','canvas.run_node','canvas.run_group'].includes(step.action)).map(step=>step.target_node_id).filter(Boolean); const authorizedNodeIds=authorize ? [...new Set([...state.mentions,...targetIds])] : []; window.CanvasAgentEvents.start(); const data=await window.CanvasAgentClient.request(`/api/canvas-agent/runs/${encodeURIComponent(state.runId)}/confirm`, {method:'POST', body:JSON.stringify({plan_version:state.plan.version,approved,authorized_node_ids:authorizedNodeIds,node_overrides:nodeOverrides,client_request_id:globalThis.crypto?.randomUUID?.() || `${Date.now()}`})}); if(data.operation_id){state.operationId=data.operation_id;status(approved ? '确认已受理，正在执行…' : '拒绝已受理，正在处理…');}else renderRun(data); } catch(e) { confirmationAccepted=false; window.CanvasAgentPlan.render(state.plan, {interactive:true}); system(e.message); } finally { confirmationPending=false; } }
+  async function confirm(approved) { if (!state.plan || !state.runId || confirmationPending) return; const authorize=$('canvasAgentAuthorizeNodes')?.checked; const nodeOverrides=approved ? window.CanvasAgentPlan.collectOverrides() : []; confirmationPending=true; confirmationAccepted=true; window.CanvasAgentPlan.render(state.plan, {interactive:false,history:true,status:approved?'已确认':'已取消',force:true}); try { const steps=state.plan.content_json?.steps || []; const targetIds=steps.filter(step=>['canvas.update_node_params','canvas.replace_node_content','canvas.run_node','canvas.run_group'].includes(step.action)).map(step=>step.target_node_id).filter(Boolean); const authorizedNodeIds=authorize ? [...new Set([...state.mentions,...targetIds])] : []; window.CanvasAgentEvents.start(); const data=await window.CanvasAgentClient.request(`/api/canvas-agent/runs/${encodeURIComponent(state.runId)}/confirm`, {method:'POST', body:JSON.stringify({plan_version:state.plan.version,approved,authorized_node_ids:authorizedNodeIds,node_overrides:nodeOverrides,client_request_id:globalThis.crypto?.randomUUID?.() || `${Date.now()}`})}); if(data.operation_id){state.operationId=data.operation_id;status(approved ? '确认已受理，正在执行…' : '拒绝已受理，正在处理…');}else renderRun(data); } catch(e) { confirmationAccepted=false; window.CanvasAgentPlan.render(state.plan, {interactive:true,force:true}); system(e.message); } finally { confirmationPending=false; } }
   async function cancel() { if (!state.runId) return; try { renderRun(await window.CanvasAgentClient.cancel()); window.CanvasAgentEvents.stop(); } catch(e) { system(e.message); } }
   function addSelectedMentions() { const ids=window.CanvasAgentBridge.selectedNodeIds(); state.mentions=[...new Set([...state.mentions,...ids])]; renderMentions(); if (!ids.length) system('请先在画布上选中节点。'); }
   async function init() { try { const response=await fetch('/api/access-control/me',{credentials:'same-origin'}); const me=response.ok ? await response.json() : {}; if(!me.is_admin){ $('canvasAgentToggle')?.remove(); panel?.remove(); return; } $('canvasAgentToggle').hidden=false; } catch (_) { $('canvasAgentToggle')?.remove(); panel?.remove(); return; } attachAuxiliaryPanels(); loadModelSelection(); $('canvasAgentToggle').addEventListener('click',()=>{panel.hidden=!panel.hidden;if(!panel.hidden){ensureModelsLoaded();refreshRuns();window.CanvasAgentEvents.recover();}}); ['pointerdown','mousedown','dblclick'].forEach(type=>panel.addEventListener(type,event=>event.stopPropagation())); panel.addEventListener('click', event=>{ const link=event.target.closest('.canvas-agent-node-link'); if(link){ event.preventDefault(); event.stopPropagation(); window.CanvasAgentBridge.focusNode(link.dataset.nodeId); } else event.stopPropagation(); }); panel.addEventListener('wheel', event=>event.stopPropagation(), {capture:true,passive:true}); $('canvasAgentClose').addEventListener('click',()=>panel.hidden=true); $('canvasAgentRunSelect').addEventListener('change',event=>window.CanvasAgentEvents.switchRun(event.target.value)); $('canvasAgentNewRun').addEventListener('click',newRun); $('canvasAgentModelSelect').addEventListener('change',onModelChange); $('canvasAgentSend').addEventListener('click',send); $('canvasAgentCancel').addEventListener('click',cancel); $('canvasAgentMention').addEventListener('click',addSelectedMentions); $('canvasAgentInput').placeholder='和画布 Agent 聊聊，或描述要在画布上完成的操作'; $('canvasAgentInput').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}}); window.addEventListener('beforeunload',window.CanvasAgentEvents.stop); renderMentions(); ensureModelsLoaded(); refreshRuns(); window.CanvasAgentEvents.recover(); }
