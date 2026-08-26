@@ -182,16 +182,22 @@
     const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'), artifactsBox=$('canvasAgentArtifacts'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
     const loaded=new Map(); let latestProgress=''; const timeline=[];
     (data.messages||[]).forEach(item=>timeline.push({kind:'message',at:Number(item.created_at)||0,item}));
+    let renderedPlanVersion='';
     (data.events||[]).forEach(event=>{
       const type=String(event.type||'').replace(/^agent\./,''); const payload=event.payload||event.payload_json||{};
       const live={sequence:Number(event.sequence)||0,type,data:payload,message:payload.message||''};
       if(isConversationEvent(type)) timeline.push({kind:'event',at:Number(event.created_at)||0,item:live});
+      if(type==='plan.created' && payload.plan) timeline.push({kind:'plan',at:Number(event.created_at)||0,item:{version:payload.plan_version,content_json:payload.plan}});
       if(type==='skill.loaded'){const skill=payload.skill||{};if(skill.name)loaded.set(`${skill.name}:${skill.version||''}`,{name:skill.name,version:skill.version||''});}
     });
     timeline.sort((a,b)=>a.at-b.at || (a.kind==='event' ? -1 : 1));
     let pending=[]; let turnOpen=false;
     timeline.forEach(entry=>{
       if(entry.kind==='event'){ if(turnOpen){ pending.push(entry.item); latestProgress=liveEventText(entry.item.type,entry.item.data,entry.item.message); } return; }
+      if(entry.kind==='plan'){
+        const snapshot=document.createElement('div'); snapshot.className='canvas-agent-plan canvas-agent-plan-history'; snapshot.hidden=false;
+        messages.appendChild(snapshot); window.CanvasAgentPlan.render(entry.item,{interactive:false,container:snapshot}); renderedPlanVersion=String(entry.item.version||''); return;
+      }
       const kind=entry.item.role==='user'?'user':entry.item.role==='system'?'system':'agent';
       if(kind==='user'){ pending=[]; turnOpen=true; }
       if(kind==='agent' && pending.length){ const liveStatus=createLiveStatus(pending); messages.appendChild(liveStatus); renderLiveIcons(liveStatus); pending=[]; }
@@ -203,8 +209,9 @@
     state.skills=[...loaded.values()]; renderSkills();
     // The plan and artifacts live in the message flow. Restore their DOM nodes
     // before their renderers resolve them by id after rebuilding the timeline.
-    messages.append(planBox, artifactsBox);
-    window.CanvasAgentPlan.render(data.plan,{interactive:run.status==='awaiting_confirmation'&&!confirmationAccepted});
+    if(data.plan && String(data.plan.version||'')!==renderedPlanVersion){ messages.append(planBox); window.CanvasAgentPlan.render(data.plan,{interactive:run.status==='awaiting_confirmation'&&!confirmationAccepted}); }
+    else { planBox.innerHTML=''; planBox.hidden=true; }
+    messages.append(artifactsBox);
     window.CanvasAgentArtifacts.render(data.tasks||[],data.artifacts||[]); if((data.artifacts||[]).length)window.CanvasAgentArtifacts.renderDocChain(data.artifacts);
     rebuildingMessages=false; restoreMessageScroll(messages,scrollSnapshot);
   }
