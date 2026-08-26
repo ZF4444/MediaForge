@@ -115,7 +115,13 @@
   const clearLiveStatus = () => { lastLiveStatus=''; liveEvents=[]; $('canvasAgentMessages').querySelectorAll('.canvas-agent-live-status').forEach(el=>el.remove()); };
   const system = content => message(content, 'system');
   const modelStorageKey = () => `canvas-agent-model:${window.CanvasAgentBridge.canvasId()}`;
-  function modelSelection() { return {provider:state.modelProvider || '', model:state.modelName || ''}; }
+  function modelSelection() {
+    if (state.modelProvider && state.modelName) return {provider:state.modelProvider, model:state.modelName};
+    // “自动选择” must still send a concrete configured model. Otherwise the
+    // server can observe a cold provider cache while the UI lists usable models.
+    const option=[...$('canvasAgentModelSelect').options].find(item=>item.dataset.provider&&item.dataset.model);
+    return {provider:option?.dataset.provider || '', model:option?.dataset.model || ''};
+  }
   function saveModelSelection() { localStorage.setItem(modelStorageKey(), JSON.stringify(modelSelection())); }
   function loadModelSelection() { try { const saved=JSON.parse(localStorage.getItem(modelStorageKey()) || '{}'); state.modelProvider=String(saved.provider || ''); state.modelName=String(saved.model || ''); } catch (_) {} }
   let modelLoadPromise=null;
