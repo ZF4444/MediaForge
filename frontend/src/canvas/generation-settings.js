@@ -964,17 +964,16 @@ function renderInlineCustomSizeFields(prefix=''){
 }
 function renderQualityControl(){
     const value = settings.quality || 'auto';
-    const labels = {auto:tr('smart.qualityAuto'), low:tr('smart.qualityLow'), medium:tr('smart.qualityMid'), high:tr('smart.qualityHigh')};
     const qualityField = canvasSchemaField('image', 'quality');
     const qualityName = canvasSchemaFieldName('image', 'quality', tr('smart.quality'));
-    const options = Array.isArray(qualityField.options) && qualityField.options.length ? qualityField.options : Object.keys(labels);
-    const qualitySummary = canvasSchemaOptionLabel(qualityField, value, labels[value] || value);
+    const options = Array.isArray(qualityField.options) && qualityField.options.length ? qualityField.options : ['auto','low','medium','high'];
+    const qualitySummary = canvasSchemaOptionLabel(qualityField, value, value);
     return `<div class="smart-control quality-control">
         <button class="smart-pill" type="button" title="${escapeAttr(qualityName)}"><i data-lucide="sliders-horizontal"></i><span>${escapeHtml(qualitySummary)}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(qualityName)}</div>
             <div class="seg-row">
-                ${options.map(k => `<button type="button" class="${k === value ? 'active' : ''}" data-smart-param="quality" data-smart-value="${escapeHtml(k)}">${escapeHtml(canvasSchemaOptionLabel(qualityField, k, labels[k] || k))}</button>`).join('')}
+                ${options.map(k => `<button type="button" class="${k === value ? 'active' : ''}" data-smart-param="quality" data-smart-value="${escapeHtml(k)}">${escapeHtml(canvasSchemaOptionLabel(qualityField, k, k))}</button>`).join('')}
             </div>
         </div>
     </div>`;
