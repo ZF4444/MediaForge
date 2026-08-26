@@ -30,7 +30,10 @@ const TYPES = [
 const comfySettingsQuery = new URLSearchParams(window.location.search);
 const singleWorkflowName = comfySettingsQuery.get('workflow') || '';
 const isSingleWorkflowMode = Boolean(singleWorkflowName);
-const isEmbeddedMode = comfySettingsQuery.get('embedded') === '1';
+const isEmbeddedMode = comfySettingsQuery.get('embedded') === '1' || (() => {
+    try { return new URL(window.parent.location.href).pathname === '/static/workflow-config.html'; }
+    catch { return false; }
+})();
 if(isSingleWorkflowMode) document.body.classList.add('single-workflow-mode');
 function currentLang(){ return window.StudioI18n?.lang?.() === 'en' ? 'en' : 'zh'; }
 function typeLabel(type){
