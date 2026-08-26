@@ -50,6 +50,52 @@ def test_completed_run_can_start_the_next_planning_turn():
     assert _can_continue_planning("blocked") is False
 
 
+def test_rejected_plan_resumes_graph_and_keeps_run_available(monkeypatch):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from app.models import CanvasAgentConfirmRequest
+    from app.routers import canvas_agent
+    from app.services.canvas_agent import runtime
+
+    run = {"id": "run-1", "canvas_id": "canvas-1", "status": "awaiting_confirmation"}
+    updates, events, resumes = [], [], []
+
+    async def fake_require_run(*_args):
+        return dict(run)
+
+    @asynccontextmanager
+    async def fake_checkpointer():
+        yield object()
+
+    class FakeGraph:
+        async def ainvoke(self, command, *, config):
+            resumes.append((command.resume, config))
+            return {}
+
+    def fake_update_run(*_args, **changes):
+        run.update(changes)
+        updates.append(changes)
+        return dict(run)
+
+    async def fake_emit(*_args):
+        events.append((_args[2], _args[3]))
+
+    monkeypatch.setattr(canvas_agent, "_require_run", fake_require_run)
+    monkeypatch.setattr(canvas_agent, "latest_plan", lambda *_args: {"version": 1})
+    monkeypatch.setattr(canvas_agent, "create_async_checkpointer", fake_checkpointer)
+    monkeypatch.setattr(canvas_agent, "update_run", fake_update_run)
+    monkeypatch.setattr(canvas_agent, "get_run", lambda *_args: dict(run))
+    monkeypatch.setattr(canvas_agent, "emit_agent_event", fake_emit)
+    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **_kwargs: FakeGraph())
+
+    result = asyncio.run(canvas_agent.execute_confirm_command("owner", "run-1", CanvasAgentConfirmRequest(plan_version=1, approved=False)))
+
+    assert resumes == [({"approved": False}, {"configurable": {"thread_id": "run-1"}})]
+    assert updates == [{"status": "planning", "phase": "planning"}]
+    assert result["run"]["status"] == "planning"
+    assert events == [("plan.rejected", {"plan_version": 1})]
+
+
 @pytest.mark.parametrize("error,category", [("upstream timeout", "transient"), ("canvas version conflict", "conflict"), ("budget limit exceeded", "quota"), ("permission denied", "permission"), ("invalid schema", "permanent")])
 def test_failure_classification(error, category):
     assert classify_failure(error) == category
