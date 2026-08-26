@@ -145,7 +145,7 @@
     const messages=$('canvasAgentMessages'), plan=$('canvasAgentPlan'), artifacts=$('canvasAgentArtifacts');
     messages.innerHTML='';
     plan.innerHTML=''; plan.hidden=true; artifacts.innerHTML=''; artifacts.hidden=true;
-    attachAuxiliaryPanels();
+    messages.append(plan, artifacts);
     state.plan=null; state.tasks=[];
   }
   function renderSkills() { const box=$('canvasAgentSkills'); box.innerHTML=''; state.skills.forEach(skill=>{const tag=document.createElement('span');tag.className='canvas-agent-skill';tag.textContent=`${skill.name}${skill.version ? ` v${skill.version}` : ''}`;box.appendChild(tag);});box.hidden=!state.skills.length; }
@@ -156,7 +156,7 @@
     if(data.plan?.version && data.plan.version !== state.plan?.version) confirmationAccepted=false;
     if(run.status !== 'awaiting_confirmation') confirmationAccepted=false;
     if(!state.operationId) status(`${run.status || 'unknown'} · ${run.phase || ''}`);
-    const messages=$('canvasAgentMessages'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
+    const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'), artifactsBox=$('canvasAgentArtifacts'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
     const loaded=new Map(); let latestProgress=''; const timeline=[];
     (data.messages||[]).forEach(item=>timeline.push({kind:'message',at:Number(item.created_at)||0,item}));
     (data.events||[]).forEach(event=>{
@@ -180,9 +180,11 @@
     state.skills=[...loaded.values()]; renderSkills();
     const activeOperation=(data.operations||[]).find(item=>['accepted','queued','running'].includes(item.status));
     state.sequence=Math.max(state.sequence,...(data.events||[]).map(event=>Number(event.sequence)||0)); state.operationId=activeOperation?.id || '';
+    // The plan and artifacts live in the message flow. Restore their DOM nodes
+    // before their renderers resolve them by id after rebuilding the timeline.
+    messages.append(planBox, artifactsBox);
     window.CanvasAgentPlan.render(data.plan,{interactive:run.status==='awaiting_confirmation'&&!confirmationAccepted});
     window.CanvasAgentArtifacts.render(data.tasks||[],data.artifacts||[]); if((data.artifacts||[]).length)window.CanvasAgentArtifacts.renderDocChain(data.artifacts);
-    attachAuxiliaryPanels();
     rebuildingMessages=false; restoreMessageScroll(messages,scrollSnapshot);
   }
   async function ensureRun() { if (state.runId) return state.runId; status('正在创建会话'); const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); await refreshRuns(); return state.runId; }

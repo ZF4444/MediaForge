@@ -1921,6 +1921,17 @@ def resolve_chat_provider(provider: str, model: str, ms_model: str = ""):
             and (item.get('chat_models') or item.get('base_url') or AI_BASE_URL)
             and provider_env_key_value(str(item.get('id') or ''))
         ]
+        # Startup cache loading is asynchronous. This synchronous resolver runs
+        # in a worker thread, so it can safely refresh a cold cache before
+        # declaring that automatic Agent model selection is unavailable.
+        if not candidates:
+            candidates = [
+                item for item in refresh_api_providers_cache()
+                if item.get('enabled', True)
+                and item.get('id') not in {'comfyui', 'runninghub'}
+                and (item.get('chat_models') or item.get('base_url') or AI_BASE_URL)
+                and provider_env_key_value(str(item.get('id') or ''))
+            ]
         api_provider = next((item for item in candidates if item.get('primary')), None) or (candidates[0] if candidates else None)
         if api_provider is None:
             raise HTTPException(status_code=400, detail='未配置可用于 Agent 的聊天 Provider，请先在 API 平台管理中配置聊天模型。')
