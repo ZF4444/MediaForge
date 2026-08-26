@@ -428,19 +428,13 @@ let previewComparePos = 50;
 let imageEditPanDrag = null;
 let previewNavState = {nodeId:'', index:0, count:0, source:'images'};
 const PANORAMA_RATIO_PRESETS = {
-    square:{w:1, h:1},
-    portrait:{w:2, h:3},
-    landscape:{w:3, h:2},
-    portrait43:{w:3, h:4},
-    landscape43:{w:4, h:3},
-    story:{w:9, h:16},
-    wide:{w:16, h:9},
-    ultrawide:{w:21, h:9},
-    ultratall:{w:9, h:21}
+    '1:1':{w:1, h:1}, '2:3':{w:2, h:3}, '3:2':{w:3, h:2},
+    '3:4':{w:3, h:4}, '4:3':{w:4, h:3}, '9:16':{w:9, h:16},
+    '16:9':{w:16, h:9}, '21:9':{w:21, h:9}, '9:21':{w:9, h:21}
 };
 let panoramaState = {
     enabled:false,
-    ratio:'wide',
+    ratio:'16:9',
     customW:16,
     customH:9,
     fov:75,
@@ -466,7 +460,7 @@ let settings = {
     apiKind:'image',
     provider_id:'',
     model:'',
-    ratio:'square',
+    ratio:'1:1',
     resolution:'1k',
     customRatio:'',
     customRatioWidth:'',
@@ -486,7 +480,7 @@ let settings = {
     videoUseFrameRoles:false,
     msgenModel:'zimage',
     msCustomModel:'',
-    msRatio:'square',
+    msRatio:'1:1',
     msResolution:'1k',
     msCustomRatio:'',
     msCustomRatioWidth:'',
@@ -509,15 +503,15 @@ const MS_GEN_MODELS = {
     custom: { label:tr('smart.custom') || '自定义', modelId:'', acceptsImage:true, endpoint:'/api/ms/generate' }
 };
 const SIZE_MAP = {
-    square: {'1k':'1024x1024','2k':'2048x2048','4k':'4096x4096'},
-    landscape: {'1k':'1536x1024','2k':'2048x1360','4k':'3520x2336'},
-    portrait: {'1k':'1024x1536','2k':'1360x2048','4k':'2336x3520'},
-    landscape43: {'1k':'1024x768','2k':'2048x1536','4k':'3312x2480'},
-    portrait43: {'1k':'768x1024','2k':'1536x2048','4k':'2480x3312'},
-    wide: {'1k':'1536x864','2k':'2048x1152','4k':'3840x2160'},
-    story: {'1k':'864x1536','2k':'1152x2048','4k':'2160x3840'},
-    ultrawide: {'1k':'1536x656','2k':'2048x880','4k':'3840x1648'},
-    ultratall: {'1k':'656x1536','2k':'880x2048','4k':'1648x3840'}
+    '1:1': {'1k':'1024x1024','2k':'2048x2048','4k':'4096x4096'},
+    '3:2': {'1k':'1536x1024','2k':'2048x1360','4k':'3520x2336'},
+    '2:3': {'1k':'1024x1536','2k':'1360x2048','4k':'2336x3520'},
+    '4:3': {'1k':'1024x768','2k':'2048x1536','4k':'3312x2480'},
+    '3:4': {'1k':'768x1024','2k':'1536x2048','4k':'2480x3312'},
+    '16:9': {'1k':'1536x864','2k':'2048x1152','4k':'3840x2160'},
+    '9:16': {'1k':'864x1536','2k':'1152x2048','4k':'2160x3840'},
+    '21:9': {'1k':'1536x656','2k':'2048x880','4k':'3840x1648'},
+    '9:21': {'1k':'656x1536','2k':'880x2048','4k':'1648x3840'}
 };
 const RES_LONG_SIDE = { '1k':1024, '2k':2048, '4k':3840 };
 const RES_PIXEL_LIMIT = { '1k':2359296, '2k':4194304, '4k':8294400 };
@@ -538,10 +532,17 @@ function cloneSmartSettings(source=settings){
             delete cloned.editUpscale;
             delete cloned.editUpscaleRes;
         }
-        return cloned;
+        return normalizeStoredImageRatios(cloned);
     } catch(e) {
-        return {...(source || {})};
+        return normalizeStoredImageRatios({...((source || {}))});
     }
+}
+function normalizeStoredImageRatios(target){
+    const legacy = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21'};
+    for(const key of ['ratio','ratioMatched','msRatio','msRatioMatched']){
+        if(legacy[target?.[key]]) target[key] = legacy[target[key]];
+    }
+    return target;
 }
 function settingsForStorage(source=settings){
     return cloneSmartSettings(source);
@@ -619,7 +620,7 @@ function rememberRecentSmartSettings(source=settings, node=null){
     sanitizeSmartApiSelection(clean);
     if(clean.outpaintResolutionLocked === true && clean.resolution === 'custom'){
         clean.resolution = '1k';
-        clean.ratio = clean.ratio || 'square';
+        clean.ratio = clean.ratio || '1:1';
         clean.customWidth = '';
         clean.customHeight = '';
         clean.customSize = '';
@@ -803,7 +804,7 @@ function stripOutpaintDisplaySettings(settingsObj, node=null){
     const matchesOutpaintSize = size && clean.resolution === 'custom' && String(clean.customSize || '') === `${size.width}x${size.height}`;
     if(matchesOutpaintSize){
         clean.resolution = '1k';
-        clean.ratio = clean.ratio || 'square';
+        clean.ratio = clean.ratio || '1:1';
         clean.customWidth = '';
         clean.customHeight = '';
         clean.customSize = '';
@@ -811,7 +812,7 @@ function stripOutpaintDisplaySettings(settingsObj, node=null){
     const matchesMsOutpaintSize = size && clean.msResolution === 'custom' && String(clean.msCustomSize || '') === `${size.width}x${size.height}`;
     if(matchesMsOutpaintSize){
         clean.msResolution = '1k';
-        clean.msRatio = clean.msRatio || 'square';
+        clean.msRatio = clean.msRatio || '1:1';
         clean.msCustomWidth = '';
         clean.msCustomHeight = '';
         clean.msCustomSize = '';
@@ -824,7 +825,7 @@ function stripOutpaintDisplaySettings(settingsObj, node=null){
     return clean;
 }
 function smartSettingsForNode(node){
-    const nodeSettings = stripOutpaintDisplaySettings(node?.runSettings || {}, node);
+    const nodeSettings = normalizeStoredImageRatios(stripOutpaintDisplaySettings(node?.runSettings || {}, node));
     const recentSettings = Object.keys(nodeSettings).length ? {} : recentSmartSettingsForMode();
     const base = {
         ...cloneSmartSettings(canvasDefaultSmartSettings || initialSmartSettings),
@@ -1280,6 +1281,19 @@ function centerViewportOnWorldPoint(point){
     applyViewport();
     scheduleSave();
 }
+function focusCanvasNode(nodeId){
+    const node = nodes.find(item => String(item?.id || '') === String(nodeId || ''));
+    if(!node) return false;
+    selectedId = node.id;
+    selectedIds = [];
+    selectedImage = {nodeId:'', index:-1};
+    render();
+    const rect = nodeRect(node);
+    centerViewportOnWorldPoint({x:rect.x + rect.width / 2, y:rect.y + rect.height / 2});
+    syncSelectionUi();
+    return true;
+}
+window.focusCanvasNode = focusCanvasNode;
 function flushDeferredViewportRendering(){
     viewportInteractionActive = false;
     if(pendingMinimapRefreshAfterInteraction){
@@ -1428,7 +1442,6 @@ let canvasMetaPollTimer = null;
 // （被 scheduleSave/saveCanvas 共享读写，原因同 state.js 的顾虑），
 // canvas-sync.js 通过共享脚本作用域访问。
 function connectAssetLibrarySyncSocket(){
-    if(window.parent && window.parent !== window) return;
     const host = window.location.host;
     if(!host) return;
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1447,7 +1460,7 @@ function connectAssetLibrarySyncSocket(){
                 const data = JSON.parse(event.data);
                 if(data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(data);
                 if(data?.type === 'canvas_updated') handleCanvasUpdatedMessage(data);
-                if(data?.type?.startsWith('agent.') && window.canvasAgentHandleEvent) window.canvasAgentHandleEvent(data);
+                if((data?.type === 'agent.event' || data?.type?.startsWith('agent.')) && window.canvasAgentHandleEvent) window.canvasAgentHandleEvent(data);
             } catch(e) {}
         };
         socket.onclose = () => {
@@ -1494,6 +1507,12 @@ async function loadCanvas({renderCanvas=true}={}){
         document.title = canvas.title || tr('canvas.title');
         document.getElementById('canvasTitle').textContent = canvas.title || tr('canvas.title');
         nodes = (Array.isArray(canvas.nodes) ? canvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
+        // A canvas refresh replaces node objects. Rebuild the composer from
+        // the refreshed node settings instead of retaining a stale global
+        // settings object from the previously selected node.
+        activeComposerSubject = null;
+        lastComposerNodeId = '';
+        let repairedTerminalTaskState = false;
         nodes.forEach(n => {
             const pendingTasks = smartPendingTasks(n);
             if(pendingTasks.length){
@@ -1503,12 +1522,19 @@ async function loadCanvas({renderCanvas=true}={}){
             } else if(n.pending){
                 n.pending = 0;
                 delete n.pendingCandidatePool;
+            } else if(n.queued && (n.images || []).some(image => image?.url)){
+                // Older Agent completion events can persist media with a stale
+                // queued flag. Completed media with no pending task is terminal.
+                delete n.queued;
+                n.running = false;
+                repairedTerminalTaskState = true;
             }
         });
+        canvas.nodes = nodes;
         canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
         viewport = {...viewport, ...(canvas.viewport || {})};
         viewport.scale = safeScale(viewport.scale);
-        if(canvas.settings) settings = {...settings, ...canvas.settings};
+        if(canvas.settings) settings = normalizeStoredImageRatios({...settings, ...canvas.settings});
         canvasDefaultSmartSettings = cloneSmartSettings(settings);
         loadRecentSmartSettings();
         if(settings.comfy_workflow && !settings.comfyWorkflow) settings.comfyWorkflow = settings.comfy_workflow;
@@ -1517,6 +1543,13 @@ async function loadCanvas({renderCanvas=true}={}){
         applyViewport();
         if(renderCanvas){
             render();
+            // Refreshing replaces the image metadata with the server copy.
+            // Cached previews may already be loaded, so measure and render
+            // immediately instead of retaining the fallback node layout.
+            if(measureSmartNodeImages({applyReady:true, renderOnChange:false}) || repairedTerminalTaskState){
+                render();
+                scheduleSave();
+            }
             resumeSmartPendingTasks();
             startCanvasMetaPoll();
         }
@@ -2147,7 +2180,6 @@ function savePromptDraftForCurrent(){
     }
     subject.promptDraftHtml = promptInput.innerHTML;
     subject.promptDraftText = promptPlainText();
-    subject.runSettings = cloneSmartSettings(settings);
 }
 function setPromptDraftForNode(node, text){
     if(!isSmartImageNode(node)) return;
@@ -2166,10 +2198,15 @@ function loadPromptDraft(subject){
         promptInput.innerHTML = hasToken
             ? subject.promptDraftHtml
             : (promptHtmlWithMentionTokens(subject.runPrompt || subject.promptDraftText || '', subject.runPromptRefs || []) || subject.promptDraftHtml);
-    } else if(typeof subject?.runPrompt === 'string'){
+    } else if(typeof subject?.runPrompt === 'string' && subject.runPrompt.trim()){
         const rebuilt = promptHtmlWithMentionTokens(subject.runPrompt, subject.runPromptRefs || []);
         if(rebuilt) promptInput.innerHTML = rebuilt;
         else setPromptText(subject.runPrompt);
+    } else if(typeof subject?.text === 'string'){
+        // Agent-created generation nodes persist their requested prompt in
+        // node.text. They have no browser-side draft yet, so show that source
+        // of truth when the configuration panel first opens.
+        setPromptText(subject.text);
     } else {
         setPromptText('');
     }
@@ -2229,6 +2266,10 @@ function updateComposer(){
         settings = smartSettingsForNode(subject);
         loadPromptDraft(subject);
     }
+    const schemaKind = settings.apiKind === 'video' ? 'video' : 'image';
+    const schemaProvider = schemaKind === 'video' ? settings.videoProvider : settings.provider_id;
+    const schemaModel = schemaKind === 'video' ? settings.videoModel : settings.model;
+    void refreshCanvasParameterSchema(schemaKind, schemaProvider, schemaModel);
     setPromptInputLocked(false);
     syncCascadeRunButton(node);
     positionComposerForNode(node);
@@ -2355,7 +2396,7 @@ async function smartResponseErrorMessage(response, fallback='请求失败', pref
 // handleSmartImageDropPayload 已迁移到 frontend/src/canvas/upload.js
 // （经典 <script>，非 ES module，原因同 M1-M5）。
 function sizeForRun(sourceSettings=settings){
-    return apiImageSize(sourceSettings.ratio || 'square', sourceSettings.resolution || '1k', sourceSettings.customRatio || '', sourceSettings.customSize || '', sourceSettings.ratioMatched || '') || '1024x1024';
+    return apiImageSize(sourceSettings.ratio || '1:1', sourceSettings.resolution || '1k', sourceSettings.customRatio || '', sourceSettings.customSize || '', sourceSettings.ratioMatched || '') || '1024x1024';
 }
 function expectedOutputSize(){
     if(settings.engine === 'comfy'){
@@ -3209,7 +3250,7 @@ function loadNodePromptDraftToInput(node){
     } else {
         const rebuilt = promptHtmlWithMentionTokens(node?.runPrompt || '', node?.runPromptRefs || []);
         if(rebuilt) promptInput.innerHTML = rebuilt;
-        else setPromptText(node?.runPrompt || '');
+        else setPromptText(node?.runPrompt || node?.text || '');
     }
 }
 // M5 拆分（第2批）：createSmartComfyTask / waitSmartComfyTaskResult /
@@ -3496,6 +3537,7 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     if(!node || !taskId) return;
     const pendingTasks = smartPendingTasks(node);
     if(!pendingTasks.some(task => task.taskId === taskId)) return;
+    delete node.queued;
     node.pendingTasks = pendingTasks.filter(task => task.taskId !== taskId);
     node.pending = Math.max(0, Number(node.pending || 0) - 1);
     const additions = normalizeOutputMediaItems(images, kind, imageRunMetaForNodeFallback(node));
@@ -4106,7 +4148,7 @@ function shellWheelHandler(e){
         e.stopPropagation();
         return;
     }
-    if(e.target.closest('.composer,.image-edit-modal,.asset-panel,.asset-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal')) return;
+    if(e.target.closest('.composer,.image-edit-modal,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-log-toggle,.canvas-shortcut-toggle,.log-modal,.shortcut-modal')) return;
     e.preventDefault();
     viewportInteractionActive = true;
     const rect = shell.getBoundingClientRect();
@@ -5003,7 +5045,7 @@ document.querySelectorAll('[data-panorama-ratio]').forEach(btn => {
     btn.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
-        applyPanoramaRatio(btn.dataset.panoramaRatio || 'wide');
+        applyPanoramaRatio(btn.dataset.panoramaRatio || '16:9');
     });
 });
 ['panoramaRatioW','panoramaRatioH'].forEach(id => {
@@ -5083,7 +5125,7 @@ try {
     const apiChannel = new BroadcastChannel('studio-api');
     apiChannel.onmessage = async event => {
         if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed'){
-            await refreshSmartConfigFromSettings();
+            await refreshSmartConfigFromSettings({invalidateParameterSchemas:event.data?.type === 'providers-changed'});
         }
         if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
         if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
@@ -5096,7 +5138,7 @@ window.addEventListener('focus', windowFocusHandler);
 function windowMessageHandler(event){
     if(event.origin && event.origin !== location.origin) return;
     if(event.data?.type === 'studio-theme') applyTheme(event.data.theme || 'light');
-    if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed') refreshSmartConfigFromSettings();
+    if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed') refreshSmartConfigFromSettings({invalidateParameterSchemas:event.data?.type === 'providers-changed'});
     if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
     if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
     if(event.data?.type === 'studio-lang' && window.StudioI18n) {

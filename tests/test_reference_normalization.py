@@ -60,16 +60,16 @@ def test_canvas_preserves_missing_file_ids_on_load_and_save(monkeypatch):
         "id": "canvas-missing-file",
         "nodes": [{
             "id": "node-1",
-            "images": [{"file_id": "missing-file", "name": "lost.png", "kind": "image"}],
+            "images": [{"file_id": "missing-file", "name": "lost.png", "kind": "image", "natural_w": 864, "natural_h": 1536}],
         }],
     }
 
     loaded = canvases.hydrate_canvas(canvas)
     assert loaded["nodes"][0]["images"] == [
-        {"file_id": "missing-file", "name": "lost.png", "kind": "image"}
+        {"file_id": "missing-file", "name": "lost.png", "kind": "image", "natural_w": 864, "natural_h": 1536}
     ]
     assert canvases.compact_canvas(loaded)["nodes"][0]["images"] == [
-        {"file_id": "missing-file", "name": "lost.png", "kind": "image"}
+        {"file_id": "missing-file", "name": "lost.png", "kind": "image", "natural_w": 864, "natural_h": 1536}
     ]
 
 

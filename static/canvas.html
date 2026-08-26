@@ -244,12 +244,13 @@
                 <select id="canvasAgentModelSelect" aria-label="选择 Agent 模型" title="选择 Agent 模型"><option value="">自动选择</option></select>
             </div>
             <div id="canvasAgentStatus" class="canvas-agent-status" aria-live="polite">正在初始化</div>
+            <div id="canvasAgentSkills" class="canvas-agent-skills" hidden aria-label="已加载 Skill"></div>
             <div id="canvasAgentMessages" class="canvas-agent-messages" aria-live="polite"></div>
             <div id="canvasAgentPlan" class="canvas-agent-plan" hidden></div>
             <div id="canvasAgentArtifacts" class="canvas-agent-artifacts" hidden></div>
             <div class="canvas-agent-compose">
                 <div id="canvasAgentMentions" class="canvas-agent-mentions"></div>
-                <textarea id="canvasAgentInput" rows="3" placeholder="描述你想在画布上完成的操作"></textarea>
+                <textarea id="canvasAgentInput" rows="3" placeholder="和画布 Agent 聊聊，或描述要在画布上完成的操作"></textarea>
                 <div class="canvas-agent-compose-actions">
                     <button id="canvasAgentMention" class="canvas-agent-action secondary" type="button" title="引用选中节点"><i data-lucide="at-sign"></i><span>引用选区</span></button>
                     <button id="canvasAgentCancel" class="canvas-agent-action secondary" type="button" title="取消运行"><i data-lucide="square"></i><span>取消</span></button>
@@ -413,15 +414,15 @@
                         <div class="panorama-control-group">
                             <div class="panorama-control-line">
                                 <span class="panorama-control-label" data-i18n="smart.panoramaRatio">视窗比例</span>
-                                <button type="button" data-panorama-ratio="square">1:1</button>
-                                <button type="button" data-panorama-ratio="portrait">2:3</button>
-                                <button type="button" data-panorama-ratio="landscape">3:2</button>
-                                <button type="button" data-panorama-ratio="portrait43">3:4</button>
-                                <button type="button" data-panorama-ratio="landscape43">4:3</button>
-                                <button type="button" data-panorama-ratio="story">9:16</button>
-                                <button type="button" data-panorama-ratio="wide" class="active">16:9</button>
-                                <button type="button" data-panorama-ratio="ultrawide">21:9</button>
-                                <button type="button" data-panorama-ratio="ultratall">9:21</button>
+                                <button type="button" data-panorama-ratio="1:1">1:1</button>
+                                <button type="button" data-panorama-ratio="2:3">2:3</button>
+                                <button type="button" data-panorama-ratio="3:2">3:2</button>
+                                <button type="button" data-panorama-ratio="3:4">3:4</button>
+                                <button type="button" data-panorama-ratio="4:3">4:3</button>
+                                <button type="button" data-panorama-ratio="9:16">9:16</button>
+                                <button type="button" data-panorama-ratio="16:9" class="active">16:9</button>
+                                <button type="button" data-panorama-ratio="21:9">21:9</button>
+                                <button type="button" data-panorama-ratio="9:21">9:21</button>
                                 <button type="button" data-panorama-ratio="custom" data-i18n="smart.custom">自定义</button>
                                 <label id="panoramaCustomRatio" class="panorama-custom-ratio" style="display:none">
                                     <input id="panoramaRatioW" type="number" min="1" max="999" step="1" value="16" aria-label="ratio width">

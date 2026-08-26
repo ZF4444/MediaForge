@@ -1283,7 +1283,7 @@ def normalize_media_refs(
 def compact_media_ref(ref: Dict[str, Any]) -> Dict[str, Any]:
     normalized = normalize_media_ref(ref or {}, allow_register=True)
     compact: Dict[str, Any] = {}
-    for key in ("file_id", "url", "name", "role", "kind"):
+    for key in ("file_id", "url", "name", "role", "kind", "natural_w", "natural_h"):
         value = normalized.get(key)
         if value not in (None, ""):
             compact[key] = value
@@ -1303,7 +1303,7 @@ def compact_media_refs(
     items: List[Dict[str, Any]] = []
     for ref in normalized_refs:
         compact: Dict[str, Any] = {}
-        for key in ("file_id", "url", "name", "role", "kind"):
+        for key in ("file_id", "url", "name", "role", "kind", "natural_w", "natural_h"):
             value = ref.get(key)
             if value not in (None, ""):
                 compact[key] = value

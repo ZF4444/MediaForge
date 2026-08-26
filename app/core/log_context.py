@@ -12,6 +12,8 @@ _DEFAULTS = {
     "user_id": None,
     "username": None,
     "task_id": None,
+    "run_id": None,
+    "operation_id": None,
 }
 
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(

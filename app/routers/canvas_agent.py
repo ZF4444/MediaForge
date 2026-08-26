@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app.core.auth import safe_user_id
 from app.core.utils import now_ms
@@ -13,16 +14,17 @@ from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_agent.adapter import semantic_plan_to_patch
 from app.services.canvas_agent.context import build_canvas_context
 from app.services.canvas_agent.events import emit_agent_event
-from app.services.canvas_agent.model_resolver import resolve_canvas_agent_model
-from app.services.canvas_agent.planner import plan_with_deep_agent
+from app.services.canvas_agent.model_resolver import CanvasAgentUpstreamError, resolve_canvas_agent_model
+from app.services.canvas_agent.planner import run_canvas_agent
+from langgraph.types import Command
 from app.services.canvas_agent.checkpoint import create_async_checkpointer
 from app.services.canvas_agent.reliability import DEFAULT_RUN_LIMITS, canvas_structure_fingerprint, classify_failure, enforce_plan_limits
 from app.config import CANVAS_TASK_TIMEOUT_SECONDS
 from app.core.logging import audit_event, get_logger
 from app.core.metrics import AGENT_RUNS, AGENT_OPERATION_SECONDS, AGENT_FAILURES
-from app.services.canvas_agent.store import append_message, create_run, create_template, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, save_artifact, save_plan, set_artifact_status, share_project_asset, update_run
+from app.services.canvas_agent.store import append_message, create_run, create_template, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, request_run_command_cancellation, replace_plan_content, save_artifact, save_plan, set_artifact_status, share_project_asset, submit_command, update_run
 from app.services.canvas_agent.artifacts import ARTIFACT_STAGES, compile_prompt, normalize_anchors, validate_stage
-from app.services.canvas_agent.skills import get_skill, list_skill_summaries, read_skill
+from app.services.canvas_agent.skills import get_enabled_skill, list_enabled_skill_summaries, read_skill
 from app.services.canvas_agent.doc_chain import stage_sources, validate_stage_sources
 from app.services.canvas_agent.evaluation import evaluate_artifact_quality, record_evaluation
 from app.services.canvas_agent.orchestration import build_specialist_plan, enforce_budget, estimate_plan_cost
@@ -44,10 +46,141 @@ logger = get_logger("canvas_agent")
 def _user(request: Request, x_user_id: str) -> str:
     return safe_user_id(x_user_id, request)
 
+
+def _can_continue_planning(status: str) -> bool:
+    """A completed execution ends one turn, not the Agent conversation."""
+    return str(status or "") not in {"cancelled", "failed", "blocked"}
+
+
 async def _require_run(user_id: str, run_id: str) -> dict:
     run = await asyncio.to_thread(get_run, user_id, run_id)
     if not run: raise HTTPException(status_code=404, detail="Agent Run 不存在")
     return run
+
+
+async def _append_plan_reply(user_id: str, run_id: str) -> str:
+    """Persist the user-facing end of a planning turn before rendering its plan."""
+    reply = "我已整理好执行计划，请确认后继续。"
+    await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"kind": "plan_ready"})
+    await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
+    return reply
+
+def _merge_existing_params(current: dict, incoming: dict) -> dict:
+    """Apply only keys already proposed by the model; do not accept new execution fields from the browser."""
+    merged = dict(current)
+    for key, value in incoming.items():
+        if key not in current:
+            continue
+        if isinstance(current[key], dict) and isinstance(value, dict):
+            merged[key] = _merge_existing_params(current[key], value)
+        elif isinstance(value, (str, int, float, bool)) or value is None:
+            merged[key] = value
+    return merged
+
+async def _apply_confirmation_overrides(user_id: str, run_id: str, plan_row: dict, overrides: list[dict]) -> None:
+    if not overrides:
+        return
+    plan = SemanticPlan.model_validate(plan_row["content_json"])
+    steps = {step.id: step for step in plan.steps if step.node is not None}
+    if len(overrides) > len(steps):
+        raise HTTPException(status_code=422, detail="节点配置数量无效")
+    seen: set[str] = set()
+    for override in overrides:
+        step_id = str(override.get("step_id") or "")
+        step = steps.get(step_id)
+        if not step or step_id in seen:
+            raise HTTPException(status_code=422, detail="节点配置目标无效")
+        seen.add(step_id)
+        node = step.node
+        assert node is not None
+        if "title" in override:
+            node.title = str(override["title"] or "")[:200]
+        if "content" in override:
+            node.content = str(override["content"] or "")[:20000]
+        params = override.get("params")
+        if params is not None:
+            if not isinstance(params, dict):
+                raise HTTPException(status_code=422, detail="节点参数格式无效")
+            node.params = _merge_existing_params(node.params, params)
+    saved = await asyncio.to_thread(replace_plan_content, user_id, run_id, int(plan_row["version"]), plan.model_dump(mode="json"))
+    if not saved:
+        raise HTTPException(status_code=409, detail="计划版本已过期")
+
+
+async def _execute_approved_canvas_patch(user_id: str, run_id: str, canvas_id: str, plan_version: int, authorized_node_ids: list[str]) -> dict:
+    """The graph-owned mutation boundary invoked only after confirmation."""
+    run = await _require_run(user_id, run_id)
+    plan_row = await asyncio.to_thread(latest_plan, user_id, run_id)
+    if not plan_row or int(plan_row["version"]) != int(plan_version):
+        raise HTTPException(status_code=409, detail="计划版本已过期")
+    canvas = await asyncio.to_thread(load_canvas_payload, user_id, canvas_id)
+    if not canvas: raise HTTPException(status_code=404, detail="画布不存在")
+    current_version = int(canvas.get("version") or 1)
+    run_metadata = run.get("metadata_json") or {}
+    if current_version != int(run["base_canvas_version"]):
+        planned_fingerprint = run_metadata.get("planned_canvas_fingerprint")
+        if planned_fingerprint and planned_fingerprint == canvas_structure_fingerprint(canvas):
+            await asyncio.to_thread(update_run, user_id, run_id, base_canvas_version=current_version, metadata_json={"placement_recomputed": True})
+        else:
+            await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="planning")
+            await emit_agent_event(user_id, run_id, "run.blocked", {"reason": "canvas_structure_conflict", "current_version": current_version, "base_version": run["base_canvas_version"]})
+            raise HTTPException(status_code=409, detail={"message": "画布内容或连线已变化，请重新规划", "current_version": current_version})
+    from app.services.canvas_agent.events import current_operation_id
+    from app.services.canvas_agent.store import command_cancel_requested
+    operation_id = current_operation_id()
+    if operation_id and await asyncio.to_thread(command_cancel_requested, operation_id):
+        raise HTTPException(status_code=409, detail="操作已取消")
+    try:
+        plan = SemanticPlan.model_validate(plan_row["content_json"])
+        plan_json = plan.model_dump(mode="json")
+        estimate = estimate_plan_cost(plan_json, budget=(run_metadata.get("limits") or {}).get("max_budget"))
+        enforce_budget(estimate)
+        plan_json["execution"]["estimated_cost"] = estimate["estimated_cost"]
+        plan = SemanticPlan.model_validate(plan_json)
+        enforce_plan_limits(plan_json, run_metadata.get("limits"))
+        patch = semantic_plan_to_patch(plan, canvas_id, current_version, canvas=canvas)
+        await asyncio.to_thread(update_run, user_id, run_id, status="applying", phase="applying")
+        result = await asyncio.to_thread(
+            apply_patch_idempotently, user_id, run_id, f"{run_id}:plan:{plan_version}", patch,
+            risk="confirm", allow_user_node_changes=bool(authorized_node_ids), authorized_node_ids=set(authorized_node_ids),
+        )
+    except (PatchConflictError, PatchPermissionError, ValueError) as exc:
+        AGENT_FAILURES.labels(stage="applying", category=classify_failure(exc)).inc()
+        await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="applying")
+        await emit_agent_event(user_id, run_id, "run.blocked", {"reason": str(exc)[:500]})
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    requested_tasks = len(result.get("run_requests") or [])
+    limit_tasks = int((run_metadata.get("limits") or {}).get("max_tasks", DEFAULT_RUN_LIMITS["max_tasks"]))
+    if requested_tasks > limit_tasks:
+        await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="running", metadata_json={"blocked_reason": "task_quota_exceeded"})
+        await emit_agent_event(user_id, run_id, "run.blocked", {"reason": "task_quota_exceeded", "requested": requested_tasks, "limit": limit_tasks})
+        raise HTTPException(status_code=409, detail="Run 任务配额超限")
+    return {**result, "plan_goal": plan.goal, "plan_version": plan_version, "task_limit": limit_tasks}
+
+
+async def _dispatch_approved_canvas_tasks(user_id: str, run_id: str, canvas_id: str, execution_result: dict) -> list[dict]:
+    """Submit deferred generation tasks after the graph records patch success."""
+    from app.services.canvas_agent.events import current_operation_id
+    from app.services.canvas_agent.store import command_cancel_requested
+    operation_id = current_operation_id()
+    if operation_id and await asyncio.to_thread(command_cancel_requested, operation_id):
+        raise HTTPException(status_code=409, detail="操作已取消")
+    try:
+        tasks = await submit_run_requests(user_id, canvas_id, run_id, execution_result.get("run_requests") or [], prompt=str(execution_result.get("plan_goal") or ""))
+    except Exception as exc:
+        AGENT_FAILURES.labels(stage="task_submission", category=classify_failure(exc)).inc()
+        await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="running")
+        await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc)[:500], "stage": "task_submission"})
+        raise HTTPException(status_code=502, detail="画布已更新，但生成任务提交失败") from exc
+    await asyncio.to_thread(update_run, user_id, run_id, status="running" if tasks else "completed", phase="running" if tasks else "reviewing", metadata_json={"task_ids": [task["task_id"] for task in tasks]})
+    run = await _require_run(user_id, run_id)
+    AGENT_RUNS.labels(mode=run.get("mode", "fast_track"), status="running" if tasks else "completed").inc()
+    audit_event("canvas_agent_plan_applied", action="apply_patch", resource_type="canvas_agent_run", resource_id=run_id, result="success", run_id=run_id, canvas_id=canvas_id, operation_id=f"{run_id}:plan:{execution_result.get('plan_version', '')}", request_id="")
+    await manager.broadcast_canvas_updated(canvas_id, now_ms(), "", user_id)
+    await emit_agent_event(user_id, run_id, "patch.applied", {key: value for key, value in execution_result.items() if key not in {"plan_goal", "task_limit"}})
+    if tasks: await emit_agent_event(user_id, run_id, "tasks.queued", {"tasks": tasks})
+    else: await emit_agent_event(user_id, run_id, "run.completed", {"version": execution_result["version"]})
+    return tasks
 
 @router.post("/api/canvas-agent/runs")
 async def create_agent_run(payload: CanvasAgentRunCreateRequest, request: Request, x_user_id: str = Header(default="")):
@@ -84,17 +217,40 @@ async def get_agent_run(run_id: str, request: Request, x_user_id: str = Header(d
     tasks = await asyncio.gather(*(get_canvas_task(task_id) for task_id in task_ids)) if task_ids else []
     return {"run": run, "messages": messages, "plan": plan, "events": events, "operations": operations, "artifacts": artifacts, "tasks": [task for task in tasks if task]}
 
-@router.post("/api/canvas-agent/runs/{run_id}/messages")
-async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
-    if run["status"] in {"cancelled", "completed", "failed", "blocked"}: raise HTTPException(status_code=409, detail="Run 当前状态不可继续规划")
-    await asyncio.to_thread(append_message, user_id, run_id, "user", payload.content, {"selected_node_ids": payload.selected_node_ids, "mention_node_ids": payload.mention_node_ids})
+async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgentMessageRequest):
+    run = await _require_run(user_id, run_id)
+    if not _can_continue_planning(run["status"]): raise HTTPException(status_code=409, detail="Run 当前状态不可继续规划")
+    if run["status"] == "completed":
+        # A new user request starts the next planning turn on the same
+        # LangGraph thread. The completed status only describes the previous
+        # patch execution, not the lifetime of the conversation.
+        run = await asyncio.to_thread(update_run, user_id, run_id, status="planning", phase="planning") or run
     try:
+        await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在读取画布上下文…"})
         context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"], selected_node_ids=payload.selected_node_ids, mention_node_ids=payload.mention_node_ids)
         context["run_id"] = run_id
+        context["user_id"] = user_id
+        context["canvas_id"] = run["canvas_id"]
         model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
+        async def progress(event_run_id, progress_payload):
+            await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
+        async def emit_skill_event(event_type, event_payload):
+            await emit_agent_event(user_id, run_id, event_type, event_payload, phase="skill")
+        context["emit_skill_event"] = emit_skill_event
+        async def execute_patch(plan_version: int, authorized_node_ids: list[str]) -> dict:
+            return await _execute_approved_canvas_patch(user_id, run_id, run["canvas_id"], plan_version, authorized_node_ids)
+        async def dispatch_tasks(execution_result: dict) -> list[dict]:
+            return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result)
         async with create_async_checkpointer() as checkpointer:
-            plan = await plan_with_deep_agent(model, payload.content, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool((run.get("metadata_json") or {}).get("model_thread_started")))
+            graph_result = await run_canvas_agent(model, payload.content, context, checkpointer=checkpointer, emit_progress=progress, execute_patch=execute_patch, dispatch_tasks=dispatch_tasks)
+        latest = await asyncio.to_thread(latest_plan, user_id, run_id)
+        if not latest:
+            messages = graph_result.get("messages") or []
+            reply = str(getattr(messages[-1], "content", "我可以帮助你处理画布内容。")) if messages else "我可以帮助你处理画布内容。"
+            await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"kind": "tool_agent_reply"})
+            await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
+            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": reply}
+        plan = SemanticPlan.model_validate(latest["content_json"])
         await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model})
         plan_json = plan.model_dump(mode="json")
         estimate = estimate_plan_cost(plan_json)
@@ -103,6 +259,15 @@ async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, re
         enforce_plan_limits(plan_json, (run.get("metadata_json") or {}).get("limits"))
         saved = await asyncio.to_thread(save_plan, user_id, run_id, plan_json, status="awaiting_confirmation")
         await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], step_count=int(run.get("step_count") or 0) + 1, metadata_json={"planned_canvas_fingerprint": canvas_structure_fingerprint(await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"]))})
+    except CanvasAgentUpstreamError as exc:
+        logger.exception(
+            "canvas agent planning provider unavailable",
+            extra={"event": "canvas_agent_planning_provider_unavailable", "run_id": run_id, "canvas_id": run["canvas_id"], "phase": "message"},
+        )
+        AGENT_FAILURES.labels(stage="planning", category="transient").inc()
+        await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="planning")
+        await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc), "category": "transient"})
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "3"}) from exc
     except Exception as exc:
         logger.exception(
             "canvas agent planning failed",
@@ -112,25 +277,49 @@ async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, re
         await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="planning")
         await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc)[:500]})
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    reply = await _append_plan_reply(user_id, run_id)
     await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json")})
-    return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved}
+    return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved, "reply": reply}
 
-@router.post("/api/canvas-agent/runs/{run_id}/answers")
-async def answer_agent_question(run_id: str, payload: CanvasAgentAnswerRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
-    await asyncio.to_thread(append_message, user_id, run_id, "user", payload.answer, {"kind": "answer"})
+async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgentAnswerRequest):
+    run = await _require_run(user_id, run_id)
     metadata = run.get("metadata_json") or {}
     try:
+        await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在恢复画布上下文…"})
         context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"])
         context["run_id"] = run_id
+        context["user_id"] = user_id
+        context["canvas_id"] = run["canvas_id"]
         provider, model_name = payload.provider or metadata.get("model_provider", ""), payload.model or metadata.get("model_name", "")
         model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
+        async def progress(event_run_id, progress_payload):
+            await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
+        async def emit_skill_event(event_type, event_payload):
+            await emit_agent_event(user_id, run_id, event_type, event_payload, phase="skill")
+        context["emit_skill_event"] = emit_skill_event
+        async def execute_patch(plan_version: int, authorized_node_ids: list[str]) -> dict:
+            return await _execute_approved_canvas_patch(user_id, run_id, run["canvas_id"], plan_version, authorized_node_ids)
+        async def dispatch_tasks(execution_result: dict) -> list[dict]:
+            return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result)
         async with create_async_checkpointer() as checkpointer:
-            plan = await plan_with_deep_agent(model, payload.answer, context, checkpointer=checkpointer, harness_key="mediaforgechatmodel", resume=bool(metadata.get("model_thread_started")))
+            graph_result = await run_canvas_agent(model, payload.answer, context, checkpointer=checkpointer, emit_progress=progress, execute_patch=execute_patch, dispatch_tasks=dispatch_tasks)
+        latest = await asyncio.to_thread(latest_plan, user_id, run_id)
+        if not latest:
+            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": "请补充你希望对画布执行的操作。"}
+        plan = SemanticPlan.model_validate(latest["content_json"])
         saved = await asyncio.to_thread(save_plan, user_id, run_id, plan.model_dump(mode="json"), status="awaiting_confirmation")
         await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name})
+        reply = await _append_plan_reply(user_id, run_id)
         await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json"), "resumed": True})
-        return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved}
+        return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved, "reply": reply}
+    except CanvasAgentUpstreamError as exc:
+        logger.exception(
+            "canvas agent planning provider unavailable",
+            extra={"event": "canvas_agent_planning_provider_unavailable", "run_id": run_id, "canvas_id": run["canvas_id"], "phase": "answer"},
+        )
+        await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="planning")
+        await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc), "category": "transient"})
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "3"}) from exc
     except Exception as exc:
         logger.exception(
             "canvas agent planning failed",
@@ -140,71 +329,71 @@ async def answer_agent_question(run_id: str, payload: CanvasAgentAnswerRequest, 
         await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc)[:500]})
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-@router.post("/api/canvas-agent/runs/{run_id}/confirm")
-async def confirm_agent_plan(run_id: str, payload: CanvasAgentConfirmRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id); plan_row = await asyncio.to_thread(latest_plan, user_id, run_id)
+async def execute_confirm_command(user_id: str, run_id: str, payload: CanvasAgentConfirmRequest):
+    run = await _require_run(user_id, run_id); plan_row = await asyncio.to_thread(latest_plan, user_id, run_id)
     if not plan_row or int(plan_row["version"]) != payload.plan_version: raise HTTPException(status_code=409, detail="计划版本已过期")
     if run["status"] != "awaiting_confirmation": raise HTTPException(status_code=409, detail="Run 不在等待确认状态")
     if not payload.approved:
         await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="planning")
         await emit_agent_event(user_id, run_id, "run.blocked", {"reason": "user_rejected_plan", "plan_version": payload.plan_version})
         return {"run": await asyncio.to_thread(get_run, user_id, run_id), "approved": False}
-    canvas = await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"])
-    if not canvas: raise HTTPException(status_code=404, detail="画布不存在")
-    current_version = int(canvas.get("version") or 1)
-    run_metadata = run.get("metadata_json") or {}
-    if current_version != int(run["base_canvas_version"]):
-        planned_fingerprint = run_metadata.get("planned_canvas_fingerprint")
-        current_fingerprint = canvas_structure_fingerprint(canvas)
-        if planned_fingerprint and planned_fingerprint == current_fingerprint:
-            # Only placement/viewport changed: rebuild the Patch against the latest version.
-            await asyncio.to_thread(update_run, user_id, run_id, base_canvas_version=current_version, metadata_json={"placement_recomputed": True})
-        else:
-            await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="planning")
-            await emit_agent_event(user_id, run_id, "run.blocked", {"reason": "canvas_structure_conflict", "current_version": current_version, "base_version": run["base_canvas_version"]})
-            raise HTTPException(status_code=409, detail={"message": "画布内容或连线已变化，请重新规划", "current_version": current_version})
+    await _apply_confirmation_overrides(user_id, run_id, plan_row, payload.node_overrides)
+    # Resume the same graph thread. The graph deterministically emits the
+    # execution tool call, records its ToolMessage, then dispatches tasks.
+    metadata = run.get("metadata_json") or {}
+    provider, model_name = metadata.get("model_provider", ""), metadata.get("model_name", "")
+    model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
+    await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在校验当前画布…"})
+    context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"])
+    context.update({"run_id": run_id, "user_id": user_id, "canvas_id": run["canvas_id"]})
+    async def progress(event_run_id, progress_payload):
+        await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
+    async def execute_patch(plan_version: int, authorized_node_ids: list[str]) -> dict:
+        return await _execute_approved_canvas_patch(user_id, run_id, run["canvas_id"], plan_version, authorized_node_ids)
+    async def dispatch_tasks(execution_result: dict) -> list[dict]:
+        return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result)
+    async with create_async_checkpointer() as checkpointer:
+        from app.services.canvas_agent.runtime import create_canvas_agent
+        graph = create_canvas_agent(model=model, user_id=user_id, run_id=run_id, canvas_id=run["canvas_id"], checkpointer=checkpointer, emit_progress=progress, execute_patch=execute_patch, dispatch_tasks=dispatch_tasks)
+        graph_result = await graph.ainvoke(Command(resume={"approved": True, "plan_version": payload.plan_version, "authorized_node_ids": payload.authorized_node_ids}), config={"configurable": {"thread_id": run_id}})
+    return {"run": await asyncio.to_thread(get_run, user_id, run_id), "result": graph_result.get("execution_result") or {}, "tasks": graph_result.get("tasks") or []}
+
+async def _accept_command(user_id: str, run_id: str, operation_type: str, payload: dict) -> JSONResponse:
     try:
-        plan = SemanticPlan.model_validate(plan_row["content_json"])
-        plan_json = plan.model_dump(mode="json")
-        estimate = estimate_plan_cost(plan_json, budget=(run_metadata.get("limits") or {}).get("max_budget"))
-        enforce_budget(estimate)
-        plan_json["execution"]["estimated_cost"] = estimate["estimated_cost"]
-        plan = SemanticPlan.model_validate(plan_json)
-        enforce_plan_limits(plan_json, run_metadata.get("limits"))
-        patch = semantic_plan_to_patch(plan, run["canvas_id"], current_version, canvas=canvas)
-        await asyncio.to_thread(update_run, user_id, run_id, status="applying", phase="applying")
-        result = await asyncio.to_thread(apply_patch_idempotently, user_id, run_id, f"{run_id}:plan:{payload.plan_version}", patch, risk="confirm", allow_user_node_changes=bool(payload.authorized_node_ids), authorized_node_ids=set(payload.authorized_node_ids))
-    except (PatchConflictError, PatchPermissionError, ValueError) as exc:
-        AGENT_FAILURES.labels(stage="applying", category=classify_failure(exc)).inc()
-        await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="applying")
-        await emit_agent_event(user_id, run_id, "run.blocked", {"reason": str(exc)[:500]})
+        operation, created = await asyncio.to_thread(submit_command, user_id, run_id, operation_type, str(payload.get("client_request_id") or ""), payload)
+    except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    requested_tasks = len(result.get("run_requests") or [])
-    limit_tasks = int((run_metadata.get("limits") or {}).get("max_tasks", DEFAULT_RUN_LIMITS["max_tasks"]))
-    if requested_tasks > limit_tasks:
-        await asyncio.to_thread(update_run, user_id, run_id, status="blocked", phase="running", metadata_json={"blocked_reason": "task_quota_exceeded"})
-        await emit_agent_event(user_id, run_id, "run.blocked", {"reason": "task_quota_exceeded", "requested": requested_tasks, "limit": limit_tasks})
-        raise HTTPException(status_code=409, detail="Run 任务配额超限")
-    try:
-        tasks = await submit_run_requests(user_id, run["canvas_id"], run_id, result.get("run_requests") or [], prompt=plan.goal)
-    except Exception as exc:
-        AGENT_FAILURES.labels(stage="task_submission", category=classify_failure(exc)).inc()
-        await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase="running")
-        await emit_agent_event(user_id, run_id, "run.failed", {"error": str(exc)[:500], "stage": "task_submission"})
-        raise HTTPException(status_code=502, detail="画布已更新，但生成任务提交失败") from exc
-    await asyncio.to_thread(update_run, user_id, run_id, status="running" if tasks else "completed", phase="running" if tasks else "reviewing", metadata_json={"task_ids": [task["task_id"] for task in tasks]})
-    AGENT_RUNS.labels(mode=run.get("mode", "fast_track"), status="running" if tasks else "completed").inc()
-    audit_event("canvas_agent_plan_applied", action="apply_patch", resource_type="canvas_agent_run", resource_id=run_id, result="success", run_id=run_id, canvas_id=run["canvas_id"], operation_id=f"{run_id}:plan:{payload.plan_version}", request_id=request.headers.get("x-request-id", ""))
-    await manager.broadcast_canvas_updated(run["canvas_id"], now_ms(), "", user_id)
-    await emit_agent_event(user_id, run_id, "patch.applied", result)
-    if tasks: await emit_agent_event(user_id, run_id, "tasks.queued", {"tasks": tasks})
-    else: await emit_agent_event(user_id, run_id, "run.completed", {"version": result["version"]})
-    return {"run": await asyncio.to_thread(get_run, user_id, run_id), "result": result, "tasks": tasks}
+    if created:
+        await emit_agent_event(user_id, run_id, "operation.accepted", {"message": "请求已受理，等待 Agent Worker 执行", "command_type": operation_type}, operation_id=operation["id"], phase="confirmation" if operation_type == "agent.confirm" else "planning")
+    events = await asyncio.to_thread(list_events, user_id, run_id)
+    return JSONResponse(status_code=202, content={"run_id": run_id, "operation_id": operation["id"], "status": operation["status"], "events_after_sequence": max((int(event["sequence"]) for event in events), default=0)})
+
+@router.post("/api/canvas-agent/runs/{run_id}/messages")
+async def post_agent_message(run_id: str, payload: CanvasAgentMessageRequest, request: Request, x_user_id: str = Header(default="")):
+    user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
+    if not _can_continue_planning(run["status"]): raise HTTPException(status_code=409, detail="Run 当前状态不可继续规划")
+    return await _accept_command(user_id, run_id, "agent.message", payload.model_dump())
+
+@router.post("/api/canvas-agent/runs/{run_id}/answers")
+async def answer_agent_question(run_id: str, payload: CanvasAgentAnswerRequest, request: Request, x_user_id: str = Header(default="")):
+    user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
+    return await _accept_command(user_id, run_id, "agent.answer", payload.model_dump())
+
+@router.post("/api/canvas-agent/runs/{run_id}/confirm")
+async def confirm_agent_plan(run_id: str, payload: CanvasAgentConfirmRequest, request: Request, x_user_id: str = Header(default="")):
+    user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
+    plan = await asyncio.to_thread(latest_plan, user_id, run_id)
+    if not plan or int(plan["version"]) != payload.plan_version: raise HTTPException(status_code=409, detail="计划版本已过期")
+    if run["status"] != "awaiting_confirmation": raise HTTPException(status_code=409, detail="Run 不在等待确认状态")
+    return await _accept_command(user_id, run_id, "agent.confirm", payload.model_dump())
 
 @router.post("/api/canvas-agent/runs/{run_id}/cancel")
 async def cancel_agent_run(run_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
     if run["status"] in {"completed", "cancelled"}: return {"run": run}
+    operations = await asyncio.to_thread(request_run_command_cancellation, user_id, run_id)
+    for operation in operations:
+        await emit_agent_event(user_id, run_id, "operation.cancel_requested", {"message": "已请求取消 Agent 命令"}, operation_id=operation["id"], phase="cancelling")
     task_ids = list((run.get("metadata_json") or {}).get("task_ids") or [])
     for task_id in task_ids:
         task = await get_canvas_task(task_id)
@@ -275,7 +464,7 @@ async def review_agent_run(run_id: str, payload: CanvasAgentReviewRequest, reque
 async def get_agent_events(run_id: str, request: Request, after_sequence: int = 0, limit: int = 500, x_user_id: str = Header(default="")):
     user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
     events = await asyncio.to_thread(list_events, user_id, run_id, after_sequence=after_sequence, limit=limit)
-    return {"events": events, "after_sequence": after_sequence}
+    return {"events": events, "after_sequence": after_sequence, "next_sequence": int(events[-1]["sequence"]) if events else int(after_sequence), "has_more": len(events) >= min(max(1, limit), 2000)}
 
 @router.get("/api/canvas-agent/runs/{run_id}/artifacts")
 async def get_agent_artifacts(run_id: str, request: Request, artifact_type: str = "", x_user_id: str = Header(default="")):
@@ -363,11 +552,11 @@ async def generate_from_prompt_pack(run_id: str, artifact_id: str, payload: Canv
 
 @router.get("/api/canvas-agent/skills")
 async def list_agent_skills():
-    return {"skills": [summary.__dict__ for summary in list_skill_summaries()]}
+    return {"skills": [summary.__dict__ for summary in list_enabled_skill_summaries()]}
 
 @router.get("/api/canvas-agent/skills/{name}")
 async def read_agent_skill(name: str):
-    if not get_skill(name): raise HTTPException(status_code=404, detail="Skill 不存在")
+    if not get_enabled_skill(name): raise HTTPException(status_code=404, detail="Skill 不存在或未启用")
     return {"name": name, "content": read_skill(name)}
 
 @router.post("/api/canvas-agent/runs/{run_id}/cost-estimate")

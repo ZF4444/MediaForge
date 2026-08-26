@@ -74,23 +74,23 @@ describe('reducedRatioForImage', () => {
 describe('closestStandardRatioKey', () => {
     it('精确匹配标准比例', () => {
         const { closestStandardRatioKey } = createGenerationSettingsSandbox();
-        expect(closestStandardRatioKey(1024, 1024)).toBe('square');
-        expect(closestStandardRatioKey(1920, 1080)).toBe('wide');
-        expect(closestStandardRatioKey(1080, 1920)).toBe('story');
-        expect(closestStandardRatioKey(2, 3)).toBe('portrait');
-        expect(closestStandardRatioKey(3, 2)).toBe('landscape');
+        expect(closestStandardRatioKey(1024, 1024)).toBe('1:1');
+        expect(closestStandardRatioKey(1920, 1080)).toBe('16:9');
+        expect(closestStandardRatioKey(1080, 1920)).toBe('9:16');
+        expect(closestStandardRatioKey(2, 3)).toBe('2:3');
+        expect(closestStandardRatioKey(3, 2)).toBe('3:2');
     });
 
     it('非标准比例匹配最接近的档位', () => {
         const { closestStandardRatioKey } = createGenerationSettingsSandbox();
-        // 略偏离 1:1 但仍最接近 square
-        expect(closestStandardRatioKey(1000, 1010)).toBe('square');
+        // 略偏离 1:1 但仍最接近 1:1。
+        expect(closestStandardRatioKey(1000, 1010)).toBe('1:1');
     });
 
-    it('宽高为 0 或非法值时返回 square', () => {
+    it('宽高为 0 或非法值时返回 1:1', () => {
         const { closestStandardRatioKey } = createGenerationSettingsSandbox();
-        expect(closestStandardRatioKey(0, 100)).toBe('square');
-        expect(closestStandardRatioKey(100, 0)).toBe('square');
+        expect(closestStandardRatioKey(0, 100)).toBe('1:1');
+        expect(closestStandardRatioKey(100, 0)).toBe('1:1');
     });
 });
 
@@ -137,14 +137,14 @@ describe('parseSizeValue', () => {
 describe('ratioIconClass', () => {
     it('按比例值映射到对应图标 class', () => {
         const { ratioIconClass } = createGenerationSettingsSandbox();
-        expect(ratioIconClass('portrait')).toBe('r-portrait');
-        expect(ratioIconClass('portrait43')).toBe('r-portrait43');
-        expect(ratioIconClass('landscape')).toBe('r-landscape');
-        expect(ratioIconClass('landscape43')).toBe('r-landscape43');
-        expect(ratioIconClass('wide')).toBe('r-wide');
-        expect(ratioIconClass('ultrawide')).toBe('r-wide');
-        expect(ratioIconClass('story')).toBe('r-story');
-        expect(ratioIconClass('ultratall')).toBe('r-story');
+        expect(ratioIconClass('2:3')).toBe('r-portrait');
+        expect(ratioIconClass('3:4')).toBe('r-portrait43');
+        expect(ratioIconClass('3:2')).toBe('r-landscape');
+        expect(ratioIconClass('4:3')).toBe('r-landscape43');
+        expect(ratioIconClass('16:9')).toBe('r-wide');
+        expect(ratioIconClass('21:9')).toBe('r-wide');
+        expect(ratioIconClass('9:16')).toBe('r-story');
+        expect(ratioIconClass('9:21')).toBe('r-story');
         expect(ratioIconClass('source')).toBe('r-source');
         expect(ratioIconClass('custom')).toBe('r-custom');
     });
@@ -176,14 +176,14 @@ describe('videoAspectIconClass', () => {
 });
 
 describe('ratioLabel', () => {
-    it('按 settings.ratio 映射到展示文案（默认 square -> 1:1）', () => {
+    it('按 settings.ratio 映射到展示文案（默认 1:1）', () => {
         const { ratioLabel } = createGenerationSettingsSandbox({ settings: {} });
         expect(ratioLabel()).toBe('1:1');
     });
 
     it('按 prefix 读取对应字段（如 outpaintRatio）', () => {
         const { ratioLabel } = createGenerationSettingsSandbox({
-            settings: { outpaintRatio: 'wide' },
+            settings: { outpaintRatio: '16:9' },
         });
         expect(ratioLabel('outpaint')).toBe('16:9');
     });

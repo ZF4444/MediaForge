@@ -110,6 +110,16 @@ def save_plan(user_id: str, run_id: str, content: dict[str, Any], *, status: str
         cur.execute("SELECT COALESCE(MAX(version),0)+1 AS version FROM canvas_agent_plans WHERE run_id=%s", (run_id,)); version = int(cur.fetchone()["version"])
         cur.execute("INSERT INTO canvas_agent_plans(id,run_id,version,status,content_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *", (new_id(),run_id,version,status,json_value(body),now,now)); return cur.fetchone()
 
+def replace_plan_content(user_id: str, run_id: str, version: int, content: dict[str, Any]) -> dict[str, Any] | None:
+    """Update the still-pending version after the user edits its displayed fields."""
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "UPDATE canvas_agent_plans SET content_json=%s,updated_at=%s "
+            "WHERE run_id=%s AND version=%s AND EXISTS (SELECT 1 FROM canvas_agent_runs WHERE id=%s AND user_id=%s AND status='awaiting_confirmation') RETURNING *",
+            (json_value(_json(content)), now_ms(), run_id, version, run_id, user_id),
+        )
+        return cur.fetchone()
+
 def begin_operation(user_id: str, run_id: str, idempotency_key: str, operation_type: str, input_data: dict[str, Any], *, risk: str = "safe") -> dict[str, Any]:
     now = now_ms(); body = _json(input_data)
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
@@ -120,6 +130,72 @@ def begin_operation(user_id: str, run_id: str, idempotency_key: str, operation_t
 def finish_operation(idempotency_key: str, *, status: str, result: dict[str, Any] | None = None, error: str | None = None) -> dict[str, Any] | None:
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("UPDATE canvas_agent_operations SET status=%s,result_json=%s,error=%s,updated_at=%s WHERE idempotency_key=%s RETURNING *", (status,json_value(_json(result)),error,now_ms(),idempotency_key)); return cur.fetchone()
+
+def submit_command(user_id: str, run_id: str, operation_type: str, client_request_id: str, input_data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Create an idempotent accepted command and persist its user input."""
+    request_id = str(client_request_id or new_id())[:128]
+    key = f"{run_id}:{operation_type}:{request_id}"
+    now = now_ms()
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("SELECT * FROM canvas_agent_operations WHERE idempotency_key=%s FOR UPDATE", (key,))
+        existing = cur.fetchone()
+        if existing:
+            return existing, False
+        cur.execute("SELECT * FROM canvas_agent_runs WHERE id=%s AND user_id=%s FOR UPDATE", (run_id, user_id))
+        run = cur.fetchone()
+        if not run: raise PermissionError("run not found")
+        cur.execute("SELECT 1 FROM canvas_agent_operations WHERE run_id=%s AND type IN ('agent.message','agent.answer','agent.confirm') AND status IN ('accepted','queued','running') LIMIT 1", (run_id,))
+        if cur.fetchone(): raise RuntimeError("Run 当前已有正在执行的操作")
+        content = str(input_data.get("content") or input_data.get("answer") or "")
+        if operation_type in {"agent.message", "agent.answer"} and content:
+            cur.execute("SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM canvas_agent_messages WHERE run_id=%s", (run_id,))
+            sequence = int(cur.fetchone()["sequence"])
+            metadata = {"kind": "answer" if operation_type == "agent.answer" else "command", "operation_id": key}
+            cur.execute("INSERT INTO canvas_agent_messages(id,run_id,role,content,sequence,created_at,metadata_json) VALUES(%s,%s,'user',%s,%s,%s,%s)", (new_id(), run_id, content, sequence, now, json_value(_json(metadata))))
+        if operation_type != "agent.confirm":
+            cur.execute("UPDATE canvas_agent_runs SET status='planning',phase='planning',updated_at=%s WHERE id=%s", (now, run_id))
+        cur.execute(
+            "INSERT INTO canvas_agent_operations(id,run_id,idempotency_key,type,risk,status,input_json,client_request_id,created_at,updated_at) VALUES(%s,%s,%s,%s,'safe','accepted',%s,%s,%s,%s) RETURNING *",
+            (new_id(), run_id, key, operation_type, json_value(_json(input_data)), request_id, now, now),
+        )
+        return cur.fetchone(), True
+
+def claim_next_command(worker_id: str, lease_ms: int = 120_000) -> dict[str, Any] | None:
+    now = now_ms()
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "SELECT o.* FROM canvas_agent_operations o WHERE o.type IN ('agent.message','agent.answer','agent.confirm') "
+            "AND (o.status='accepted' OR (o.status='running' AND COALESCE(o.lease_until,0)<%s)) "
+            "AND NOT EXISTS (SELECT 1 FROM canvas_agent_operations active WHERE active.run_id=o.run_id AND active.id<>o.id AND active.type IN ('agent.message','agent.answer','agent.confirm') AND active.status='running' AND COALESCE(active.lease_until,0)>%s) "
+            "ORDER BY o.created_at FOR UPDATE SKIP LOCKED LIMIT 1", (now, now),
+        )
+        row = cur.fetchone()
+        if not row: return None
+        cur.execute("UPDATE canvas_agent_operations SET status='running',lease_owner=%s,lease_until=%s,started_at=COALESCE(started_at,%s),updated_at=%s WHERE id=%s RETURNING *", (worker_id, now + lease_ms, now, now, row["id"]))
+        return cur.fetchone()
+
+def finish_command(operation_id: str, *, status: str, result: dict[str, Any] | None = None, error: str = "") -> dict[str, Any] | None:
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE canvas_agent_operations SET status=%s,result_json=%s,error=%s,lease_owner=NULL,lease_until=NULL,finished_at=%s,updated_at=%s WHERE id=%s RETURNING *", (status, json_value(_json(result)), error[:2000] or None, now, now, operation_id))
+        return cur.fetchone()
+
+def command_cancel_requested(operation_id: str) -> bool:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT cancel_requested_at IS NOT NULL AS requested FROM canvas_agent_operations WHERE id=%s", (operation_id,))
+        row = cur.fetchone(); return bool(row and row["requested"])
+
+def refresh_command_lease(operation_id: str, worker_id: str, lease_ms: int = 120_000) -> bool:
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE canvas_agent_operations SET lease_until=%s,updated_at=%s WHERE id=%s AND status='running' AND lease_owner=%s RETURNING id", (now + lease_ms, now, operation_id, worker_id))
+        return bool(cur.fetchone())
+
+def request_run_command_cancellation(user_id: str, run_id: str) -> list[dict[str, Any]]:
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE canvas_agent_operations SET cancel_requested_at=%s,updated_at=%s WHERE run_id=%s AND status IN ('accepted','running') AND type IN ('agent.message','agent.answer','agent.confirm') RETURNING *", (now, now, run_id))
+        return cur.fetchall()
 
 def save_artifact(user_id: str, run_id: str, artifact_type: str, content: dict[str, Any], *, status: str = "draft", source_artifact_ids: list[str] | None = None) -> dict[str, Any]:
     now = now_ms(); body = _json(content); source_ids = list(source_artifact_ids or [])
@@ -156,12 +232,9 @@ def set_artifact_status(user_id: str, run_id: str, artifact_id: str, status: str
         cur.execute("UPDATE canvas_agent_artifacts SET status=%s,stale=%s,approved_by=%s,approved_at=%s,rejection_note=%s,updated_at=%s WHERE id=%s RETURNING *", (status, status == "stale", approved_by, approved_at, rejection_note[:4000], now_ms(), artifact_id)); return cur.fetchone()
 
 def append_event(user_id: str, run_id: str, event_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    now = now_ms()
-    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM canvas_agent_runs WHERE id=%s AND user_id=%s FOR UPDATE", (run_id,user_id))
-        if not cur.fetchone(): raise PermissionError("run not found")
-        cur.execute("SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM canvas_agent_events WHERE run_id=%s", (run_id,)); sequence = int(cur.fetchone()["sequence"])
-        cur.execute("INSERT INTO canvas_agent_events(id,run_id,sequence,type,payload_json,created_at) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *", (new_id(),run_id,sequence,event_type,json_value(_json(payload)),now)); return cur.fetchone()
+    """Compatibility API; new code must use ``AgentEventService`` directly."""
+    from .event_bus import AgentEventService
+    return AgentEventService.append_sync(user_id=user_id, run_id=run_id, event_type=event_type, payload=payload)
 
 def list_events(user_id: str, run_id: str, *, after_sequence: int = 0, limit: int = 500) -> list[dict[str, Any]]:
     with metadata_connection() as conn, conn.cursor() as cur:

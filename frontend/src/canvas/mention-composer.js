@@ -1240,7 +1240,17 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
     }).join('');
     body = body.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     const inputPrompt = promptEnabled ? inputPromptTextFor(node, ctx).trim() : '';
+    // A generation node can be created directly by the Agent and carry its
+    // prompt in `text`, without an upstream smart-prompt connection. Include
+    // that text in the same request path used by manually created nodes.
+    const ownPrompt = promptEnabled && node?.type === 'smart-image'
+        ? String(node.text || '').trim()
+        : '';
+    // node.text is loaded into the editor as the initial draft for Agent-created
+    // nodes. Only use it here when there is still no editor or upstream prompt,
+    // otherwise the same prompt would be sent twice.
     if(inputPrompt) body = [inputPrompt, body].filter(Boolean).join('\n\n');
+    if(!body && ownPrompt) body = ownPrompt;
     if(!body && settings.engine === 'runninghub' && promptEnabled){
         body = rhDefaultPromptSuggestion();
     }

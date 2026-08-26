@@ -275,27 +275,32 @@ function renderVideoModelSelector(providers, models, restricted){
     </div>`;
 }
 function renderVideoGenerationConfig(){
-    const quick = [5, 10, 15];
+    const durationField = canvasSchemaField('video', 'videoDuration');
+    const durationName = canvasSchemaFieldName('video', 'videoDuration', tr('smart.videoDuration'));
+    const quick = Array.isArray(durationField.options) && durationField.options.length ? durationField.options.map(Number).filter(Number.isFinite) : [5, 10, 15];
     const durationValue = Number(settings.videoDuration);
     const v = Number.isFinite(durationValue) && durationValue > 0 ? durationValue : 5;
     settings.videoDuration = v;
-    const aspectOptions = [
-        ['16:9','16:9'], ['4:3','4:3'], ['1:1','1:1'], ['3:4','3:4'], ['9:16','9:16'], ['21:9','21:9']
-    ];
+    const aspectField = canvasSchemaField('video', 'videoAspect');
+    const aspectName = canvasSchemaFieldName('video', 'videoAspect', tr('smart.videoAspect'));
+    const aspectOptions = (Array.isArray(aspectField.options) && aspectField.options.length ? aspectField.options : ['16:9','4:3','1:1','3:4','9:16','21:9']).map(value => [value, canvasSchemaOptionLabel(aspectField, value)]);
     const aspect = settings.videoAspect || '16:9';
     const aspectLabels = Object.fromEntries(aspectOptions);
-    const resolutionOptions = [['480p','480p'], ['720p','720p'], ['1080p','1080p']];
+    const resolutionField = canvasSchemaField('video', 'videoResolution');
+    const resolutionName = canvasSchemaFieldName('video', 'videoResolution', tr('smart.videoResolution'));
+    const resolutionOptions = (Array.isArray(resolutionField.options) && resolutionField.options.length ? resolutionField.options : ['480p','720p','1080p']).map(value => [value, canvasSchemaOptionLabel(resolutionField, value)]);
     const resolution = settings.videoResolution || '480p';
     settings.videoResolution = resolution;
     const resolutionLabels = Object.fromEntries(resolutionOptions);
+    const durationLabel = canvasSchemaOptionLabel(durationField, v, String(v));
     const generationMode = videoGenerationMode();
     const generationModeOptions = [
         ['text', tr('smart.videoTextToVideo')],
-        ['multimodal', tr('smart.videoMultimodal')],
-        ['frames', tr('smart.videoUseFrameRoles')]
+        ['multimodal', canvasSchemaFieldName('video', 'videoMultimodal', tr('smart.videoMultimodal'))],
+        ['frames', canvasSchemaFieldName('video', 'videoUseFrameRoles', tr('smart.videoUseFrameRoles'))]
     ];
     const generationModeLabel = Object.fromEntries(generationModeOptions)[generationMode];
-    const summary = `${generationModeLabel}·${aspectLabels[aspect] || aspect}·${resolutionLabels[resolution] || resolution}·${v}s`;
+    const summary = `${generationModeLabel}·${aspectLabels[aspect] || aspect}·${resolutionLabels[resolution] || resolution}·${durationLabel}`;
     return `<div class="smart-control video-generation-control">
         <button class="smart-pill video-generation-summary" type="button" title="${escapeAttr(summary)}">
             <i data-lucide="sliders-horizontal"></i>
@@ -310,28 +315,28 @@ function renderVideoGenerationConfig(){
                 </div>
             </section>
             <section class="video-config-section">
-                <div class="video-config-label">${escapeHtml(tr('smart.videoAspect'))}</div>
+                <div class="video-config-label">${escapeHtml(aspectName)}</div>
                 <div class="ratio-grid video-config-ratio-grid">
                     ${aspectOptions.map(([value,label]) => `<button type="button" class="ratio-option ${value === aspect ? 'active' : ''}" data-smart-param="videoAspect" data-smart-value="${escapeAttr(value)}"><span class="ratio-icon ${videoAspectIconClass(value)}"></span><span>${escapeHtml(label)}</span></button>`).join('')}
                 </div>
             </section>
             <div class="video-config-detail-grid">
                 <section class="video-config-section">
-                    <div class="video-config-label">${escapeHtml(tr('smart.videoResolution'))}</div>
+                    <div class="video-config-label">${escapeHtml(resolutionName)}</div>
                     <div class="video-config-resolution-grid">
                         ${resolutionOptions.map(([value,label]) => `<button type="button" class="video-config-option ${value === resolution ? 'active' : ''}" data-smart-param="videoResolution" data-smart-value="${escapeAttr(value)}"><span>${escapeHtml(label)}</span></button>`).join('')}
                     </div>
                 </section>
                 <section class="video-config-section">
-                    <div class="video-config-label">${escapeHtml(tr('smart.videoDuration'))}</div>
+                    <div class="video-config-label">${escapeHtml(durationName)}</div>
                     <div class="duration-grid">
-                        ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" data-smart-param="videoDuration" data-smart-value="${n}">${n}s</button>`).join('')}
-                        <input class="duration-custom-input ${quick.includes(v) ? '' : 'active'}" type="number" min="1" max="60" step="1" value="${quick.includes(v) ? '' : escapeAttr(v)}" placeholder="${escapeAttr(tr('smart.custom'))}" aria-label="${escapeAttr(tr('smart.videoDurationTip'))}" data-param="videoDuration">
+                        ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" data-smart-param="videoDuration" data-smart-value="${n}">${escapeHtml(canvasSchemaOptionLabel(durationField, n, n))}</button>`).join('')}
+                        <input class="duration-custom-input ${quick.includes(v) ? '' : 'active'}" type="number" min="${escapeAttr(durationField.min ?? 1)}" max="${escapeAttr(durationField.max ?? 60)}" step="${escapeAttr(durationField.step ?? 1)}" value="${quick.includes(v) ? '' : escapeAttr(v)}" placeholder="${escapeAttr(tr('smart.custom'))}" aria-label="${escapeAttr(durationName)}" data-param="videoDuration">
                     </div>
                 </section>
             </div>
             <section class="video-config-section video-config-flags">
-                <div class="video-config-label">${escapeHtml(tr('smart.videoGenerateAudio'))}</div>
+                <div class="video-config-label">${escapeHtml(canvasSchemaFieldName('video', 'videoGenerateAudio', tr('smart.videoGenerateAudio')))}</div>
                 <div class="video-config-toggle-row">
                     <div class="video-config-audio-grid">
                         <button type="button" class="video-config-option ${settings.videoGenerateAudio ? 'active' : ''}" data-video-audio="on"><span>${escapeHtml(tr('smart.audioOn'))}</span></button>
@@ -348,6 +353,70 @@ function renderVideoToggleControl(key, label){
 }
 function optionHtml(value, label, selected){
     return `<option value="${escapeHtml(value)}" ${String(value) === String(selected) ? 'selected' : ''}>${escapeHtml(label ?? value)}</option>`;
+}
+const canvasParameterSchemaCache = new Map();
+const canvasParameterSchemaTarget = {image:'', video:''};
+function defaultCanvasParameterSchema(kind){
+    if(kind === 'video') return {fields:[
+        {id:'videoDuration', default:5, options:[5,10,15], min:1, max:60, step:1},
+        {id:'videoAspect', default:'16:9', options:['16:9','4:3','1:1','3:4','9:16','21:9']},
+        {id:'videoResolution', default:'480p', options:['480p','720p','1080p']}
+    ]};
+    return {fields:[
+        {id:'resolution', default:'1k', options:['1k','2k','4k','custom']},
+        {id:'ratio', default:'1:1', options:['1:1','2:3','3:2','3:4','4:3','9:16','16:9','21:9','9:21','source','custom']},
+        {id:'quality', default:'auto', options:['auto','low','medium','high']},
+        {id:'count', default:1, min:1, max:4, step:1}
+    ]};
+}
+function canvasSchemaField(kind, id){
+    const schema = canvasParameterSchemaCache.get(`${kind}:active`) || defaultCanvasParameterSchema(kind);
+    return (schema.fields || []).find(field => field.id === id) || (defaultCanvasParameterSchema(kind).fields || []).find(field => field.id === id) || {};
+}
+function canvasSchemaFieldName(kind, id, fallback){
+    return String(canvasSchemaField(kind, id).name || fallback || id);
+}
+function canvasSchemaOptionLabel(field, value, fallback=value){
+    const options = Array.isArray(field?.options) ? field.options : [];
+    const labels = Array.isArray(field?.option_labels) ? field.option_labels : [];
+    const index = options.findIndex(option => String(option) === String(value));
+    return index >= 0 && labels[index] !== undefined && labels[index] !== '' ? String(labels[index]) : String(fallback ?? value);
+}
+function applyCanvasSchemaDefaults(kind, schema){
+    for(const field of schema?.fields || []){
+        const key = field?.id;
+        if(!key || ['provider_id','model','videoProvider','videoModel'].includes(key)) continue;
+        const options = Array.isArray(field.options) ? field.options : [];
+        const current = settings[key];
+        if(current === undefined || current === null || current === '' || (options.length && !options.some(value => String(value) === String(current)))){
+            settings[key] = field.default !== undefined ? field.default : (options[0] ?? current);
+        }
+    }
+}
+async function refreshCanvasParameterSchema(kind, providerId, model){
+    if(!providerId) return;
+    const key = `${kind}:${providerId}:${model || ''}`;
+    canvasParameterSchemaTarget[kind] = key;
+    const activate = schema => {
+        // Schema requests are asynchronous while selection changes are not.
+        // Only the selected node/model may update the shared rendered schema.
+        if(canvasParameterSchemaTarget[kind] !== key) return;
+        canvasParameterSchemaCache.set(`${kind}:active`, schema);
+        applyCanvasSchemaDefaults(kind, schema);
+        renderDynamicParams();
+    };
+    if(canvasParameterSchemaCache.has(key)){
+        activate(canvasParameterSchemaCache.get(key));
+        return;
+    }
+    try {
+        const query = new URLSearchParams({capability:kind === 'video' ? 'video.text_to_video' : 'image.text_to_image', provider_id:providerId, model:model || ''});
+        const response = await fetch(`/api/canvas/capability-parameters?${query.toString()}`, {credentials:'same-origin'});
+        if(!response.ok) return;
+        const schema = await response.json();
+        canvasParameterSchemaCache.set(key, schema);
+        activate(schema);
+    } catch (_) { /* Keep the backend-compatible default schema on network failure. */ }
 }
 function parseSizeValue(value){
     const match = String(value || '').trim().match(/^(\d+)\s*[xX*]\s*(\d+)$/);
@@ -367,8 +436,8 @@ function apiImageSize(ratioValue, resolutionValue, customRatioValue='', customSi
     if(ratioValue === 'source'){
         // 适配比例：已在 applySourceRatioToSettings 里用原图宽高比匹配好最接近的标准比例档位，
         // 直接取该档位在当前分辨率下的预设尺寸，不再做任何和分辨率相关的比例计算。
-        const key = matchedRatioKey && SIZE_MAP[matchedRatioKey] ? matchedRatioKey : 'square';
-        return SIZE_MAP[key]?.[resolutionKey] || SIZE_MAP.square[resolutionKey] || SIZE_MAP.square['1k'];
+        const key = matchedRatioKey && SIZE_MAP[matchedRatioKey] ? matchedRatioKey : '1:1';
+        return SIZE_MAP[key]?.[resolutionKey] || SIZE_MAP['1:1'][resolutionKey] || SIZE_MAP['1:1']['1k'];
     }
     if(ratioValue === 'custom'){
         const parsed = parseRatioValue(customRatioValue);
@@ -382,8 +451,8 @@ function apiImageSize(ratioValue, resolutionValue, customRatioValue='', customSi
             return `${Math.max(64, width)}x${Math.max(64, height)}`;
         }
     }
-    const ratioKey = ratioValue && SIZE_MAP[ratioValue] ? ratioValue : 'square';
-    return SIZE_MAP[ratioKey]?.[resolutionKey] || SIZE_MAP.square[resolutionKey] || SIZE_MAP.square['1k'];
+    const ratioKey = ratioValue && SIZE_MAP[ratioValue] ? ratioValue : '1:1';
+    return SIZE_MAP[ratioKey]?.[resolutionKey] || SIZE_MAP['1:1'][resolutionKey] || SIZE_MAP['1:1']['1k'];
 }
 function normalizeApiSizeSettings(prefix=''){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
@@ -686,7 +755,7 @@ function renderSizeControls(prefix='', includeSource=false){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';
     const ratios = [
-        ['square','1:1'], ['portrait','2:3'], ['landscape','3:2'], ['portrait43','3:4'], ['landscape43','4:3'], ['story','9:16'], ['wide','16:9'], ['ultrawide','21:9'], ['ultratall','9:21'],
+        ['1:1','1:1'], ['2:3','2:3'], ['3:2','3:2'], ['3:4','3:4'], ['4:3','4:3'], ['9:16','9:16'], ['16:9','16:9'], ['21:9','21:9'], ['9:21','9:21'],
         ...(includeSource ? [['source', tr('canvas.adaptiveRatio') || '适配比例']] : []),
         ['custom', tr('canvas.custom') || '自定义']
     ];
@@ -694,14 +763,8 @@ function renderSizeControls(prefix='', includeSource=false){
             ${['1k','2k','4k','custom'].map(v => optionHtml(v, v === 'custom' ? (tr('canvas.custom') || '自定义') : v.toUpperCase(), settings[resKey] || '1k')).join('')}
         </select>
         <select data-param="${ratioKey}" ${settings[resKey] === 'custom' ? 'disabled' : ''}>
-            ${ratios.map(([v,l]) => `<option value="${escapeHtml(v)}" ${v === (settings[ratioKey] || 'square') ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+            ${ratios.map(([v,l]) => `<option value="${escapeHtml(v)}" ${v === (settings[ratioKey] || '1:1') ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
         </select>`;
-}
-function ratioLabel(prefix=''){
-    const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
-    const customKey = prefix ? `${prefix}CustomRatio` : 'customRatio';
-    const map = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21', source:tr('smart.imageRatio'), custom:settings[customKey] || tr('smart.custom')};
-    return map[settings[ratioKey] || 'square'] || '1:1';
 }
 function gcdInt(a, b){
     a = Math.abs(Math.round(Number(a) || 0));
@@ -732,14 +795,14 @@ function sourceRatioCandidateImageForNode(node){
 }
 // 标准比例表：与 SIZE_MAP / renderRatioControl 保持一致的 9 个预设档位
 const STANDARD_RATIO_CHOICES = [
-    ['square', 1, 1], ['portrait', 2, 3], ['landscape', 3, 2], ['portrait43', 3, 4], ['landscape43', 4, 3],
-    ['story', 9, 16], ['wide', 16, 9], ['ultrawide', 21, 9], ['ultratall', 9, 21]
+    ['1:1', 1, 1], ['2:3', 2, 3], ['3:2', 3, 2], ['3:4', 3, 4], ['4:3', 4, 3],
+    ['9:16', 9, 16], ['16:9', 16, 9], ['21:9', 21, 9], ['9:21', 9, 21]
 ];
 // 直接用原图宽高比匹配最接近的标准比例档位（不经过任何分辨率相关的计算），
 // 避免比例匹配结果随所选分辨率（1K/2K/4K）漂移。
 function closestStandardRatioKey(width, height){
     const w = Number(width) || 0, h = Number(height) || 0;
-    if(!w || !h) return 'square';
+    if(!w || !h) return '1:1';
     const ratio = w / h;
     let best = STANDARD_RATIO_CHOICES[0];
     let bestDiff = Infinity;
@@ -776,19 +839,13 @@ function applySourceRatioToSettings(prefix='', node=activeComposerNode() || sele
     targetSettings[`${ratioKey}Matched`] = matchedKey;
     return true;
 }
-function resolutionLabel(prefix=''){
-    const resKey = prefix ? `${prefix}Resolution` : 'resolution';
-    const sizeKey = prefix ? `${prefix}CustomSize` : 'customSize';
-    const value = settings[resKey] || '1k';
-    return value === 'custom' ? (settings[sizeKey] || tr('smart.custom')) : value.toUpperCase();
-}
 function ratioIconClass(value){
-    if(value === 'portrait') return 'r-portrait';
-    if(value === 'portrait43') return 'r-portrait43';
-    if(value === 'landscape') return 'r-landscape';
-    if(value === 'landscape43') return 'r-landscape43';
-    if(value === 'wide' || value === 'ultrawide') return 'r-wide';
-    if(value === 'story' || value === 'ultratall') return 'r-story';
+    if(value === '2:3') return 'r-portrait';
+    if(value === '3:4') return 'r-portrait43';
+    if(value === '3:2') return 'r-landscape';
+    if(value === '4:3') return 'r-landscape43';
+    if(value === '16:9' || value === '21:9') return 'r-wide';
+    if(value === '9:16' || value === '9:21') return 'r-story';
     if(value === 'source') return 'r-source';
     if(value === 'custom') return 'r-custom';
     return '';
@@ -832,34 +889,40 @@ function renderModelControl(models, restricted){
 }
 function renderRatioControl(prefix='', includeSource=false, allowCustom=true){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
-    const resKey = prefix ? `${prefix}Resolution` : 'resolution';
-    if(!allowCustom && settings[ratioKey] === 'custom') settings[ratioKey] = 'square';
-    const ratios = [
-        ['square','1:1'], ['portrait','2:3'], ['landscape','3:2'], ['portrait43','3:4'], ['landscape43','4:3'],
-        ['story','9:16'], ['wide','16:9'], ['ultrawide','21:9'], ['ultratall','9:21'],
-        ...(includeSource ? [['source', tr('smart.imageRatio')]] : []),
-        ...(allowCustom ? [['custom', tr('smart.custom')]] : [])
-    ];
+    if(!allowCustom && settings[ratioKey] === 'custom') settings[ratioKey] = '1:1';
+    const ratioField = canvasSchemaField('image', 'ratio');
+    const ratioName = canvasSchemaFieldName('image', 'ratio', tr('smart.ratio'));
+    const ratioValues = Array.isArray(ratioField.options) && ratioField.options.length ? ratioField.options : ['1:1','2:3','3:2','3:4','4:3','9:16','16:9','21:9','9:21','source','custom'];
+    const ratios = ratioValues.filter(value => (includeSource || value !== 'source') && (allowCustom || value !== 'custom')).map(value => [value, canvasSchemaOptionLabel(ratioField, value, value)]);
+    const ratioValue = settings[ratioKey] || '1:1';
+    const customKey = prefix ? `${prefix}CustomRatio` : 'customRatio';
+    const ratioSummary = canvasSchemaOptionLabel(ratioField, ratioValue, ratioValue === 'custom' ? (settings[customKey] || ratioValue) : ratioValue);
     return `<div class="smart-control ratio-control">
-        <button class="smart-pill" type="button"><i data-lucide="scan"></i><span>${escapeHtml(ratioLabel(prefix))}</span></button>
+        <button class="smart-pill" type="button" title="${escapeAttr(ratioName)}"><i data-lucide="scan"></i><span>${escapeHtml(ratioSummary)}</span></button>
         <div class="smart-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.ratio'))}</div>
+            <div class="smart-popover-title">${escapeHtml(ratioName)}</div>
             <div class="ratio-grid">
-                ${ratios.map(([value, label]) => `<button type="button" class="ratio-option ${value === (settings[ratioKey] || 'square') ? 'active' : ''}" data-smart-param="${ratioKey}" data-smart-value="${escapeHtml(value)}"><span class="ratio-icon ${ratioIconClass(value)}"></span><span>${escapeHtml(label)}</span></button>`).join('')}
+                ${ratios.map(([value, label]) => `<button type="button" class="ratio-option ${value === (settings[ratioKey] || '1:1') ? 'active' : ''}" data-smart-param="${ratioKey}" data-smart-value="${escapeHtml(value)}"><span class="ratio-icon ${ratioIconClass(value)}"></span><span>${escapeHtml(label)}</span></button>`).join('')}
             </div>
         </div>
     </div>`;
 }
 function renderResolutionControl(prefix='', allowCustom=true){
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';
-    const options = allowCustom ? ['1k','2k','4k','custom'] : ['1k','2k','4k'];
+    const resolutionField = canvasSchemaField('image', 'resolution');
+    const resolutionName = canvasSchemaFieldName('image', 'resolution', tr('smart.resolution'));
+    const configured = Array.isArray(resolutionField.options) && resolutionField.options.length ? resolutionField.options : ['1k','2k','4k','custom'];
+    const options = configured.filter(value => allowCustom || value !== 'custom');
     if(!allowCustom && settings[resKey] === 'custom') settings[resKey] = '1k';
+    const resolutionValue = settings[resKey] || '1k';
+    const customSizeKey = prefix ? `${prefix}CustomSize` : 'customSize';
+    const resolutionSummary = canvasSchemaOptionLabel(resolutionField, resolutionValue, resolutionValue === 'custom' ? (settings[customSizeKey] || resolutionValue) : resolutionValue);
     return `<div class="smart-control resolution-control">
-        <button class="smart-pill" type="button"><i data-lucide="monitor"></i><span>${escapeHtml(resolutionLabel(prefix))}</span></button>
+        <button class="smart-pill" type="button" title="${escapeAttr(resolutionName)}"><i data-lucide="monitor"></i><span>${escapeHtml(resolutionSummary)}</span></button>
         <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.resolution'))}</div>
+            <div class="smart-popover-title">${escapeHtml(resolutionName)}</div>
             <div class="seg-row">
-                ${options.map(value => `<button type="button" class="${value === (settings[resKey] || '1k') ? 'active' : ''}" data-smart-param="${resKey}" data-smart-value="${value}">${value === 'custom' ? escapeHtml(tr('smart.custom')) : value.toUpperCase()}</button>`).join('')}
+                ${options.map(value => `<button type="button" class="${value === (settings[resKey] || '1k') ? 'active' : ''}" data-smart-param="${resKey}" data-smart-value="${value}">${escapeHtml(canvasSchemaOptionLabel(resolutionField, value, value))}</button>`).join('')}
             </div>
         </div>
     </div>`;
@@ -891,25 +954,34 @@ function renderInlineCustomSizeFields(prefix=''){
 }
 function renderQualityControl(){
     const value = settings.quality || 'auto';
-    const labels = {auto:tr('smart.qualityAuto'), low:tr('smart.qualityLow'), medium:tr('smart.qualityMid'), high:tr('smart.qualityHigh')};
+    const qualityField = canvasSchemaField('image', 'quality');
+    const qualityName = canvasSchemaFieldName('image', 'quality', tr('smart.quality'));
+    const options = Array.isArray(qualityField.options) && qualityField.options.length ? qualityField.options : ['auto','low','medium','high'];
+    const qualitySummary = canvasSchemaOptionLabel(qualityField, value, value);
     return `<div class="smart-control quality-control">
-        <button class="smart-pill" type="button"><i data-lucide="sliders-horizontal"></i><span>${escapeHtml(labels[value] || value)}</span></button>
+        <button class="smart-pill" type="button" title="${escapeAttr(qualityName)}"><i data-lucide="sliders-horizontal"></i><span>${escapeHtml(qualitySummary)}</span></button>
         <div class="smart-popover compact-popover">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.quality'))}</div>
+            <div class="smart-popover-title">${escapeHtml(qualityName)}</div>
             <div class="seg-row">
-                ${Object.entries(labels).map(([k, l]) => `<button type="button" class="${k === value ? 'active' : ''}" data-smart-param="quality" data-smart-value="${escapeHtml(k)}">${escapeHtml(l)}</button>`).join('')}
+                ${options.map(k => `<button type="button" class="${k === value ? 'active' : ''}" data-smart-param="quality" data-smart-value="${escapeHtml(k)}">${escapeHtml(canvasSchemaOptionLabel(qualityField, k, k))}</button>`).join('')}
             </div>
         </div>
     </div>`;
 }
 function renderCountVisualControl(){
     const value = Number(settings.count || 1);
+    const field = canvasSchemaField('image', 'count');
+    const countName = canvasSchemaFieldName('image', 'count', tr('smart.count'));
+    const min = Number(field.min ?? 1), max = Number(field.max ?? 4), step = Number(field.step ?? 1);
+    const values = [];
+    for(let n=min; n<=max; n+=step) values.push(n);
+    const countSummary = canvasSchemaOptionLabel(field, value, value);
     return `<div class="smart-control count-control">
-        <button class="smart-pill" type="button"><i data-lucide="copy"></i><span>${value}${tr('smart.countUnit') ? ' ' + escapeHtml(tr('smart.countUnit')) : ''}</span></button>
+        <button class="smart-pill" type="button" title="${escapeAttr(countName)}"><i data-lucide="copy"></i><span>${escapeHtml(countSummary)}</span></button>
         <div class="smart-popover compact-popover" style="min-width:170px">
-            <div class="smart-popover-title">${escapeHtml(tr('smart.count'))}</div>
+            <div class="smart-popover-title">${escapeHtml(countName)}</div>
             <div class="count-grid">
-                ${[1,2,3,4].map(n => `<button type="button" class="count-cell ${n === value ? 'active' : ''}" data-smart-param="count" data-smart-value="${n}">${n}</button>`).join('')}
+                ${values.map(n => `<button type="button" class="count-cell ${n === value ? 'active' : ''}" data-smart-param="count" data-smart-value="${n}">${escapeHtml(canvasSchemaOptionLabel(field, n, n))}</button>`).join('')}
             </div>
         </div>
     </div>`;
@@ -1318,6 +1390,8 @@ function setDynamicSetting(key, value, providerId=''){
     settings[key] = numericKeys.has(key) && value !== '' ? Number(value) : value;
     if(key === 'provider_id') settings.model = '';
     if(key === 'videoProvider') settings.videoModel = '';
+    if(key === 'provider_id' || key === 'model') void refreshCanvasParameterSchema('image', settings.provider_id, settings.model);
+    if(key === 'videoProvider' || key === 'videoModel') void refreshCanvasParameterSchema('video', settings.videoProvider, settings.videoModel);
     if(key === 'videoMultimodal' && settings.videoMultimodal) settings.videoUseFrameRoles = false;
     if(key === 'videoUseFrameRoles' && settings.videoUseFrameRoles) settings.videoMultimodal = false;
     if(key === 'workflowSource'){
@@ -1333,12 +1407,12 @@ function setDynamicSetting(key, value, providerId=''){
     }
     if(key === 'resolution'){
         if(settings.resolution === 'custom') settings.ratio = '';
-        else if(!settings.ratio) settings.ratio = 'square';
+        else if(!settings.ratio) settings.ratio = '1:1';
     }
     if(key === 'ratio') applySourceRatioToSettings('');
     if(key === 'msResolution'){
         if(settings.msResolution === 'custom') settings.msRatio = '';
-        else if(!settings.msRatio) settings.msRatio = 'square';
+        else if(!settings.msRatio) settings.msRatio = '1:1';
     }
     if(key === 'msRatio') applySourceRatioToSettings('ms');
     if(key === 'customRatioWidth' || key === 'customRatioHeight') settings.customRatio = settings.customRatioWidth && settings.customRatioHeight ? `${settings.customRatioWidth}:${settings.customRatioHeight}` : '';
@@ -1564,10 +1638,17 @@ function bindDynamicParams(){
         };
     });
 }
-async function loadConfig(){
+async function loadConfig({invalidateParameterSchemas=false}={}){
     try {
         const cfg = await fetch('/api/config').then(r => r.json());
         apiProviders = Array.isArray(cfg.api_providers) ? cfg.api_providers : [];
+        if(invalidateParameterSchemas) canvasParameterSchemaCache.clear();
+        const imageProvider = imageProviders().find(provider => provider.id === settings.provider_id) || imageProviders()[0];
+        const videoProvider = videoApiProviders().find(provider => provider.id === settings.videoProvider) || videoApiProviders()[0];
+        await Promise.all([
+            refreshCanvasParameterSchema('image', imageProvider?.id || '', settings.model || imageProvider?.image_models?.[0] || ''),
+            refreshCanvasParameterSchema('video', videoProvider?.id || '', settings.videoModel || videoProvider?.video_models?.[0] || ''),
+        ]);
         comfyInstanceCount = Math.max(1, (Array.isArray(cfg.comfy_instances) ? cfg.comfy_instances : []).filter(Boolean).length || 1);
         // 根据 provider 启用状态隐藏引擎选项
         syncEngineOptionsVisibility();
@@ -1583,8 +1664,8 @@ async function loadConfig(){
         toast(tr('smart.toastApiSettingsFail'));
     }
 }
-async function refreshSmartConfigFromSettings(){
-    await loadConfig();
+async function refreshSmartConfigFromSettings({invalidateParameterSchemas=false}={}){
+    await loadConfig({invalidateParameterSchemas});
     renderDynamicParams();
     const node = selectedNode();
     if(node?.type === 'smart-prompt') {

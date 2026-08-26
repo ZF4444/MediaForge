@@ -1,21 +1,76 @@
 """Versioned, provider-neutral contracts for the Canvas Agent runtime."""
 from __future__ import annotations
 
-from typing import Any, Literal
-from pydantic import BaseModel, Field, ConfigDict
+import json
+from typing import Annotated, Any, Literal
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, WithJsonSchema
 
 SCHEMA_VERSION = 1
+
+
+def _decode_json_object(value: Any) -> dict[str, Any]:
+    """Accept provider-native JSON strings while retaining dicts in the domain model."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("must be a JSON object string") from exc
+    if not isinstance(value, dict):
+        raise ValueError("must be an object")
+    return value
+
+
+# Azure/OpenAI strict JSON Schema forbids arbitrary object properties. The
+# provider therefore emits these extensible fields as JSON strings, which the
+# validator converts back to dictionaries before they reach the executor.
+NativeJsonObject = Annotated[
+    dict[str, Any],
+    BeforeValidator(_decode_json_object),
+    WithJsonSchema({"type": "string", "description": "JSON-encoded object"}),
+]
+
+
+def _make_native_schema_strict(schema: Any) -> None:
+    if isinstance(schema, dict):
+        schema.pop("default", None)
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            schema["required"] = list(properties)
+            schema["additionalProperties"] = False
+            for property_schema in properties.values():
+                _make_native_schema_strict(property_schema)
+        for key, value in schema.items():
+            if key != "properties":
+                _make_native_schema_strict(value)
+    elif isinstance(schema, list):
+        for item in schema:
+            _make_native_schema_strict(item)
 
 class ProtocolModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
 
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        schema = super().model_json_schema(*args, **kwargs)
+        _make_native_schema_strict(schema)
+        return schema
+
+SemanticNodeType = Literal[
+    "prompt", "image_generation", "video_generation", "workflow_generation", "group",
+    "smart-prompt", "smart-image", "smart-group",
+]
+
+
 class SemanticNode(ProtocolModel):
-    semantic_type: str
-    title: str = ""
-    content: str = ""
-    capability: str = ""
-    params: dict[str, Any] = Field(default_factory=dict)
+    semantic_type: SemanticNodeType = Field(
+        description="Canvas node kind. Use image_generation for image nodes, video_generation for video nodes, "
+        "workflow_generation for ComfyUI/RH workflow nodes, and prompt for prompt nodes. Never use a capability name here."
+    )
+    title: str = Field(default="", description="Short node title.")
+    content: str = Field(default="", description="Prompt text or replacement content.")
+    capability: str = Field(default="", description="Capability selected from read_capability_registry, for example image.text_to_image or prompt.generate.")
+    params: NativeJsonObject = Field(default_factory=dict)
 
 class SemanticStep(ProtocolModel):
     id: str
@@ -25,6 +80,7 @@ class SemanticStep(ProtocolModel):
     from_step: str = ""
     to_step: str = ""
     relation: str = ""
+    placement: NativeJsonObject = Field(default_factory=dict)
 
 class PlanExecution(ProtocolModel):
     auto_run: bool = False
@@ -43,6 +99,12 @@ class SemanticPlan(ProtocolModel):
     steps: list[SemanticStep] = Field(default_factory=list)
     execution: PlanExecution = Field(default_factory=PlanExecution)
     confirmation: PlanConfirmation = Field(default_factory=PlanConfirmation)
+
+
+class IntentDecision(ProtocolModel):
+    """First-stage routing result for a Canvas Agent message."""
+    intent: Literal["canvas_action", "chat", "clarification"]
+    reply: str = ""
 
 class PatchOperation(ProtocolModel):
     op: Literal["add_node", "update_node_params", "replace_node_content", "add_connection", "remove_connection", "add_group", "move_node", "run_node", "run_group"]

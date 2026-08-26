@@ -163,20 +163,17 @@ npm test
 当前应用版本记录在根目录 `VERSION` 文件中。发布新版本时，在项目根目录执行：
 
 ```bash
-# 1. 修改 VERSION，例如 1.3.7 -> 1.3.8
-printf '1.3.8\n' > VERSION
+# 递增 VERSION 的补丁号并重建前端
+./scripts/rebuild-frontend.sh
 
-# 2. 安装依赖并重新构建前端
-cd frontend
-npm ci
-npm run build
-npm test
-cd ..
-
-# 3. 检查改动
+# 检查改动
 git diff --check
 git status
 ```
+
+脚本要求 `VERSION` 使用 `X.Y.Z` 格式，并只递增最后一位，例如 `1.3.7` 变为
+`1.3.8`。首次构建或 `package-lock.json` 变更后，仍需先在 `frontend/` 中运行
+`npm ci`。
 
 提交发布代码时，`VERSION` 必须和源码一起提交。页面路由会读取该文件并为静态资源注入版本参数，用于浏览器缓存更新；只修改版本号不会重新生成前端代码，修改前端代码也不会自动更新版本号。
 

@@ -1029,7 +1029,7 @@ input[type=range].smart-range::-webkit-slider-thumb { -webkit-appearance:none; w
 .ref-line { display:none; }
 .ref-thumb { width:30px; height:30px; border-radius:8px; object-fit:cover; border:1px solid var(--line); background:var(--soft); flex:0 0 auto; }
 .ref-chip { height:20px; max-width:130px; padding:0 7px; border-radius:999px; display:inline-flex; align-items:center; background:var(--soft); border:1px solid var(--line); color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.canvas-minimap { position:absolute; right:22px; bottom:22px; z-index:8; width:190px; height:128px; border-radius:18px; background:var(--panel); border:1px solid var(--line); box-shadow:0 18px 44px var(--shadow); backdrop-filter:blur(16px); overflow:hidden; pointer-events:auto; cursor:crosshair; }
+.canvas-minimap { position:absolute; left:22px; bottom:22px; z-index:8; width:190px; height:128px; border-radius:18px; background:var(--panel); border:1px solid var(--line); box-shadow:0 18px 44px var(--shadow); backdrop-filter:blur(16px); overflow:hidden; pointer-events:auto; cursor:crosshair; }
 .canvas-minimap-content { position:absolute; inset:10px; border-radius:12px; overflow:hidden; background-image:radial-gradient(var(--grid) 1px, transparent 1px); background-size:12px 12px; opacity:.95; }
 .minimap-node { position:absolute; min-width:4px; min-height:4px; border-radius:3px; background:var(--strong); opacity:.8; }
 .canvas-minimap-viewport { position:absolute; border-radius:8px; border:2px solid var(--strong); background:rgba(255,255,255,.12); }

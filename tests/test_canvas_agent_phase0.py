@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.models.canvas_agent import SemanticPlan
@@ -5,7 +7,7 @@ from app.services.canvas_agent.adapter import semantic_plan_to_patch
 from app.services.canvas_agent.capabilities import CapabilityRegistry
 from app.services.canvas_agent.policy import assess_patch, validate_patch
 from app.services.canvas_agent.evaluation import evaluate_plan
-from app.services.canvas_agent.runtime import ReadOnlyCanvasBackend, create_canvas_agent
+from app.services.canvas_agent.runtime import create_canvas_agent
 
 def test_semantic_plan_converts_to_versioned_patch():
     plan = SemanticPlan.model_validate({"goal": "create visual", "steps": [
@@ -19,15 +21,241 @@ def test_semantic_plan_converts_to_versioned_patch():
     assert [item.op for item in patch.operations] == ["add_node", "add_node", "add_connection"]
     validate_patch(patch)
 
+def test_semantic_node_type_is_constrained_and_generation_nodes_match_canvas_contract():
+    with pytest.raises(Exception):
+        SemanticPlan.model_validate({"goal": "invalid", "steps": [{"id": "bad", "action": "canvas.create_node", "node": {"semantic_type": "capability"}}]})
+    plan = SemanticPlan.model_validate({"goal": "image", "steps": [{"id": "image", "action": "canvas.create_node", "node": {"semantic_type": "image_generation", "capability": "image.text_to_image"}}]})
+    node = semantic_plan_to_patch(plan, "canvas-1", 1).operations[0].node
+    assert node["type"] == "smart-image"
+    assert node["genKind"] == "image"
+    assert node["runSettings"] == {"engine": "api", "apiKind": "image"}
+
+
+def test_agent_generation_node_preserves_manual_run_settings_contract():
+    plan = SemanticPlan.model_validate({
+        "goal": "猫狗大战",
+        "steps": [{
+            "id": "step_create_catdog_2k_t2i_v2",
+            "action": "canvas.create_node",
+            "node": {
+                "semantic_type": "image_generation",
+                "title": "猫狗大战（2K生图）",
+                "content": "猫狗大战",
+                "capability": "image.text_to_image",
+                "params": {"runSettings": {
+                    "count": 1,
+                    "model": "gemini-3.1-flash-image-preview",
+                    "ratio": "1:1",
+                    "quality": "auto",
+                    "resolution": "2k",
+                    "provider_id": "custom-api-2",
+                }},
+            },
+        }],
+    })
+    node = semantic_plan_to_patch(plan, "canvas-1", 36).operations[0].node
+    assert node["genKind"] == "image"
+    assert node["runSettings"]["engine"] == "api"
+    assert node["runSettings"]["apiKind"] == "image"
+    assert node["runSettings"]["provider_id"] == "custom-api-2"
+    assert node["runSettings"]["resolution"] == "2k"
+    assert node["text"] == "猫狗大战"
+    assert "provider_id" not in node
+
+
+def test_agent_generation_node_accepts_legacy_flat_settings():
+    plan = SemanticPlan.model_validate({
+        "goal": "image",
+        "steps": [{
+            "id": "image",
+            "action": "canvas.create_node",
+            "node": {
+                "semantic_type": "image_generation",
+                "params": {"provider_id": "custom-api-2", "model": "demo", "ratio": "1:1"},
+            },
+        }],
+    })
+    node = semantic_plan_to_patch(plan, "canvas-1", 1).operations[0].node
+    assert node["runSettings"]["provider_id"] == "custom-api-2"
+    assert node["runSettings"]["model"] == "demo"
+    assert node["runSettings"]["ratio"] == "1:1"
+
+
+def test_agent_node_placement_avoids_existing_and_same_patch_overlaps():
+    plan = SemanticPlan.model_validate({
+        "goal": "create images",
+        "steps": [
+            {"id": "first", "action": "canvas.create_node", "placement": {"x": 560, "y": 640}, "node": {"semantic_type": "image_generation"}},
+            {"id": "second", "action": "canvas.create_node", "placement": {"x": 560, "y": 640}, "node": {"semantic_type": "image_generation"}},
+        ],
+    })
+    canvas = {"nodes": [
+        {"id": "a", "x": 560, "y": 640, "type": "smart-image"},
+        {"id": "b", "x": 760, "y": 820, "type": "smart-image"},
+    ]}
+    patch = semantic_plan_to_patch(plan, "canvas-1", 36, canvas)
+    placements = [operation.placement for operation in patch.operations]
+    assert placements == [{"x": 1120.0, "y": 820.0}, {"x": 1480.0, "y": 820.0}]
+
+
+def test_agent_node_placement_preserves_non_overlapping_model_suggestion():
+    plan = SemanticPlan.model_validate({
+        "goal": "create image",
+        "steps": [{"id": "image", "action": "canvas.create_node", "placement": {"x": 2000, "y": 100}, "node": {"semantic_type": "image_generation"}}],
+    })
+    patch = semantic_plan_to_patch(plan, "canvas-1", 1, {"nodes": [{"x": 0, "y": 0}]})
+    assert patch.operations[0].placement == {"x": 2000.0, "y": 100.0}
+
 def test_policy_marks_execution_as_confirmation_required():
     plan = SemanticPlan.model_validate({"goal": "run", "steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "agent-node"}]})
     patch = semantic_plan_to_patch(plan, "canvas-1", 1)
     assert assess_patch(patch)["requires_confirmation"] is True
 
 def test_registry_hides_disabled_provider_and_exposes_semantics():
-    registry = CapabilityRegistry([{"id": "a", "enabled": True, "image_models": ["img"], "video_models": ["vid"]}, {"id": "b", "enabled": False, "image_models": ["hidden"]}])
+    registry = CapabilityRegistry([{"id": "a", "enabled": True, "chat_models": ["chat"], "image_models": ["img"], "video_models": ["vid"]}, {"id": "b", "enabled": False, "chat_models": ["hidden-chat"], "image_models": ["hidden"]}])
+    assert registry.get("prompt.generate").model == "chat"
     assert registry.get("image.text_to_image").model == "img"
     assert registry.get("video.text_to_video").cost_level == "high"
+
+
+def test_provider_registry_default_loader_reads_cached_provider_configuration(monkeypatch):
+    import main
+    from app.services.canvas_agent import capabilities
+
+    monkeypatch.setattr(main, "load_api_providers", lambda: [{"id": "cached", "enabled": True, "image_models": ["image"]}])
+    monkeypatch.setattr(main, "refresh_api_providers_cache", lambda: (_ for _ in ()).throw(AssertionError("must not refresh from an async task path")))
+
+    registry = capabilities.from_provider_configuration()
+
+    assert registry.get("image.text_to_image").provider_id == "cached"
+
+def test_provider_registry_registers_enabled_comfyui_workflows():
+    from app.services.canvas_agent.capabilities import from_provider_configuration
+    registry = from_provider_configuration(
+        lambda: [{"id": "comfyui", "enabled": True}],
+        lambda: {"workflows": [
+            {"name": "custom/image.json", "title": "Image workflow", "media": "image", "field_count": 2},
+            {"name": "video.json", "title": "Video workflow", "media": "video", "field_count": 1},
+        ]},
+    )
+    assert registry.resolve("comfyui.workflow.image", requested_model="custom/image.json").provider_id == "comfyui"
+    assert registry.resolve("comfyui.workflow.video", requested_model="video.json").input_constraints["field_count"] == 1
+
+def test_capability_parameters_use_workflow_and_provider_sources():
+    from app.services.provider_parameters import capability_parameters
+    comfy = capability_parameters(
+        capability="comfyui.workflow.image", model="custom/demo.json",
+        provider_loader=lambda: [{"id": "comfyui", "enabled": True}],
+        workflow_loader=lambda _name: {"config": {"fields": [{"id": "seed", "type": "dropdown", "options": [1, 2]}]}},
+    )
+    assert comfy["fields"][0]["options"] == [1, 2]
+    assert comfy["params_path"] == "runSettings.comfyParams"
+    prompt = capability_parameters(
+        capability="prompt.generate", provider_id="chat", model="chat-1",
+        provider_loader=lambda: [{"id": "chat", "enabled": True, "chat_models": ["chat-1"]}],
+    )
+    assert prompt["fields"][1]["options"] == ["chat-1"]
+    assert prompt["params_path"] == "node"
+    rh = capability_parameters(
+        capability="runninghub.app.image", provider_id="runninghub", model="app-1",
+        provider_loader=lambda: [{"id": "runninghub", "enabled": True, "rh_apps": [{"id": "app-1", "fields": [{"nodeId": "1", "fieldName": "ratio", "fieldType": "SELECT", "fieldData": ["1:1", "16:9"]}]}]}],
+    )
+    assert rh["fields"][0]["options"] == ["1:1", "16:9"]
+
+
+def test_agent_parameter_tool_uses_injected_canvas_provider_source():
+    import asyncio
+    from app.services.canvas_agent.tools import build_canvas_tools
+
+    provider = {
+        "id": "custom-api-2", "enabled": True, "image_models": ["gemini-3-pro-image-preview"],
+        "parameter_schema": {"models": {"gemini-3-pro-image-preview": {"image": {"fields": [{
+            "id": "resolution", "options": ["1k", "2k", "4k"], "option_labels": ["1P", "2P", "4P"],
+        }]}}}},
+    }
+    tools = build_canvas_tools(
+        user_id="user", run_id="run", canvas_id="canvas", provider_loader=lambda: [provider],
+    )
+    read_parameters = next(item for item in tools if item.name == "read_capability_parameters")
+    schema = asyncio.run(read_parameters.ainvoke({
+        "capability": "image.text_to_image", "provider_id": "custom-api-2", "model": "gemini-3-pro-image-preview",
+    }))
+
+    resolution = next(field for field in schema["fields"] if field["id"] == "resolution")
+    assert schema["source"] == ["system.default", "provider.parameter_schema.models"]
+    assert resolution["option_labels"] == ["1P", "2P", "4P"]
+
+
+def test_agent_run_request_uses_the_target_image_node_settings():
+    from app.services.canvas_agent.task_dispatch import _image_request_for_node
+
+    capability = CapabilityRegistry([{
+        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
+    }]).get("image.text_to_image")
+    request = _image_request_for_node({
+        "id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词",
+        "runSettings": {"provider_id": "configured", "model": "configured-model", "count": 3, "quality": "high"},
+    }, capability, "计划提示词", None)
+
+    assert request["provider_id"] == "configured"
+    assert request["model"] == "configured-model"
+    assert request["prompt"] == "节点提示词"
+    assert request["n"] == 3
+    assert request["size"] == "1024x1024"
+    assert request["run_settings"]["quality"] == "high"
+
+
+def test_agent_run_request_uses_canvas_size_rules_for_custom_ratio_and_size():
+    from app.services.canvas_agent.task_dispatch import _image_request_for_node
+
+    capability = CapabilityRegistry([{
+        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
+    }]).get("image.text_to_image")
+    base = {"id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词"}
+
+    custom_ratio = _image_request_for_node({**base, "runSettings": {
+        "provider_id": "configured", "model": "configured-model", "ratio": "custom",
+        "customRatio": "3:2", "resolution": "1k",
+    }}, capability, "", None)
+    custom_size = _image_request_for_node({**base, "runSettings": {
+        "provider_id": "configured", "model": "configured-model", "resolution": "custom",
+        "customSize": "1200x800",
+    }}, capability, "", None)
+
+    assert custom_ratio["size"] == "1024x672"
+    assert custom_size["size"] == "1200x800"
+
+
+def test_agent_task_projects_queued_state_before_enqueue(monkeypatch):
+    from app.services.canvas_agent import task_dispatch
+    from app.services.canvas_agent import events
+    import main
+
+    capability = CapabilityRegistry([{
+        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
+    }]).get("image.text_to_image")
+    node = {"id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词"}
+    order = []
+
+    monkeypatch.setattr(task_dispatch, "load_canvas_payload", lambda *_args: {"nodes": [node]})
+    monkeypatch.setattr(task_dispatch, "from_provider_configuration", lambda: type("Registry", (), {"get": lambda *_args: capability})())
+    monkeypatch.setattr(task_dispatch, "_image_request_for_node", lambda *_args: {"provider_id": "provider", "model": "model", "n": 1})
+
+    async def create_task(_task): order.append("create")
+    async def enqueue_task(_task_id): order.append("enqueue")
+    async def emit_event(*_args, **_kwargs): order.append("queued_event")
+    async def assert_budget(*_args, **_kwargs): return None
+
+    monkeypatch.setattr(task_dispatch, "create_canvas_task", create_task)
+    monkeypatch.setattr(task_dispatch, "enqueue_canvas_task", enqueue_task)
+    monkeypatch.setattr(events, "emit_agent_event", emit_event)
+    monkeypatch.setattr(main, "require_model_access", lambda *_args: None)
+    monkeypatch.setattr(main, "get_api_provider", lambda *_args: {})
+    monkeypatch.setattr(main, "assert_provider_budget_available", assert_budget)
+
+    asyncio.run(task_dispatch.submit_run_requests("user", "canvas", "run", [{"op": "run_node", "node_id": "image-1"}], prompt=""))
+
+    assert order == ["create", "queued_event", "enqueue"]
 
 def test_fixed_evaluation_records_protocol_metrics():
     metrics = evaluate_plan("prompt-to-image", {"goal": "image", "steps": [
@@ -39,22 +267,10 @@ def test_fixed_evaluation_records_protocol_metrics():
     assert metrics["patch_validation_passed"] is True
     assert metrics["confirmation_consistent"] is True
 
-def test_deep_agents_harness_builds_without_general_purpose_subagent():
+def test_runtime_uses_explicit_planning_and_execution_graph():
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
-    agent = create_canvas_agent(model=FakeListChatModel(responses=["ok"]), harness_key="fakelistchatmodel")
-    assert "tools" in agent.nodes
-
-def test_deep_agents_runtime_is_read_only_and_interrupts_plan_submission(monkeypatch):
-    import deepagents
-    captured = {}
-    monkeypatch.setattr(deepagents, "create_deep_agent", lambda **kwargs: captured.update(kwargs) or object())
-    monkeypatch.setattr(deepagents, "register_harness_profile", lambda _key, profile: captured.setdefault("profile", profile))
-    create_canvas_agent(model="provider:model", harness_key="provider:model")
-    with pytest.raises(PermissionError): ReadOnlyCanvasBackend().write("x")
-    assert captured["subagents"] == []
-    assert captured["interrupt_on"] == {"submit_semantic_plan": True}
-    assert {"write_file", "edit_file", "execute", "delete_file", "task"}.issubset(captured["profile"].excluded_tools)
-    assert captured["profile"].general_purpose_subagent.enabled is False
+    agent = create_canvas_agent(model=FakeListChatModel(responses=["ok"]))
+    assert {"agent", "tools", "confirmation", "execute", "dispatch_tasks"}.issubset(agent.nodes)
 
 def test_langgraph_checkpoint_resumes_same_thread_with_command():
     from langgraph.checkpoint.memory import InMemorySaver
@@ -98,23 +314,65 @@ def test_model_planner_rejects_invalid_tool_calls_and_uses_command_resume(monkey
     from app.services.canvas_agent import planner, runtime
 
     calls = []
+    captured = {}
     class Agent:
         async def ainvoke(self, invocation, config):
             calls.append((invocation, config))
             return {"structured_response": {"goal": "safe plan", "steps": []}}
-    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: Agent())
+    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: captured.update(kwargs) or Agent())
     plan = asyncio.run(planner.plan_with_deep_agent(None, "answer", {"run_id": "run-1"}, harness_key="fake", resume=True))
     assert plan.goal == "safe plan"
+    from langchain.agents.structured_output import ProviderStrategy
+    assert isinstance(captured["response_format"], ProviderStrategy)
+    assert captured["response_format"].schema is SemanticPlan
+    assert captured["tools"] == []
     assert isinstance(calls[0][0], Command)
     assert calls[0][0].resume == "answer"
     assert calls[0][1]["configurable"]["thread_id"] == "run-1"
     with pytest.raises(ValueError, match="无效工具参数"):
         planner.reject_invalid_tool_calls({"messages": [{"invalid_tool_calls": [{"name": "submit_semantic_plan"}]}]})
 
+
+def test_intent_router_defaults_to_chat_and_requires_explicit_canvas_action(monkeypatch):
+    import asyncio
+    from app.services.canvas_agent import planner, runtime
+
+    captured = {}
+
+    class Agent:
+        async def ainvoke(self, invocation, config):
+            captured["user"] = invocation["messages"][0]["content"]
+            return {"response": {"intent": "chat", "reply": "你好，我可以帮你分析画布或回答问题。"}}
+
+    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: captured.update(kwargs) or Agent())
+    decision = asyncio.run(planner.classify_intent(None, "你好", {"run_id": "run-1", "node_count": 2}, harness_key="fake"))
+
+    assert decision.intent == "chat"
+    assert "默认选择 chat" in captured["system_prompt"]
+    assert "必须同时满足" in captured["system_prompt"]
+    assert "在画布上新建一个文生图节点" in captured["system_prompt"]
+    assert "用户消息：你好" in captured["user"]
+    assert "画布上下文：节点数=2" in captured["user"]
+
 def test_semantic_plan_tool_blocks_invalid_parameters():
     from app.services.canvas_agent.tools import submit_semantic_plan
     with pytest.raises(Exception):
         submit_semantic_plan({"goal": "x", "steps": [{"id": "bad", "action": "delete_canvas"}]})
+
+
+def test_planner_normalizes_known_legacy_canvas_operations():
+    from app.services.canvas_agent.planner import _normalize_plan
+
+    plan = _normalize_plan({
+        "goal": "新建文生图节点",
+        "steps": [{"id": "s1", "name": "创建节点", "details": {"node_type": "smart-prompt"}}],
+        "execution": {"mode": "canvas_ops_plan", "operations": [{"op": "create_node", "client_ref": "prompt-1", "node": {"type": "smart-prompt", "text": "雨夜城市"}}]},
+        "confirmation": {"summary": "需要确认"},
+    }, {})
+
+    assert plan.steps[0].action == "canvas.create_node"
+    assert plan.steps[0].node.semantic_type == "prompt"
+    assert plan.steps[0].node.content == "雨夜城市"
 
 def test_provider_adapter_preserves_invalid_tool_calls_for_planner_blocking():
     from app.services.canvas_agent.model_resolver import MediaForgeChatModel
@@ -125,3 +383,55 @@ def test_provider_adapter_preserves_invalid_tool_calls_for_planner_blocking():
     assert valid[0]["args"]["goal"] == "x"
     assert invalid[0]["type"] == "invalid_tool_call"
     assert invalid[0]["args"] == '{"goal":'
+    assert MediaForgeChatModel._tool_choice("any") == "required"
+    assert MediaForgeChatModel._tool_choice("auto") == "auto"
+
+
+def test_provider_adapter_forwards_native_response_format(monkeypatch):
+    import asyncio
+    from langchain.agents.structured_output import ProviderStrategy
+    from langchain_core.messages import HumanMessage
+    from app.models.canvas_agent import SemanticPlan
+    from app.services.canvas_agent.model_resolver import MediaForgeChatModel
+
+    model = MediaForgeChatModel(endpoint="https://example.invalid/v1/chat/completions", model_name="gpt-test")
+    captured = {}
+
+    async def post(body):
+        captured["body"] = body
+        return {"choices": [{"message": {"content": '{"goal":"ok","steps":[]}'}}]}
+
+    monkeypatch.setattr(model, "_post_with_retry", post)
+    strategy = ProviderStrategy(SemanticPlan)
+    result = asyncio.run(model._agenerate([HumanMessage(content="plan")], response_format=strategy.to_model_kwargs()["response_format"]))
+
+    assert captured["body"]["response_format"]["type"] == "json_schema"
+    assert captured["body"]["response_format"]["json_schema"]["name"] == "SemanticPlan"
+    assert result.generations[0].message.content == '{"goal":"ok","steps":[]}'
+
+
+def test_semantic_plan_native_schema_is_azure_strict_compatible():
+    from langchain.agents.structured_output import ProviderStrategy
+
+    schema = ProviderStrategy(SemanticPlan).to_model_kwargs()["response_format"]["json_schema"]["schema"]
+
+    def assert_strict(node):
+        if isinstance(node, dict):
+            assert "default" not in node
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                assert node["required"] == list(properties)
+                assert node["additionalProperties"] is False
+            for value in node.values():
+                assert_strict(value)
+        elif isinstance(node, list):
+            for value in node:
+                assert_strict(value)
+
+    assert_strict(schema)
+    node_schema = schema["$defs"]["SemanticNode"]["properties"]
+    assert node_schema["params"]["type"] == "string"
+    assert schema["$defs"]["SemanticStep"]["properties"]["placement"]["type"] == "string"
+    plan = SemanticPlan.model_validate({"goal": "x", "steps": [{"id": "n", "action": "canvas.create_node", "node": {"semantic_type": "prompt", "params": "{\"model\":\"demo\"}"}, "placement": "{\"x\":1}"}]})
+    assert plan.steps[0].node.params == {"model": "demo"}
+    assert plan.steps[0].placement == {"x": 1}

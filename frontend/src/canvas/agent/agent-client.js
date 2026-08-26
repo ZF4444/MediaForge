@@ -11,13 +11,14 @@
     return body;
   }
   const runPath = suffix => `/api/canvas-agent/runs/${encodeURIComponent(window.CanvasAgentState.runId)}${suffix}`;
+  const requestId = () => globalThis.crypto?.randomUUID?.() || `req_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   window.CanvasAgentClient = {
     request, getRun: () => request(runPath('')), events: after => request(`${runPath('/events')}?after_sequence=${encodeURIComponent(after)}`),
     listRuns: (canvasId, limit=50) => request(`/api/canvas-agent/runs?canvas_id=${encodeURIComponent(canvasId)}&limit=${limit}`),
     createRun: () => request('/api/canvas-agent/runs', {method:'POST', body:JSON.stringify({canvas_id:window.CanvasAgentBridge.canvasId(), mode:'fast_track'})}),
-    send: body => request(runPath('/messages'), {method:'POST', body:JSON.stringify({...body, use_model:true})}),
-    answer: (answer, provider='', model='') => request(runPath('/answers'), {method:'POST', body:JSON.stringify({answer, use_model:true, provider, model})}),
-    confirm: (planVersion, approved) => request(runPath('/confirm'), {method:'POST', body:JSON.stringify({plan_version:planVersion, approved})}),
+    send: body => request(runPath('/messages'), {method:'POST', body:JSON.stringify({...body, use_model:true, client_request_id:body.client_request_id || requestId()})}),
+    answer: (answer, provider='', model='', clientRequestId='') => request(runPath('/answers'), {method:'POST', body:JSON.stringify({answer, use_model:true, provider, model, client_request_id:clientRequestId || requestId()})}),
+    confirm: (planVersion, approved, clientRequestId='') => request(runPath('/confirm'), {method:'POST', body:JSON.stringify({plan_version:planVersion, approved, client_request_id:clientRequestId || requestId()})}),
     cancel: () => request(runPath('/cancel'), {method:'POST', body:'{}'}),
     retryTask: taskId => request(runPath(`/tasks/${encodeURIComponent(taskId)}/retry`), {method:'POST', body:'{}'}),
     review: (status, note='') => request(runPath('/review'), {method:'POST', body:JSON.stringify({status, note})}),

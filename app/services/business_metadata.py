@@ -106,7 +106,14 @@ CREATE TABLE IF NOT EXISTS canvas_agent_operations (
     type TEXT NOT NULL, risk TEXT NOT NULL DEFAULT 'safe', status TEXT NOT NULL DEFAULT 'pending', input_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     result_json JSONB NOT NULL DEFAULT '{}'::jsonb, error TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
 );
+ALTER TABLE canvas_agent_operations ADD COLUMN IF NOT EXISTS client_request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE canvas_agent_operations ADD COLUMN IF NOT EXISTS lease_owner TEXT;
+ALTER TABLE canvas_agent_operations ADD COLUMN IF NOT EXISTS lease_until BIGINT;
+ALTER TABLE canvas_agent_operations ADD COLUMN IF NOT EXISTS cancel_requested_at BIGINT;
+ALTER TABLE canvas_agent_operations ADD COLUMN IF NOT EXISTS started_at BIGINT;
+ALTER TABLE canvas_agent_operations ADD COLUMN IF NOT EXISTS finished_at BIGINT;
 CREATE INDEX IF NOT EXISTS idx_canvas_agent_operations_run ON canvas_agent_operations(run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_operations_claim ON canvas_agent_operations(status, lease_until, created_at);
 CREATE TABLE IF NOT EXISTS canvas_agent_artifacts (
     id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, type TEXT NOT NULL,
     version INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'draft', content_json JSONB NOT NULL, source_artifact_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -121,7 +128,20 @@ CREATE TABLE IF NOT EXISTS canvas_agent_events (
     id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, sequence BIGINT NOT NULL,
     type TEXT NOT NULL, payload_json JSONB NOT NULL DEFAULT '{}'::jsonb, created_at BIGINT NOT NULL, UNIQUE(run_id, sequence)
 );
+ALTER TABLE canvas_agent_events ADD COLUMN IF NOT EXISTS operation_id TEXT;
+ALTER TABLE canvas_agent_events ADD COLUMN IF NOT EXISTS phase TEXT;
+ALTER TABLE canvas_agent_events ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT 'info';
+ALTER TABLE canvas_agent_events ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS idx_canvas_agent_events_run ON canvas_agent_events(run_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_events_operation ON canvas_agent_events(operation_id, sequence);
+CREATE TABLE IF NOT EXISTS canvas_agent_event_outbox (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL UNIQUE REFERENCES canvas_agent_events(id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, user_id TEXT NOT NULL,
+    topic TEXT NOT NULL, payload_json JSONB NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+    available_at BIGINT NOT NULL, delivered_at BIGINT, last_error TEXT NOT NULL DEFAULT '',
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_agent_event_outbox_pending ON canvas_agent_event_outbox(status, available_at, created_at);
 CREATE TABLE IF NOT EXISTS canvas_agent_skills (
     id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '1',
     enabled BOOLEAN NOT NULL DEFAULT TRUE, metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL

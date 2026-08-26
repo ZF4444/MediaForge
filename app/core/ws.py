@@ -130,6 +130,11 @@ class ConnectionManager:
             await self._send(self.user_connections.get(key, set()), json.dumps(payload.get("message") or {}), event)
         elif event == "announcement":
             await self._send(self.active_connections, json.dumps(payload.get("message") or {}), event)
+        elif event == "agent.event.v1":
+            user_id = str(payload.get("user_id") or "")
+            agent_event = payload.get("event") or {}
+            if user_id and isinstance(agent_event, dict):
+                await self.broadcast_to_user(user_id, {"type": "agent.event", "data": agent_event}, event)
 
 
 manager = ConnectionManager()

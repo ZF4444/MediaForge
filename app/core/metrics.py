@@ -195,6 +195,18 @@ AGENT_OPERATION_SECONDS = Histogram(
     buckets=(0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 300),
     registry=REGISTRY,
 )
+AGENT_EVENT_OUTBOX = Gauge(
+    "mediaforge_canvas_agent_event_outbox",
+    "Canvas Agent durable event outbox records by status.",
+    ("status",),
+    registry=REGISTRY,
+)
+AGENT_EVENT_PUBLISHES = Counter(
+    "mediaforge_canvas_agent_event_publishes_total",
+    "Canvas Agent outbox publish attempts by result.",
+    ("result",),
+    registry=REGISTRY,
+)
 
 
 def update_pool_stats(stats: dict) -> None:
