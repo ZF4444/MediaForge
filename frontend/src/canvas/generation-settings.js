@@ -460,6 +460,9 @@ function normalizeApiSizeSettings(prefix=''){
 }
 async function ensureComfyWorkflow(name){
     if(!name) return null;
+    // Workflow settings are editable from a separate page. Never reuse a
+    // response that predates a settings change; loadConfig clears this cache
+    // when the workflow list is refreshed.
     if(comfyWorkflowCache[name]) return comfyWorkflowCache[name];
     const data = await fetch(`/api/workflows/${encodeURIComponent(name)}`).then(r => r.ok ? r.json() : null).catch(() => null);
     if(data) comfyWorkflowCache[name] = data;
@@ -1657,6 +1660,17 @@ async function loadConfig({invalidateParameterSchemas=false}={}){
         updateProviderModels();
         const wf = await fetch('/api/workflows').then(r => r.json()).catch(() => ({workflows:[]}));
         comfyWorkflows = Array.isArray(wf.workflows) ? wf.workflows : [];
+        // The workflow settings page broadcasts `workflows-changed` after
+        // saving fields. Drop cached per-workflow configs so the canvas reads
+        // the newly saved `config.fields` instead of rendering stale controls.
+        comfyWorkflowCache = {};
+        // Older canvas payloads stored custom workflow names without the
+        // `.json` suffix. Match them to the current API names when possible.
+        const workflowNames = new Set(comfyWorkflows.map(item => item?.name).filter(Boolean));
+        const legacyName = String(settings.comfyWorkflow || '');
+        if(legacyName && !workflowNames.has(legacyName) && workflowNames.has(`${legacyName}.json`)){
+            settings.comfyWorkflow = `${legacyName}.json`;
+        }
         lastConfigRefreshAt = Date.now();
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
