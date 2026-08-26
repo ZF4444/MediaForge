@@ -84,7 +84,7 @@ function guessType(value, inputName){
         return 'number';
     }
     if(typeof value === 'string'){
-        if(/prompt|text|description/.test(lc) || (value && value.length > 60)) return 'textarea';
+        if(/prompt|text|description/.test(lc) || (value && value.length > 60)) return 'prompt';
         if(/video|movie|mp4|webm|mov|m4v|vhs/.test(lc) || /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/i.test(value)) return 'video';
         if(/audio|sound|music|voice|wav|mp3/.test(lc) || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(value)) return 'audio';
         if(/image|img|mask|filename|file/.test(lc) || /\.(png|jpe?g|webp|gif|bmp|tiff?)(\?|$)/i.test(value)) return 'image';

@@ -242,7 +242,7 @@ function updatePromptComposer(){
 }
 function renderInputPromptPreview(node){
     if(!inputPromptPreview) return;
-    if(settings.engine === 'runninghub' && !rhRequiresPrompt(settings)){
+    if(!smartPromptInputEnabledForSettings(settings)){
         inputPromptPreview.classList.remove('has-text');
         inputPromptPreview.innerHTML = '';
         return;
@@ -329,6 +329,40 @@ function renderRunningHubInputThumbsRow(node){
     }).join('')}</div>`;
     bindInputThumbsDrag(node, refs);
 }
+function renderComfyInputThumbsRow(node){
+    const fields = currentComfyFields().filter(field => ['image','video','audio'].includes(comfyFieldKind(field)));
+    const refs = node ? visibleReferenceImagesFor(node) : [];
+    const media = {
+        image:imageRefsOnly(refs),
+        video:videoRefsOnly(refs),
+        audio:audioRefsOnly(refs)
+    };
+    const indexes = {image:0, video:0, audio:0};
+    inputThumbsRow.classList.add('runninghub-inputs');
+    inputThumbsRow.classList.toggle('has-items', fields.length > 0);
+    if(!fields.length){
+        inputThumbsRow.innerHTML = '';
+        return;
+    }
+    inputThumbsRow.innerHTML = `<div class="rh-input-field-list">${fields.map(field => {
+        const kind = comfyFieldKind(field);
+        const index = indexes[kind]++;
+        const ref = (media[kind] || [])[index] || null;
+        const label = field.name || field.input || rhInputKindLabel(kind);
+        const sourceUrl = ref?.originalLocalUrl || ref?.sourceUrl || ref?.url || '';
+        const thumb = ref?.url
+            ? renderRhInputThumb(ref, {label, fieldName:field.input}, index, kind, node, sourceUrl)
+            : `<div class="rh-input-empty-icon"><i data-lucide="${rhInputKindIcon(kind)}"></i></div>`;
+        return `<div class="rh-input-field ${ref?.url ? '' : 'empty'}" title="${escapeAttr(label)}">
+            ${thumb}
+            <div class="rh-input-field-meta">
+                <div class="rh-input-field-name">${escapeHtml(label)}</div>
+                <div class="rh-input-field-kind">${escapeHtml(rhInputKindLabel(kind))}</div>
+            </div>
+        </div>`;
+    }).join('')}</div>`;
+    bindInputThumbsDrag(node, refs);
+}
 function inputThumbItemHtml(img, i, node, typeIndexes){
     const isVid = isVideoMediaItem(img);
     const isSelf = node ? isSelfReferenceForNode(node, img) : false;
@@ -348,6 +382,7 @@ function renderInputThumbsRow(node){
     syncRhConfigForRefs();
     inputThumbsRow.classList.remove('runninghub-inputs');
     if(settings.engine === 'runninghub') return renderRunningHubInputThumbsRow(node);
+    if(settings.engine === 'comfy') return renderComfyInputThumbsRow(node);
     const dedup = node ? visibleReferenceImagesFor(node) : [];
     inputThumbsRow.classList.toggle('has-items', dedup.length > 0);
     if(!dedup.length){ inputThumbsRow.innerHTML = ''; return; }

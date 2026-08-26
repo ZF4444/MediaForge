@@ -118,7 +118,7 @@ function renderPreview(){
 function renderPreviewField(f){
     const label = `<div class="pfield-label">${escapeHtml(f.name || f.input)}</div>`;
     const v = previewValues[f.id] ?? f.default ?? (f.type==='boolean'?false:(f.type==='number'||f.type==='slider'?0:''));
-    if(f.type === 'textarea'){
+    if(fieldKind(f) === 'prompt'){
         return `<div class="pfield">${label}<textarea class="pfield-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
     }
     if(f.type === 'number'){

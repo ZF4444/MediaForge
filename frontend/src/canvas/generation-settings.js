@@ -475,8 +475,9 @@ async function ensureComfyWorkflow(name){
     if(data) comfyWorkflowCache[name] = data;
     return data;
 }
-function currentComfyFields(){
-    return comfyWorkflowCache[settings.comfyWorkflow]?.config?.fields || [];
+function currentComfyFields(sourceSettings=settings){
+    const source = sourceSettings || settings;
+    return comfyWorkflowCache[source.comfyWorkflow]?.config?.fields || [];
 }
 function comfyParamValue(field){
     settings.comfyParams = settings.comfyParams || {};
@@ -1119,21 +1120,15 @@ function rhFieldKind(field){
     if(type === 'IMAGE') return 'image';
     if(type === 'VIDEO') return 'video';
     if(type === 'AUDIO') return 'audio';
+    if(type === 'PROMPT' || type === 'TEXTAREA') return 'prompt';
     if(type === 'SLIDER') return 'slider';
     if(['NUMBER','FLOAT','INTEGER','INT'].includes(type)) return 'number';
     if(['BOOLEAN','BOOL'].includes(type)) return 'boolean';
-    const key = `${field?.fieldName || ''} ${field?.fieldValue || ''}`.toLowerCase();
-    if(/\b(image|img|mask|photo|picture)\b/.test(key) || /\.(png|jpe?g|webp|gif|bmp)(\?|$)/i.test(key)) return 'image';
-    if(/\b(video|movie|mp4)\b/.test(key) || /\.(mp4|webm|mov|m4v|mkv)(\?|$)/i.test(key)) return 'video';
-    if(/\b(audio|sound|music|voice)\b/.test(key) || /\.(mp3|wav|ogg|m4a|flac|aac)(\?|$)/i.test(key)) return 'audio';
+    if(['SELECT','LIST','DROPDOWN','COMBO','ENUM'].includes(type)) return 'dropdown';
     return 'text';
 }
 function rhFieldRole(field){
-    const kind = rhFieldKind(field);
-    if(['image','video','audio','number','slider','boolean'].includes(kind)) return kind;
-    const text = `${field?.fieldName || ''} ${field?.label || ''} ${field?.group || ''}`.toLowerCase();
-    if(/prompt|positive|negative|text|caption|description|关键词|提示词|正向|负向/.test(text)) return 'prompt';
-    return 'text';
+    return rhFieldKind(field);
 }
 function rhExtractFieldOptions(field){
     const candidates = [field?.fieldData, field?.options, field?.list, field?.values, field?.enum, field?.choices, field?.items, field?.selectOptions, field?.dropdown];
@@ -1235,7 +1230,10 @@ function rhRequiresPrompt(sourceSettings=settings){
     return rhPromptFields(sourceSettings).length > 0;
 }
 function smartPromptInputEnabledForSettings(sourceSettings=settings){
-    return !((sourceSettings || settings).engine === 'runninghub' && !rhRequiresPrompt(sourceSettings || settings));
+    const source = sourceSettings || settings;
+    if(source.engine === 'runninghub') return rhRequiresPrompt(source);
+    if(source.engine === 'comfy') return currentComfyFields(source).some(field => comfyFieldKind(field) === 'prompt');
+    return true;
 }
 function updatePromptPlaceholder(){
     if(!promptInput) return;

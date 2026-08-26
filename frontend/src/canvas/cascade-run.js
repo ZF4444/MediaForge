@@ -164,12 +164,9 @@ function comfyParamsFromWorkflowValues(config, values={}){
     return params;
 }
 function comfyFieldKind(field){
-    if(['image','video','audio'].includes(field?.type)) return field.type;
-    const key = `${field?.input || ''} ${field?.name || ''}`.toLowerCase();
-    // Textareas are also used for workflow settings (for example a LoRA
-    // model name). Classify by the semantic field name/input instead of the
-    // UI control type alone.
-    if(/prompt|text|positive|negative|提示词|正向|负向/.test(key)) return 'prompt';
+    if(['image','video','audio','prompt'].includes(field?.type)) return field.type;
+    // Compatibility for configurations saved before the prompt type existed.
+    if(field?.type === 'textarea') return 'prompt';
     return 'setting';
 }
 async function runApiGeneration(prompt, refs, runSettings=settings){
@@ -298,8 +295,8 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     });
     const fields = wf.config?.fields || [];
     const values = {};
-    fields.filter(f => comfyFieldKind(f) === 'prompt').forEach((field, index) => {
-        values[field.id] = index === 0 ? prompt : (field.default ?? '');
+    fields.filter(f => comfyFieldKind(f) === 'prompt').forEach(field => {
+        values[field.id] = String(prompt || '').trim() || field.default || '';
     });
     const assignMediaFields = async (mediaFields, mediaRefs) => {
         for(let i = 0; i < mediaFields.length && i < mediaRefs.length; i++){

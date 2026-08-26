@@ -18,7 +18,7 @@ function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
 
 const TYPES = [
     { v:'text', zh:'文本', en:'Text' },
-    { v:'textarea', zh:'多行文本', en:'Textarea' },
+    { v:'prompt', zh:'提示词', en:'Prompt' },
     { v:'number', zh:'数字', en:'Number' },
     { v:'slider', zh:'滑块', en:'Slider' },
     { v:'dropdown', zh:'下拉框', en:'Dropdown' },
@@ -153,9 +153,9 @@ function setStatus(text){ statusEl.textContent = text || ''; }
 function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 function fieldKind(f){
-    if(['image','video','audio'].includes(f.type)) return f.type;
-    const key = `${f.input || ''} ${f.name || ''}`.toLowerCase();
-    if(f.type === 'textarea' || /prompt|text|提示词|正向|负向/.test(key)) return 'prompt';
+    if(['image','video','audio','prompt'].includes(f.type)) return f.type;
+    // Compatibility for configurations saved before the prompt type existed.
+    if(f.type === 'textarea') return 'prompt';
     return 'setting';
 }
 function isMediaField(f){ return ['image','video','audio'].includes(fieldKind(f)); }
@@ -242,6 +242,10 @@ async function selectWorkflow(name){
         currentWorkflow = data.workflow;
         currentConfig = data.config || { title:name.replace('.json',''), fields:[] };
         if(!currentConfig.fields) currentConfig.fields = [];
+        // Normalize the legacy persisted name when the workflow is next saved.
+        currentConfig.fields.forEach(field => {
+            if(field?.type === 'textarea') field.type = 'prompt';
+        });
         currentConfig.media = currentConfig.media === 'video' ? 'video' : 'image';
         if(!currentConfig.mini_cards) currentConfig.mini_cards = {};
         isBuiltin = !!data.builtin;
