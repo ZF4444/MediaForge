@@ -18,22 +18,55 @@
     const labels=Array.isArray(field.option_labels)?field.option_labels:[];
     return (field.options||[]).map((value,index)=>({value,label:String(labels[index]||value)}));
   }
+  function fieldIcon(field){
+    return ({provider_id:'plug-zap',videoProvider:'plug-zap',model:'sparkles',videoModel:'film',resolution:'monitor',videoResolution:'monitor',ratio:'scan',videoAspect:'scan',quality:'sliders-horizontal',count:'copy'})[String(field.id||'')]||'sliders-horizontal';
+  }
+  function ratioIcon(value){
+    if(['2:3','3:4'].includes(String(value))) return String(value)==='2:3'?'r-portrait':'r-portrait43';
+    if(['3:2','4:3'].includes(String(value))) return String(value)==='3:2'?'r-landscape':'r-landscape43';
+    if(['16:9','21:9'].includes(String(value))) return 'r-wide';
+    if(['9:16','9:21'].includes(String(value))) return 'r-story';
+    return String(value)==='source'?'r-source':String(value)==='custom'?'r-custom':'';
+  }
+  function closePopovers(except=null){document.querySelectorAll('#canvasAgentPlan .canvas-agent-smart-control.pinned').forEach(control=>{if(control!==except)control.classList.remove('pinned');});}
+  function appendIcon(parent,name,klass=''){const icon=document.createElement('i');icon.setAttribute('data-lucide',name);if(klass)icon.className=klass;parent.appendChild(icon);}
+  function choiceButton(value,caption,active,onPick,klass=''){
+    const button=document.createElement('button');button.type='button';button.dataset.agentValue=String(value);button.className=`${klass} ${active?'active':''}`.trim();button.textContent=caption;button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();onPick(value);});return button;
+  }
   function control(field,value,onChange,interactive){
-    const type=String(field.type||'text'); const configurable=interactive&&field.ui?.configurable!==false;
+    const id=String(field.id||'');let type=String(field.type||'text');
+    if(id==='count'&&type==='number') field={...field,type:'dropdown',options:Array.from({length:Math.max(1,Number(field.max??4)-Number(field.min??1)+1)},(_,index)=>Number(field.min??1)+index)};
+    type=String(field.type||type);const configurable=interactive&&field.ui?.configurable!==false;
     if(type==='dropdown'){
-      const select=document.createElement('select'); options(field).forEach(option=>{const item=document.createElement('option');item.value=String(option.value);item.textContent=String(option.label);select.appendChild(item);});select.value=value==null?'':String(value);select.disabled=!configurable;select.addEventListener('change',()=>onChange(select.value));return select;
+      const values=options(field),current=String(value??'');const wrapper=document.createElement('div');wrapper.className=`canvas-agent-smart-control smart-control ${String(field.id||'')}-control`;
+      const pill=document.createElement('button');pill.type='button';pill.className='smart-pill';pill.title=label(field);pill.disabled=!configurable;appendIcon(pill,fieldIcon(field));const summary=document.createElement('span');summary.className='sub';summary.textContent=String(values.find(option=>String(option.value)===current)?.label??current??'');pill.appendChild(summary);appendIcon(pill,'chevron-down','pill-caret');pill.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const open=!wrapper.classList.contains('pinned');closePopovers(wrapper);wrapper.classList.toggle('pinned',open);});wrapper.appendChild(pill);
+      if(configurable){
+        const popover=document.createElement('div');popover.className='smart-popover compact-popover';const title=document.createElement('div');title.className='smart-popover-title';title.textContent=label(field);popover.appendChild(title);
+        const pick=next=>{onChange(next);summary.textContent=String(values.find(option=>String(option.value)===String(next))?.label??next);popover.querySelectorAll('[data-agent-value]').forEach(button=>button.classList.toggle('active',button.dataset.agentValue===String(next)));closePopovers();};
+        if(id==='ratio'||id==='videoAspect'){
+          const grid=document.createElement('div');grid.className='ratio-grid';values.forEach(option=>{const button=choiceButton(option.value,option.label,String(option.value)===current,pick,'ratio-option');const glyph=document.createElement('span');glyph.className=`ratio-icon ${ratioIcon(option.value)}`;const text=document.createElement('span');text.textContent=String(option.label);button.textContent='';button.append(glyph,text);grid.appendChild(button);});popover.appendChild(grid);
+        }else if(id==='count'){
+          const grid=document.createElement('div');grid.className='count-grid';values.forEach(option=>grid.appendChild(choiceButton(option.value,option.label,String(option.value)===current,pick,'count-cell')));popover.appendChild(grid);
+        }else if(['resolution','videoResolution','quality'].includes(id)){
+          const row=document.createElement('div');row.className='seg-row';values.forEach(option=>row.appendChild(choiceButton(option.value,option.label,String(option.value)===current,pick)));popover.appendChild(row);
+        }else{
+          const list=document.createElement('div');list.className='model-list';values.forEach(option=>list.appendChild(choiceButton(option.value,option.label,String(option.value)===current,pick,'direct-option')));popover.appendChild(list);
+        }
+        wrapper.appendChild(popover);
+      }
+      return wrapper;
     }
     if(type==='boolean'){
-      const input=document.createElement('input');input.type='checkbox';input.checked=Boolean(value);input.disabled=!configurable;input.addEventListener('change',()=>onChange(input.checked));return input;
+      const button=document.createElement('button');button.type='button';button.className=`setting-check ${Boolean(value)?'active':''}`;button.disabled=!configurable;const check=document.createElement('span');check.className='check-box';const caption=document.createElement('span');caption.textContent=label(field);button.append(check,caption);button.addEventListener('click',()=>onChange(!Boolean(value)));return button;
     }
+    const wrapper=document.createElement('div');wrapper.className=`num-compact canvas-agent-number-control ${type==='textarea'?'rh-text-param':''}`;wrapper.title=label(field);const caption=document.createElement('span');caption.className='num-label';caption.textContent=label(field);wrapper.appendChild(caption);
     const input=document.createElement(type==='textarea'?'textarea':'input');
     if(type==='number'||type==='slider'){input.type='number';if(field.min!=null)input.min=field.min;if(field.max!=null)input.max=field.max;if(field.step!=null)input.step=field.step;}
-    input.value=value??'';input.disabled=!configurable;if(type==='textarea')input.rows=2;input.addEventListener('input',()=>onChange((type==='number'||type==='slider')&&input.value!==''?Number(input.value):input.value));return input;
+    input.value=value??'';input.disabled=!configurable;if(type==='textarea')input.rows=2;input.addEventListener('input',()=>onChange((type==='number'||type==='slider')&&input.value!==''?Number(input.value):input.value));wrapper.appendChild(input);return wrapper;
   }
   function schemaField(field,values,paramsPath,interactive,onLayoutChange){
-    const row=document.createElement('label');row.className='canvas-agent-config-control';const caption=document.createElement('span');caption.textContent=label(field);
     const value=pathValue(values.params,`${paramsPath}.${field.id}`)??field.default??'';
-    row.append(caption,control(field,value,next=>{setPath(values.params,`${paramsPath}.${field.id}`,next);if(['resolution','ratio','msResolution','msRatio'].includes(String(field.id)))onLayoutChange?.();},interactive));return row;
+    return control(field,value,next=>{setPath(values.params,`${paramsPath}.${field.id}`,next);if(['resolution','ratio','msResolution','msRatio'].includes(String(field.id)))onLayoutChange?.();},interactive);
   }
   function visible(field,settings){
     const id=String(field.id||'');
@@ -53,15 +86,15 @@
     if(!node.capability){fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));return;}
     try{
       const response=await fetch(schemaUrl(node.capability,provider,model),{credentials:'same-origin'});if(!response.ok)throw new Error();const schema=await response.json();if(request!==schemaRequest||!card.isConnected)return;
-      const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');const renderFields=()=>{controls.innerHTML='';(schema.fields||[]).filter(field=>visible(field,pathValue(values.params,paramsPath)||{})).forEach(field=>controls.appendChild(schemaField(field,values,paramsPath,interactive,renderFields)));};renderFields();
-      if(!controls.childElementCount)fallbackFields(values,interactive).forEach(item=>controls.appendChild(item));
+      const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');const renderFields=()=>{controls.innerHTML='';(schema.fields||[]).filter(field=>visible(field,pathValue(values.params,paramsPath)||{})).forEach(field=>controls.appendChild(schemaField(field,values,paramsPath,interactive,renderFields)));window.lucide?.createIcons();};renderFields();
+      if(!controls.childElementCount){fallbackFields(values,interactive).forEach(item=>controls.appendChild(item));window.lucide?.createIcons();}
     }catch(_){if(request===schemaRequest&&card.isConnected)fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));}
   }
   function config(step,interactive,request){
-    const values=planValues(step);const card=document.createElement('section');card.className='canvas-agent-node-config';
-    const head=document.createElement('div');head.className='canvas-agent-node-config-head';const heading=document.createElement('h5');heading.textContent=values.title||text(step);head.appendChild(heading);card.appendChild(head);
-    const content=document.createElement('textarea');content.className='canvas-agent-config-prompt';content.rows=2;content.value=values.content;content.disabled=!interactive;content.placeholder='提示词';content.addEventListener('input',()=>values.content=content.value);card.appendChild(content);
-    const controls=document.createElement('div');controls.className='canvas-agent-config-controls';card.appendChild(controls);card._override=()=>({step_id:values.step_id,title:values.title,content:values.content,params:values.params});void populateSchema(card,step,values,interactive,request);return card;
+    const values=planValues(step);const card=document.createElement('section');card.className='canvas-agent-node-config composer-card';
+    const head=document.createElement('div');head.className='canvas-agent-node-config-head composer-head';const heading=document.createElement('h5');heading.textContent=values.title||text(step);head.appendChild(heading);card.appendChild(head);
+    const promptRow=document.createElement('div');promptRow.className='prompt-row';const content=document.createElement('textarea');content.className='canvas-agent-config-prompt prompt-input';content.value=values.content;content.disabled=!interactive;content.placeholder='提示词';content.style.setProperty('--prompt-h','124px');content.addEventListener('input',()=>values.content=content.value);promptRow.appendChild(content);card.appendChild(promptRow);
+    const controls=document.createElement('div');controls.className='canvas-agent-config-controls dynamic-params param-row';card.appendChild(controls);card._override=()=>({step_id:values.step_id,title:values.title,content:values.content,params:values.params});void populateSchema(card,step,values,interactive,request);return card;
   }
   function render(row,options={}){
     const box=document.getElementById('canvasAgentPlan'),interactive=options.interactive!==false,renderKey=`${row?.version||''}:${interactive?'interactive':'readonly'}`;
