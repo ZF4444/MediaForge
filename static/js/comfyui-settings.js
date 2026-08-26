@@ -30,6 +30,7 @@ const TYPES = [
 const comfySettingsQuery = new URLSearchParams(window.location.search);
 const singleWorkflowName = comfySettingsQuery.get('workflow') || '';
 const isSingleWorkflowMode = Boolean(singleWorkflowName);
+const isEmbeddedMode = comfySettingsQuery.get('embedded') === '1';
 if(isSingleWorkflowMode) document.body.classList.add('single-workflow-mode');
 function currentLang(){ return window.StudioI18n?.lang?.() === 'en' ? 'en' : 'zh'; }
 function typeLabel(type){
@@ -303,7 +304,7 @@ function renderEditor(){
     workflowTitleInput.value = currentConfig.title || selectedName.replace('.json','');
     subEl.textContent = tf('comfy.nodeStats', {nodes:Object.keys(currentWorkflow).length, fields:currentConfig.fields.length}) + (isBuiltin ? ` · ${tr('comfy.builtin')}` : '');
     if(deleteBtn) deleteBtn.style.display = isBuiltin ? 'none' : 'inline-flex';
-    saveBtn.style.display = 'inline-flex';
+    saveBtn.style.display = isEmbeddedMode ? 'none' : 'inline-flex';
 
     renderGraph();
     renderWorkspaceView();
@@ -491,11 +492,11 @@ async function onUpload(event){
 }
 
 async function onSave(){
-    if(!selectedName || !currentConfig) return;
+    if(!selectedName || !currentConfig) return false;
     // 校验
     for(const f of currentConfig.fields){
         if(!f.name || !f.name.trim()){
-            alert(tf('comfy.saveMissingName', {field:f.input})); return;
+            alert(tf('comfy.saveMissingName', {field:f.input})); return false;
         }
     }
     setStatus(tr('comfy.saving'));
@@ -509,7 +510,8 @@ async function onSave(){
         setStatus(tr('comfy.saved'));
         await loadList();
         new BroadcastChannel('studio-api').postMessage({ type: 'workflows-changed' });
-    } catch(e){ alert(e.message || tr('comfy.saveFailed')); setStatus(tr('comfy.saveFailed')); }
+        return true;
+    } catch(e){ alert(e.message || tr('comfy.saveFailed')); setStatus(tr('comfy.saveFailed')); return false; }
 }
 
 async function onDelete(){

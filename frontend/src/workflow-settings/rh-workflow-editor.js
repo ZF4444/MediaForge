@@ -493,7 +493,7 @@ function setRhWorkflowSaveButtonState(state, text){
 async function saveRhWorkflowEditor(){
     const state = rhWorkflowEditorState;
     const config = state.config;
-    if(!config){ alert('请先加载应用参数'); return; }
+    if(!config){ alert('请先加载应用参数'); return false; }
     setRhWorkflowSaveButtonState('saving', '保存中...');
     config.title = rhWorkflowEditName?.value.trim() || config.title || config.appId;
     config.description = rhWorkflowEditNote?.value.trim() || config.description || '';
@@ -513,9 +513,11 @@ async function saveRhWorkflowEditor(){
         setTimeout(() => setRhWorkflowSaveButtonState('idle', '保存'), 1600);
         broadcastStudioApiChange('providers-changed');
         renderRhWorkflowEditor();
+        return true;
     } catch(err) {
         setRhWorkflowSaveButtonState('idle', '保存');
         alert(err.message || '保存失败');
+        return false;
     }
 }
 function renderRhWorkflowEditor(){
