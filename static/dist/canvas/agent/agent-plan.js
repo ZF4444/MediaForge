@@ -104,7 +104,7 @@
     if(!options.force&&!options.container&&row&&state.plan?.version===row.version&&box.dataset.planVersion===renderKey)return;
     const request=++schemaRequest;box.innerHTML='';if(!options.container)state.plan=row||null;const plan=row?.content_json||{},steps=Array.isArray(plan.steps)?plan.steps:[];if(!row){box.hidden=true;return;}box.dataset.planVersion=renderKey;
     const title=document.createElement('h4');title.textContent=plan.goal||'Agent 计划';box.appendChild(title);
-    const nodeSteps=steps.filter(step=>step.node);const configs=nodeSteps.map((step,index)=>config(step,interactive,request,interactive&&index===nodeSteps.length-1,Boolean(options.container),options.status||''));if(configs.length)configs.forEach(item=>box.appendChild(item));else{const summary=document.createElement('div');summary.className='canvas-agent-plan-meta';summary.textContent=steps.map(text).join('；');box.appendChild(summary);}if(!interactive)box.hidden=false;else box.hidden=false;
+    const history=Boolean(options.container)||Boolean(options.history);const nodeSteps=steps.filter(step=>step.node);const configs=nodeSteps.map((step,index)=>config(step,interactive,request,interactive&&index===nodeSteps.length-1,history,options.status||''));if(configs.length)configs.forEach(item=>box.appendChild(item));else{const summary=document.createElement('div');summary.className='canvas-agent-plan-meta';summary.textContent=steps.map(text).join('；');box.appendChild(summary);}if(!interactive)box.hidden=false;else box.hidden=false;
     window.lucide?.createIcons();
   }
   const collectOverrides=()=>[...document.querySelectorAll('#canvasAgentPlan .canvas-agent-node-config')].map(card=>card._override?.()).filter(Boolean);
