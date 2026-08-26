@@ -206,7 +206,13 @@ def capability_parameters(*, capability: str, provider_id: str = "", model: str 
     provider_field = next(field for field in fields if field["id"] in {"provider_id", "videoProvider"})
     model_field = next(field for field in fields if field["id"] in {"model", "videoModel"})
     provider_field.update(default=provider_id, options=[item.get("id") for item in providers if item.get(f"{kind}_models")])
-    model_field.update(default=model, options=list((selected or {}).get(f"{kind}_models") or []))
+    models = list((selected or {}).get(f"{kind}_models") or [])
+    aliases = (selected or {}).get("model_aliases") or {}
+    model_field.update(
+        default=model,
+        options=models,
+        option_labels=[str(aliases.get(item) or item) for item in models],
+    )
     return {"capability": capability, "provider_id": provider_id, "model": model, "params_path": "runSettings", "fields": fields, "source": sources}
 
 

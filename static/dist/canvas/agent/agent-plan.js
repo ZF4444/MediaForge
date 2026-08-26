@@ -36,7 +36,7 @@
   function control(field,value,onChange,interactive){
     const id=String(field.id||'');let type=String(field.type||'text');
     if(id==='count'&&type==='number') field={...field,type:'dropdown',options:Array.from({length:Math.max(1,Number(field.max??4)-Number(field.min??1)+1)},(_,index)=>Number(field.min??1)+index)};
-    type=String(field.type||type);const configurable=interactive&&field.ui?.configurable!==false;
+    type=String(field.type||type);const configurable=interactive&&(field.ui?.configurable!==false||['model','videoModel'].includes(id));
     if(type==='dropdown'){
       const values=options(field),current=String(value??'');const wrapper=document.createElement('div');wrapper.className=`canvas-agent-smart-control smart-control ${String(field.id||'')}-control`;
       const pill=document.createElement('button');pill.type='button';pill.className='smart-pill';pill.title=label(field);pill.disabled=!configurable;appendIcon(pill,fieldIcon(field));const summary=document.createElement('span');summary.className='sub';summary.textContent=String(values.find(option=>String(option.value)===current)?.label??current??'');pill.appendChild(summary);appendIcon(pill,'chevron-down','pill-caret');pill.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const open=!wrapper.classList.contains('pinned');closePopovers(wrapper);wrapper.classList.toggle('pinned',open);});wrapper.appendChild(pill);
@@ -66,7 +66,7 @@
   }
   function schemaField(field,values,paramsPath,interactive,onLayoutChange){
     const value=pathValue(values.params,`${paramsPath}.${field.id}`)??field.default??'';
-    return control(field,value,next=>{setPath(values.params,`${paramsPath}.${field.id}`,next);if(['resolution','ratio','msResolution','msRatio'].includes(String(field.id)))onLayoutChange?.();},interactive);
+    return control(field,value,next=>{setPath(values.params,`${paramsPath}.${field.id}`,next);onLayoutChange?.(String(field.id));},interactive);
   }
   function visible(field,settings){
     const id=String(field.id||'');
@@ -86,7 +86,7 @@
     if(!node.capability){fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));return;}
     try{
       const response=await fetch(schemaUrl(node.capability,provider,model),{credentials:'same-origin'});if(!response.ok)throw new Error();const schema=await response.json();if(request!==schemaRequest||!card.isConnected)return;
-      const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');const renderFields=()=>{controls.innerHTML='';(schema.fields||[]).filter(field=>visible(field,pathValue(values.params,paramsPath)||{})).forEach(field=>controls.appendChild(schemaField(field,values,paramsPath,interactive,renderFields)));window.lucide?.createIcons();};renderFields();
+      const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');const renderFields=()=>{controls.innerHTML='';(schema.fields||[]).filter(field=>!['provider_id','videoProvider'].includes(String(field.id||''))).filter(field=>visible(field,pathValue(values.params,paramsPath)||{})).forEach(field=>controls.appendChild(schemaField(field,values,paramsPath,interactive,fieldId=>{if(['model','videoModel'].includes(fieldId))void populateSchema(card,step,values,interactive,request);else if(['resolution','ratio','msResolution','msRatio'].includes(fieldId))renderFields();})));window.lucide?.createIcons();};renderFields();
       if(!controls.childElementCount){fallbackFields(values,interactive).forEach(item=>controls.appendChild(item));window.lucide?.createIcons();}
     }catch(_){if(request===schemaRequest&&card.isConnected)fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));}
   }
