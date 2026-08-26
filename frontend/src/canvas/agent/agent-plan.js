@@ -15,7 +15,8 @@
   function options(field){
     const values=Array.isArray(field.display_options)?field.display_options:[];
     if(values.length)return values;
-    return (field.options||[]).map(value=>({value,label:String(value)}));
+    const labels=Array.isArray(field.option_labels)?field.option_labels:[];
+    return (field.options||[]).map((value,index)=>({value,label:String(labels[index]||value)}));
   }
   function control(field,value,onChange,interactive){
     const type=String(field.type||'text'); const configurable=interactive&&field.ui?.configurable!==false;

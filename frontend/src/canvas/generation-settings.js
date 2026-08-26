@@ -354,6 +354,7 @@ function optionHtml(value, label, selected){
     return `<option value="${escapeHtml(value)}" ${String(value) === String(selected) ? 'selected' : ''}>${escapeHtml(label ?? value)}</option>`;
 }
 const canvasParameterSchemaCache = new Map();
+const canvasParameterSchemaTarget = {image:'', video:''};
 function defaultCanvasParameterSchema(kind){
     if(kind === 'video') return {fields:[
         {id:'videoDuration', default:5, options:[5,10,15], min:1, max:60, step:1},
@@ -394,8 +395,17 @@ function applyCanvasSchemaDefaults(kind, schema){
 async function refreshCanvasParameterSchema(kind, providerId, model){
     if(!providerId) return;
     const key = `${kind}:${providerId}:${model || ''}`;
+    canvasParameterSchemaTarget[kind] = key;
+    const activate = schema => {
+        // Schema requests are asynchronous while selection changes are not.
+        // Only the selected node/model may update the shared rendered schema.
+        if(canvasParameterSchemaTarget[kind] !== key) return;
+        canvasParameterSchemaCache.set(`${kind}:active`, schema);
+        applyCanvasSchemaDefaults(kind, schema);
+        renderDynamicParams();
+    };
     if(canvasParameterSchemaCache.has(key)){
-        canvasParameterSchemaCache.set(`${kind}:active`, canvasParameterSchemaCache.get(key));
+        activate(canvasParameterSchemaCache.get(key));
         return;
     }
     try {
@@ -404,9 +414,7 @@ async function refreshCanvasParameterSchema(kind, providerId, model){
         if(!response.ok) return;
         const schema = await response.json();
         canvasParameterSchemaCache.set(key, schema);
-        canvasParameterSchemaCache.set(`${kind}:active`, schema);
-        applyCanvasSchemaDefaults(kind, schema);
-        renderDynamicParams();
+        activate(schema);
     } catch (_) { /* Keep the backend-compatible default schema on network failure. */ }
 }
 function parseSizeValue(value){

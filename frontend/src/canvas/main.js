@@ -2266,6 +2266,10 @@ function updateComposer(){
         settings = smartSettingsForNode(subject);
         loadPromptDraft(subject);
     }
+    const schemaKind = settings.apiKind === 'video' ? 'video' : 'image';
+    const schemaProvider = schemaKind === 'video' ? settings.videoProvider : settings.provider_id;
+    const schemaModel = schemaKind === 'video' ? settings.videoModel : settings.model;
+    void refreshCanvasParameterSchema(schemaKind, schemaProvider, schemaModel);
     setPromptInputLocked(false);
     syncCascadeRunButton(node);
     positionComposerForNode(node);
