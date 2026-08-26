@@ -4,15 +4,20 @@
   let liveEvents = [];
   const expandedEventGroups = new Set();
   let rebuildingMessages = false;
+  let messageFollow = true;
   let lastRunRenderKey = '';
   let confirmationPending = false;
   let confirmationAccepted = false;
   const status = value => { $('canvasAgentStatus').textContent=value || ''; };
   const timeLabel = () => new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit'}).format(new Date());
   const isNearMessageBottom = box => (box.scrollHeight - box.scrollTop - box.clientHeight) < 48;
-  const captureMessageScroll = box => ({top:box.scrollTop,follow:isNearMessageBottom(box)});
+  const captureMessageScroll = box => ({top:box.scrollTop,follow:messageFollow});
   const restoreMessageScroll = (box, snapshot) => { box.scrollTop=snapshot?.follow ? box.scrollHeight : Math.min(snapshot?.top || 0, Math.max(0,box.scrollHeight-box.clientHeight)); };
-  const attachAuxiliaryPanels = () => $('canvasAgentMessages').append($('canvasAgentPlan'), $('canvasAgentArtifacts'));
+  const attachAuxiliaryPanels = () => {
+    const messages=$('canvasAgentMessages');
+    messages.append($('canvasAgentPlan'), $('canvasAgentArtifacts'));
+    messages.addEventListener('scroll',()=>{if(!rebuildingMessages)messageFollow=isNearMessageBottom(messages);});
+  };
   const conversationEventTypes = new Set(['progress.context','progress.agent','progress.tool_started','progress.tool_failed','skill.loaded','skill.resource_loaded']);
   const isConversationEvent = type => conversationEventTypes.has(String(type || '').replace(/^agent\./,''));
   const escapeRegExp = value => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -37,7 +42,7 @@
     const el=document.createElement('div'); el.className=`canvas-agent-message ${kind}`;
     const body=document.createElement('div'); body.className='canvas-agent-message-body'; renderMessageContent(body, content); el.appendChild(body);
     if (kind === 'user') { const time=document.createElement('div'); time.className='canvas-agent-message-time'; time.textContent=timeLabel(); el.appendChild(time); }
-    const box=$('canvasAgentMessages'); const follow=isNearMessageBottom(box); box.appendChild(el); if(!rebuildingMessages && follow) box.scrollTop=box.scrollHeight;
+    const box=$('canvasAgentMessages'); box.appendChild(el); if(!rebuildingMessages && messageFollow) box.scrollTop=box.scrollHeight;
   };
   const liveEventText = (type, data, fallback='') => {
     const message = String(data?.message || fallback || '').trim();
@@ -99,10 +104,9 @@
     if (!liveEvents.length && !lastLiveStatus) { el?.remove(); return; }
     const next=createLiveStatus(liveEvents.length ? liveEvents : [{type:'status',message:lastLiveStatus,data:{}}]);
     next.classList.add('is-active');
-    const follow=isNearMessageBottom(box);
     if(el) el.replaceWith(next); else box.appendChild(next);
     renderLiveIcons(next);
-    if(!rebuildingMessages && follow) box.scrollTop=box.scrollHeight;
+    if(!rebuildingMessages && messageFollow) box.scrollTop=box.scrollHeight;
   };
   const liveEvent = event => {
     const item={sequence:Number(event?.sequence || 0),type:String(event?.type || 'status').replace(/^agent\./,''),data:event?.data || {},message:event?.message || ''};
@@ -148,7 +152,7 @@
     runs.forEach(run=>{ const option=document.createElement('option'); option.value=run.id; option.textContent=runLabel(run); option.title=run.title || run.id; option.selected=run.id===state.runId; select.appendChild(option); });
   }
   function clearRun() {
-    lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear();
+    lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear(); messageFollow=true;
     lastRunRenderKey='';
     const messages=$('canvasAgentMessages'), plan=$('canvasAgentPlan'), artifacts=$('canvasAgentArtifacts');
     messages.innerHTML='';
@@ -213,11 +217,11 @@
     else { planBox.innerHTML=''; planBox.hidden=true; }
     messages.append(planBox, artifactsBox);
     window.CanvasAgentArtifacts.render(data.tasks||[],data.artifacts||[]); if((data.artifacts||[]).length)window.CanvasAgentArtifacts.renderDocChain(data.artifacts);
-    rebuildingMessages=false; restoreMessageScroll(messages,scrollSnapshot);
+    restoreMessageScroll(messages,scrollSnapshot); rebuildingMessages=false; messageFollow=scrollSnapshot.follow;
   }
   async function ensureRun() { if (state.runId) return state.runId; status('正在创建会话'); const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); await refreshRuns(); return state.runId; }
   async function newRun() { if (state.busy) return; state.busy=true; window.CanvasAgentEvents.stop(); state.runId=''; state.sequence=0; state.skills=[]; clearRun(); renderSkills(); status('正在创建会话'); try { const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); renderRun({run:data.run,messages:[],events:[],tasks:[],artifacts:[]}); await refreshRuns(); } catch (e) { system(e.message); status('创建失败'); } finally { state.busy=false; } }
-  async function send() { const input=$('canvasAgentInput'), content=input.value.trim(); if (!content || state.busy) return; state.busy=true; input.value=''; message(content,'user'); status('正在受理请求…'); try { await ensureModelsLoaded(); await ensureRun(); window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.send({content,provider:selection.provider,model:selection.model,selected_node_ids:window.CanvasAgentBridge.selectedNodeIds(),mention_node_ids:state.mentions}); state.operationId=data.operation_id || ''; status('请求已受理，正在准备 Agent…'); window.CanvasAgentEvents.start(); } catch(e) { system(e.message); status('error'); } finally { state.busy=false; } }
+  async function send() { const input=$('canvasAgentInput'), content=input.value.trim(); if (!content || state.busy) return; state.busy=true; input.value=''; messageFollow=true; message(content,'user'); status('正在受理请求…'); try { await ensureModelsLoaded(); await ensureRun(); window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.send({content,provider:selection.provider,model:selection.model,selected_node_ids:window.CanvasAgentBridge.selectedNodeIds(),mention_node_ids:state.mentions}); state.operationId=data.operation_id || ''; status('请求已受理，正在准备 Agent…'); window.CanvasAgentEvents.start(); } catch(e) { system(e.message); status('error'); } finally { state.busy=false; } }
   async function answer(answer) { if (!answer?.trim() || !state.runId) return; try { window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.answer(answer.trim(),selection.provider,selection.model); state.operationId=data.operation_id || ''; status('回答已受理，正在继续规划…'); } catch(e) { system(e.message); } }
   async function confirm(approved) { if (!state.plan || !state.runId || confirmationPending) return; const authorize=$('canvasAgentAuthorizeNodes')?.checked; const nodeOverrides=approved ? window.CanvasAgentPlan.collectOverrides() : []; confirmationPending=true; confirmationAccepted=true; window.CanvasAgentPlan.render(state.plan, {interactive:false}); try { const steps=state.plan.content_json?.steps || []; const targetIds=steps.filter(step=>['canvas.update_node_params','canvas.replace_node_content','canvas.run_node','canvas.run_group'].includes(step.action)).map(step=>step.target_node_id).filter(Boolean); const authorizedNodeIds=authorize ? [...new Set([...state.mentions,...targetIds])] : []; window.CanvasAgentEvents.start(); const data=await window.CanvasAgentClient.request(`/api/canvas-agent/runs/${encodeURIComponent(state.runId)}/confirm`, {method:'POST', body:JSON.stringify({plan_version:state.plan.version,approved,authorized_node_ids:authorizedNodeIds,node_overrides:nodeOverrides,client_request_id:globalThis.crypto?.randomUUID?.() || `${Date.now()}`})}); if(data.operation_id){state.operationId=data.operation_id;status(approved ? '确认已受理，正在执行…' : '拒绝已受理，正在处理…');}else renderRun(data); } catch(e) { confirmationAccepted=false; window.CanvasAgentPlan.render(state.plan, {interactive:true}); system(e.message); } finally { confirmationPending=false; } }
   async function cancel() { if (!state.runId) return; try { renderRun(await window.CanvasAgentClient.cancel()); window.CanvasAgentEvents.stop(); } catch(e) { system(e.message); } }
