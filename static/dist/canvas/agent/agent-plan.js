@@ -29,6 +29,7 @@
     return String(value)==='source'?'r-source':String(value)==='custom'?'r-custom':'';
   }
   function closePopovers(except=null){document.querySelectorAll('#canvasAgentPlan .canvas-agent-smart-control.pinned').forEach(control=>{if(control!==except)control.classList.remove('pinned');});}
+  document.addEventListener('pointerdown',event=>{if(!event.target.closest('#canvasAgentPlan .canvas-agent-smart-control'))closePopovers();},true);
   function appendIcon(parent,name,klass=''){const icon=document.createElement('i');icon.setAttribute('data-lucide',name);if(klass)icon.className=klass;parent.appendChild(icon);}
   function choiceButton(value,caption,active,onPick,klass=''){
     const button=document.createElement('button');button.type='button';button.dataset.agentValue=String(value);button.className=`${klass} ${active?'active':''}`.trim();button.textContent=caption;button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();onPick(value);});return button;
