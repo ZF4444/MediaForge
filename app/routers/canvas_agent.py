@@ -22,7 +22,7 @@ from app.services.canvas_agent.reliability import DEFAULT_RUN_LIMITS, canvas_str
 from app.config import CANVAS_TASK_TIMEOUT_SECONDS
 from app.core.logging import audit_event, get_logger
 from app.core.metrics import AGENT_RUNS, AGENT_OPERATION_SECONDS, AGENT_FAILURES
-from app.services.canvas_agent.store import append_message, create_run, create_template, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, request_run_command_cancellation, replace_plan_content, save_artifact, save_plan, set_artifact_status, share_project_asset, submit_command, update_run
+from app.services.canvas_agent.store import append_message, create_run, create_template, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, request_run_command_cancellation, replace_plan_content, save_artifact, save_plan, set_artifact_status, set_plan_status, share_project_asset, submit_command, update_run
 from app.services.canvas_agent.artifacts import ARTIFACT_STAGES, compile_prompt, normalize_anchors, validate_stage
 from app.services.canvas_agent.skills import get_enabled_skill, list_enabled_skill_summaries, read_skill
 from app.services.canvas_agent.doc_chain import stage_sources, validate_stage_sources
@@ -342,9 +342,8 @@ async def execute_confirm_command(user_id: str, run_id: str, payload: CanvasAgen
             graph = create_canvas_agent(model=None, user_id=user_id, run_id=run_id, canvas_id=run["canvas_id"], checkpointer=checkpointer)
             await graph.ainvoke(Command(resume={"approved": False}), config={"configurable": {"thread_id": run_id}})
         await asyncio.to_thread(update_run, user_id, run_id, status="planning", phase="planning")
-        await emit_agent_event(user_id, run_id, "plan.rejected", {"plan_version": payload.plan_version})
+        await asyncio.to_thread(set_plan_status, user_id, run_id, payload.plan_version, "rejected")
         return {"run": await asyncio.to_thread(get_run, user_id, run_id), "approved": False}
-    await emit_agent_event(user_id, run_id, "plan.confirmed", {"plan_version": payload.plan_version})
     await _apply_confirmation_overrides(user_id, run_id, plan_row, payload.node_overrides)
     # Resume the same graph thread. The graph deterministically emits the
     # execution tool call, records its ToolMessage, then dispatches tasks.
@@ -364,6 +363,7 @@ async def execute_confirm_command(user_id: str, run_id: str, payload: CanvasAgen
         from app.services.canvas_agent.runtime import create_canvas_agent
         graph = create_canvas_agent(model=model, user_id=user_id, run_id=run_id, canvas_id=run["canvas_id"], checkpointer=checkpointer, emit_progress=progress, execute_patch=execute_patch, dispatch_tasks=dispatch_tasks)
         graph_result = await graph.ainvoke(Command(resume={"approved": True, "plan_version": payload.plan_version, "authorized_node_ids": payload.authorized_node_ids}), config={"configurable": {"thread_id": run_id}})
+    await asyncio.to_thread(set_plan_status, user_id, run_id, payload.plan_version, "confirmed")
     return {"run": await asyncio.to_thread(get_run, user_id, run_id), "result": graph_result.get("execution_result") or {}, "tasks": graph_result.get("tasks") or []}
 
 async def _accept_command(user_id: str, run_id: str, operation_type: str, payload: dict) -> JSONResponse:

@@ -27,6 +27,7 @@
       window.CanvasAgentPanel.message(data.reply, 'agent');
     }
     if (type === 'plan.created' && data.plan) window.CanvasAgentPlan.render({version:data.plan_version, content_json:data.plan});
+    if (type === 'operation.failed') window.CanvasAgentPanel.confirmationFailed?.();
     if (type === 'skill.loaded' && data.skill?.name) {
       const key = `${data.skill.name}:${data.skill.version || ''}`;
       if (!state.skills.some(skill => `${skill.name}:${skill.version || ''}` === key)) state.skills.push({name:data.skill.name,version:data.skill.version || ''});

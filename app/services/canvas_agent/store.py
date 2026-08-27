@@ -120,6 +120,19 @@ def replace_plan_content(user_id: str, run_id: str, version: int, content: dict[
         )
         return cur.fetchone()
 
+def set_plan_status(user_id: str, run_id: str, version: int, status: str) -> dict[str, Any] | None:
+    """Persist a terminal confirmation decision for one plan version."""
+    if status not in {"confirmed", "rejected"}:
+        raise ValueError("invalid plan status")
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "UPDATE canvas_agent_plans SET status=%s,updated_at=%s "
+            "WHERE run_id=%s AND version=%s AND EXISTS "
+            "(SELECT 1 FROM canvas_agent_runs WHERE id=%s AND user_id=%s) RETURNING *",
+            (status, now_ms(), run_id, version, run_id, user_id),
+        )
+        return cur.fetchone()
+
 def begin_operation(user_id: str, run_id: str, idempotency_key: str, operation_type: str, input_data: dict[str, Any], *, risk: str = "safe") -> dict[str, Any]:
     now = now_ms(); body = _json(input_data)
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
