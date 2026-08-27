@@ -14,7 +14,7 @@
     <main class="canvas-manager">
         <header class="manager-header">
             <div><p class="manager-eyebrow">CANVASES</p><h1>画布管理</h1><p class="manager-subtitle">选择已有画布，或创建一张新的画布开始创作。</p></div>
-            <button id="refreshBtn" class="icon-button" type="button" title="刷新画布列表" aria-label="刷新画布列表"><i data-lucide="refresh-cw"></i></button>
+            <div class="manager-header-actions"><button id="importBtn" class="icon-button" type="button" title="导入画布模板" aria-label="导入画布模板"><i data-lucide="upload"></i></button><input id="importInput" type="file" accept=".json,.zip,application/json,application/zip" hidden><button id="refreshBtn" class="icon-button" type="button" title="刷新画布列表" aria-label="刷新画布列表"><i data-lucide="refresh-cw"></i></button></div>
         </header>
         <section class="create-panel" aria-label="新建画布">
             <div class="create-panel-copy"><i data-lucide="sparkles"></i><span>新建画布</span></div>
