@@ -1529,6 +1529,13 @@ async function loadCanvas({renderCanvas=true}={}){
                 delete n.queued;
                 n.running = false;
                 repairedTerminalTaskState = true;
+            } else if(n.running || n.queued){
+                // Older ComfyUI runs persisted a visual running state but not
+                // their server task ID. They cannot be resumed after reload.
+                delete n.queued;
+                n.running = false;
+                n.runTimerHidden = true;
+                repairedTerminalTaskState = true;
             }
         });
         canvas.nodes = nodes;
@@ -3401,6 +3408,12 @@ function isRunningHubPendingTask(task){
     // 只有 AI 应用引擎提交的任务才带 mode 标记，需要走 /api/runninghub/query 轮询。
     return task?.mode === 'app';
 }
+function isComfyPendingTask(task){
+    return task?.taskType === 'comfy'
+        || String(task?.providerId || task?.provider || task?.engine || '').toLowerCase() === 'comfyui'
+        // Tasks created before taskType was persisted can still be recovered.
+        || /^canvas_comfy_/i.test(String(task?.taskId || ''));
+}
 function hasRunningHubPendingTask(){
     return nodes.some(node => smartPendingTasks(node).some(isRunningHubPendingTask));
 }
@@ -3530,8 +3543,39 @@ async function pollCanvasTask(taskId){
         activeSmartTaskPolls.delete(taskId);
     }
 }
+async function pollCanvasComfyTask(taskId){
+    if(!taskId) throw new Error(tr('smart.errRunFailed'));
+    if(activeSmartTaskPolls.has(taskId)) return activeSmartTaskPolls.get(taskId);
+    const promise = (async () => {
+        for(let i = 0; i < 900; i++){
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            const task = await fetch(`/api/canvas-comfy-tasks/${encodeURIComponent(taskId)}`).then(async r => {
+                if(!r.ok) throw await smartResponseError(r);
+                return r.json();
+            });
+            if(task.status === 'succeeded'){
+                checkQuotaWarningFromResult(task);
+                return task.result || {};
+            }
+            if(task.status === 'failed'){
+                if(task.error_code === 'storage_quota_exceeded' || task.status_code === 413) throw new StorageQuotaSignal(task);
+                const budget = budgetDataFromPayload(task);
+                if(budget) throw new UsageBudgetSignal(budget);
+                throw new Error(task.error || tr('smart.errRunFailed'));
+            }
+        }
+        throw new Error(tr('smart.errRunTimeout'));
+    })();
+    activeSmartTaskPolls.set(taskId, promise);
+    try {
+        return await promise;
+    } finally {
+        activeSmartTaskPolls.delete(taskId);
+    }
+}
 async function pollSmartPendingTask(task){
     if(isRunningHubPendingTask(task)) return pollRunningHubTask(task.taskId);
+    if(isComfyPendingTask(task)) return pollCanvasComfyTask(task.taskId);
     return pollCanvasTask(task.taskId);
 }
 function finalizeSmartPendingTask(node, taskId, images, kind='image'){

@@ -179,6 +179,19 @@ git status
 
 生产环境不需要每次重启都执行 npm 命令。推荐在 CI/CD 或 Docker 镜像构建阶段执行 `npm ci && npm run build`，然后将生成的 `static/dist/` 一起打入发布包或镜像。若采用“同步源码到服务器”的发布方式，则每次前端代码发布前都必须在服务器执行上述构建流程。
 
+### 数据备份
+
+使用 `scripts/backup_services.sh` 可一次性备份 PostgreSQL、Redis 和 MinIO 三个存储桶。脚本从
+`DATABASE_URL`、`REDIS_URL`、`MINIO_*` 环境变量读取连接信息，将每次备份写入带 UTC 时间戳的目录，
+并生成 `manifest.txt` 与 `SHA256SUMS`。默认保留 14 天，可通过参数调整：
+
+```bash
+./scripts/backup_services.sh --output-dir /var/backups/mediaforge --retention-days 30
+```
+
+也可以只备份单个服务，例如 `--only postgres`。备份主机需安装 `pg_dump`、`redis-cli` 和 MinIO
+客户端 `mc`；备份目录应使用独立磁盘或远端同步存储，并定期执行恢复演练。
+
 ## 启动服务
 
 ### 开发模式

@@ -84,8 +84,7 @@ async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runSt
 }
 
 // === 第 2 批：中等复杂度的 provider 调用函数 ===
-//   ComfyUI 队列基础设施：createSmartComfyTask / waitSmartComfyTaskResult /
-//     runQueuedSmartComfyGenerate / comfyParamsFromWorkflowValues
+//   ComfyUI 队列基础设施：createSmartComfyTask / comfyParamsFromWorkflowValues
 //   ComfyUI 具体调用：comfyFieldKind / runComfyGeneration / comfyNameForRef / sleep
 //   其它 provider 调用：runApiGeneration / submitRunningHubGeneration /
 //     pollRunningHubTask / runRunningHubGeneration / runApiVideoGeneration /
@@ -120,28 +119,6 @@ async function createSmartComfyTask(payload){
     });
     if(!res.ok) throw await smartResponseError(res, tr('smart.errRunFailed'));
     return res.json();
-}
-async function waitSmartComfyTaskResult(taskId){
-    if(!taskId) throw new Error(tr('smart.errRunFailed'));
-    while(true){
-        const res = await fetch(`/api/canvas-comfy-tasks/${encodeURIComponent(taskId)}`);
-        if(!res.ok) throw await smartResponseError(res, tr('smart.errRunFailed'));
-        const data = await res.json();
-        const readyResult = data?.result || data?.outputs || data?.images || data?.videos || data?.audios || data?.texts;
-        if(readyResult && resultMediaUrls(readyResult).length){ checkQuotaWarningFromResult(data); return data.result || data; }
-        if(data.status === 'succeeded'){ checkQuotaWarningFromResult(data); return data.result || {}; }
-        if(data.status === 'failed'){
-            if(data.error_code === 'storage_quota_exceeded' || data.status_code === 413) throw new StorageQuotaSignal(data);
-            const budget = budgetDataFromPayload(data);
-            if(budget) throw new UsageBudgetSignal(budget);
-            throw new Error(data.error || tr('smart.errRunFailed'));
-        }
-        await sleep(1600);
-    }
-}
-async function runQueuedSmartComfyGenerate(payload){
-    const task = await createSmartComfyTask(payload);
-    return waitSmartComfyTaskResult(task.task_id);
 }
 function comfyParamsFromWorkflowValues(config, values={}){
     const params = {};
@@ -313,7 +290,22 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
             values[field.id] = settings.comfyParams?.[field.id] ?? field.default;
         }
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
+    const task = await createSmartComfyTask({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
+    if(!task?.task_id) throw new Error(tr('smart.errRunFailed'));
+    if(pendingNode){
+        pendingNode.pendingTasks = [{taskId:task.task_id, kind:'image', providerId:'comfyui', taskType:'comfy'}];
+        pendingNode.pending = 1;
+        pendingNode.pendingCandidatePool = true;
+        pendingNode.running = false;
+        render();
+        await saveCanvas();
+        await resumeSmartPendingNode(pendingNode);
+        if(!(pendingNode.images || []).length) throw new Error(tr('smart.errComfyNoImages'));
+        clearPromptInput({preserveDraft:true});
+        scheduleSave();
+        return;
+    }
+    const result = await pollCanvasComfyTask(task.task_id);
     const urls = resultMediaUrls(result);
     if(!urls.length) throw new Error(tr('smart.errComfyNoImages'));
     const kind = mediaKindForUrls(urls, result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image');
