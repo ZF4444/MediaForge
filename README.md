@@ -183,15 +183,23 @@ git status
 
 使用 `scripts/backup_services.py` 可一次性备份 PostgreSQL、Redis 和 MinIO 三个存储桶。脚本从
 `DATABASE_URL`、`REDIS_URL`、`MINIO_*` 环境变量读取连接信息，将每次备份写入带 UTC 时间戳的目录，
-并生成 `manifest.txt` 与 `SHA256SUMS`。Redis 使用 ACL 兼容的逻辑备份（`SCAN` + `DUMP`），不要求
-`REPLCONF`/`SYNC` 复制权限。默认保留 14 天，可通过参数调整：
+并生成 `manifest.txt` 与 `SHA256SUMS`。Redis 统一使用管理员账号生成原子 RDB 快照，需要
+`REPLCONF`/`SYNC` 权限。默认保留 14 天，可通过参数调整：
 
 ```bash
 python scripts/backup_services.py --output-dir /var/backups/mediaforge --retention-days 30
 ```
 
-也可以只备份单个服务，例如 `--only postgres`。备份主机需安装 `pg_dump`、`redis-cli` 和 MinIO
-客户端 `mc`；备份目录应使用独立磁盘或远端同步存储，并定期执行恢复演练。
+Redis 备份必须提供管理员连接串：
+
+```bash
+python scripts/backup_services.py --only redis \
+  --redis-admin-url 'redis://admin:password@127.0.0.1:6379/0'
+```
+
+也可通过 `REDIS_ADMIN_URL` 环境变量传入，避免将密码写入命令历史。未提供管理员连接串时，脚本会直接失败。
+
+也可以只备份单个服务，例如 `--only postgres`。备份主机需安装 `pg_dump`、`redis-cli`；备份目录应使用独立磁盘或远端同步存储，并定期执行恢复演练。
 
 ## 启动服务
 
