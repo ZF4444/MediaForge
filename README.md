@@ -181,12 +181,12 @@ git status
 
 ### 数据备份
 
-使用 `scripts/backup_services.sh` 可一次性备份 PostgreSQL、Redis 和 MinIO 三个存储桶。脚本从
+使用 `scripts/backup_services.py` 可一次性备份 PostgreSQL、Redis 和 MinIO 三个存储桶。脚本从
 `DATABASE_URL`、`REDIS_URL`、`MINIO_*` 环境变量读取连接信息，将每次备份写入带 UTC 时间戳的目录，
 并生成 `manifest.txt` 与 `SHA256SUMS`。默认保留 14 天，可通过参数调整：
 
 ```bash
-./scripts/backup_services.sh --output-dir /var/backups/mediaforge --retention-days 30
+python scripts/backup_services.py --output-dir /var/backups/mediaforge --retention-days 30
 ```
 
 也可以只备份单个服务，例如 `--only postgres`。备份主机需安装 `pg_dump`、`redis-cli` 和 MinIO
