@@ -156,7 +156,7 @@ def submit_command(user_id: str, run_id: str, operation_type: str, client_reques
                 if isinstance(references, list):
                     message_references = []
                     for item in references[:24]:
-                        if not isinstance(item, dict) or not str(item.get("url") or ""):
+                        if not isinstance(item, dict) or (not str(item.get("url") or "") and not str(item.get("node_id") or item.get("nodeId") or "")):
                             continue
                         try:
                             image_index = int(item.get("image_index") or item.get("imageIndex") or 0)
@@ -165,6 +165,7 @@ def submit_command(user_id: str, run_id: str, operation_type: str, client_reques
                         message_references.append({
                             "node_id": str(item.get("node_id") or item.get("nodeId") or ""),
                             "image_index": image_index,
+                            "empty": bool(item.get("empty")),
                             "source": str(item.get("source") or "canvas"),
                             "url": str(item.get("url") or ""),
                             "thumbnail": str(item.get("thumbnail") or ""),

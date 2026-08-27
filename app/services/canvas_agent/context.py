@@ -26,6 +26,9 @@ def build_canvas_context(user_id: str, canvas_id: str, *, selected_node_ids: lis
         except (TypeError, ValueError):
             continue
         node = by_id.get(node_id)
+        if bool(raw.get("empty")) and node:
+            references.append({"node_id": node_id, "image_index": -1, "url": "", "label": f"图{len(references) + 1}", "node_label": str(node.get("title") or node.get("name") or node_id), "source": "canvas", "empty": True})
+            continue
         images = node.get("images") if node else None
         if not isinstance(images, list) or image_index < 0 or image_index >= len(images):
             continue

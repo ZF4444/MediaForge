@@ -12,9 +12,10 @@
 
   function materialReference(nodeId, requestedIndex = null) {
     const node = nodes.find(item => String(item?.id || '') === String(nodeId || ''));
+    if (!node) return null;
     const imageIndex = requestedIndex == null ? (node?.images || []).findIndex(media => String(media?.url || media?.preview_url || media?.previewUrl || '').trim()) : Number(requestedIndex);
     const item = imageIndex >= 0 ? node.images[imageIndex] : null;
-    if (!node || !item) return null;
+    if (!item) return { nodeId: String(node.id), imageIndex: -1, label: nodeLabel(node.id), src: '', previewSrc: '', kind: 'node', empty: true };
     const source = typeof thumbMediaUrl === 'function' ? thumbMediaUrl(item) : String(item.url || item.preview_url || item.previewUrl || '');
     const preview = typeof displayMediaUrl === 'function' ? displayMediaUrl(item) : source;
     if (!source) return null;
@@ -24,14 +25,14 @@
   function renderReferencePicking() {
     document.body.classList.toggle('canvas-agent-reference-picking', referencePicking);
     document.querySelectorAll('.image-node[data-id]').forEach(nodeEl => {
-      nodeEl.classList.toggle('canvas-agent-reference-eligible', Boolean(referencePicking && materialReference(nodeEl.dataset.id)));
+      nodeEl.classList.toggle('canvas-agent-reference-eligible', Boolean(referencePicking && nodes.some(item => String(item?.id || '') === String(nodeEl.dataset.id || ''))));
     });
     window.dispatchEvent(new CustomEvent('canvas-agent-reference-picking-changed', {detail: {active: referencePicking}}));
     if (!referencePicking) { referenceNotice?.remove(); referenceNotice = null; return; }
     if (!referenceNotice) {
       referenceNotice = document.createElement('div');
       referenceNotice.className = 'canvas-agent-reference-notice';
-      referenceNotice.innerHTML = '<span><strong>从画布添加</strong><small>点击带素材的节点以添加为引用</small></span>';
+      referenceNotice.innerHTML = '<span><strong>从画布添加</strong><small>点击节点以添加为引用</small></span>';
       const exit = document.createElement('button'); exit.type = 'button'; exit.textContent = '退出';
       exit.addEventListener('click', () => endReferencePicking());
       referenceNotice.appendChild(exit); document.body.appendChild(referenceNotice);
