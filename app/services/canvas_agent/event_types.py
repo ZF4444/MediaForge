@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from typing import Any
+import os
+
+from app.core.logging import get_logger
 
 EVENT_SCHEMA_VERSION = 1
 MAX_EVENT_PAYLOAD_BYTES = 24_000
@@ -18,12 +21,27 @@ EVENT_TYPES = {
     "skill.discovered", "skill.loaded", "skill.resource_loaded", "skill.rejected", "skill.resource_rejected", "skill.invalidated",
 }
 
+logger = get_logger("canvas_agent")
+
 _SENSITIVE_KEYS = {"api_key", "apikey", "authorization", "cookie", "password", "secret", "token", "access_key", "private_key"}
 
 
 def normalize_event_type(value: str) -> str:
     event_type = str(value or "").removeprefix("agent.")
     if event_type not in EVENT_TYPES:
+        # Keep enough runtime identity to diagnose stale/mixed worker processes.
+        logger.error(
+            "unsupported canvas agent event type",
+            extra={
+                "event": "canvas_agent_event_type_unsupported",
+                "requested_event_type": str(value or ""),
+                "normalized_event_type": event_type,
+                "process_id": os.getpid(),
+                "module_file": __file__,
+                "event_types_contains": event_type in EVENT_TYPES,
+                "event_types_count": len(EVENT_TYPES),
+            },
+        )
         raise ValueError(f"unsupported agent event type: {event_type}")
     return event_type
 
