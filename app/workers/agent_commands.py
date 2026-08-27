@@ -11,10 +11,12 @@ from fastapi import HTTPException
 from app.config import AGENT_COMMAND_POLL_SECONDS
 from app.core.auth import USERS, current_user_var
 from app.core.log_context import reset_log_context, set_log_context
+from app.core.logging import get_logger
 from app.services.canvas_agent.event_bus import AgentEventService
 from app.services.canvas_agent.store import claim_next_command, command_cancel_requested, finish_command, refresh_command_lease, update_run
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+logger = get_logger("canvas_agent")
 
 
 async def _emit(user_id: str, run_id: str, operation_id: str, event_type: str, *, phase: str = "", severity: str = "info", payload: dict[str, Any] | None = None) -> None:
@@ -78,8 +80,30 @@ async def execute_command(operation: dict[str, Any]) -> None:
         await asyncio.to_thread(finish_command, operation_id, status="blocked" if exc.status_code == 409 else "failed", error=str(detail))
         if exc.status_code != 409:
             await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase=phase)
+        logger.error(
+            "canvas agent command rejected",
+            extra={
+                "event": "canvas_agent_command_rejected",
+                "command_type": kind,
+                "operation_id": operation_id,
+                "run_id": run_id,
+                "worker_id": WORKER_ID,
+                "status_code": exc.status_code,
+                "detail": str(detail)[:500],
+            },
+        )
         await _emit(user_id, run_id, operation_id, "operation.failed", phase="execution" if kind == "agent.confirm" else "planning", severity="error", payload={"message": str(detail), "status_code": exc.status_code})
     except Exception as exc:
+        logger.exception(
+            "canvas agent command failed",
+            extra={
+                "event": "canvas_agent_command_failed",
+                "command_type": kind,
+                "operation_id": operation_id,
+                "run_id": run_id,
+                "worker_id": WORKER_ID,
+            },
+        )
         await asyncio.to_thread(finish_command, operation_id, status="failed", error=str(exc))
         await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase=phase)
         await _emit(user_id, run_id, operation_id, "operation.failed", phase="execution" if kind == "agent.confirm" else "planning", severity="error", payload={"message": "Agent 命令执行失败", "error": str(exc)[:500]})
