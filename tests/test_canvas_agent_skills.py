@@ -50,6 +50,14 @@ def test_skill_document_reads_complete_body_and_metadata_prompt():
     assert "canvas-capabilities v1.0.0" in skills.skill_metadata_prompt()
 
 
+def test_image_generation_skill_is_registered_with_matching_frontmatter():
+    document = skills.read_skill_document("image-generation")
+    assert document.name == "image-generation"
+    assert document.version == "1.0.0"
+    assert "image.text_to_image" in document.content
+    assert "image-generation v1.0.0" in skills.skill_metadata_prompt()
+
+
 def test_disabled_skill_is_hidden_and_cannot_be_read(monkeypatch):
     monkeypatch.setattr(skills, "_enabled_skill_names", lambda: {"shot-list"})
     assert [skill.name for skill in skills.list_enabled_skill_summaries()] == ["shot-list"]

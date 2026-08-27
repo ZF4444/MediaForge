@@ -67,6 +67,10 @@ _SKILLS = (
     SkillSummary("product-ad-creative", "Product advertising creative workflow", "1.0.0", triggers=("产品广告", "主视觉", "电商")),
     SkillSummary("shot-list", "Shot list planning workflow", "1.0.0", triggers=("分镜", "镜头", "shot list")),
     SkillSummary("prompt-pack", "Prompt package structure and validation", "1.0.0", triggers=("提示词", "prompt", "批量生成")),
+    SkillSummary(
+        "image-generation", "Canvas image-generation planning and iteration workflow", "1.0.0",
+        triggers=("生图", "文生图", "图生图", "图片生成", "画面", "提示词"),
+    ),
 )
 
 
@@ -156,10 +160,10 @@ def _frontmatter(content: str) -> tuple[dict[str, Any], str]:
     return data, content[end + 5:]
 
 
-def read_skill_document(name: str, *, root: str = "") -> SkillDocument:
+def read_skill_document(name: str, *, root: str = "", _allow_builtin_registration: bool = False) -> SkillDocument:
     if not _SKILL_NAME.fullmatch(str(name or "")):
         raise KeyError(name)
-    skill = get_enabled_skill(name)
+    skill = get_skill(name) if _allow_builtin_registration else get_enabled_skill(name)
     if skill is None:
         raise KeyError(name)
     skill_root = _resolve_under(_skill_root(root), Path(skill.name))
@@ -178,9 +182,9 @@ def read_skill(name: str, *, root: str = "") -> str:
     return read_skill_document(name, root=root).content
 
 
-def read_skill_resource(name: str, resource_path: str, *, root: str = "") -> SkillResourceDocument:
+def read_skill_resource(name: str, resource_path: str, *, root: str = "", _allow_builtin_registration: bool = False) -> SkillResourceDocument:
     """Read one Level 3 resource that is explicitly registered for a Skill."""
-    skill = get_enabled_skill(name)
+    skill = get_skill(name) if _allow_builtin_registration else get_enabled_skill(name)
     if skill is None:
         raise KeyError(name)
     relative_path = _safe_relative_path(resource_path)
@@ -199,10 +203,10 @@ def register_builtin_skills() -> None:
     now = now_ms()
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
         for skill in _SKILLS:
-            document = read_skill_document(skill.name)
+            document = read_skill_document(skill.name, _allow_builtin_registration=True)
             resources = []
             for resource in skill.resources:
-                resource_document = read_skill_resource(skill.name, resource.path)
+                resource_document = read_skill_resource(skill.name, resource.path, _allow_builtin_registration=True)
                 resources.append({
                     "path": resource.path,
                     "sha256": resource_document.content_sha256,
