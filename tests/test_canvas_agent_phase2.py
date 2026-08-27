@@ -3,6 +3,7 @@ import pytest
 from app.models.canvas_agent import CanvasPatch, SemanticPlan
 from app.services.canvas_agent.policy import validate_patch
 from app.services.canvas_agent.reliability import canvas_structure_fingerprint, classify_failure, enforce_plan_limits
+from app.routers.canvas_agent import _hydrate_plan_nodes
 
 
 def test_structure_fingerprint_ignores_placement_and_transient_task_state():
@@ -24,6 +25,62 @@ def test_user_node_requires_explicit_per_node_authorization():
     with pytest.raises(PermissionError):
         validate_patch(patch, allow_user_node_changes=True, authorized_node_ids=set())
     validate_patch(patch, allow_user_node_changes=True, authorized_node_ids={"user:user-node"})
+
+
+def test_hydrate_plan_nodes_reuses_created_node_for_followup_execution_step():
+    plan = {
+        "steps": [
+            {"id": "create-image", "action": "canvas.create_node", "node": {
+                "semantic_type": "image_generation", "title": "产品主视觉",
+                "content": "雨夜城市中的产品",
+                "params": {"runSettings": {"model": "demo", "resolution": "2k"}},
+            }},
+            {"id": "run-image", "action": "canvas.run_node", "target_node_id": "create-image"},
+        ]
+    }
+    hydrated = _hydrate_plan_nodes(plan, {"nodes": []})
+    assert hydrated["steps"][1]["node"] == hydrated["steps"][0]["node"]
+
+
+def test_hydrate_plan_nodes_prefers_generation_prompt_over_imported_file_text():
+    plan = {"steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "n1"}]}
+    canvas = {"nodes": [{
+        "id": "n1", "type": "smart-image", "title": "Image",
+        "text": "data/image copy 18.png", "promptDraftText": "生成一只猫",
+        "runSettings": {"model": "demo", "ratio": "16:9"},
+    }]}
+    hydrated = _hydrate_plan_nodes(plan, canvas)
+    node = hydrated["steps"][0]["node"]
+    assert node["content"] == "生成一只猫"
+    assert node["params"]["runSettings"] == {"model": "demo", "ratio": "16:9"}
+
+
+def test_hydrate_plan_nodes_uses_latest_canvas_values_over_stale_plan_snapshot():
+    plan = {"steps": [{
+        "id": "run", "action": "canvas.run_node", "target_node_id": "n1",
+        "node": {"semantic_type": "smart-image", "title": "旧标题",
+                  "content": "旧提示词", "params": {"runSettings": {"model": "old-model"}}},
+    }]}
+    canvas = {"nodes": [{
+        "id": "n1", "type": "smart-image", "title": "新标题",
+        "promptDraftText": "新提示词", "runSettings": {"model": "new-model"},
+    }]}
+    hydrated = _hydrate_plan_nodes(plan, canvas)
+    node = hydrated["steps"][0]["node"]
+    assert node["title"] == "新标题"
+    assert node["content"] == "新提示词"
+    assert node["params"]["runSettings"]["model"] == "new-model"
+
+
+@pytest.mark.parametrize(("settings", "capability"), [
+    ({"engine": "comfy", "apiKind": "image"}, "comfyui.workflow.image"),
+    ({"engine": "comfy", "apiKind": "video"}, "comfyui.workflow.video"),
+    ({"provider_id": "runninghub", "apiKind": "image"}, "runninghub.app.image"),
+])
+def test_hydrate_plan_nodes_infers_provider_specific_capability(settings, capability):
+    plan = {"steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "n1"}]}
+    canvas = {"nodes": [{"id": "n1", "type": "smart-image", "runSettings": settings}]}
+    assert _hydrate_plan_nodes(plan, canvas)["steps"][0]["node"]["capability"] == capability
 
 def test_confirm_endpoint_rejects_stale_plan_version(monkeypatch):
     import asyncio

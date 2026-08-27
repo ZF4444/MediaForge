@@ -84,9 +84,11 @@
   }
   async function populateSchema(card,step,values,interactive,request,history=false){
     const node=step.node||{},settings=values.settings||{};const provider=String(settings.provider_id||settings.videoProvider||'');const model=String(settings.model||settings.videoModel||'');
-    if(!node.capability){fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));return;}
+    const kind=String(settings.apiKind||node.genKind).toLowerCase()==='video'?'video':'image',engine=String(settings.engine||'').toLowerCase();
+    const capability=String(node.capability||((node.semantic_type==='prompt'||node.semantic_type==='smart-prompt')?'prompt.generate':(engine==='comfy'?`comfyui.workflow.${kind}`:(engine==='runninghub'||settings.provider_id==='runninghub'?`runninghub.app.${kind}`:(kind==='video'?'video.text_to_video':'image.text_to_image')))));
+    if(!capability){fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));return;}
     try{
-      const response=await fetch(schemaUrl(node.capability,provider,model),{credentials:'same-origin'});if(!response.ok)throw new Error();const schema=await response.json();if((request!==schemaRequest&&!history)||!card.isConnected)return;
+      const response=await fetch(schemaUrl(capability,provider,model),{credentials:'same-origin'});if(!response.ok)throw new Error();const schema=await response.json();if((request!==schemaRequest&&!history)||!card.isConnected)return;
       const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');const renderFields=()=>{controls.innerHTML='';(schema.fields||[]).filter(field=>!['provider_id','videoProvider'].includes(String(field.id||''))).filter(field=>visible(field,pathValue(values.params,paramsPath)||{})).forEach(field=>controls.appendChild(schemaField(field,values,paramsPath,interactive,fieldId=>{if(['model','videoModel'].includes(fieldId))void populateSchema(card,step,values,interactive,request);else if(['resolution','ratio','msResolution','msRatio'].includes(fieldId))renderFields();})));window.lucide?.createIcons();};renderFields();
       if(!controls.childElementCount){fallbackFields(values,interactive).forEach(item=>controls.appendChild(item));window.lucide?.createIcons();}
     }catch(_){if((request===schemaRequest||history)&&card.isConnected)fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));}
@@ -104,7 +106,9 @@
     if(!options.force&&!options.container&&row&&state.plan?.version===row.version&&box.dataset.planVersion===renderKey)return;
     const request=++schemaRequest;box.innerHTML='';if(!options.container)state.plan=row||null;const plan=row?.content_json||{},steps=Array.isArray(plan.steps)?plan.steps:[];if(!row){box.hidden=true;return;}box.dataset.planVersion=renderKey;
     const title=document.createElement('h4');title.textContent=plan.goal||'Agent 计划';box.appendChild(title);
-    const history=Boolean(options.container)||Boolean(options.history);const nodeSteps=steps.filter(step=>step.node);const configs=nodeSteps.map((step,index)=>config(step,interactive,request,interactive&&index===nodeSteps.length-1,history,options.status||''));if(configs.length)configs.forEach(item=>box.appendChild(item));else{const summary=document.createElement('div');summary.className='canvas-agent-plan-meta';summary.textContent=steps.map(text).join('；');box.appendChild(summary);}if(!interactive)box.hidden=false;else box.hidden=false;
+    const history=Boolean(options.container)||Boolean(options.history);
+    const configurableActions=new Set(['canvas.create_node','canvas.update_node_params','canvas.replace_node_content','canvas.run_node','canvas.run_group']);
+    const nodeSteps=steps.filter(step=>step.node||configurableActions.has(step.action));const configs=nodeSteps.map((step,index)=>config(step,interactive,request,interactive&&index===nodeSteps.length-1,history,options.status||''));if(configs.length)configs.forEach(item=>box.appendChild(item));else{const summary=document.createElement('div');summary.className='canvas-agent-plan-meta';summary.textContent=steps.map(text).join('；');box.appendChild(summary);}if(!interactive)box.hidden=false;else box.hidden=false;
     window.lucide?.createIcons();
   }
   const collectOverrides=()=>[...document.querySelectorAll('#canvasAgentPlan .canvas-agent-node-config')].map(card=>card._override?.()).filter(Boolean);
