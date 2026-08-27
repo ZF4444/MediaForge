@@ -31,7 +31,19 @@ async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *,
                                 execute_patch=execute_patch, dispatch_tasks=dispatch_tasks, tools=tools,
                                 provider_loader=_load_canvas_parameter_providers,
                                 emit_skill_event=context.get("emit_skill_event"))
-    return await graph.ainvoke({"run_id": run_id, "messages": [HumanMessage(content=message)]},
+    references = list(context.get("media_references") or [])
+    if references:
+        from main import reference_to_data_url
+        labels = "\n".join(f"- {ref.get('label')}: {ref.get('node_label') or ref.get('node_id')}" for ref in references)
+        parts: list[dict[str, Any]] = [{"type": "text", "text": f"{message}\n\n本轮引用画布素材（按顺序）：\n{labels}"}]
+        for ref in references[:12]:
+            data_url = await asyncio.to_thread(reference_to_data_url, ref, 1536)
+            if data_url:
+                parts.append({"type": "image_url", "image_url": {"url": data_url}})
+        human = HumanMessage(content=parts)
+    else:
+        human = HumanMessage(content=message)
+    return await graph.ainvoke({"run_id": run_id, "messages": [human]},
                                config={"configurable": {"thread_id": run_id}})
 
 async def plan_with_state_graph(model: Any, message: str, context: dict[str, Any], *, checkpointer=None,

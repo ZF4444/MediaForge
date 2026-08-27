@@ -8,6 +8,9 @@
   let lastRunRenderKey = '';
   let confirmationPending = false;
   let confirmationAccepted = false;
+  let referencePickerOpen = false;
+  let referencePickerIndex = 0;
+  let referencePickerSource = 'canvas';
   const status = value => { $('canvasAgentStatus').textContent=value || ''; };
   const timeLabel = () => new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit'}).format(new Date());
   const isNearMessageBottom = box => (box.scrollHeight - box.scrollTop - box.clientHeight) < 48;
@@ -24,7 +27,7 @@
   const renderMessageContent = (body, content) => {
     const candidates = (window.CanvasAgentBridge.nodeMentionCandidates?.() || []).sort((a,b)=>b.label.length-a.label.length || b.id.length-a.id.length);
     const usable = candidates.filter(item=>item.label.length >= 2 || item.id.length >= 8);
-    if(!usable.length){ body.textContent=content; return; }
+    if(!usable.length){ body.appendChild(document.createTextNode(content)); return; }
     const pattern = new RegExp(usable.map(item=>escapeRegExp(item.label)).concat(usable.map(item=>escapeRegExp(item.id))).join('|'), 'g');
     let cursor=0; let match;
     while((match=pattern.exec(String(content)))!==null){
@@ -34,13 +37,42 @@
       const link=document.createElement('button'); link.type='button'; link.className='canvas-agent-node-link'; link.textContent=value; link.title=`定位节点：${target.label}`; link.dataset.nodeId=target.id; body.appendChild(link); cursor=pattern.lastIndex;
     }
     if(cursor<String(content).length) body.appendChild(document.createTextNode(String(content).slice(cursor)));
-    if(!body.childNodes.length) body.textContent=content;
+    if(!body.childNodes.length) body.appendChild(document.createTextNode(content));
   };
-  const message = (content, kind='agent') => {
+  const messageReferenceToken = (reference,index) => {
+    const token=document.createElement('button'); token.type='button'; token.className='mention-image-token';
+    const url=reference.thumbnail||reference.src||reference.url||'';
+    const name=reference.name||reference.label||`图${index+1}`;
+    token.dataset.url=reference.preview_url||reference.previewSrc||reference.url||url;
+    token.title=reference.source==='asset'?'素材库中内容无法跳转':`定位节点：${name}`;
+    const image=document.createElement('img'); image.src=url; image.alt=name; image.draggable=false;
+    const label=document.createElement('span'); label.textContent=name;
+    token.append(image,label);
+    token.addEventListener('click',()=>{
+      if(reference.source==='asset'){ toast('素材库中内容无法跳转'); return; }
+      if(!reference.node_id&&!reference.nodeId){ toast('该引用不属于画布节点，无法跳转'); return; }
+      if(!window.CanvasAgentBridge.focusNode(reference.node_id||reference.nodeId)) toast('对应画布节点已不存在，无法跳转');
+    });
+    return token;
+  };
+  const renderUserMessageContent = (body, content, references=[]) => {
+    const refs=Array.isArray(references)?references:[]; const used=new Set(); const text=String(content||''); const pattern=/图([1-9]\d*)/g; let cursor=0; let match;
+    while((match=pattern.exec(text))!==null){
+      const index=Number(match[1])-1; const reference=refs[index];
+      if(!reference){ continue; }
+      renderMessageContent(body,text.slice(cursor,match.index)); body.appendChild(messageReferenceToken(reference,index)); used.add(index); cursor=pattern.lastIndex;
+    }
+    renderMessageContent(body,text.slice(cursor));
+    const remaining=refs.filter((_,index)=>!used.has(index));
+    if(!remaining.length)return;
+    const row=document.createElement('div'); row.className='canvas-agent-message-references';
+    remaining.forEach(reference=>row.appendChild(messageReferenceToken(reference,refs.indexOf(reference)))); body.appendChild(row);
+  };
+  const message = (content, kind='agent', references=[]) => {
     if (!content) return;
     if (kind === 'agent') sealLiveStatus();
     const el=document.createElement('div'); el.className=`canvas-agent-message ${kind}`;
-    const body=document.createElement('div'); body.className='canvas-agent-message-body'; renderMessageContent(body, content); el.appendChild(body);
+    const body=document.createElement('div'); body.className='canvas-agent-message-body'; if(kind==='user')renderUserMessageContent(body,content,references); else renderMessageContent(body,content); el.appendChild(body);
     if (kind === 'user') { const time=document.createElement('div'); time.className='canvas-agent-message-time'; time.textContent=timeLabel(); el.appendChild(time); }
     const box=$('canvasAgentMessages'); box.appendChild(el); if(!rebuildingMessages && messageFollow) box.scrollTop=box.scrollHeight;
   };
@@ -161,7 +193,23 @@
     state.plan=null; state.tasks=[];
   }
   function renderSkills() { const box=$('canvasAgentSkills'); box.innerHTML=''; state.skills.forEach(skill=>{const tag=document.createElement('span');tag.className='canvas-agent-skill';tag.textContent=`${skill.name}${skill.version ? ` v${skill.version}` : ''}`;box.appendChild(tag);});box.hidden=!state.skills.length; }
-  function renderMentions() { const box=$('canvasAgentMentions'); box.innerHTML=''; state.mentions.forEach(id => { const chip=document.createElement('span'); chip.className='canvas-agent-mention'; chip.textContent=`@${window.CanvasAgentBridge.nodeLabel(id)}`; const remove=document.createElement('button'); remove.type='button'; remove.textContent='×'; remove.addEventListener('click',()=>{state.mentions=state.mentions.filter(item=>item!==id);renderMentions();}); chip.appendChild(remove); box.appendChild(chip); }); }
+  function renderMentions() {
+    const box=$('canvasAgentMentions'); box.innerHTML='';
+    state.references.forEach(reference => {
+      const chip=document.createElement('div'); chip.className='input-thumb'; chip.title=`引用素材：${reference.label||reference.name||'图片'}`;
+      chip.style.setProperty('--preview-url',`url('${reference.previewSrc||reference.url||reference.src||''}')`);
+      const image=document.createElement('img'); image.src=reference.src||reference.thumbnail||reference.url; image.alt=reference.label||reference.name||'图片'; image.draggable=false;
+      const remove=document.createElement('button'); remove.type='button'; remove.className='input-thumb-x'; remove.setAttribute('aria-label',`移除 ${reference.label||reference.name||'图片'}`); remove.innerHTML='<i data-lucide="x"></i>';
+      remove.addEventListener('click',()=>{state.references=state.references.filter(item=>item!==reference);renderMentions();});
+      const label=document.createElement('span'); label.className='input-thumb-label'; label.textContent=`图${state.references.indexOf(reference)+1}`;
+      chip.append(image,label,remove); box.appendChild(chip);
+    });
+    state.mentions.forEach(id => {
+      const chip=document.createElement('span'); chip.className='canvas-agent-mention'; chip.textContent=`@${window.CanvasAgentBridge.nodeLabel(id)}`;
+      const remove=document.createElement('button'); remove.type='button'; remove.textContent='×'; remove.addEventListener('click',()=>{state.mentions=state.mentions.filter(item=>item!==id);renderMentions();}); chip.appendChild(remove); box.appendChild(chip);
+    });
+    if(window.lucide) lucide.createIcons({root:box});
+  }
   function renderRun(data) {
     const run=data.run||{};
     if(run.id){ state.runId=run.id; window.CanvasAgentEvents.saveRun(); }
@@ -175,7 +223,7 @@
     // Removing a native select from the DOM closes its option list.
     const renderKey=JSON.stringify({
       run:[run.id||'',run.status||'',run.phase||''],
-      messages:(data.messages||[]).map(item=>[item.id||'',item.role||'',item.content||'',item.created_at||'']),
+      messages:(data.messages||[]).map(item=>[item.id||'',item.role||'',item.content||'',JSON.stringify(item.metadata_json||{}),item.created_at||'']),
       events:(data.events||[]).map(event=>[event.sequence||'',event.type||'',event.created_at||'']),
       plan:[data.plan?.version||'',data.plan?.status||''],
       tasks:(data.tasks||[]).map(item=>[item.id||item.task_id||'',item.status||'',item.updated_at||'']),
@@ -209,7 +257,7 @@
       const kind=entry.item.role==='user'?'user':entry.item.role==='system'?'system':'agent';
       if(kind==='user'){ pending=[]; turnOpen=true; }
       if(kind==='agent' && pending.length){ const liveStatus=createLiveStatus(pending); messages.appendChild(liveStatus); renderLiveIcons(liveStatus); pending=[]; }
-      message(entry.item.content,kind);
+      message(entry.item.content,kind,entry.item.metadata_json?.media_references||[]);
       if(kind==='agent' || kind==='system') turnOpen=false;
     });
     liveEvents=turnOpen ? pending : [];
@@ -229,11 +277,37 @@
   }
   async function ensureRun() { if (state.runId) return state.runId; status('正在创建会话'); const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); await refreshRuns(); return state.runId; }
   async function newRun() { if (state.busy) return; state.busy=true; window.CanvasAgentEvents.stop(); state.runId=''; state.sequence=0; state.skills=[]; clearRun(); renderSkills(); status('正在创建会话'); try { const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); renderRun({run:data.run,messages:[],events:[],tasks:[],artifacts:[]}); await refreshRuns(); } catch (e) { system(e.message); status('创建失败'); } finally { state.busy=false; } }
-  async function send() { const input=$('canvasAgentInput'), content=input.value.trim(); if (!content || state.busy) return; state.busy=true; input.value=''; messageFollow=true; message(content,'user'); status('正在受理请求…'); try { await ensureModelsLoaded(); await ensureRun(); window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.send({content,provider:selection.provider,model:selection.model,selected_node_ids:window.CanvasAgentBridge.selectedNodeIds(),mention_node_ids:state.mentions}); state.operationId=data.operation_id || ''; status('请求已受理，正在准备 Agent…'); window.CanvasAgentEvents.start(); } catch(e) { system(e.message); status('error'); } finally { state.busy=false; } }
+  function closeReferencePicker(){ referencePickerOpen=false; const picker=$('canvasAgentReferencePicker'); if(picker){ picker.classList.remove('open'); picker.hidden=true; picker.innerHTML=''; } }
+  function inputMentionCandidates(){ return state.references.filter(item=>item?.url||item?.src).map((item,index)=>({...item,url:item.url||item.src,thumbnail:item.thumbnail||item.src||item.url,alias:item.name||item.label||`图片${index+1}`,source:item.source||'canvas'})); }
+  function assetMentionCandidates(categoryId=''){ try { return typeof assetMentionCandidateImages==='function' ? assetMentionCandidateImages(categoryId).map(item=>({...item,source:'asset'})) : []; } catch (_) { return []; } }
+  function mentionCandidates(source=referencePickerSource){ return source==='asset' ? assetMentionCandidates(mentionAssetCategoryId) : inputMentionCandidates(); }
+  function positionReferencePicker(){ const picker=$('canvasAgentReferencePicker'), input=$('canvasAgentInput'), compose=input?.closest('.canvas-agent-compose'); if(!picker||!input||!compose)return; const composeRect=compose.getBoundingClientRect(), inputRect=input.getBoundingClientRect(); const selection=window.getSelection(); const range=selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null; const caretRect=range?.getClientRects?.()[0]||range?.getBoundingClientRect?.(); const width=picker.offsetWidth||340, height=picker.offsetHeight||260; const left=Math.max(4,Math.min((caretRect?.left||inputRect.left)-composeRect.left-6,composeRect.width-width-4)); const above=inputRect.top-height-8; const below=caretRect?.bottom||inputRect.top+24; picker.style.left=`${left}px`; picker.style.top=`${(above>=8?above:below+2)-composeRect.top}px`; }
+  function renderReferencePicker(){ const picker=$('canvasAgentReferencePicker'); if(!picker)return; const inputItems=inputMentionCandidates(); const libraries=typeof assetLibraries==='function' ? assetLibraries() : []; if(!activeAssetLibraryId||!libraries.some(lib=>lib.id===activeAssetLibraryId)) activeAssetLibraryId=assetLibrary?.active_library_id||libraries[0]?.id||''; const libraryWithAssets=libraries.find(lib=>(lib.categories||[]).some(cat=>(cat.type||'image')==='image'&&(cat.items||[]).some(item=>item?.url))); const categories=typeof assetCategories==='function' ? assetCategories('image') : []; if(referencePickerSource==='asset'&&libraryWithAssets&&!categories.some(cat=>(cat.items||[]).some(item=>item?.url))){activeAssetLibraryId=libraryWithAssets.id;activeAssetCategoryId='';mentionAssetCategoryId='';} const currentCategory=typeof assetCategoryForMention==='function'?assetCategoryForMention():null; const assetItems=assetMentionCandidates(currentCategory?.id||''); const hasInput=inputItems.length>0, hasAssets=Boolean(libraryWithAssets); if(referencePickerSource==='canvas'&&!hasInput&&hasAssets)referencePickerSource='asset'; if(referencePickerSource==='asset'&&!hasAssets&&hasInput)referencePickerSource='canvas'; if(!hasInput&&!hasAssets){closeReferencePicker();return;} const candidates=(referencePickerSource==='asset'?assetItems:inputItems).slice(0,36); const librarySelect=referencePickerSource==='asset'&&libraries.length?`<label class="mention-library-row"><span>资产库</span><select class="mention-library-select" data-agent-mention-library>${libraries.map(lib=>`<option value="${escapeHtml(lib.id)}" ${lib.id===activeAssetLibraryId?'selected':''}>${escapeHtml(lib.name||'资产库')}</option>`).join('')}</select></label>`:''; const folderChips=referencePickerSource==='asset'&&categories.length?categories.map(cat=>`<button class="mention-folder-chip ${cat.id===mentionAssetCategoryId?'active':''}" type="button" data-agent-mention-folder="${escapeHtml(cat.id)}" title="${escapeHtml(cat.name||'未分类')}">${escapeHtml(cat.name||'未分类')}</button>`).join(''):''; picker.innerHTML=`<div class="mention-picker-shell"><div class="mention-source-tabs"><button class="mention-source-tab ${referencePickerSource==='canvas'?'active':''}" type="button" data-agent-mention-source="canvas" ${hasInput?'':'disabled'}><i data-lucide="image"></i><span>输入图</span></button><button class="mention-source-tab ${referencePickerSource==='asset'?'active':''}" type="button" data-agent-mention-source="asset" ${hasAssets?'':'disabled'}><i data-lucide="library"></i><span>资产库</span></button></div>${librarySelect}<div class="mention-folder-chips ${folderChips?'':'hidden'}">${folderChips}</div><div class="mention-content">${candidates.length?`<div class="mention-option-grid">${candidates.map((item,index)=>`<button class="mention-option" type="button" data-agent-mention-index="${index}"><img src="${escapeHtml(item.thumbnail||item.url)}" alt=""><span>${escapeHtml(item.alias||item.name||'图片')}</span></button>`).join('')}</div>`:'<div class="mention-empty">没有可引用的图片</div>'}</div></div>`; picker._items=candidates; picker.hidden=false; picker.classList.add('open'); positionReferencePicker(); picker.querySelectorAll('[data-agent-mention-source]').forEach(button=>button.addEventListener('mousedown',event=>{event.preventDefault();if(!button.disabled){referencePickerSource=button.dataset.agentMentionSource;referencePickerIndex=0;renderReferencePicker();}})); picker.querySelector('[data-agent-mention-library]')?.addEventListener('change',event=>{activeAssetLibraryId=event.target.value||'';activeAssetCategoryId='';mentionAssetCategoryId='';renderAssetLibrary();renderReferencePicker();}); picker.querySelectorAll('[data-agent-mention-folder]').forEach(button=>button.addEventListener('mousedown',event=>{event.preventDefault();mentionAssetCategoryId=button.dataset.agentMentionFolder||'';renderReferencePicker();})); picker.querySelectorAll('[data-agent-mention-index]').forEach(button=>button.addEventListener('mousedown',event=>{event.preventDefault();insertReferenceMention(picker._items[Number(button.dataset.agentMentionIndex)]);})); if(window.lucide)lucide.createIcons({root:picker}); }
+  function insertReferenceMention(ref){ const input=$('canvasAgentInput'), selection=window.getSelection(); if(!ref?.url||!selection?.rangeCount)return closeReferencePicker(); const range=selection.getRangeAt(0); if(!input.contains(range.startContainer))return closeReferencePicker(); let removed=false; if(range.startContainer.nodeType===Node.TEXT_NODE&&range.startOffset>0){const value=range.startContainer.textContent||'';if(value[range.startOffset-1]==='@'){range.setStart(range.startContainer,range.startOffset-1);range.deleteContents();removed=true;}} if(!removed)return closeReferencePicker(); if(!state.references.some(item=>(item.url||item.src)===(ref.url||ref.src))){state.references.push(ref);renderMentions();} const token=document.createElement('span');token.className='mention-image-token';token.contentEditable='false';token.dataset.url=ref.url||ref.src||'';token.dataset.name=ref.alias||ref.name||ref.label||'图片';token.dataset.kind=typeof mediaKindForItem==='function'?mediaKindForItem(ref):'image';token.dataset.nodeId=ref.nodeId||'';token.dataset.imageIndex=String(ref.imageIndex??'');token.dataset.assetUris=JSON.stringify(ref.asset_uris||{});token.innerHTML=`<img src="${escapeHtml(ref.url||ref.src||'')}" alt=""><span>${escapeHtml(token.dataset.name)}</span>`;range.insertNode(token);const spacer=document.createTextNode(' ');token.after(spacer);range.setStartAfter(spacer);range.collapse(true);selection.removeAllRanges();selection.addRange(range);closeReferencePicker();input.focus(); }
+  function composerText(){ const input=$('canvasAgentInput'); let text=''; input.childNodes.forEach(node=>{if(node.nodeType===Node.TEXT_NODE)text+=node.textContent||'';else if(node.classList?.contains('mention-image-token')){const index=state.references.findIndex(ref=>(ref.url||ref.src)===(node.dataset.url||''));text+=index>=0?`图${index+1}`:`@${node.dataset.name||'图片'}`;}else text+=node.innerText||'';}); return text.trim(); }
+  function textBeforeAgentCaret(){ const input=$('canvasAgentInput'), selection=window.getSelection(); if(!selection?.rangeCount||!input.contains(selection.anchorNode))return '';const range=selection.getRangeAt(0).cloneRange();range.selectNodeContents(input);range.setEnd(selection.anchorNode,selection.anchorOffset);return range.toString(); }
+  function handleInput(){ if(/@$/.test(textBeforeAgentCaret())){referencePickerOpen=true;referencePickerSource=inputMentionCandidates().length?'canvas':'asset';referencePickerIndex=0;renderReferencePicker();} else closeReferencePicker(); }
+  function handleInputKeydown(event){ if(referencePickerOpen){const total=mentionCandidates().length;if((event.key==='ArrowDown'||event.key==='ArrowUp')&&total){event.preventDefault();referencePickerIndex=(referencePickerIndex+(event.key==='ArrowDown'?1:-1)+total)%total;renderReferencePicker();return;}if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();insertReferenceMention($('canvasAgentReferencePicker')._items?.[referencePickerIndex]);return;}if(event.key==='Escape'){event.preventDefault();closeReferencePicker();return;}}if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();} }
+  function previewReferenceMention(event){ const token=event.target.closest?.('.mention-image-token'), preview=$('mentionPreview'); if(!token||!preview)return; let media=preview.querySelector('img,video'); const isVideo=token.dataset.kind==='video'||(typeof isVideoMediaItem==='function'&&isVideoMediaItem({url:token.dataset.url,kind:token.dataset.kind})); if(isVideo&&media?.tagName?.toLowerCase()!=='video'){media?.replaceWith(document.createElement('video'));media=preview.querySelector('video');}else if(!isVideo&&media?.tagName?.toLowerCase()!=='img'){media?.replaceWith(document.createElement('img'));media=preview.querySelector('img');} if(isVideo){media.muted=true;media.loop=true;media.playsInline=true;media.preload='metadata';media.src=token.dataset.url||'';media.play?.().catch(()=>{});}else{media.src=token.dataset.url||'';media.alt='preview';} const rect=token.getBoundingClientRect(); preview.style.left=`${Math.min(window.innerWidth-236,rect.left)}px`;preview.style.top=`${Math.min(window.innerHeight-236,rect.bottom+8)}px`;preview.style.display='block'; }
+  function hideReferenceMentionPreview(event){ if(!event.target.closest?.('.mention-image-token'))return; const preview=$('mentionPreview'); if(!preview)return; const media=preview.querySelector('img,video'); preview.style.display='none';media?.pause?.();media?.removeAttribute('src');media?.load?.(); }
+  async function send() { closeReferencePicker(); const input=$('canvasAgentInput'), content=composerText(); if (!content || state.busy) return; const references=state.references.map(item=>({node_id:item.nodeId||'',image_index:item.imageIndex ?? 0,source:item.source||'canvas',url:item.url||item.src||'',thumbnail:item.thumbnail||item.src||'',preview_url:item.previewSrc||item.url||item.src||'',name:item.name||item.label||''})); const referenceIds=references.map(item=>item.node_id).filter(Boolean); state.busy=true; input.innerHTML=''; state.references=[]; renderMentions(); messageFollow=true; message(content,'user',references); status('正在受理请求…'); try { await ensureModelsLoaded(); await ensureRun(); window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.send({content,provider:selection.provider,model:selection.model,selected_node_ids:window.CanvasAgentBridge.selectedNodeIds(),mention_node_ids:[...new Set([...state.mentions,...referenceIds]) ],media_references:references}); state.operationId=data.operation_id || ''; status('请求已受理，正在准备 Agent…'); window.CanvasAgentEvents.start(); } catch(e) { system(e.message); status('error'); } finally { state.busy=false; } }
   async function answer(answer) { if (!answer?.trim() || !state.runId) return; try { window.CanvasAgentEvents.start(); const selection=modelSelection(); const data=await window.CanvasAgentClient.answer(answer.trim(),selection.provider,selection.model); state.operationId=data.operation_id || ''; status('回答已受理，正在继续规划…'); } catch(e) { system(e.message); } }
   async function confirm(approved) { if (!state.plan || !state.runId || confirmationPending) return; const authorize=$('canvasAgentAuthorizeNodes')?.checked; const nodeOverrides=approved ? window.CanvasAgentPlan.collectOverrides() : []; confirmationPending=true; confirmationAccepted=true; window.CanvasAgentPlan.render(state.plan, {interactive:false,history:true,status:approved?'已确认':'已取消',force:true}); try { const steps=state.plan.content_json?.steps || []; const targetIds=steps.filter(step=>['canvas.update_node_params','canvas.replace_node_content','canvas.run_node','canvas.run_group'].includes(step.action)).map(step=>step.target_node_id).filter(Boolean); const authorizedNodeIds=authorize ? [...new Set([...state.mentions,...targetIds])] : []; window.CanvasAgentEvents.start(); const data=await window.CanvasAgentClient.request(`/api/canvas-agent/runs/${encodeURIComponent(state.runId)}/confirm`, {method:'POST', body:JSON.stringify({plan_version:state.plan.version,approved,authorized_node_ids:authorizedNodeIds,node_overrides:nodeOverrides,client_request_id:globalThis.crypto?.randomUUID?.() || `${Date.now()}`})}); if(data.operation_id){state.operationId=data.operation_id;status(approved ? '确认已受理，正在执行…' : '拒绝已受理，正在处理…');}else renderRun(data); } catch(e) { confirmationAccepted=false; window.CanvasAgentPlan.render(state.plan, {interactive:true,force:true}); system(e.message); } finally { confirmationPending=false; } }
   async function cancel() { if (!state.runId) return; try { renderRun(await window.CanvasAgentClient.cancel()); window.CanvasAgentEvents.stop(); } catch(e) { system(e.message); } }
   function addSelectedMentions() { const ids=window.CanvasAgentBridge.selectedNodeIds(); state.mentions=[...new Set([...state.mentions,...ids])]; renderMentions(); if (!ids.length) system('请先在画布上选中节点。'); }
-  async function init() { try { const response=await fetch('/api/access-control/me',{credentials:'same-origin'}); const me=response.ok ? await response.json() : {}; if(!me.is_admin){ $('canvasAgentToggle')?.remove(); panel?.remove(); return; } $('canvasAgentToggle').hidden=false; } catch (_) { $('canvasAgentToggle')?.remove(); panel?.remove(); return; } attachAuxiliaryPanels(); loadModelSelection(); $('canvasAgentToggle').addEventListener('click',()=>{panel.hidden=!panel.hidden;if(!panel.hidden){ensureModelsLoaded();refreshRuns();window.CanvasAgentEvents.recover();}}); ['pointerdown','mousedown','dblclick'].forEach(type=>panel.addEventListener(type,event=>event.stopPropagation())); panel.addEventListener('click', event=>{ const link=event.target.closest('.canvas-agent-node-link'); if(link){ event.preventDefault(); event.stopPropagation(); window.CanvasAgentBridge.focusNode(link.dataset.nodeId); } else event.stopPropagation(); }); panel.addEventListener('wheel', event=>event.stopPropagation(), {capture:true,passive:true}); $('canvasAgentClose').addEventListener('click',()=>panel.hidden=true); $('canvasAgentRunSelect').addEventListener('change',event=>window.CanvasAgentEvents.switchRun(event.target.value)); $('canvasAgentNewRun').addEventListener('click',newRun); $('canvasAgentModelSelect').addEventListener('change',onModelChange); $('canvasAgentSend').addEventListener('click',send); $('canvasAgentCancel').addEventListener('click',cancel); $('canvasAgentMention').addEventListener('click',addSelectedMentions); $('canvasAgentInput').placeholder='和画布 Agent 聊聊，或描述要在画布上完成的操作'; $('canvasAgentInput').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}}); window.addEventListener('beforeunload',window.CanvasAgentEvents.stop); renderMentions(); ensureModelsLoaded(); refreshRuns(); window.CanvasAgentEvents.recover(); }
+  function setCanvasReferencePicking(active) {
+    state.referencePicking=Boolean(active);
+    $('canvasAgentAddCanvasContent')?.classList.toggle('active',state.referencePicking);
+  }
+  function toggleCanvasReferencePicking() {
+    setCanvasReferencePicking(!state.referencePicking);
+    if(!state.referencePicking) { window.CanvasAgentBridge.endReferencePicking(); return; }
+    window.CanvasAgentBridge.beginReferencePicking(reference => {
+      if(state.references.some(item=>item.nodeId===reference.nodeId)) return;
+      state.references.push(reference); renderMentions(); $('canvasAgentInput').focus();
+    });
+  }
+  async function init() { try { const response=await fetch('/api/access-control/me',{credentials:'same-origin'}); const me=response.ok ? await response.json() : {}; if(!me.is_admin){ $('canvasAgentToggle')?.remove(); panel?.remove(); return; } $('canvasAgentToggle').hidden=false; } catch (_) { $('canvasAgentToggle')?.remove(); panel?.remove(); return; } attachAuxiliaryPanels(); loadModelSelection(); $('canvasAgentToggle').addEventListener('click',()=>{panel.hidden=!panel.hidden;if(!panel.hidden){ensureModelsLoaded();refreshRuns();window.CanvasAgentEvents.recover();}}); ['pointerdown','mousedown','dblclick'].forEach(type=>panel.addEventListener(type,event=>event.stopPropagation())); panel.addEventListener('click', event=>{ const link=event.target.closest('.canvas-agent-node-link'); if(link){ event.preventDefault(); event.stopPropagation(); window.CanvasAgentBridge.focusNode(link.dataset.nodeId); } else event.stopPropagation(); }); panel.addEventListener('wheel', event=>event.stopPropagation(), {capture:true,passive:true}); $('canvasAgentClose').addEventListener('click',()=>{panel.hidden=true; window.CanvasAgentBridge.endReferencePicking();}); $('canvasAgentRunSelect').addEventListener('change',event=>window.CanvasAgentEvents.switchRun(event.target.value)); $('canvasAgentNewRun').addEventListener('click',newRun); $('canvasAgentModelSelect').addEventListener('change',onModelChange); $('canvasAgentSend').addEventListener('click',send); $('canvasAgentCancel').addEventListener('click',cancel); $('canvasAgentMention').addEventListener('click',addSelectedMentions); $('canvasAgentAddCanvasContent').addEventListener('click',toggleCanvasReferencePicking); $('canvasAgentInput').addEventListener('input',handleInput); $('canvasAgentInput').addEventListener('keydown',handleInputKeydown); $('canvasAgentInput').addEventListener('mouseover',previewReferenceMention); $('canvasAgentInput').addEventListener('mouseout',hideReferenceMentionPreview); window.addEventListener('canvas-agent-reference-picking-changed',event=>setCanvasReferencePicking(event.detail?.active)); window.addEventListener('beforeunload',()=>{window.CanvasAgentEvents.stop();window.CanvasAgentBridge.endReferencePicking();}); renderMentions(); ensureModelsLoaded(); refreshRuns(); window.CanvasAgentEvents.recover(); }
+  document.addEventListener('mousedown',event=>{const picker=$('canvasAgentReferencePicker'),input=$('canvasAgentInput');if(referencePickerOpen&&!picker?.contains(event.target)&&!input?.contains(event.target))closeReferencePicker();});
   window.CanvasAgentPanel={init,status,message,liveStatus,liveEvent,clearLiveStatus,isConversationEvent,system,renderRun,renderSkills,clearRun,refreshRuns,send,answer,confirm,cancel}; init();
 })();

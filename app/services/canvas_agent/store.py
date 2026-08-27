@@ -151,6 +151,27 @@ def submit_command(user_id: str, run_id: str, operation_type: str, client_reques
             cur.execute("SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM canvas_agent_messages WHERE run_id=%s", (run_id,))
             sequence = int(cur.fetchone()["sequence"])
             metadata = {"kind": "answer" if operation_type == "agent.answer" else "command", "operation_id": key}
+            if operation_type == "agent.message":
+                references = input_data.get("media_references") or []
+                if isinstance(references, list):
+                    message_references = []
+                    for item in references[:24]:
+                        if not isinstance(item, dict) or not str(item.get("url") or ""):
+                            continue
+                        try:
+                            image_index = int(item.get("image_index") or item.get("imageIndex") or 0)
+                        except (TypeError, ValueError):
+                            image_index = 0
+                        message_references.append({
+                            "node_id": str(item.get("node_id") or item.get("nodeId") or ""),
+                            "image_index": image_index,
+                            "source": str(item.get("source") or "canvas"),
+                            "url": str(item.get("url") or ""),
+                            "thumbnail": str(item.get("thumbnail") or ""),
+                            "preview_url": str(item.get("preview_url") or item.get("previewUrl") or ""),
+                            "name": str(item.get("name") or ""),
+                        })
+                    metadata["media_references"] = message_references
             cur.execute("INSERT INTO canvas_agent_messages(id,run_id,role,content,sequence,created_at,metadata_json) VALUES(%s,%s,'user',%s,%s,%s,%s)", (new_id(), run_id, content, sequence, now, json_value(_json(metadata))))
         if operation_type != "agent.confirm":
             cur.execute("UPDATE canvas_agent_runs SET status='planning',phase='planning',updated_at=%s WHERE id=%s", (now, run_id))

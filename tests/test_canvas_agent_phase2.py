@@ -50,6 +50,32 @@ def test_completed_run_can_start_the_next_planning_turn():
     assert _can_continue_planning("blocked") is False
 
 
+def test_canvas_media_references_use_the_saved_node_media(monkeypatch):
+    from app.services.canvas_agent import context
+
+    monkeypatch.setattr(context, "load_canvas_payload", lambda *_args: {
+        "version": 7,
+        "nodes": [{"id": "node-1", "title": "猫", "images": [{"url": "/api/files/first"}, {"url": "/api/files/second"}]}],
+        "connections": [],
+    })
+
+    result = context.build_canvas_context("owner", "canvas-1", media_references=[
+        {"node_id": "node-1", "image_index": 1, "url": "https://example.invalid/forged"},
+        {"node_id": "missing", "image_index": 0},
+    ])
+
+    assert result["media_references"] == [{
+        "node_id": "node-1", "image_index": 1, "url": "/api/files/second", "label": "图1", "node_label": "猫", "source": "canvas",
+    }]
+
+
+@pytest.mark.parametrize("event_type", ["plan.confirmed", "plan.rejected"])
+def test_plan_decision_is_a_supported_agent_event(event_type):
+    from app.services.canvas_agent.event_types import normalize_event_type
+
+    assert normalize_event_type(event_type) == event_type
+
+
 def test_rejected_plan_resumes_graph_and_keeps_run_available(monkeypatch):
     import asyncio
     from contextlib import asynccontextmanager

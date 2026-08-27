@@ -13,7 +13,7 @@ EVENT_TYPES = {
     "run.created", "run.completed", "run.failed", "run.blocked", "run.cancelled", "run.reviewed", "run.retrying",
     "operation.accepted", "operation.queued", "operation.started", "operation.succeeded", "operation.failed", "operation.cancel_requested", "operation.cancelled",
     "progress", "progress.context", "progress.model", "progress.agent", "progress.tool_started", "progress.tool_completed", "progress.tool_failed", "progress.validation", "progress.confirmation", "progress.execution",
-    "message.replied", "plan.created", "patch.applied", "tasks.queued", "task.queued", "task.running", "task.succeeded", "task.failed", "task.timed_out", "task.cancelled", "task.retrying",
+    "message.replied", "plan.created", "plan.confirmed", "plan.rejected", "patch.applied", "tasks.queued", "task.queued", "task.running", "task.succeeded", "task.failed", "task.timed_out", "task.cancelled", "task.retrying",
     "artifact.created", "artifact.advanced", "artifact.status_changed", "artifact.quality_evaluated", "prompt_pack.compiled", "prompt_pack.tasks_queued", "orchestration.proposed", "template.instantiated", "project_asset.shared",
     "skill.discovered", "skill.loaded", "skill.resource_loaded", "skill.rejected", "skill.resource_rejected", "skill.invalidated",
 }

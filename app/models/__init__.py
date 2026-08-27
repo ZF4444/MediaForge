@@ -228,6 +228,7 @@ class CanvasAgentMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
     selected_node_ids: List[str] = []
     mention_node_ids: List[str] = []
+    media_references: List[Dict[str, Any]] = []
     use_model: bool = True
     provider: str = ""
     model: str = ""

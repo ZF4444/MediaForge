@@ -227,7 +227,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
         run = await asyncio.to_thread(update_run, user_id, run_id, status="planning", phase="planning") or run
     try:
         await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在读取画布上下文…"})
-        context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"], selected_node_ids=payload.selected_node_ids, mention_node_ids=payload.mention_node_ids)
+        context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"], selected_node_ids=payload.selected_node_ids, mention_node_ids=payload.mention_node_ids, media_references=payload.media_references)
         context["run_id"] = run_id
         context["user_id"] = user_id
         context["canvas_id"] = run["canvas_id"]

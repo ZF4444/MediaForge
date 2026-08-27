@@ -35,7 +35,7 @@ class MediaForgeChatModel(BaseChatModel):
     @staticmethod
     def _message(message: BaseMessage) -> dict[str, Any]:
         role = "user" if isinstance(message, HumanMessage) else "system" if isinstance(message, SystemMessage) else "tool" if isinstance(message, ToolMessage) else "assistant"
-        content = message.content if isinstance(message.content, str) else str(message.content)
+        content = message.content if isinstance(message.content, (str, list)) else str(message.content)
         item: dict[str, Any] = {"role": role, "content": content}
         if isinstance(message, ToolMessage): item["tool_call_id"] = message.tool_call_id
         if isinstance(message, AIMessage) and message.tool_calls:
