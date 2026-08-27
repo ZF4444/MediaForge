@@ -4198,6 +4198,20 @@ function windowPasteHandler(e){
     }
     const editable = isEditableTarget(e.target) || isEditableTarget(document.activeElement);
     const files = clipboardEventMediaFiles(e.clipboardData);
+    if(editable && !files.length){
+        const plainText = e.clipboardData?.getData('text/plain') ?? '';
+        const target = e.target?.closest?.('input, textarea, [contenteditable="true"]') || document.activeElement;
+        // Text fields must never receive clipboard HTML or embedded rich nodes.
+        e.preventDefault();
+        if(target?.matches?.('input, textarea') && typeof target.setRangeText === 'function'){
+            const start=target.selectionStart ?? target.value.length, end=target.selectionEnd ?? start;
+            target.setRangeText(plainText,start,end,'end');
+            target.dispatchEvent(new Event('input',{bubbles:true}));
+        }else if(target?.isContentEditable){
+            document.execCommand('insertText',false,plainText);
+        }
+        return;
+    }
     pasteClipboardContent(files, {editable, preventDefault:() => e.preventDefault()});
 }
 window.addEventListener('paste', windowPasteHandler);
