@@ -102,6 +102,41 @@ def append_message(user_id: str, run_id: str, role: str, content: str, metadata:
         cur.execute("INSERT INTO canvas_agent_messages(id,run_id,role,content,sequence,created_at,metadata_json) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *", (mid,run_id,role,content,sequence,now,json_value(_json(metadata))))
         return cur.fetchone()
 
+def update_execution_message_reference(user_id: str, run_id: str, node_id: str, media: dict[str, Any]) -> list[dict[str, Any]]:
+    """Replace a pending execution-result node token with its generated media."""
+    source = str(media.get("url") or media.get("preview_url") or media.get("previewUrl") or "").strip()
+    if not source or not node_id:
+        return []
+    updated: list[dict[str, Any]] = []
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.id,m.metadata_json FROM canvas_agent_messages m JOIN canvas_agent_runs r ON r.id=m.run_id "
+            "WHERE m.run_id=%s AND r.user_id=%s AND m.role='assistant' FOR UPDATE",
+            (run_id, user_id),
+        )
+        for row in cur.fetchall():
+            metadata = dict(row.get("metadata_json") or {})
+            if metadata.get("kind") != "execution_result":
+                continue
+            references = list(metadata.get("media_references") or [])
+            changed = False
+            for reference in references:
+                if not isinstance(reference, dict) or str(reference.get("node_id") or reference.get("nodeId") or "") != node_id:
+                    continue
+                reference.update({
+                    "empty": False,
+                    "image_index": 0,
+                    "url": source,
+                    "thumbnail": str(media.get("thumbnail") or source),
+                    "preview_url": str(media.get("preview_url") or media.get("previewUrl") or source),
+                    "kind": str(media.get("kind") or "image"),
+                })
+                changed = True
+            if changed:
+                cur.execute("UPDATE canvas_agent_messages SET metadata_json=%s WHERE id=%s", (json_value(_json(metadata)), row["id"]))
+                updated.append({"id": row["id"], "media_references": references})
+    return updated
+
 def save_plan(user_id: str, run_id: str, content: dict[str, Any], *, status: str = "draft") -> dict[str, Any]:
     now = now_ms(); body = _json(content)
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:

@@ -1,9 +1,11 @@
 """Fast Track Canvas Agent API."""
 from __future__ import annotations
 import asyncio
+import json
 import time
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.auth import safe_user_id
 from app.core.utils import now_ms
@@ -52,6 +54,78 @@ def _can_continue_planning(status: str) -> bool:
     return str(status or "") not in {"cancelled", "failed", "blocked"}
 
 
+def _hydrate_plan_nodes(plan_json: dict, canvas: dict | None) -> dict:
+    """Attach node snapshots to every configurable step for the UI.
+
+    A run step may target a node created earlier in the same plan. That node is
+    not present in the persisted canvas yet, so looking only at the canvas
+    snapshot leaves the second confirmation card without its title, prompt, or
+    parameters. Keep the create-step snapshot as a local source as well.
+    """
+    nodes = {str(item.get("id") or ""): item for item in (canvas or {}).get("nodes", []) if isinstance(item, dict)}
+    planned_nodes = {
+        str(step.get("id") or ""): step.get("node")
+        for step in plan_json.get("steps", [])
+        if isinstance(step, dict) and step.get("action") == "canvas.create_node" and isinstance(step.get("node"), dict)
+    }
+    for step in plan_json.get("steps", []):
+        if not isinstance(step, dict) or not step.get("target_node_id"):
+            continue
+        target_id = str(step["target_node_id"])
+        source = nodes.get(target_id)
+        planned = planned_nodes.get(target_id)
+        if not source and not planned:
+            continue
+        if planned and not source and not step.get("node"):
+            # The semantic node shape is already what the confirmation UI
+            # expects; copy it so later mutation cannot affect the source step.
+            step["node"] = json.loads(json.dumps(planned))
+            continue
+        if not source:
+            # Keep a provider-supplied snapshot when the target is not yet
+            # persisted and no create-step snapshot is available.
+            continue
+        # Canvas nodes have accumulated a few storage shapes over time. In
+        # particular, `text` can be an imported file path while the actual
+        # generation prompt lives in promptDraftText/runPrompt.
+        source_params = source.get("params") if isinstance(source.get("params"), dict) else {}
+        source_settings = source.get("settings") if isinstance(source.get("settings"), dict) else {}
+        source_run_settings = source.get("runSettings") if isinstance(source.get("runSettings"), dict) else {}
+        params = dict(source_params)
+        if source_settings:
+            params.setdefault("runSettings", dict(source_settings))
+        if source_run_settings:
+            merged_settings = dict(params.get("runSettings") or {})
+            merged_settings.update(source_run_settings)
+            params["runSettings"] = merged_settings
+        prompt = next((source.get(key) for key in ("promptDraftText", "runPrompt", "prompt", "content", "text")
+                       if isinstance(source.get(key), str) and source.get(key).strip()), "")
+        capability = str(source.get("capability") or "")
+        if not capability:
+            node_type = str(source.get("type") or source.get("semantic_type") or "")
+            api_kind = str(source_run_settings.get("apiKind") or source.get("genKind") or "").lower()
+            engine = str(source_run_settings.get("engine") or "").lower()
+            if node_type in {"smart-prompt", "prompt"}:
+                capability = "prompt.generate"
+            elif engine == "comfy":
+                capability = f"comfyui.workflow.{'video' if api_kind == 'video' else 'image'}"
+            elif engine == "runninghub" or str(source_run_settings.get("provider_id") or "") == "runninghub":
+                capability = f"runninghub.app.{'video' if api_kind == 'video' else 'image'}"
+            elif api_kind == "video":
+                capability = "video.text_to_video"
+            elif node_type in {"smart-image", "image_generation", "video_generation", "workflow_generation"}:
+                capability = "image.text_to_image"
+        step["node"] = {
+            "schema_version": 1,
+            "semantic_type": source.get("semantic_type") or source.get("type") or "image_generation",
+            "title": source.get("title") or source.get("name") or "",
+            "content": prompt,
+            "capability": capability,
+            "params": params,
+        }
+    return plan_json
+
+
 async def _require_run(user_id: str, run_id: str) -> dict:
     run = await asyncio.to_thread(get_run, user_id, run_id)
     if not run: raise HTTPException(status_code=404, detail="Agent Run 不存在")
@@ -64,6 +138,45 @@ async def _append_plan_reply(user_id: str, run_id: str) -> str:
     await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"kind": "plan_ready"})
     await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
     return reply
+
+async def _append_execution_reply(user_id: str, run_id: str, canvas_id: str, execution_result: dict, tasks: list[dict], model=None) -> None:
+    """Persist the post-confirmation Agent reply and its live node references."""
+    canvas = await asyncio.to_thread(load_canvas_payload, user_id, canvas_id)
+    nodes = {str(node.get("id") or ""): node for node in (canvas or {}).get("nodes", []) if isinstance(node, dict)}
+    node_ids = list(dict.fromkeys([
+        *[str(node_id) for node_id in (execution_result.get("changed_node_ids") or []) if node_id],
+        *[str(item.get("node_id") or "") for item in (execution_result.get("run_requests") or []) if isinstance(item, dict)],
+    ]))
+    references = [{
+        "node_id": node_id,
+        "image_index": -1,
+        "empty": True,
+        "source": "canvas",
+        "url": "",
+        "thumbnail": "",
+        "preview_url": "",
+        "name": str(nodes.get(node_id, {}).get("title") or nodes.get(node_id, {}).get("name") or node_id),
+    } for node_id in node_ids]
+    created = len(execution_result.get("node_refs") or {})
+    changed = max(0, len(node_ids) - created)
+    fallback = "已创建节点。" if created == 1 else (f"已创建 {created} 个节点。" if created else "已完成画布节点更新。")
+    if changed:
+        fallback += " 已更新关联节点。"
+    if tasks:
+        fallback += " 生成任务已提交，结果会显示在下方节点中。"
+    if model is not None:
+        try:
+            response = await model.ainvoke([
+                SystemMessage(content="你是画布 Agent。根据已执行工具的真实结果，用中文写一到两句简短交付说明。不要声称任务已完成；若任务已提交，说明正在生成。不要使用 Markdown、列表或提问。"),
+                HumanMessage(content=json.dumps({"created_nodes": created, "updated_nodes": changed, "submitted_tasks": len(tasks), "node_names": [item["name"] for item in references]}, ensure_ascii=False)),
+            ])
+            content = str(getattr(response, "content", "") or "").strip()
+            if content and not getattr(response, "tool_calls", None):
+                fallback = content[:500]
+        except Exception:
+            logger.warning("canvas agent execution reply generation failed", exc_info=True, extra={"event": "canvas_agent_execution_reply_failed", "run_id": run_id})
+    await asyncio.to_thread(append_message, user_id, run_id, "assistant", fallback, {"kind": "execution_result", "media_references": references})
+    await emit_agent_event(user_id, run_id, "message.replied", {"reply": fallback, "media_references": references})
 
 def _merge_existing_params(current: dict, incoming: dict) -> dict:
     """Apply only keys already proposed by the model; do not accept new execution fields from the browser."""
@@ -158,7 +271,7 @@ async def _execute_approved_canvas_patch(user_id: str, run_id: str, canvas_id: s
     return {**result, "plan_goal": plan.goal, "plan_version": plan_version, "task_limit": limit_tasks}
 
 
-async def _dispatch_approved_canvas_tasks(user_id: str, run_id: str, canvas_id: str, execution_result: dict) -> list[dict]:
+async def _dispatch_approved_canvas_tasks(user_id: str, run_id: str, canvas_id: str, execution_result: dict, *, model=None) -> list[dict]:
     """Submit deferred generation tasks after the graph records patch success."""
     from app.services.canvas_agent.events import current_operation_id
     from app.services.canvas_agent.store import command_cancel_requested
@@ -180,6 +293,10 @@ async def _dispatch_approved_canvas_tasks(user_id: str, run_id: str, canvas_id: 
     await emit_agent_event(user_id, run_id, "patch.applied", {key: value for key, value in execution_result.items() if key not in {"plan_goal", "task_limit"}})
     if tasks: await emit_agent_event(user_id, run_id, "tasks.queued", {"tasks": tasks})
     else: await emit_agent_event(user_id, run_id, "run.completed", {"version": execution_result["version"]})
+    try:
+        await _append_execution_reply(user_id, run_id, canvas_id, execution_result, tasks, model=model)
+    except Exception:
+        logger.exception("canvas agent execution reply projection failed", extra={"event": "canvas_agent_execution_reply_projection_failed", "run_id": run_id})
     return tasks
 
 @router.post("/api/canvas-agent/runs")
@@ -240,7 +357,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
         async def execute_patch(plan_version: int, authorized_node_ids: list[str]) -> dict:
             return await _execute_approved_canvas_patch(user_id, run_id, run["canvas_id"], plan_version, authorized_node_ids)
         async def dispatch_tasks(execution_result: dict) -> list[dict]:
-            return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result)
+            return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result, model=model)
         async with create_async_checkpointer() as checkpointer:
             graph_result = await run_canvas_agent(model, payload.content, context, checkpointer=checkpointer, emit_progress=progress, execute_patch=execute_patch, dispatch_tasks=dispatch_tasks)
         latest = await asyncio.to_thread(latest_plan, user_id, run_id)
@@ -253,6 +370,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
         plan = SemanticPlan.model_validate(latest["content_json"])
         await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model})
         plan_json = plan.model_dump(mode="json")
+        plan_json = _hydrate_plan_nodes(plan_json, await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"]))
         estimate = estimate_plan_cost(plan_json)
         plan_json["execution"]["estimated_cost"] = estimate["estimated_cost"]
         plan = SemanticPlan.model_validate(plan_json)
@@ -300,13 +418,15 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
         async def execute_patch(plan_version: int, authorized_node_ids: list[str]) -> dict:
             return await _execute_approved_canvas_patch(user_id, run_id, run["canvas_id"], plan_version, authorized_node_ids)
         async def dispatch_tasks(execution_result: dict) -> list[dict]:
-            return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result)
+            return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result, model=model)
         async with create_async_checkpointer() as checkpointer:
             graph_result = await run_canvas_agent(model, payload.answer, context, checkpointer=checkpointer, emit_progress=progress, execute_patch=execute_patch, dispatch_tasks=dispatch_tasks)
         latest = await asyncio.to_thread(latest_plan, user_id, run_id)
         if not latest:
             return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": "请补充你希望对画布执行的操作。"}
         plan = SemanticPlan.model_validate(latest["content_json"])
+        plan_json = _hydrate_plan_nodes(plan.model_dump(mode="json"), await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"]))
+        plan = SemanticPlan.model_validate(plan_json)
         saved = await asyncio.to_thread(save_plan, user_id, run_id, plan.model_dump(mode="json"), status="awaiting_confirmation")
         await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name})
         reply = await _append_plan_reply(user_id, run_id)
@@ -358,7 +478,7 @@ async def execute_confirm_command(user_id: str, run_id: str, payload: CanvasAgen
     async def execute_patch(plan_version: int, authorized_node_ids: list[str]) -> dict:
         return await _execute_approved_canvas_patch(user_id, run_id, run["canvas_id"], plan_version, authorized_node_ids)
     async def dispatch_tasks(execution_result: dict) -> list[dict]:
-        return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result)
+        return await _dispatch_approved_canvas_tasks(user_id, run_id, run["canvas_id"], execution_result, model=model)
     async with create_async_checkpointer() as checkpointer:
         from app.services.canvas_agent.runtime import create_canvas_agent
         graph = create_canvas_agent(model=model, user_id=user_id, run_id=run_id, canvas_id=run["canvas_id"], checkpointer=checkpointer, emit_progress=progress, execute_patch=execute_patch, dispatch_tasks=dispatch_tasks)

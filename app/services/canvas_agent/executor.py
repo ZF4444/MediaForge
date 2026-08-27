@@ -89,7 +89,14 @@ def apply_patch(user_id: str, patch: CanvasPatch, *, run_id: str = "", allow_use
             cur.execute("INSERT INTO smart_canvas_nodes(id,canvas_id,node_type,position_x,position_y,sort_order,data_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)", (node_id, patch.canvas_id, node.get("type", ""), float(node.get("x", 0) or 0), float(node.get("y", 0) or 0), order.index(node_id), json_value(node), now, now))
         payload["connections"] = connections; meta["payload"] = payload
         cur.execute("UPDATE smart_canvases SET viewport_json=%s,updated_at=%s,version=version+1 WHERE id=%s", (json_value(meta), now, patch.canvas_id))
-        return {"schema_version": 1, "canvas_id": patch.canvas_id, "version": version + 1, "node_refs": refs, "run_requests": run_requests}
+        return {
+            "schema_version": 1,
+            "canvas_id": patch.canvas_id,
+            "version": version + 1,
+            "node_refs": refs,
+            "changed_node_ids": sorted(changed),
+            "run_requests": run_requests,
+        }
 
 def apply_patch_idempotently(user_id: str, run_id: str, idempotency_key: str, patch: CanvasPatch, *, risk: str = "safe", allow_user_node_changes: bool = False, authorized_node_ids: set[str] | None = None) -> dict[str, Any]:
     """Persist the side-effect fence before applying a patch and cache its successful result."""

@@ -4,6 +4,7 @@ from typing import Any
 from app.core.ws import manager
 from app.core.utils import now_ms
 from app.services.business_metadata import json_value, metadata_connection
+from .store import update_execution_message_reference
 from .event_bus import AgentEventService
 
 _operation_id: ContextVar[str] = ContextVar("canvas_agent_operation_id", default="")
@@ -121,6 +122,11 @@ async def emit_agent_event(user_id: str, run_id: str, event_type: str, payload: 
     canvas_version = None
     if event_type.startswith("task."):
         canvas_version = await asyncio.to_thread(_project_task_to_canvas, user_id, run_id, event_payload)
+        if event_type == "task.succeeded":
+            result = event_payload.get("result") if isinstance(event_payload.get("result"), dict) else {}
+            media_items = result.get("image_items") if isinstance(result.get("image_items"), list) else []
+            if media_items:
+                await asyncio.to_thread(update_execution_message_reference, user_id, run_id, str(event_payload.get("node_id") or ""), media_items[0])
         if canvas_version: event_payload["canvas_version"] = canvas_version
     event = await AgentEventService.append(user_id=user_id, run_id=run_id, event_type=event_type, payload=event_payload, operation_id=operation_id or _operation_id.get() or None, phase=phase or requested_phase, severity=severity)
     if canvas_version:
