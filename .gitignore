@@ -5,6 +5,7 @@ skills-lock.json
 __pycache__/
 
 **/.env
+**/.env.lock
 assets/
 data/
 docs/*
