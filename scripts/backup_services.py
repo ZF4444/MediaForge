@@ -90,6 +90,38 @@ def write_checksums(run_dir: Path) -> None:
     (run_dir / "SHA256SUMS").write_text("\n".join(entries) + ("\n" if entries else ""), encoding="utf-8")
 
 
+def backup_redis(run_dir: Path, manifest: list[str]) -> None:
+    """Create an ACL-friendly logical backup without REPLCONF/SYNC privileges."""
+    try:
+        import redis
+    except ImportError:
+        fail("Python package 'redis' is required for Redis backup")
+    url = os.getenv("REDIS_URL", "").strip()
+    if not url:
+        fail("REDIS_URL is required for Redis backup")
+    destination = run_dir / "redis.logical.jsonl"
+    count = 0
+    log("Backing up Redis (logical SCAN/DUMP; no replication privileges required)")
+    try:
+        client = redis.Redis.from_url(url, decode_responses=False)
+        with destination.open("wb") as output:
+            for raw_key in client.scan_iter():
+                key = raw_key if isinstance(raw_key, bytes) else str(raw_key).encode()
+                value = client.dump(key)
+                if value is None:
+                    continue
+                import base64
+                record = {"key": base64.b64encode(key).decode("ascii"),
+                          "ttl_ms": int(client.pttl(key)),
+                          "value": base64.b64encode(value).decode("ascii")}
+                output.write((json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8"))
+                count += 1
+        manifest.append(f"redis_logical_keys={count}")
+        manifest.append(f"redis_logical_bytes={stat_size(destination)}")
+    except Exception as exc:
+        fail(f"Redis backup failed: {exc}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Back up MediaForge PostgreSQL, Redis, and MinIO data.")
     parser.add_argument("--output-dir", default=os.getenv("BACKUP_DIR", str(ROOT / "backups")))
@@ -115,14 +147,7 @@ def main() -> int:
             run_command(["pg_dump", "--dbname", database_url, "--format=custom", "--no-owner", "--no-privileges", "--file", str(dump)])
             manifest.append(f"postgres_dump_bytes={stat_size(dump)}")
         if args.only in ("all", "redis"):
-            redis_url = os.getenv("REDIS_URL", "").strip()
-            if not redis_url:
-                fail("REDIS_URL is required for Redis backup")
-            command_exists("redis-cli")
-            log("Backing up Redis")
-            rdb = run_dir / "redis.rdb"
-            run_command(["redis-cli", "-u", redis_url, "--rdb", str(rdb)])
-            manifest.append(f"redis_rdb_bytes={stat_size(rdb)}")
+            backup_redis(run_dir, manifest)
         if args.only in ("all", "minio"):
             backup_minio(run_dir, manifest)
         (run_dir / "manifest.txt").write_text("\n".join(manifest) + "\n", encoding="utf-8")
