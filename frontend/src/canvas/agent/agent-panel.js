@@ -39,6 +39,32 @@
     if(cursor<String(content).length) body.appendChild(document.createTextNode(String(content).slice(cursor)));
     if(!body.childNodes.length) body.appendChild(document.createTextNode(content));
   };
+  const linkNodeMentions = root => {
+    const candidates=(window.CanvasAgentBridge.nodeMentionCandidates?.()||[]).sort((a,b)=>b.label.length-a.label.length||b.id.length-a.id.length);
+    const usable=candidates.filter(item=>item.label.length>=2||item.id.length>=8);
+    if(!usable.length)return;
+    const pattern=new RegExp(usable.map(item=>escapeRegExp(item.label)).concat(usable.map(item=>escapeRegExp(item.id))).join('|'),'g');
+    const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT); const textNodes=[];
+    while(walker.nextNode())textNodes.push(walker.currentNode);
+    textNodes.forEach(node=>{
+      if(node.parentElement?.closest('a,button,code,pre'))return;
+      const value=node.textContent||''; pattern.lastIndex=0; if(!pattern.test(value))return; pattern.lastIndex=0;
+      const fragment=document.createDocumentFragment(); let cursor=0; let match;
+      while((match=pattern.exec(value))!==null){
+        if(match.index>cursor)fragment.append(document.createTextNode(value.slice(cursor,match.index)));
+        const target=usable.find(item=>item.label===match[0]||item.id===match[0]);
+        if(!target)fragment.append(document.createTextNode(match[0]));
+        else {const link=document.createElement('button');link.type='button';link.className='canvas-agent-node-link';link.textContent=match[0];link.title=`定位节点：${target.label}`;link.dataset.nodeId=target.id;fragment.append(link);}
+        cursor=pattern.lastIndex;
+      }
+      if(cursor<value.length)fragment.append(document.createTextNode(value.slice(cursor)));
+      node.replaceWith(fragment);
+    });
+  };
+  const renderMarkdownMessageContent = (body, content) => {
+    if(!window.MediaForgeMarkdown?.render){renderMessageContent(body,content);return;}
+    body.classList.add('markdown-content'); body.innerHTML=window.MediaForgeMarkdown.render(content,{emptyText:'暂无内容'}); linkNodeMentions(body);
+  };
   const messageReferenceToken = (reference,index) => {
     const token=document.createElement('button'); token.type='button'; token.className='mention-image-token';
     const url=reference.thumbnail||reference.src||reference.url||'';
@@ -72,7 +98,7 @@
     if (!content) return;
     if (kind === 'agent') sealLiveStatus();
     const el=document.createElement('div'); el.className=`canvas-agent-message ${kind}`;
-    const body=document.createElement('div'); body.className='canvas-agent-message-body'; if(kind==='user')renderUserMessageContent(body,content,references); else renderMessageContent(body,content); el.appendChild(body);
+    const body=document.createElement('div'); body.className='canvas-agent-message-body'; if(kind==='user')renderUserMessageContent(body,content,references); else renderMarkdownMessageContent(body,content); el.appendChild(body);
     if (kind === 'user') { const time=document.createElement('div'); time.className='canvas-agent-message-time'; time.textContent=timeLabel(); el.appendChild(time); }
     const box=$('canvasAgentMessages'); box.appendChild(el); if(!rebuildingMessages && messageFollow) box.scrollTop=box.scrollHeight;
   };
