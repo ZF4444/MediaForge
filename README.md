@@ -190,6 +190,15 @@ git status
 python scripts/backup_services.py --output-dir /var/backups/mediaforge --retention-days 30
 ```
 
+如果有 Redis 管理账号，建议使用管理员连接串生成原子 RDB 快照：
+
+```bash
+python scripts/backup_services.py --only redis \
+  --redis-admin-url 'redis://admin:password@127.0.0.1:6379/0'
+```
+
+也可通过 `REDIS_ADMIN_URL` 环境变量传入，避免将密码写入命令历史。
+
 也可以只备份单个服务，例如 `--only postgres`。备份主机需安装 `pg_dump`、`redis-cli` 和 MinIO
 客户端 `mc`；备份目录应使用独立磁盘或远端同步存储，并定期执行恢复演练。
 
