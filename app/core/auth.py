@@ -29,7 +29,7 @@ from app.core.logging import get_logger
 from app.core.metrics import AUTH_SESSION_CACHE_REQUESTS, REDIS_OPERATION_SECONDS
 from app.core.redis_client import RedisUnavailableError, get_redis_client
 from app.core.utils import now_ms
-from app.services.business_metadata import metadata_connection
+from app.services.business_metadata import get_app_setting, metadata_connection
 
 SESSION_COOKIE_NAME = "sid"
 SESSION_MAX_AGE = 365 * 24 * 60 * 60  # 1 年：同一台电脑不用反复登录
@@ -87,13 +87,21 @@ def register_user(user_id: str, username: str) -> bool:
         if user_id in USERS:
             return False
         created_at = now_ms()
+        default_budget = {"monthly_budget_usd": 0, "enabled": True}
+        try:
+            configured = get_app_setting("new_user_budget", default_budget)
+            if isinstance(configured, dict):
+                default_budget["monthly_budget_usd"] = configured.get("monthly_budget_usd", 0)
+                default_budget["enabled"] = bool(configured.get("enabled", True))
+        except Exception:
+            pass
         with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
             cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING id", (user_id, username, created_at))
             if not cur.fetchone():
                 return False
             cur.execute(
-                "INSERT INTO user_budgets(user_id,monthly_budget_usd,enabled,created_at,updated_at) VALUES(%s,0,TRUE,%s,%s)",
-                (user_id, created_at, created_at),
+                "INSERT INTO user_budgets(user_id,monthly_budget_usd,enabled,created_at,updated_at) VALUES(%s,%s,%s,%s,%s)",
+                (user_id, default_budget["monthly_budget_usd"], default_budget["enabled"], created_at, created_at),
             )
         USERS[user_id] = {"username": username, "created_at": created_at, "org_id": None}
     return True

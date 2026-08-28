@@ -637,6 +637,34 @@
     "APIRoute"
   ],
   [
+    "/api/settings/new-user-budget",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/user-data-migration/source",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/user-data-migration/execute",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
+    "/api/settings/new-user-budget",
+    [
+      "PUT"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/pose-studio/generate-fbx",
     [
       "POST"

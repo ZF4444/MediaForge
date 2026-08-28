@@ -64,7 +64,7 @@
         <section class="view" data-view="quota"><iframe class="embed" data-src="/static/storage-quota.html" title="存储配额"></iframe></section>
         <section class="view" data-view="sessions"><div class="placeholder"><div class="placeholder-inner"><i class="placeholder-icon" data-lucide="monitor-smartphone"></i><div class="placeholder-title">登录会话</div><div class="placeholder-copy">会话管理视图尚未开放。后续将在这里查看登录设备、最后活动时间并撤销指定会话。</div></div></div></section>
         <section class="view" data-view="usage"><div class="usage"><div class="usage-toolbar"><div><h2>使用统计</h2><p id="usageStatus">所有费用按 USD 结算</p></div><div style="display:flex;gap:8px;align-items:center"><button id="syncOmnilojo" class="budget-save" type="button" title="刷新用量"><i data-lucide="refresh-cw"></i></button><input id="usageMonth" class="month-input" type="month"></div></div><div id="usageSummary"></div><div class="usage-summary-title">使用明细</div><div id="usageTable" class="usage-table"></div></div></section>
-        <section class="view" data-view="budgets"><div class="usage"><div class="usage-toolbar"><div><h2>预算配置</h2><p id="budgetStatus">所有预算按 USD 设置</p></div></div><div class="section-title" style="margin-bottom:10px">组织预算</div><div id="budgetGrid" class="usage-grid"></div><div class="section-title" style="margin:26px 0 10px">个人预算</div><div id="personalBudgetGrid" class="usage-grid"></div></div></section>
+        <section class="view" data-view="budgets"><div class="usage"><div class="usage-toolbar"><div><h2>预算配置</h2><p id="budgetStatus">所有预算按 USD 设置</p></div></div><div class="budget-row" style="margin-bottom:18px"><div class="budget-head"><span class="budget-name">新用户默认预算</span><span class="budget-state">仅影响之后新建的用户</span></div><div class="budget-meta" style="margin-top:6px">新用户首次创建时自动写入个人月度预算。</div><div class="budget-edit"><input id="newUserBudgetInput" type="number" min="0" step="0.0001" placeholder="月度预算（USD）"><label class="budget-toggle"><input id="newUserBudgetEnabled" type="checkbox">启用</label><button id="newUserBudgetSave" class="budget-save" type="button" title="保存新用户默认预算"><i data-lucide="check"></i></button></div></div><div class="section-title" style="margin-bottom:10px">组织预算</div><div id="budgetGrid" class="usage-grid"></div><div class="section-title" style="margin:26px 0 10px">个人预算</div><div id="personalBudgetGrid" class="usage-grid"></div></div></section>
     </main>
 </div>
 <script>
@@ -224,7 +224,7 @@
         const month = document.getElementById('usageMonth').value;
         const status = document.getElementById('usageStatus');
         status.textContent = '加载中...';
-        try { const [rh, omni] = await Promise.all([fetch(`/api/usage/runninghub?month=${encodeURIComponent(month)}`), fetch(`/api/usage/omnilojo?month=${encodeURIComponent(month)}`)]); const d = await rh.json(); const omnilojo = await omni.json().catch(() => ({detail:`Omnilojo 接口错误（HTTP ${omni.status}）`})); if(!rh.ok) throw new Error(d.detail || '加载失败'); state.usage = {...d, omnilojo: omni.ok ? omnilojo : {records:[]}}; status.textContent = omni.ok ? '所有费用按 USD 结算' : `Omnilojo 统计不可用：${omnilojo.detail || '请求失败'}`; const budgetStatus = document.getElementById('budgetStatus'); if(budgetStatus) budgetStatus.textContent = omni.ok ? '所有预算按 USD 设置' : '部分统计不可用'; renderUsage(); renderBudgets(); }
+        try { const [rh, omni, defaults] = await Promise.all([fetch(`/api/usage/runninghub?month=${encodeURIComponent(month)}`), fetch(`/api/usage/omnilojo?month=${encodeURIComponent(month)}`), fetch('/api/settings/new-user-budget')]); const d = await rh.json(); const omnilojo = await omni.json().catch(() => ({detail:`Omnilojo 接口错误（HTTP ${omni.status}）`})); if(!rh.ok) throw new Error(d.detail || '加载失败'); if(defaults.ok){ const cfg = await defaults.json(); document.getElementById('newUserBudgetInput').value = Number(cfg.monthly_budget_usd || 0) || ''; document.getElementById('newUserBudgetEnabled').checked = cfg.enabled !== false; } state.usage = {...d, omnilojo: omni.ok ? omnilojo : {records:[]}}; status.textContent = omni.ok ? '所有费用按 USD 结算' : `Omnilojo 统计不可用：${omnilojo.detail || '请求失败'}`; const budgetStatus = document.getElementById('budgetStatus'); if(budgetStatus) budgetStatus.textContent = omni.ok ? '所有预算按 USD 设置' : '部分统计不可用'; renderUsage(); renderBudgets(); }
         catch(e){ status.textContent = e.message || '加载失败'; }
     }
     async function saveBudget(orgId){
@@ -243,6 +243,14 @@
         const amount = Number(input?.value || 0);
         if(!Number.isFinite(amount) || amount < 0){ status.textContent = '预算金额必须为非负数'; return; }
         try { const r = await fetch(`/api/users/${encodeURIComponent(userId)}/budget`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({monthly_budget_usd:amount, enabled:Boolean(enabled?.checked)})}); const d = await r.json(); if(!r.ok) throw new Error(d.detail || '保存失败'); await loadUsage(); }
+        catch(e){ status.textContent = e.message || '保存失败'; }
+    }
+    async function saveNewUserBudget(){
+        const amount = Number(document.getElementById('newUserBudgetInput').value || 0);
+        const enabled = document.getElementById('newUserBudgetEnabled').checked;
+        const status = document.getElementById('budgetStatus');
+        if(!Number.isFinite(amount) || amount < 0){ status.textContent = '预算金额必须为非负数'; return; }
+        try { const r = await fetch('/api/settings/new-user-budget', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({monthly_budget_usd:amount, enabled})}); const d = await r.json(); if(!r.ok) throw new Error(d.detail || '保存失败'); status.textContent = '新用户默认预算已保存'; }
         catch(e){ status.textContent = e.message || '保存失败'; }
     }
     function activate(name){
@@ -266,6 +274,7 @@
     document.getElementById('usageMonth').value = new Date().toISOString().slice(0, 7);
     document.getElementById('usageMonth').addEventListener('change', loadUsage);
     document.getElementById('syncOmnilojo').addEventListener('click', loadUsage);
+    document.getElementById('newUserBudgetSave').addEventListener('click', saveNewUserBudget);
     const initial = ['users','access','quota','sessions','usage','budgets'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'users';
     activate(initial); loadOrgs(); loadUsers(); if(window.lucide) lucide.createIcons();
 })();

@@ -53,7 +53,7 @@
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_PINNED_KEY = 'studio_sidebar_pinned';
         const DEFAULT_PAGE_ID = 'canvas';
-        const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','my-account','api-settings','comfyui-settings','user-management','feedback-admin','broadcast-admin'];
+        const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','my-account','api-settings','comfyui-settings','user-management','user-data-migration','feedback-admin','broadcast-admin'];
         const LEGACY_USER_MANAGEMENT_TABS = {'access-control':'access','storage-quota':'quota'};
         const LOCAL_PAGE_IDS = ['angle','gaussian','pose-studio'];
 
@@ -263,7 +263,7 @@
             const allowed = new Set(me && Array.isArray(me.pages) ? me.pages : PAGE_IDS);
             let hidActive = false;
             PAGE_IDS.forEach(pid => {
-                if (pid === 'my-account' || pid === 'user-management' || pid === 'feedback-admin' || pid === 'broadcast-admin') return;   // 账户页始终开放；其余入口由管理员处理
+                if (pid === 'my-account' || pid === 'user-data-migration' || pid === 'user-management' || pid === 'feedback-admin' || pid === 'broadcast-admin') return;   // 账户页和用户迁移始终开放；其余入口由管理员处理
                 if (allowed.has(pid)) return;
                 // 隐藏对应导航入口（nav-item 或 side-pill）
                 document.querySelectorAll(`[onclick*="'${pid}'"],[onclick*='"${pid}"']`).forEach(el => {

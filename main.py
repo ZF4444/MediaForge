@@ -6930,6 +6930,7 @@ from app.routers import announcement as announcement_router
 from app.routers import storage_management as storage_management_router
 from app.routers import usage as usage_router
 from app.routers import canvas_agent as canvas_agent_router
+from app.routers import user_data_migration as user_data_migration_router
 
 app.include_router(conversations_router.router)
 app.include_router(prompts_router.router)
@@ -6949,6 +6950,7 @@ app.include_router(announcement_router.router)
 app.include_router(storage_management_router.router)
 app.include_router(usage_router.router)
 app.include_router(canvas_agent_router.router)
+app.include_router(user_data_migration_router.router)
 
 if __name__ == "__main__":
     import argparse, uvicorn

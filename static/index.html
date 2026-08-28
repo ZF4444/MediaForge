@@ -1074,6 +1074,10 @@
                 </button>
 
                 <div class="nav-fold-group" id="local-nav-group">
+                    <div class="nav-item" onclick="switchUI(this, 'user-data-migration')">
+                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"></path><path d="M4 20 21 3"></path><path d="M21 16v5h-5"></path><path d="M15 15l6 6"></path><path d="M4 4l5 5"></path></svg>
+                        <span class="nav-text">用户数据迁移</span>
+                    </div>
                     <div class="nav-item" onclick="switchUI(this, 'angle')">
                         <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
@@ -1222,6 +1226,7 @@
             <iframe id="frame-api-settings" data-src="/static/api-settings.html" scrolling="yes"></iframe>
             <iframe id="frame-comfyui-settings" data-src="/static/workflow-settings.html" scrolling="yes"></iframe>
             <iframe id="frame-user-management" data-src="/static/user-management.html" scrolling="yes"></iframe>
+            <iframe id="frame-user-data-migration" data-src="/static/user-data-migration.html" scrolling="yes"></iframe>
             <iframe id="frame-feedback-admin" data-src="/static/feedback-admin.html" scrolling="yes"></iframe>
             <iframe id="frame-broadcast-admin" data-src="/static/broadcast-admin.html" scrolling="yes"></iframe>
 
