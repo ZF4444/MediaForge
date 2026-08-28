@@ -73,7 +73,52 @@ def migration_execute(payload: dict[str, Any]):
             ("asset_libraries", "user_id"),
         ]
         for table, column in statements:
-            cur.execute(f"UPDATE {table} SET {column}=%s WHERE {column}=%s", (target_id, source_id))
+            if table == "user_settings":
+                # Settings use (user_id, key) as a primary key. Preserve B's
+                # existing value and only move keys that B does not have.
+                cur.execute(
+                    """INSERT INTO user_settings(user_id,key,value_json,created_at,updated_at)
+                       SELECT %s,key,value_json,created_at,updated_at FROM user_settings
+                       WHERE user_id=%s ON CONFLICT(user_id,key) DO NOTHING""",
+                    (target_id, source_id),
+                )
+                cur.execute("DELETE FROM user_settings WHERE user_id=%s", (source_id,))
+            elif table == "asset_libraries":
+                # Library names are unique per user; preserve both libraries
+                # by giving a colliding source library a migration suffix.
+                cur.execute(
+                    """UPDATE asset_libraries source SET user_id=%s,
+                           name=source.name || ' (迁移)'
+                       WHERE source.user_id=%s AND EXISTS (
+                           SELECT 1 FROM asset_libraries target
+                           WHERE target.user_id=%s AND target.name=source.name)""",
+                    (target_id, source_id, target_id),
+                )
+                cur.execute("UPDATE asset_libraries SET user_id=%s WHERE user_id=%s", (target_id, source_id))
+            elif table == "canvas_agent_templates":
+                cur.execute(
+                    """UPDATE canvas_agent_templates source SET user_id=%s,
+                           name=source.name || ' (迁移)'
+                       WHERE source.user_id=%s AND EXISTS (
+                           SELECT 1 FROM canvas_agent_templates target
+                           WHERE target.user_id=%s AND target.name=source.name AND target.version=source.version)""",
+                    (target_id, source_id, target_id),
+                )
+                cur.execute("UPDATE canvas_agent_templates SET user_id=%s WHERE user_id=%s", (target_id, source_id))
+            elif table == "canvas_agent_project_assets":
+                # This table has a unique user/project/artifact key. Keep B's
+                # existing share and move the remaining source rows.
+                cur.execute(
+                    """DELETE FROM canvas_agent_project_assets source
+                       WHERE source.user_id=%s AND EXISTS (
+                           SELECT 1 FROM canvas_agent_project_assets target
+                           WHERE target.user_id=%s AND target.project_id=source.project_id
+                             AND target.artifact_id=source.artifact_id)""",
+                    (source_id, target_id),
+                )
+                cur.execute("UPDATE canvas_agent_project_assets SET user_id=%s WHERE user_id=%s", (target_id, source_id))
+            else:
+                cur.execute(f"UPDATE {table} SET {column}=%s WHERE {column}=%s", (target_id, source_id))
             moved_tables.append(table)
         # Remove source-owned rows that were deliberately not migrated.
         cur.execute("DELETE FROM user_budgets WHERE user_id=%s", (source_id,))
