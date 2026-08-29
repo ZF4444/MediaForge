@@ -1,4 +1,4 @@
-"""Administrator-assisted migration of a non-Feishu account into the current account."""
+"""Migration of a non-Feishu account into the current account."""
 from typing import Any
 
 from fastapi import APIRouter, HTTPException

@@ -71,10 +71,7 @@ async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, request
             raise ValueError("当前没有可用的生图模型")
         task_id = f"canvas_agent_img_{uuid.uuid4().hex}"
         request = _image_request_for_node(node, capability, prompt, prompts_by_node)
-        # Reuse the existing access-control resolver; the Agent never chooses
-        # an unapproved provider/model pair directly.
-        from main import assert_provider_budget_available, get_api_provider, require_model_access
-        await asyncio.to_thread(require_model_access, request["provider_id"], request["model"])
+        from main import assert_provider_budget_available, get_api_provider
         await assert_provider_budget_available(get_api_provider(request["provider_id"]), user_id)
         await create_canvas_task({"id": task_id, "type": "online-image", "status": "queued", "provider_id": request["provider_id"], "model": request["model"], "owner_id": user_id, "agent_run_id": run_id, "agent_node_id": node["id"], "deadline_at": time.time() + CANVAS_TASK_TIMEOUT_SECONDS, "attempt": 1, "request": request})
         # Queue submission is the first authoritative lifecycle transition.

@@ -1,4 +1,4 @@
-"""组织管理路由（/api/organizations/*，仅 admin）。
+"""组织管理路由（/api/organizations/*，需要“用户管理”页面权限）。
 
 端点：
 - GET    /api/organizations                 组织列表（含成员数量）。
@@ -7,11 +7,11 @@
 - DELETE /api/organizations/{org_id}        删除组织（成员自动解除归属，不会被删除）。
 - PUT    /api/access-control/users/{user_id}/org   把用户分配到某组织（org_id 为 null 表示解除归属）。
 
-权限：管理员判定为 current_user_id() == ADMIN_USER_ID（用户名 "admin"）。
+权限：拥有“用户管理”页面权限的用户可管理组织和用户归属。
 """
 from fastapi import APIRouter, HTTPException
 
-from app.core.access_control import ADMIN_USER_ID, is_admin
+from app.core.access_control import has_page_access
 from app.core.auth import USERS, USERS_LOCK, current_user_id, set_user_org
 from app.core.logging import audit_event
 from app.core.organizations import (
@@ -26,24 +26,24 @@ from app.models import OrganizationCreatePayload, OrganizationRenamePayload, Use
 router = APIRouter()
 
 
-def _require_admin() -> str:
+def _require_user_management() -> str:
     uid = current_user_id()
-    if not is_admin(uid):
-        raise HTTPException(status_code=403, detail="需要管理员权限。")
+    if not has_page_access(uid, "user-management"):
+        raise HTTPException(status_code=403, detail="需要“用户管理”页面权限。")
     return uid
 
 
 @router.get("/api/organizations")
 def organizations_list():
-    """全部组织（仅 admin）。"""
-    _require_admin()
+    """全部组织。"""
+    _require_user_management()
     return {"organizations": list_organizations()}
 
 
 @router.post("/api/organizations")
 def organizations_create(payload: OrganizationCreatePayload):
-    """创建组织（仅 admin）。"""
-    _require_admin()
+    """创建组织。"""
+    _require_user_management()
     try:
         org = create_organization(payload.name)
     except ValueError as exc:
@@ -60,8 +60,8 @@ def organizations_create(payload: OrganizationCreatePayload):
 
 @router.put("/api/organizations/{org_id}")
 def organizations_rename(org_id: str, payload: OrganizationRenamePayload):
-    """重命名组织（仅 admin）。"""
-    _require_admin()
+    """重命名组织。"""
+    _require_user_management()
     try:
         ok = rename_organization(org_id, payload.name)
     except ValueError as exc:
@@ -80,8 +80,8 @@ def organizations_rename(org_id: str, payload: OrganizationRenamePayload):
 
 @router.delete("/api/organizations/{org_id}")
 def organizations_delete(org_id: str):
-    """删除组织（仅 admin）；成员自动解除归属，不会被删除。"""
-    _require_admin()
+    """删除组织；成员自动解除归属，不会被删除。"""
+    _require_user_management()
     ok = delete_organization(org_id)
     if not ok:
         raise HTTPException(status_code=404, detail="组织不存在。")
@@ -96,10 +96,8 @@ def organizations_delete(org_id: str):
 
 @router.put("/api/access-control/users/{user_id}/org")
 def assign_user_organization(user_id: str, payload: UserOrgAssignPayload):
-    """把用户分配到某组织，或解除归属（org_id=null）（仅 admin）。"""
-    _require_admin()
-    if user_id == ADMIN_USER_ID:
-        raise HTTPException(status_code=400, detail="管理员账号不支持分配组织。")
+    """把用户分配到某组织，或解除归属（org_id=null）。"""
+    _require_user_management()
     with USERS_LOCK:
         exists = user_id in USERS
     if not exists:

@@ -66,7 +66,7 @@
         "canvas.loopRound": { zh: "第", en: "Round" },
         "canvas.apiGenerate": { zh: "AI生成", en: "AI Generate" },
         "canvas.nodeNotAllowedTitle": { zh: "节点不可用", en: "Node unavailable" },
-        "canvas.nodeNotAllowed": { zh: "管理员未授权你使用该节点。", en: "The administrator has not granted you access to this node." },
+        "canvas.nodeNotAllowed": { zh: "当前用户类型未授予该节点操作权限。", en: "Your user type is not allowed to use this node." },
         "canvas.videoGenerate": { zh: "视频生成", en: "Video Generate" },
         "canvas.group": { zh: "分组", en: "Group" },
         "canvas.logs": { zh: "日志", en: "Logs" },

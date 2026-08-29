@@ -1301,12 +1301,7 @@ def save_api_providers(providers):
     if GLOBAL_LOOP and GLOBAL_LOOP.is_running():
         asyncio.run_coroutine_threadsafe(publish_provider_config_changed(), GLOBAL_LOOP)
 
-# 依赖注入：把 load_api_providers 交给 access_control 模块，用于动态枚举
-# 画布「AI生成」引擎下的可选模型清单（画布节点访问控制）。避免 access_control
-# 反向 import main.py 造成循环依赖。
 import app.core.access_control as access_control
-access_control.set_image_models_provider(load_api_providers)
-access_control.set_fallback_chat_models_provider(lambda: CHAT_MODELS)
 
 def public_provider(provider, *, include_credentials=False):
     item = {**provider}
@@ -1345,31 +1340,19 @@ def public_api_providers(*, include_credentials=False):
     return [public_provider(p, include_credentials=include_credentials) for p in load_api_providers()]
 
 
-def require_admin() -> str:
+def require_page_access(page_id: str, page_label: str) -> str:
     uid = current_user_id()
-    if not access_control.is_admin(uid):
-        raise HTTPException(status_code=403, detail="需要管理员权限。")
+    if not access_control.has_page_access(uid, page_id):
+        raise HTTPException(status_code=403, detail=f"需要“{page_label}”页面权限。")
     return uid
 
 
-def require_model_access(provider_id: str, model: str) -> str:
-    uid = current_user_id()
-    # Legacy clients may submit `comfly`; get_api_provider resolves it to the
-    # active provider. Authorization must use that same concrete provider ID.
-    if not str(provider_id or '').strip():
-        model_text = str(model or '').strip()
-        provider = next((item for item in load_api_providers() if item.get('enabled', True) and model_text in {
-            str(value or '').strip()
-            for key in ('chat_models', 'image_models', 'video_models')
-            for value in (item.get(key) or [])
-        }), None)
-        if provider is None:
-            raise HTTPException(status_code=400, detail='未指定有效的 Provider/模型。Agent 聊天模型与图片生成模型需要分别配置。')
-    else:
-        provider = get_api_provider(provider_id)
-    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, provider["id"], model):
-        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员(@飞帆)在访问控制中开放。")
-    return uid
+def require_user_management_access() -> str:
+    return require_page_access("user-management", "用户管理")
+
+
+def require_api_settings_access() -> str:
+    return require_page_access("api-settings", "API 设置")
 
 
 def require_chat_model_access(provider_id: str, model: str) -> str:
@@ -4134,7 +4117,7 @@ async def ai_models():
 async def api_providers():
     from app.services.business_metadata import get_app_setting_with_version
     _value, version = await asyncio.to_thread(get_app_setting_with_version, "api_providers", [])
-    return {"providers": public_api_providers(include_credentials=access_control.is_admin(current_user_id())), "version": version}
+    return {"providers": public_api_providers(include_credentials=access_control.has_page_access(current_user_id(), "api-settings")), "version": version}
 
 @app.get("/api/canvas/capability-parameters")
 async def canvas_capability_parameters(capability: str, provider_id: str = "", model: str = ""):
@@ -4165,7 +4148,7 @@ async def canvas_parameter_schema_definitions():
 @app.post("/api/canvas/parameter-schema/validate")
 async def validate_canvas_parameter_schema(payload: Dict[str, Any]):
     """Validate one Provider's model-scoped parameter overrides before save."""
-    require_admin()
+    require_api_settings_access()
     from app.services.provider_parameters import normalize_parameter_schema
     try:
         return {"parameter_schema": normalize_parameter_schema(payload.get("parameter_schema"))}
@@ -4174,7 +4157,7 @@ async def validate_canvas_parameter_schema(payload: Dict[str, Any]):
 
 @app.put("/api/providers")
 def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = Header(None, alias="If-Match")):
-    require_admin()
+    require_api_settings_access()
     if if_match is None:
         raise HTTPException(status_code=428, detail="保存 Provider 配置必须携带 If-Match 版本号，请刷新后重试。")
     try:
@@ -4457,7 +4440,7 @@ def parse_upstream_models(raw, protocol="openai"):
 @app.post("/api/providers/test-connection")
 async def test_provider_connection(payload: TestConnectionPayload):
     """测试请求地址是否可用：调上游 /v1/models。验证通过时同时把模型清单按类别返回，避免再调一次拉取接口。"""
-    require_admin()
+    require_api_settings_access()
     protocol = protocol_from_payload(payload)
     base_url = validate_public_http_url(payload.base_url, label="请求地址")
     api_key = api_key_from_payload(payload, protocol)
@@ -4508,7 +4491,7 @@ async def test_provider_connection(payload: TestConnectionPayload):
 async def probe_async_endpoint(payload: TestConnectionPayload):
     """验证异步协议：用假 task_id 请求 GET /v1/tasks/{fake_id}。
     收到 400 Invalid task ID = 端点存在且 Key 有效；401/403 = Key 无效；404/连接失败 = 不支持异步端点。"""
-    require_admin()
+    require_api_settings_access()
     base_url = validate_public_http_url(payload.base_url, label="请求地址")
     protocol = protocol_from_payload(payload)
     api_key = api_key_from_payload(payload, protocol)
@@ -4668,7 +4651,7 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
 @app.post("/api/providers/fetch-models")
 async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
     """按页面当前表单值拉取模型，支持新增平台未保存时直接使用临时 Base URL / Key。"""
-    require_admin()
+    require_api_settings_access()
     protocol = protocol_from_payload(payload)
     api_key = api_key_from_payload(payload, protocol)
     async with provider_operation(protocol, "model_discovery", user_id=current_user_id()):
@@ -4677,7 +4660,7 @@ async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
 @app.get("/api/providers/{provider_id}/fetch-models")
 async def fetch_upstream_models(provider_id: str):
     """从已保存的上游 OpenAI 兼容接口拉取 /v1/models 列表，按名称智能分类为 image/chat/video。"""
-    require_admin()
+    require_api_settings_access()
     provider = get_api_provider_exact(provider_id)
     api_key = os.getenv(provider_key_env(provider["id"]), "")
     if not api_key:
@@ -4690,7 +4673,6 @@ async def build_online_image_result(payload: OnlineImageRequest):
     provider = get_api_provider(payload.provider_id)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
     model = selected_model(payload.model, default_model)
-    require_model_access(provider["id"], model)
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
     max_count = max(1, min(8, int(os.getenv("AI_ONLINE_IMAGE_MAX_COUNT", "4"))))
     count = max(1, min(max_count, int(payload.n or 1)))
@@ -5024,7 +5006,6 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
     payload = normalize_canvas_image_request(payload)
-    require_model_access(payload.provider_id, payload.model)
     await assert_provider_budget_available(get_api_provider(payload.provider_id), current_user_id())
     owner_id = current_user_id()
     count = max(1, min(8, int(payload.n or 1)))
@@ -5132,7 +5113,7 @@ async def get_canvas_image_task(task_id: str):
     task = await get_canvas_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="画布任务不存在，可能服务已重启或任务已过期")
-    if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
+    if task.get("owner_id") != current_user_id():
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
     if task.get("type") == "online-image-batch":
         task = await _canvas_image_batch_view(task)
@@ -5219,7 +5200,7 @@ async def get_canvas_comfy_task(task_id: str):
     task = await get_canvas_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在，可能服务已重启或任务已过期")
-    if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
+    if task.get("owner_id") != current_user_id():
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
     task.pop("request", None)
     return task
@@ -5227,13 +5208,13 @@ async def get_canvas_comfy_task(task_id: str):
 
 @app.get("/api/admin/canvas-task-dead-letters")
 async def admin_list_canvas_task_dead_letters(limit: int = 100):
-    require_admin()
+    require_user_management_access()
     return {"items": await list_dead_letter_canvas_tasks(limit)}
 
 
 @app.post("/api/admin/canvas-task-dead-letters/{entry_id}/retry")
 async def admin_retry_canvas_task_dead_letter(entry_id: str):
-    require_admin()
+    require_user_management_access()
     entries = await list_dead_letter_canvas_tasks(500)
     entry = next((item for item in entries if item.get("entry_id") == entry_id), None)
     if not entry or not entry.get("task_id"):
@@ -5250,7 +5231,7 @@ async def admin_retry_canvas_task_dead_letter(entry_id: str):
 
 @app.delete("/api/admin/canvas-task-dead-letters/{entry_id}")
 async def admin_cancel_canvas_task_dead_letter(entry_id: str):
-    require_admin()
+    require_user_management_access()
     entries = await list_dead_letter_canvas_tasks(500)
     entry = next((item for item in entries if item.get("entry_id") == entry_id), None)
     if not entry:
@@ -5747,7 +5728,6 @@ AI_PROVIDER_RUNTIME.register("video_generation", "default", _video_provider_adap
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
     payload = normalize_canvas_video_request(payload)
-    require_model_access(payload.provider_id, payload.model)
     provider = get_api_provider(payload.provider_id)
     async with provider_operation(provider["id"], "video_generation", user_id=current_user_id()):
         return await AI_PROVIDER_RUNTIME.dispatch("video_generation", provider_protocol(provider), payload, provider)
@@ -5920,7 +5900,6 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
 @app.post("/api/canvas-llm")
 async def canvas_llm(payload: CanvasLLMRequest):
     _chat_base, _chat_headers, model = resolve_chat_provider(payload.provider, payload.model)
-    require_model_access(payload.provider, model)
     async with provider_operation(payload.provider, "llm", user_id=current_user_id()):
         return await _canvas_llm_impl(payload)
 

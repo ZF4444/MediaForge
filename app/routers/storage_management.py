@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, Set
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from app.core.access_control import is_admin
+from app.core.access_control import has_page_access
 from app.core.auth import (
     USERS,
     USERS_LOCK,
@@ -29,10 +29,10 @@ from app.services.storage import (
 router = APIRouter()
 
 
-def _require_admin() -> str:
+def _require_user_management() -> str:
     uid = current_user_id()
-    if not is_admin(uid):
-        raise HTTPException(status_code=403, detail="需要管理员权限。")
+    if not has_page_access(uid, "user-management"):
+        raise HTTPException(status_code=403, detail="需要“用户管理”页面权限。")
     return uid
 
 
@@ -186,7 +186,7 @@ def _batch_delete_storage_entries_sync(raw, payload: StorageBatchDeletePayload):
 
 @router.get("/api/storage/config")
 def get_storage_quota_config():
-    _require_admin()
+    _require_user_management()
     users = []
     for item in _registered_users():
         user_id = item["user_id"]
@@ -201,7 +201,7 @@ def get_storage_quota_config():
 
 @router.put("/api/storage/config")
 def put_storage_quota_config(payload: StorageQuotaConfigPayload):
-    _require_admin()
+    _require_user_management()
     data = {
         "enabled": bool(payload.enabled),
         "default_quota_bytes": payload.default_quota_bytes,

@@ -124,7 +124,6 @@ class MediaForgeChatModel(BaseChatModel):
         return self.bind(_bound_tools=list(tools), _tool_choice=tool_choice, **kwargs)
 
 def resolve_canvas_agent_model(provider: str = "", model: str = "") -> MediaForgeChatModel:
-    from main import require_model_access, resolve_chat_provider
+    from main import resolve_chat_provider
     endpoint, headers, resolved_model = resolve_chat_provider(provider, model)
-    require_model_access(provider, resolved_model)
     return MediaForgeChatModel(endpoint=f"{endpoint}/chat/completions", headers=dict(headers), model_name=resolved_model)

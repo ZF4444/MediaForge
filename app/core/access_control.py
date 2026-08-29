@@ -1,19 +1,14 @@
-"""按用户区分的访问控制（侧边栏页面 + 无限画布节点）。
+"""按用户类型区分的页面访问控制。
 
-- 管理员：用户名（清洗后的 user_id）等于 ADMIN_USER_ID（默认 "admin"）。
 - PostgreSQL `app_settings.access_control`，结构：
     {
-      "users": {
-        "<user_id>": {"pages": ["canvas", ...], "nodes": ["comfly::gpt-image-1", ...]}
-      }
+      "types": {"new-user": {"name": "默认用户", "pages": ["canvas", ...]}},
+      "user_types": {"<user_id>": "new-user"}
     }
 - 语义：
-    * admin 始终拥有全部页面与节点权限，且不可被配置裁剪。
-    * 未在配置中出现的用户，默认拥有全部页面与节点（向后兼容）。
-    * 出现在配置中的用户，仅拥有其 pages/nodes 列表中列出的项。
+    * 每位用户按所属用户类型获得 pages 权限。
+    * 未分配类型的用户使用「默认用户」类型。
     * 校验/保存时会过滤掉不在全集清单中的非法 id。
-    * "nodes" 存储各功能可用的具体模型，
-      id 格式为 "<provider_id>::<model>"，随 API 设置里的 provider/模型配置动态变化。
 
 依赖：PostgreSQL app_settings 与用户注册表。
 本模块不引用 FastAPI app 对象，避免循环导入。
@@ -31,8 +26,8 @@ from app.core.logging import get_logger
 logger = get_logger("access_control")
 from app.services.business_metadata import get_app_setting, set_app_setting
 
-# 管理员用户 id（用户名经 clean_user_id 清洗后的值）。
-ADMIN_USER_ID = "admin"
+DEFAULT_USER_TYPE_ID = "new-user"
+DEFAULT_USER_TYPE_NAME = "默认用户"
 
 ACCESS_CONTROL_LOCK = Lock()
 _ACCESS_CONTROL_CACHE = None
@@ -54,17 +49,20 @@ _FALLBACK_ALL_PAGES: List[Dict[str, str]] = [
     {"id": "gpt-chat", "label": "GPT 对话"},
     {"id": "canvas", "label": "无限画布"},
     {"id": "asset-manager", "label": "素材库"},
+    {"id": "my-account", "label": "我的账户"},
     {"id": "api-settings", "label": "API 设置"},
     {"id": "comfyui-settings", "label": "工作流设置"},
+    {"id": "user-management", "label": "用户管理"},
+    {"id": "user-data-migration", "label": "用户数据迁移"},
+    {"id": "feedback-admin", "label": "反馈管理"},
+    {"id": "broadcast-admin", "label": "全局广播"},
 ]
 
 
 def _extract_nav_items(html: str) -> List[Dict[str, str]]:
     """从 index.html 源码中提取全部 switchUI(this, 'id') 导航入口及其可见文案。
 
-    仅保留侧边栏可见入口；带 id="nav-xxx" 前缀的入口视为管理员专属（access-control/
-    feedback-admin/broadcast-admin 等，默认 style="display:none"，由前端按 admin 身份显示），
-    不参与按用户裁剪，因此排除在外。
+    侧边栏中的每个页面入口均可由用户类型授权。
     """
     items: List[Dict[str, str]] = []
     seen = set()
@@ -73,9 +71,6 @@ def _extract_nav_items(html: str) -> List[Dict[str, str]]:
         tag = m.group(0)
         page_id = m.group(1)
         if page_id in seen:
-            continue
-        # 管理员专属入口（id="nav-xxx"）不纳入按用户裁剪的全集清单。
-        if re.search(r'\bid="nav-[a-zA-Z0-9-]+"', tag):
             continue
         # 在该导航项标签之后、下一个导航项标签开始之前的区间内查找可见文案 span，
         # 取其内文本作为 label（不依赖固定字符数，避免图标标记变化导致窗口不够）。
@@ -113,113 +108,59 @@ def all_pages() -> List[Dict[str, str]]:
 def all_page_ids() -> List[str]:
     return [p["id"] for p in all_pages()]
 
-# --- 可用模型：动态感知各 provider 配置的模型 ---
-# 不再使用固定的节点类型清单（image/prompt/loop/... 已废弃），改为按
-# "provider_id::model" 枚举对话、图片和视频模型。
-# 数据来源由 main.py 通过 set_image_models_provider() 注入 load_api_providers，
-# 避免 core 模块反向依赖 main.py 造成循环引用。
-_image_models_provider = None  # Callable[[], List[dict]]，返回值形如 load_api_providers() 的 provider 列表
-_fallback_chat_models_provider = None  # Callable[[], List[str]]，供旧版 GPT 对话的默认模型回退使用
+
+def has_page_access(user_id: str, page_id: str) -> bool:
+    """用户是否拥有指定侧边栏页面的权限。"""
+    return str(page_id or "") in set(effective_permissions(user_id).get("pages") or [])
 
 
-def set_image_models_provider(fn) -> None:
-    """由 main.py 在 load_api_providers 定义后调用，注入获取当前 provider 列表的函数。"""
-    global _image_models_provider
-    _image_models_provider = fn
-
-
-def set_fallback_chat_models_provider(fn) -> None:
-    """注入旧版 GPT 对话在平台未配置聊天模型时使用的全局默认模型。"""
-    global _fallback_chat_models_provider
-    _fallback_chat_models_provider = fn
-
-
-def _provider_display_name(provider: Dict[str, Any]) -> str:
-    return str(provider.get("name") or provider.get("id") or "").strip() or str(provider.get("id") or "")
-
-
-def all_nodes() -> List[Dict[str, str]]:
-    """动态枚举访问控制可授权的全部模型。
-
-    id 格式："<provider_id>::<model>"，覆盖对话（chat_models）、图片
-    （image_models）与视频（video_models）模型。provider 未启用（enabled=False）时跳过。
-    每次调用都重新读取，随 data/api_providers.json 的改动即时生效。
-    """
-    if _image_models_provider is None:
-        return []
-    try:
-        providers = _image_models_provider() or []
-    except Exception:
-        logger.exception("failed to load provider models", extra={"event": "provider_models_load_failed"})
-        return []
-    enabled_providers = [
-        provider for provider in providers
-        if isinstance(provider, dict) and provider.get("enabled") is not False
-    ]
-    primary_provider = next(
-        (provider for provider in enabled_providers if provider.get("primary")),
-        enabled_providers[0] if enabled_providers else {},
-    )
-    primary_provider_id = str(primary_provider.get("id") or "").strip()
-    items: List[Dict[str, str]] = []
-    seen = set()
-    fallback_chat_models = []
-    if _fallback_chat_models_provider is not None:
-        try:
-            fallback_chat_models = _fallback_chat_models_provider() or []
-        except Exception:
-            logger.exception("failed to load fallback chat models", extra={"event": "fallback_chat_models_load_failed"})
-    for provider in enabled_providers:
-        provider_id = str(provider.get("id") or "").strip()
-        if not provider_id:
+def _legacy_config_to_types(data: Dict[str, Any]) -> Dict[str, Any]:
+    """将旧版默认/单用户权限转换为用户类型，保留既有权限。"""
+    types = {
+        DEFAULT_USER_TYPE_ID: {
+            "name": DEFAULT_USER_TYPE_NAME,
+            **_sanitize_user_entry(data.get("default") if isinstance(data.get("default"), dict) else {}),
+        }
+    }
+    user_types = {}
+    for uid, entry in (data.get("users") or {}).items():
+        if not uid:
             continue
-        display_name = _provider_display_name(provider)
-        for model_type in ("chat_models", "image_models", "video_models"):
-            models = provider.get(model_type) or []
-            if model_type == "chat_models" and not models and provider_id == primary_provider_id:
-                models = fallback_chat_models
-            for model in models:
-                model = str(model or "").strip()
-                if not model:
-                    continue
-                node_id = f"{provider_id}::{model}"
-                if node_id in seen:
-                    continue
-                seen.add(node_id)
-                items.append({"id": node_id, "label": f"{display_name} · {model}"})
-    return items
+        type_id = f"legacy-{uid}"
+        types[type_id] = {"name": f"迁移用户 {uid}", **_sanitize_user_entry(entry)}
+        user_types[uid] = type_id
+    return {"types": types, "user_types": user_types}
 
 
-def all_node_ids() -> List[str]:
-    return [n["id"] for n in all_nodes()]
-
-
-def is_model_allowed(user_id: str, provider_id: str, model: str) -> bool:
-    """校验指定用户是否有权限使用某个「provider_id + model」组合（供路由层调用）。
-
-    admin 始终允许。未配置任何画布节点限制的用户默认允许全部。
-    """
-    node_id = f"{str(provider_id or '').strip()}::{str(model or '').strip()}"
-    perms = effective_permissions(user_id)
-    return node_id in set(perms.get("nodes") or [])
-
-
-def is_admin(user_id: str) -> bool:
-    """是否为管理员用户。"""
-    return (user_id or "") == ADMIN_USER_ID
+def _normalize_config(data: Any) -> Dict[str, Any]:
+    """规范化当前格式，同时兼容旧版访问控制设置。"""
+    if not isinstance(data, dict) or not isinstance(data.get("types"), dict):
+        return _legacy_config_to_types(data if isinstance(data, dict) else {})
+    types = {}
+    for type_id, entry in data["types"].items():
+        type_id = str(type_id or "").strip()
+        if not type_id:
+            continue
+        entry = entry if isinstance(entry, dict) else {}
+        name = str(entry.get("name") or type_id).strip()[:80] or type_id
+        if type_id == DEFAULT_USER_TYPE_ID and name == "新用户":
+            name = DEFAULT_USER_TYPE_NAME
+        types[type_id] = {"name": name, **_sanitize_user_entry(entry)}
+    if DEFAULT_USER_TYPE_ID not in types:
+        types[DEFAULT_USER_TYPE_ID] = {"name": DEFAULT_USER_TYPE_NAME, **_sanitize_user_entry({})}
+    user_types = {}
+    for uid, type_id in (data.get("user_types") or {}).items():
+        uid, type_id = str(uid or "").strip(), str(type_id or "").strip()
+        if uid and type_id in types:
+            user_types[uid] = type_id
+    return {"types": types, "user_types": user_types}
 
 
 def _load_config_unlocked() -> Dict[str, Any]:
     global _ACCESS_CONTROL_CACHE
     if _ACCESS_CONTROL_CACHE is not None:
         return copy.deepcopy(_ACCESS_CONTROL_CACHE)
-    data = get_app_setting("access_control", {})
-    if isinstance(data, dict) and isinstance(data.get("users"), dict):
-        if "default" not in data or not isinstance(data.get("default"), dict):
-            data["default"] = None
-        _ACCESS_CONTROL_CACHE = data
-    else:
-        _ACCESS_CONTROL_CACHE = {"default": None, "users": {}}
+    _ACCESS_CONTROL_CACHE = _normalize_config(get_app_setting("access_control", {}))
     return copy.deepcopy(_ACCESS_CONTROL_CACHE)
 
 
@@ -237,43 +178,39 @@ def load_config() -> Dict[str, Any]:
 
 
 def _sanitize_user_entry(entry: Any) -> Dict[str, List[str]]:
-    """把单个用户配置规范化为 {pages, nodes}，过滤非法 id 并去重保序。"""
+    """把单个用户类型配置规范化为页面权限，过滤非法 id 并去重保序。"""
     entry = entry if isinstance(entry, dict) else {}
     raw_pages = entry.get("pages")
-    raw_nodes = entry.get("nodes")
     # None 表示"全部"（未限制），保存为完整全集；列表表示显式集合。
     valid_page_ids = all_page_ids()
-    valid_node_ids = all_node_ids()
     pages = valid_page_ids if raw_pages is None else [p for p in valid_page_ids if p in set(raw_pages)]
-    nodes = valid_node_ids if raw_nodes is None else [n for n in valid_node_ids if n in set(raw_nodes)]
-    return {"pages": pages, "nodes": nodes}
+    return {"pages": pages}
 
 
 def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """规范化并持久化访问控制配置，返回保存后的配置。
-
-    payload 形如 {"default": {pages,nodes} | None, "users": {uid: {pages,nodes}}}。
-    - default 缺省（键不存在）时保留磁盘上已有的 default，避免被误清空。
-    - default 显式传 None 表示「不设默认，新用户全开」。
-    """
+    """规范化并持久化用户类型及用户类型分配。"""
     payload = payload if isinstance(payload, dict) else {}
-    users_in = payload.get("users")
-    users_in = users_in if isinstance(users_in, dict) else {}
-    sanitized: Dict[str, Any] = {"default": None, "users": {}}
-
-    # default：未传该键则沿用磁盘已有值；传 dict 则规范化；传 None 则清空。
-    if "default" in payload:
-        default_in = payload.get("default")
-        sanitized["default"] = _sanitize_user_entry(default_in) if isinstance(default_in, dict) else None
-    else:
-        existing = _load_config_unlocked().get("default")
-        sanitized["default"] = existing if isinstance(existing, dict) else None
-
-    for uid, entry in users_in.items():
-        if not uid or uid == ADMIN_USER_ID:
-            # admin 不可被裁剪，忽略针对 admin 的配置。
+    types_in = payload.get("types") if isinstance(payload.get("types"), dict) else {}
+    assignments_in = payload.get("user_types") if isinstance(payload.get("user_types"), dict) else {}
+    sanitized: Dict[str, Any] = {"types": {}, "user_types": {}}
+    for type_id, entry in types_in.items():
+        type_id = str(type_id or "").strip()
+        if not type_id:
             continue
-        sanitized["users"][uid] = _sanitize_user_entry(entry)
+        entry = entry if isinstance(entry, dict) else {}
+        name = str(entry.get("name") or type_id).strip()[:80] or type_id
+        if type_id == DEFAULT_USER_TYPE_ID and name == "新用户":
+            name = DEFAULT_USER_TYPE_NAME
+        sanitized["types"][type_id] = {
+            "name": name,
+            **_sanitize_user_entry(entry),
+        }
+    if DEFAULT_USER_TYPE_ID not in sanitized["types"]:
+        sanitized["types"][DEFAULT_USER_TYPE_ID] = {"name": DEFAULT_USER_TYPE_NAME, **_sanitize_user_entry({})}
+    for uid, type_id in assignments_in.items():
+        uid, type_id = str(uid or "").strip(), str(type_id or "").strip()
+        if uid and type_id in sanitized["types"]:
+            sanitized["user_types"][uid] = type_id
     global _ACCESS_CONTROL_CACHE
     with ACCESS_CONTROL_LOCK:
         set_app_setting("access_control", sanitized)
@@ -284,19 +221,10 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 def effective_permissions(user_id: str) -> Dict[str, Any]:
     """计算指定用户的有效权限。
 
-    优先级：admin（全权）> 用户独立配置 > 默认配置(default) > 全集（全开）。
-    返回：{is_admin, pages: [...], nodes: [...]}。
+    优先级：用户所属类型 > 默认用户类型。
     """
-    if is_admin(user_id):
-        return {"is_admin": True, "pages": all_page_ids(), "nodes": all_node_ids()}
     config = load_config()
-    entry = config.get("users", {}).get(user_id)
-    if entry is None:
-        # 无独立配置：回退到默认配置；默认未设置则全开。
-        default = config.get("default")
-        if isinstance(default, dict):
-            sd = _sanitize_user_entry(default)
-            return {"is_admin": False, "pages": sorted(set(sd["pages"]) | {"gpt-chat"}), "nodes": sd["nodes"]}
-        return {"is_admin": False, "pages": all_page_ids(), "nodes": all_node_ids()}
+    type_id = config.get("user_types", {}).get(user_id, DEFAULT_USER_TYPE_ID)
+    entry = config.get("types", {}).get(type_id) or config["types"][DEFAULT_USER_TYPE_ID]
     sanitized = _sanitize_user_entry(entry)
-    return {"is_admin": False, "pages": sorted(set(sanitized["pages"]) | {"gpt-chat"}), "nodes": sanitized["nodes"]}
+    return {"user_type": type_id, "pages": sanitized["pages"]}

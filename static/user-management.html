@@ -17,7 +17,7 @@
         .tabs{display:flex;gap:4px;margin-top:20px;overflow:auto}.tab{height:42px;padding:0 14px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--faint,#667085);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:7px}.tab svg{width:16px;height:16px}.tab:hover{color:var(--text,#16191f)}.tab.active{color:var(--text,#16191f);border-bottom-color:var(--text,#16191f)}
         .content{flex:1;min-height:0;position:relative}.view{display:none;height:100%}.view.active{display:block}.embed{width:100%;height:100%;border:0;background:var(--bg,#f5f6f8)}
         .users{height:100%;overflow:auto;padding:24px 28px 48px;max-width:1180px;margin:0 auto}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.section-title{font-size:14px;font-weight:700}.search{width:min(320px,55vw);height:38px;padding:0 12px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:13px;outline:none}.search:focus{border-color:var(--text,#16191f)}
-        .table{border-top:1px solid var(--border,#e4e7ec)}.row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(180px,1.3fr) 130px minmax(160px,1fr) 58px;align-items:center;gap:16px;min-height:62px;padding:10px 12px;border-bottom:1px solid var(--border,#e4e7ec)}.row.header{min-height:40px;color:var(--faint,#667085);font-size:11px;font-weight:700;text-transform:uppercase}.user{font-size:13px;font-weight:650}.id{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--faint,#667085)}.badge{justify-self:start;padding:3px 8px;border:1px solid var(--border,#d0d5dd);font-size:11px;color:var(--faint,#667085)}.badge.admin{border-color:#d97706;color:#b45309;background:#fffbeb}.empty{text-align:center;padding:70px 20px;color:var(--faint,#667085);font-size:13px}.user-delete{width:30px;height:30px;display:grid;place-items:center;border:0;background:transparent;color:#b42318;cursor:pointer}.user-delete:hover{background:#fef3f2}.user-delete svg{width:15px;height:15px}
+        .table{border-top:1px solid var(--border,#e4e7ec)}.row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(180px,1.3fr) 130px minmax(160px,1fr) 58px;align-items:center;gap:16px;min-height:62px;padding:10px 12px;border-bottom:1px solid var(--border,#e4e7ec)}.row.header{min-height:40px;color:var(--faint,#667085);font-size:11px;font-weight:700;text-transform:uppercase}.user{font-size:13px;font-weight:650}.id{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--faint,#667085)}.badge{justify-self:start;padding:3px 8px;border:1px solid var(--border,#d0d5dd);font-size:11px;color:var(--faint,#667085)}.empty{text-align:center;padding:70px 20px;color:var(--faint,#667085);font-size:13px}.user-delete{width:30px;height:30px;display:grid;place-items:center;border:0;background:transparent;color:#b42318;cursor:pointer}.user-delete:hover{background:#fef3f2}.user-delete svg{width:15px;height:15px}
         .org-select{width:100%;max-width:220px;height:34px;padding:0 8px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:12.5px;outline:none}.org-select:focus{border-color:var(--text,#16191f)}
         .org-panel{border:1px solid var(--border,#e4e7ec);background:var(--panel,#fff);padding:14px 16px;margin-bottom:18px}.org-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.org-panel-title{font-size:13px;font-weight:700}.org-form{display:flex;gap:8px}.org-input{flex:1;max-width:260px;height:34px;padding:0 10px;border:1px solid var(--border,#d0d5dd);background:var(--panel,#fff);color:var(--text,#16191f);font-size:13px;outline:none}.org-input:focus{border-color:var(--text,#16191f)}
         .org-btn{height:34px;padding:0 14px;border:1px solid var(--text,#16191f);background:var(--text,#16191f);color:var(--panel,#fff);font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}.org-btn:hover{opacity:.88}.org-btn:disabled{opacity:.5;cursor:not-allowed}
@@ -35,7 +35,7 @@
         <div class="title-row"><div class="title">用户管理</div><div id="userCount" class="count"></div></div>
         <nav class="tabs" aria-label="用户管理视图">
             <button class="tab active" data-tab="users"><i data-lucide="users"></i>用户列表</button>
-            <button class="tab" data-tab="access"><i data-lucide="shield-check"></i>访问权限</button>
+            <button class="tab" data-tab="access"><i data-lucide="shield-check"></i>权限管理</button>
             <button class="tab" data-tab="quota"><i data-lucide="database"></i>存储配额</button>
             <button class="tab" data-tab="sessions"><i data-lucide="monitor-smartphone"></i>登录会话</button>
             <button class="tab" data-tab="usage"><i data-lucide="chart-no-axes-column"></i>使用统计</button>
@@ -60,7 +60,7 @@
                 <div id="userTable" class="table"></div>
             </div>
         </section>
-        <section class="view" data-view="access"><iframe class="embed" data-src="/static/access-control.html" title="访问权限"></iframe></section>
+        <section class="view" data-view="access"><iframe class="embed" data-src="/static/access-control.html" title="权限管理"></iframe></section>
         <section class="view" data-view="quota"><iframe class="embed" data-src="/static/storage-quota.html" title="存储配额"></iframe></section>
         <section class="view" data-view="sessions"><div class="placeholder"><div class="placeholder-inner"><i class="placeholder-icon" data-lucide="monitor-smartphone"></i><div class="placeholder-title">登录会话</div><div class="placeholder-copy">会话管理视图尚未开放。后续将在这里查看登录设备、最后活动时间并撤销指定会话。</div></div></div></section>
         <section class="view" data-view="usage"><div class="usage"><div class="usage-toolbar"><div><h2>使用统计</h2><p id="usageStatus">所有费用按 USD 结算</p></div><div style="display:flex;gap:8px;align-items:center"><button id="syncOmnilojo" class="budget-save" type="button" title="刷新用量"><i data-lucide="refresh-cw"></i></button><input id="usageMonth" class="month-input" type="month"></div></div><div id="usageSummary"></div><div class="usage-summary-title">使用明细</div><div id="usageTable" class="usage-table"></div></div></section>
@@ -69,7 +69,7 @@
 </div>
 <script>
 (() => {
-    const state = { users: [], orgs: [], query: '', usage: null };
+    const state = { users: [], orgs: [], types: {}, userTypes: {}, query: '', usage: null };
     const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     function orgName(orgId){
         const org = state.orgs.find(o => o.id === orgId);
@@ -80,12 +80,19 @@
         const users = q ? state.users.filter(u => `${u.username || ''} ${u.user_id || ''}`.toLowerCase().includes(q)) : state.users;
         document.getElementById('userCount').textContent = `${state.users.length} 位用户`;
         const orgOptions = state.orgs.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
-        document.getElementById('userTable').innerHTML = `<div class="row header"><div>用户</div><div>用户 ID</div><div>角色</div><div>组织</div><div>操作</div></div>${users.map(u => {
-            const isAdmin = u.user_id === 'admin';
-            const orgSelect = isAdmin ? '<span class="status">—</span>' : `<select class="org-select" data-user="${esc(u.user_id)}"><option value="">未分配</option>${orgOptions}</select>`;
-            const deleteButton = isAdmin ? '<span class="status">—</span>' : `<button type="button" class="user-delete" data-user-delete="${esc(u.user_id)}" title="删除用户"><i data-lucide="trash-2"></i></button>`;
-            return `<div class="row"><div class="user">${esc(u.username || u.user_id)}</div><div class="id">${esc(u.user_id)}</div><div class="badge ${isAdmin ? 'admin' : ''}">${isAdmin ? '管理员' : '用户'}</div><div>${orgSelect}</div><div>${deleteButton}</div></div>`;
+        const typeOptions = Object.entries(state.types).map(([id, type]) => `<option value="${esc(id)}">${esc(type.name || id)}</option>`).join('');
+        document.getElementById('userTable').innerHTML = `<div class="row header"><div>用户</div><div>用户 ID</div><div>账号类型</div><div>组织</div><div>操作</div></div>${users.map(u => {
+            const orgSelect = `<select class="org-select" data-user="${esc(u.user_id)}"><option value="">未分配</option>${orgOptions}</select>`;
+            const userType = state.userTypes[u.user_id] || 'new-user';
+            const typeSelect = `<select class="org-select" data-user-type="${esc(u.user_id)}">${typeOptions}</select>`;
+            const deleteButton = `<button type="button" class="user-delete" data-user-delete="${esc(u.user_id)}" title="删除用户"><i data-lucide="trash-2"></i></button>`;
+            return `<div class="row"><div class="user">${esc(u.username || u.user_id)}</div><div class="id">${esc(u.user_id)}</div><div>${typeSelect}</div><div>${orgSelect}</div><div>${deleteButton}</div></div>`;
         }).join('') || '<div class="empty">没有匹配的用户</div>'}`;
+        document.querySelectorAll('[data-user-type]').forEach(sel => {
+            const uid = sel.dataset.userType;
+            sel.value = state.userTypes[uid] || 'new-user';
+            sel.addEventListener('change', () => assignUserType(uid, sel.value));
+        });
         document.querySelectorAll('.org-select').forEach(sel => {
             const uid = sel.dataset.user;
             const user = state.users.find(u => u.user_id === uid);
@@ -115,7 +122,7 @@
         if(window.lucide) lucide.createIcons();
     }
     async function loadUsers(){
-        try { const r = await fetch('/api/access-control/users'); const d = await r.json(); if(!r.ok) throw new Error(d.detail || '加载失败'); state.users = d.users || []; document.getElementById('status').textContent = ''; renderUsers(); }
+        try { const r = await fetch('/api/access-control/users'); const d = await r.json(); if(!r.ok) throw new Error(d.detail || '加载失败'); state.users = d.users || []; state.types = d.types || {}; state.userTypes = d.user_types || {}; document.getElementById('status').textContent = ''; renderUsers(); }
         catch(e){ document.getElementById('status').textContent = e.message || '加载失败'; }
     }
     async function loadOrgs(){
@@ -166,6 +173,16 @@
             if(!r.ok) throw new Error(d.detail || '分配失败');
             await Promise.all([loadUsers(), loadOrgs()]);
         } catch(e){ status.textContent = e.message || '分配失败'; }
+    }
+    async function assignUserType(userId, typeId){
+        const status = document.getElementById('status');
+        try {
+            const r = await fetch(`/api/access-control/users/${encodeURIComponent(userId)}/type`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_id: typeId }) });
+            const d = await r.json();
+            if(!r.ok) throw new Error(d.detail || '分配失败');
+            state.userTypes[userId] = d.user_type;
+            status.textContent = '用户类型已更新';
+        } catch(e){ status.textContent = e.message || '分配失败'; await loadUsers(); }
     }
     async function deleteUser(userId){
         const user = state.users.find(item => item.user_id === userId);

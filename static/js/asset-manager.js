@@ -70,7 +70,7 @@ let storageUnreferencedOnly = false;
 let storageFiltersOpen = false;
 let storageSelectedIds = new Set();
 let storageManageMode = false;
-let meInfo = {is_admin:false, user_id:''};
+let meInfo = {user_id:'', pages:[]};
 let storageSearchTimer = 0;
 
 const LOCAL_MEDIA_EXTS = /\.(png|jpe?g|webp|gif|bmp|avif|svg|mp4|webm|mov|m4v|mp3|wav|flac|ogg|m4a|aac)(\?|#|$)/i;
@@ -163,13 +163,13 @@ async function loadAll(){
         apiJson('/api/providers').catch(() => ({providers:[]})),
         loadSharedFolders(),
         loadLocalAssets(),
-        apiJson('/api/access-control/me').catch(() => ({is_admin:false, user_id:''})),
+        apiJson('/api/access-control/me').catch(() => ({user_id:'', pages:[]})),
         apiJson('/api/storage/usage').catch(() => ({usage_by_category:[]}))
     ]);
     assetLibrary = assetData.library || {libraries:[], categories:[]};
     promptLibrary = promptData.library || {libraries:[]};
     apiProviders = Array.isArray(providerData.providers) ? providerData.providers : [];
-    meInfo = meData || {is_admin:false, user_id:''};
+    meInfo = meData || {user_id:'', pages:[]};
     storageUsage = usageData || {usage_by_category:[]};
     storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matches:0, total_pages:0, current_page:1};
     if(activeTab === 'storage'){

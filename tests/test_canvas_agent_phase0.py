@@ -249,7 +249,6 @@ def test_agent_task_projects_queued_state_before_enqueue(monkeypatch):
     monkeypatch.setattr(task_dispatch, "create_canvas_task", create_task)
     monkeypatch.setattr(task_dispatch, "enqueue_canvas_task", enqueue_task)
     monkeypatch.setattr(events, "emit_agent_event", emit_event)
-    monkeypatch.setattr(main, "require_model_access", lambda *_args: None)
     monkeypatch.setattr(main, "get_api_provider", lambda *_args: {})
     monkeypatch.setattr(main, "assert_provider_budget_available", assert_budget)
 

@@ -1,273 +1,69 @@
-/* 访问控制管理页逻辑。仅 admin 可用；后端 config 接口对非 admin 返回 403。 */
+/* 权限管理：用户类型的页面权限与用户类型分配。 */
 (function () {
   'use strict';
-
-  var DEFAULT_ID = '__default__';   // 虚拟条目：新用户默认配置
-
-  var state = {
-    allPages: [],
-    allNodes: [],
-    users: [],          // [{user_id, username}]
-    config: {},         // { user_id: {pages:[], nodes:[]} }
-    default: null,      // {pages:[], nodes:[]} 或 null（null = 新用户全开）
-    selected: null,     // 当前选中的 user_id 或 DEFAULT_ID
-    draftPages: new Set(),
-    draftNodes: new Set(),
-  };
-
+  var DEFAULT_TYPE_ID = 'new-user';
+  var state = { allPages: [], users: [], types: {}, userTypes: {}, selected: null, draftPages: new Set() };
   function $(id) { return document.getElementById(id); }
-  function allPageIds() { return state.allPages.map(function (p) { return p.id; }); }
-  function allNodeIds() { return state.allNodes.map(function (n) { return n.id; }); }
-
-  function setStatus(msg, kind) {
-    var el = $('acStatus');
-    if (!el) return;
-    el.textContent = msg || '';
-    el.className = 'ac-status' + (kind ? ' ' + kind : '');
+  function typeEntries() { return Object.keys(state.types).map(function (id) { return { id: id, value: state.types[id] }; }); }
+  function setStatus(message, kind) { var el = $('acStatus'); el.textContent = message || ''; el.className = 'ac-status' + (kind ? ' ' + kind : ''); }
+  function markDirty(message) { setStatus(message || '有未保存的变更。'); }
+  function fetchJSON(url, options) { return fetch(url, Object.assign({ credentials: 'same-origin' }, options || {})).then(function (res) { if (res.status === 403) { var forbidden = new Error('forbidden'); forbidden.code = 403; throw forbidden; } if (!res.ok) { var error = new Error('http ' + res.status); error.code = res.status; throw error; } return res.json(); }); }
+  function commitSelected() { if (state.selected && state.types[state.selected]) state.types[state.selected] = { name: $('acTypeName').value.trim() || state.selected, pages: Array.from(state.draftPages) }; }
+  function renderTypes() {
+    var list = $('acTypeList'); list.innerHTML = '';
+    typeEntries().forEach(function (entry) {
+      var item = document.createElement('button'), dot = document.createElement('span'), name = document.createElement('span');
+      item.type = 'button'; item.className = 'ac-type-item' + (state.selected === entry.id ? ' active' : ''); dot.className = 'ac-type-dot'; name.textContent = entry.value.name || entry.id;
+      item.appendChild(dot); item.appendChild(name); item.addEventListener('click', function () { selectType(entry.id); }); list.appendChild(item);
+    });
   }
-
-  async function fetchJSON(url, options) {
-    var resp = await fetch(url, Object.assign({ credentials: 'same-origin' }, options || {}));
-    if (resp.status === 403) { var e = new Error('forbidden'); e.code = 403; throw e; }
-    if (!resp.ok) { var er = new Error('http ' + resp.status); er.code = resp.status; throw er; }
-    return resp.json();
-  }
-
-  function isRestricted(uid) {
-    return Object.prototype.hasOwnProperty.call(state.config, uid);
-  }
-
-  // 未单独配置的用户实际生效的来源标签
-  function fallbackBadge() {
-    return state.default ? '默认' : '全部';
-  }
-
-  function makeItem(id, name, badgeText, badgeClass) {
-    var item = document.createElement('div');
-    item.className = 'ac-user-item' + (state.selected === id ? ' active' : '');
-    var label = document.createElement('span');
-    label.textContent = name;
-    var badge = document.createElement('span');
-    badge.className = 'ac-user-badge' + (badgeClass ? ' ' + badgeClass : '');
-    badge.textContent = badgeText;
-    item.appendChild(label);
-    item.appendChild(badge);
-    item.addEventListener('click', function () { selectUser(id); });
-    return item;
-  }
-
   function renderUsers() {
-    var list = $('acUserList');
-    list.innerHTML = '';
-
-    // 顶部固定：默认（新用户）配置条目
-    list.appendChild(makeItem(
-      DEFAULT_ID,
-      '默认（新用户）',
-      state.default ? '已设置' : '未设置',
-      state.default ? 'restricted' : ''
-    ));
-
-    var divider = document.createElement('div');
-    divider.style.cssText = 'height:1px;background:var(--border,#e5e7eb);margin:8px 2px;';
-    list.appendChild(divider);
-
-    if (!state.users.length) {
-      var empty = document.createElement('div');
-      empty.className = 'ac-empty';
-      empty.textContent = '暂无其他注册用户。';
-      list.appendChild(empty);
-      return;
-    }
-    state.users.forEach(function (u) {
-      var restricted = isRestricted(u.user_id);
-      var name = u.username && u.username !== u.user_id ? (u.username + ' (' + u.user_id + ')') : u.user_id;
-      list.appendChild(makeItem(
-        u.user_id,
-        name,
-        restricted ? '已限制' : fallbackBadge(),
-        restricted ? 'restricted' : ''
-      ));
+    var list = $('acUserList'); list.innerHTML = '';
+    if (!state.users.length) { var empty = document.createElement('tr'); empty.innerHTML = '<td class="ac-empty-row" colspan="2">暂无其他注册用户。</td>'; list.appendChild(empty); return; }
+    state.users.forEach(function (user) {
+      var row = document.createElement('tr'), userCell = document.createElement('td'), typeCell = document.createElement('td'), name = document.createElement('div'), id = document.createElement('div'), select = document.createElement('select');
+      name.className = 'ac-user-name'; id.className = 'ac-user-id'; name.textContent = user.username || user.user_id; id.textContent = user.username && user.username !== user.user_id ? user.user_id : '';
+      userCell.appendChild(name); if (id.textContent) userCell.appendChild(id); select.className = 'ac-type-select';
+      typeEntries().forEach(function (entry) { var option = document.createElement('option'); option.value = entry.id; option.textContent = entry.value.name || entry.id; option.selected = (state.userTypes[user.user_id] || DEFAULT_TYPE_ID) === entry.id; select.appendChild(option); });
+      select.addEventListener('change', function () { state.userTypes[user.user_id] = select.value; markDirty('有未保存的用户类型分配。'); });
+      typeCell.appendChild(select); row.appendChild(userCell); row.appendChild(typeCell); list.appendChild(row);
     });
   }
-
-  function buildChecks(containerId, allItems, draftSet) {
-    var box = $(containerId);
-    box.innerHTML = '';
-    allItems.forEach(function (it) {
-      var checked = draftSet.has(it.id);
-      var lab = document.createElement('label');
-      lab.className = 'ac-check' + (checked ? ' checked' : '');
-      var input = document.createElement('input');
-      input.type = 'checkbox';
-      input.checked = checked;
-      input.value = it.id;
-      input.addEventListener('change', function () {
-        if (input.checked) draftSet.add(it.id); else draftSet.delete(it.id);
-        lab.classList.toggle('checked', input.checked);
-      });
-      var span = document.createElement('span');
-      span.textContent = it.label;
-      lab.appendChild(input);
-      lab.appendChild(span);
-      box.appendChild(lab);
+  function buildChecks() {
+    var box = $('acPages'); box.innerHTML = '';
+    state.allPages.forEach(function (item) {
+      var label = document.createElement('label'), input = document.createElement('input'), text = document.createElement('span');
+      label.className = 'ac-check' + (state.draftPages.has(item.id) ? ' checked' : ''); input.type = 'checkbox'; input.checked = state.draftPages.has(item.id);
+      input.addEventListener('change', function () { if (input.checked) state.draftPages.add(item.id); else state.draftPages.delete(item.id); label.classList.toggle('checked', input.checked); markDirty(); });
+      text.textContent = item.label; label.appendChild(input); label.appendChild(text); box.appendChild(label);
     });
   }
-
-  function selectUser(id) {
-    state.selected = id;
-    var src;
-    if (id === DEFAULT_ID) {
-      // 默认配置：已设置则用之，否则预填全部
-      src = state.default || { pages: allPageIds(), nodes: allNodeIds() };
-    } else {
-      var cfg = state.config[id];
-      // 已单独配置 => 用其列表；否则预填「当前默认」或全部，便于在此基础上调整
-      src = cfg || state.default || { pages: allPageIds(), nodes: allNodeIds() };
-    }
-    state.draftPages = new Set(src.pages || []);
-    state.draftNodes = new Set(src.nodes || []);
-
-    $('acDetailEmpty').style.display = 'none';
-    $('acDetail').style.display = '';
-    $('acDetailTitle').textContent = id === DEFAULT_ID ? '默认（新用户）配置' : '用户配置';
-    // 仅默认条目显示「清除默认」按钮
-    $('acClearDefaultWrap').style.display = id === DEFAULT_ID ? '' : 'none';
-    // 仅已被单独限制的具体用户显示「恢复默认」按钮（把该用户的独立配置清除，重新跟随默认/全开）
-    var restoreWrap = $('acRestoreDefaultWrap');
-    if (restoreWrap) restoreWrap.style.display = (id !== DEFAULT_ID && isRestricted(id)) ? '' : 'none';
-
-    renderUsers();
-    buildChecks('acPages', state.allPages, state.draftPages);
-    buildChecks('acNodes', state.allNodes, state.draftNodes);
-    setStatus('');
+  function selectType(typeId) {
+    commitSelected(); state.selected = typeId; var type = state.types[typeId]; if (!type) return;
+    state.draftPages = new Set(type.pages || []); $('acDetailEmpty').style.display = 'none'; $('acDetail').style.display = ''; $('acTypeName').value = type.name || typeId; $('acDetailTitle').textContent = type.name || typeId; $('acDeleteTypeBtn').style.display = typeId === DEFAULT_TYPE_ID ? 'none' : ''; renderTypes(); buildChecks();
   }
-
-  function applyBulk(kind, val) {
-    var all = kind === 'pages' ? state.allPages : state.allNodes;
-    var set = kind === 'pages' ? state.draftPages : state.draftNodes;
-    set.clear();
-    if (val === 'all') all.forEach(function (it) { set.add(it.id); });
-    buildChecks(kind === 'pages' ? 'acPages' : 'acNodes', all, set);
+  function applyBulk(value) { state.draftPages.clear(); if (value === 'all') state.allPages.forEach(function (item) { state.draftPages.add(item.id); }); buildChecks(); markDirty(); }
+  function newType() {
+    var name = window.prompt('用户类型名称'); if (!name || !name.trim()) return;
+    var id = 'type-' + Date.now().toString(36); state.types[id] = { name: name.trim(), pages: [] }; selectType(id); renderUsers(); markDirty('已创建用户类型，请配置权限后保存。');
   }
-
-  // 组装并发送完整配置（默认 + 全部用户）。editingDefaultCleared=true 表示本次清除默认。
-  async function persist(editingDefaultCleared) {
-    var btn = $('acSaveBtn');
-    btn.disabled = true;
-    setStatus('保存中...');
-
-    // 把当前草稿写回到内存状态（取决于正在编辑谁）
-    if (state.selected === DEFAULT_ID) {
-      state.default = editingDefaultCleared ? null : {
-        pages: Array.from(state.draftPages),
-        nodes: Array.from(state.draftNodes),
-      };
-    } else if (state.selected) {
-      state.config[state.selected] = {
-        pages: Array.from(state.draftPages),
-        nodes: Array.from(state.draftNodes),
-      };
-    }
-
-    var usersPayload = {};
-    Object.keys(state.config).forEach(function (uid) {
-      usersPayload[uid] = {
-        pages: (state.config[uid].pages || []).slice(),
-        nodes: (state.config[uid].nodes || []).slice(),
-      };
-    });
-
-    var body = { users: usersPayload, default: state.default };
-    try {
-      var res = await fetchJSON('/api/access-control/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      state.config = res.config || {};
-      state.default = res.default || null;
-      renderUsers();
-      // 重新同步当前编辑项的草稿（清除默认后回到全部预填）
-      if (state.selected) selectUser(state.selected);
-      setStatus('已保存。', 'ok');
-    } catch (e) {
-      setStatus(e.code === 403 ? '无权限。' : '保存失败：' + e.message, 'err');
-    } finally {
-      btn.disabled = false;
-    }
+  function deleteType() {
+    var typeId = state.selected; if (!typeId || typeId === DEFAULT_TYPE_ID || !window.confirm('删除此用户类型？相关用户将改为“默认用户”。')) return;
+    delete state.types[typeId]; Object.keys(state.userTypes).forEach(function (uid) { if (state.userTypes[uid] === typeId) state.userTypes[uid] = DEFAULT_TYPE_ID; }); state.selected = DEFAULT_TYPE_ID; selectType(DEFAULT_TYPE_ID); renderUsers(); markDirty('已删除用户类型，请保存变更。');
   }
-
-  // 恢复某用户为默认配置：清除其独立配置（config 中的记录），使其重新跟随
-  // 「默认（新用户）」配置（或默认未设置时全开）。立即持久化，无需再点「保存配置」。
-  async function restoreUserDefault(uid) {
-    if (!uid || uid === DEFAULT_ID) return;
-    var btn = $('acRestoreDefaultBtn');
-    if (btn) btn.disabled = true;
-    setStatus('恢复中...');
-
-    var usersPayload = {};
-    Object.keys(state.config).forEach(function (id) {
-      if (id === uid) return;   // 从 payload 中剔除该用户 => 后端保存后其记录消失
-      usersPayload[id] = {
-        pages: (state.config[id].pages || []).slice(),
-        nodes: (state.config[id].nodes || []).slice(),
-      };
-    });
-    var body = { users: usersPayload };
-    try {
-      var res = await fetchJSON('/api/access-control/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      state.config = res.config || {};
-      state.default = res.default || null;
-      renderUsers();
-      if (state.selected === uid) selectUser(uid);
-      setStatus('已恢复为默认配置。', 'ok');
-    } catch (e) {
-      setStatus(e.code === 403 ? '无权限。' : '恢复失败：' + e.message, 'err');
-    } finally {
-      if (btn) btn.disabled = false;
-    }
+  function persist() {
+    commitSelected(); $('acSaveBtn').disabled = true; setStatus('保存中...');
+    fetchJSON('/api/access-control/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ types: state.types, user_types: state.userTypes }) }).then(function (data) {
+      state.types = data.types || {}; state.userTypes = data.user_types || {}; renderTypes(); renderUsers(); selectType(state.selected && state.types[state.selected] ? state.selected : DEFAULT_TYPE_ID); setStatus('已保存。', 'ok');
+    }).catch(function (error) { setStatus(error.code === 403 ? '无权限。' : '保存失败：' + error.message, 'err'); }).finally(function () { $('acSaveBtn').disabled = false; });
   }
-
-  async function init() {
-    try {
-      var data = await fetchJSON('/api/access-control/config');
-      state.allPages = data.all_pages || [];
-      state.allNodes = data.all_nodes || [];
-      state.users = data.users || [];
-      state.config = data.config || {};
-      state.default = data.default || null;
-      $('acMain').style.display = '';
-      renderUsers();
-    } catch (e) {
-      if (e.code === 403) {
-        $('acMain').style.display = 'none';
-        $('acForbidden').style.display = '';
-      } else {
-        setStatus('加载失败：' + e.message, 'err');
-      }
-      return;
-    }
-
-    document.querySelectorAll('.ac-mini-btn[data-bulk]').forEach(function (b) {
-      b.addEventListener('click', function () { applyBulk(b.dataset.bulk, b.dataset.val); });
-    });
-    $('acSaveBtn').addEventListener('click', function () { persist(false); });
-    var clearBtn = $('acClearDefaultBtn');
-    if (clearBtn) clearBtn.addEventListener('click', function () { persist(true); });
-    var restoreBtn = $('acRestoreDefaultBtn');
-    if (restoreBtn) restoreBtn.addEventListener('click', function () { restoreUserDefault(state.selected); });
-
-    try { if (window.lucide) window.lucide.createIcons(); } catch (e) {}
+  function init() {
+    document.querySelectorAll('[data-bulk]').forEach(function (button) { button.addEventListener('click', function () { applyBulk(button.dataset.val); }); });
+    $('acAddTypeBtn').addEventListener('click', newType); $('acDeleteTypeBtn').addEventListener('click', deleteType); $('acSaveBtn').addEventListener('click', persist);
+    $('acTypeName').addEventListener('input', function () { if (state.selected) { $('acDetailTitle').textContent = this.value.trim() || state.selected; markDirty(); } });
+    fetchJSON('/api/access-control/config').then(function (data) {
+      state.allPages = data.all_pages || []; state.users = data.users || []; state.types = data.types || {}; state.userTypes = data.user_types || {}; $('acMain').style.display = ''; renderTypes(); renderUsers(); selectType(state.types[DEFAULT_TYPE_ID] ? DEFAULT_TYPE_ID : typeEntries()[0].id);
+    }).catch(function (error) { if (error.code === 403) $('acForbidden').style.display = ''; else setStatus('加载失败：' + error.message, 'err'); });
   }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
 })();

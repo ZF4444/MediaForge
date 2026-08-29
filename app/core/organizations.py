@@ -2,7 +2,7 @@
 
 - PostgreSQL `organizations` 表（id, name, created_at, updated_at）。
 - `users.org_id` 外键指向 organizations.id（ON DELETE SET NULL：删除组织不会删除用户，仅解除归属）。
-- 仅 admin 可管理组织与分配成员，鉴权在路由层完成（app/routers/organizations.py）。
+- 组织管理权限由页面权限控制，鉴权在路由层完成（app/routers/organizations.py）。
 
 依赖：app.services.business_metadata（PostgreSQL 连接与建表），app.core.auth（USERS 注册表）。
 本模块不引用 FastAPI app 对象，避免循环导入。
