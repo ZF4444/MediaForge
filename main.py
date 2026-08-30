@@ -2023,13 +2023,13 @@ def resolve_chat_provider(provider: str, model: str, ms_model: str = ""):
     hdrs = api_headers(provider=api_provider, model=mdl)
     return base, hdrs, mdl
 
-def api_headers(json_body=True, provider=None, model=""):
+def api_headers(json_body=True, provider=None, model="", api_key=""):
     if provider:
         # Provider keys are stored in the encrypted provider_secrets table
         # when APP_SECRET_KEY is enabled. Never bypass provider_env_key_value()
         # here by reading os.environ directly, otherwise Agent requests report
         # a saved key as missing.
-        api_key = provider_env_key_value(provider["id"])
+        api_key = str(api_key or provider_env_key_value(provider["id"]) or "").strip()
         provider_name = provider["id"]
         if not api_key:
             raise HTTPException(status_code=400, detail=f"未配置 {provider_name} 的 API Key，请在 API 平台管理中填写。")
@@ -3437,6 +3437,9 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
     mask_refs = [ref for ref in refs if str(ref.get("role") or "").strip().lower() == "mask" or str(ref.get("name") or "").lower().endswith("_mask.png")]
     image_refs = [ref for ref in refs if ref not in mask_refs]
     request_timeout = httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0) if is_gpt2 else AI_REQUEST_TIMEOUT
+    # Secret storage uses a synchronous compatibility bridge; resolve it off
+    # the event loop before constructing request headers.
+    provider_api_key = await asyncio.to_thread(provider_env_key_value, provider["id"])
     async with shared_http_client(timeout=request_timeout) as client:
         response = None
         async def post_openai_edits(edit_files=None):
@@ -3447,7 +3450,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
                 data["quality"] = quality
             return await client.post(
                 edit_url,
-                headers=api_headers(json_body=False, provider=provider, model=model),
+                headers=api_headers(json_body=False, provider=provider, model=model, api_key=provider_api_key),
                 data=data,
                 files=edit_files if edit_files is not None else {},
             )
@@ -3457,7 +3460,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
             body["output_format"] = "png"
             if quality:
                 body["quality"] = quality
-            response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
+            response = await client.post(gen_url, headers=api_headers(provider=provider, model=model, api_key=provider_api_key), json=body)
             if response.status_code >= 400 and images_api_unsupported(response):
                 response = await post_openai_edits()
         elif image_refs:
@@ -3514,7 +3517,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
                 }
                 if quality:
                     body["quality"] = quality
-                response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
+                response = await client.post(gen_url, headers=api_headers(provider=provider, model=model, api_key=provider_api_key), json=body)
                 if response.status_code >= 400 and images_api_unsupported(response):
                     raise HTTPException(
                         status_code=502,
@@ -3526,7 +3529,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
                 body["quality"] = quality
             response = await client.post(
                 gen_url,
-                headers=api_headers(provider=provider, model=model),
+                headers=api_headers(provider=provider, model=model, api_key=provider_api_key),
                 json=body,
             )
             if response.status_code >= 400 and images_api_unsupported(response):
