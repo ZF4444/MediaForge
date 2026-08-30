@@ -30,6 +30,15 @@ def initialize_provider_secrets() -> None:
         """)
 
 
+def legacy_provider_secrets_available() -> bool:
+    """Return whether the migration-only legacy secret table still exists."""
+    if not os.getenv("DATABASE_URL"):
+        return False
+    with database_connection_sync() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='provider_secrets'")
+        return bool(cur.fetchone())
+
+
 def get_connection_secret(connection_id: str, secret_name: str = "api_key") -> str:
     if not os.getenv("DATABASE_URL") or not os.getenv("APP_SECRET_KEY"):
         return ""

@@ -176,7 +176,7 @@ import app.core.shared_state as shared_state
 from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup, check_storage_quota
 from app.services.business_metadata import archive_ai_task, initialize_business_metadata, get_comfy_workflow
 from app.services.canvas_agent.skills import register_builtin_skills
-from app.services.provider_secrets import initialize_provider_secrets, get_provider_secret, set_provider_secret
+from app.services.provider_secrets import initialize_provider_secrets, get_provider_secret, set_provider_secret, legacy_provider_secrets_available
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
 from app.core.redis_client import RedisUnavailableError, close_redis_client, open_redis_client, redis_readiness_status
 from app.core.metrics import render_metrics
@@ -783,7 +783,7 @@ def migrate_provider_secrets_from_legacy_env() -> None:
     Reads legacy values only during migration. Runtime lookups use PostgreSQL
     exclusively whenever ``APP_SECRET_KEY`` is configured.
     """
-    if not os.getenv("APP_SECRET_KEY"):
+    if not os.getenv("APP_SECRET_KEY") or not legacy_provider_secrets_available():
         return
     updates = []
     for provider in load_api_providers():
