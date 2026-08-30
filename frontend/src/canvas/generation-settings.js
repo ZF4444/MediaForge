@@ -1002,7 +1002,7 @@ function renderCountControl(){
     return `<select data-param="count">${[1,2,3,4].map(n => optionHtml(n, `${n} 张`, Number(settings.count || 1))).join('')}</select>`;
 }
 function apiImageModelEntries(){
-    return imageProviders().flatMap(provider => (provider.image_models || []).map(model => ({
+    return imageProviders().flatMap(provider => providerImageModels(provider.id).map(model => ({
         providerId: provider.id,
         model,
         label: modelDisplayName(model, provider.id),
@@ -1010,7 +1010,7 @@ function apiImageModelEntries(){
     })));
 }
 function apiVideoModelEntries(){
-    return videoApiProviders().flatMap(provider => (provider.video_models || []).map(model => ({
+    return videoApiProviders().flatMap(provider => providerVideoModels(provider.id).map(model => ({
         providerId: provider.id,
         model,
         label: modelDisplayName(model, provider.id),
