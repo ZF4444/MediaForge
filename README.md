@@ -105,6 +105,7 @@ export MINIO_ENDPOINT=127.0.0.1:9000
 export MINIO_ACCESS_KEY=minioadmin
 export MINIO_SECRET_KEY=readygo123
 export REDIS_URL=redis://mediaforge:readygo123@127.0.0.1:6379/0
+export APP_SECRET_KEY="$(openssl rand -hex 32)"
 ```
 
 如果 Redis 使用 ACL 用户而不是默认用户，该用户还需要发布订阅权限（跨进程 WebSocket 和 Provider 配置通知会使用 Pub/Sub）：

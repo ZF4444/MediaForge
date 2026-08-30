@@ -8,6 +8,8 @@ import pytest
 from fastapi import HTTPException
 
 from app.ai import gateway
+from app.ai.contracts import Actor
+from app.ai.images import LegacyImageGateway
 from app.ai.registry import ImageAdapterRegistry, ImageGenerationRequest
 from app.core.metrics import AI_PROVIDER_REQUESTS
 
@@ -41,6 +43,139 @@ def test_image_adapter_registry_dispatches_registered_handler():
         registry.register("demo", handler)
     with pytest.raises(LookupError, match="not registered"):
         asyncio.run(registry.dispatch("missing", _request()))
+
+
+def test_openai_chat_adapter_declares_capabilities_and_endpoint():
+    from app.ai.adapters.openai import OpenAIChatAdapter
+    from app.ai.domain import Connection, ModelResource, ResolvedTarget
+    from app.ai.contracts import ChatCommand
+
+    connection = Connection("c1", "legacy-c1", "openai", "C1", "https://api.example/v1", True)
+    model = ModelResource("m1", "c1", "gpt-test", "chat", "openai", capabilities=frozenset({"chat"}))
+    command = ChatCommand(target=ResolvedTarget(connection=connection, model=model), messages=[])
+    adapter = OpenAIChatAdapter()
+
+    assert "chat" in adapter.capabilities
+    assert adapter._endpoint(command) == "https://api.example/v1/chat/completions"
+
+
+def test_gemini_and_omnilojo_chat_adapters_have_explicit_protocols():
+    from app.ai.adapters import GeminiChatAdapter, OmnilojoChatAdapter
+
+    assert GeminiChatAdapter.protocol == "gemini"
+    assert OmnilojoChatAdapter.protocol == "omnilojo"
+    assert GeminiChatAdapter.capabilities == OmnilojoChatAdapter.capabilities
+
+
+def test_connection_discovery_service_rejects_unknown_connection():
+    from app.ai.services.discovery import ConnectionDiscoveryService
+
+    called = []
+
+    async def discover(_connection):
+        called.append(True)
+        return {"ok": True}
+
+    service = ConnectionDiscoveryService(connection_loader=lambda _id: None, discoverer=discover)
+    with pytest.raises(LookupError):
+        asyncio.run(service.discover("missing"))
+    assert called == []
+
+
+def test_legacy_image_gateway_applies_budget_governance_and_adapter_dispatch():
+    registry = ImageAdapterRegistry()
+    calls = []
+
+    async def handler(request):
+        calls.append(("adapter", request.provider["id"], request.model))
+        return {"ok": True}
+
+    async def budget(provider, user_id):
+        calls.append(("budget", provider["id"], user_id))
+
+    registry.register("demo", handler)
+    image_gateway = LegacyImageGateway(
+        provider_resolver=lambda _provider_id: {"id": "demo"},
+        budget_authorizer=budget,
+        registry=registry,
+        adapter_selector=lambda _provider, _model: "demo",
+    )
+
+    result = asyncio.run(image_gateway.generate(
+        prompt="draw", size="1024x1024", quality="high", model="image-1",
+        reference_images=[], provider_id="legacy-demo", actor=Actor(user_id="user-a"),
+    ))
+
+    assert result == {"ok": True}
+    assert calls == [("budget", "demo", "user-a"), ("adapter", "demo", "image-1")]
+
+
+def test_main_image_entrypoint_delegates_to_legacy_gateway(monkeypatch):
+    import main
+
+    calls = []
+
+    monkeypatch.setattr(main, "get_api_provider", lambda provider_id: {"id": provider_id})
+    monkeypatch.setattr(main, "current_user_id", lambda: "user-a")
+    monkeypatch.setattr(main, "image_adapter_key", lambda _provider, _model: "demo")
+
+    async def budget(provider, user_id):
+        calls.append(("budget", provider["id"], user_id))
+
+    async def dispatch(adapter_key, request):
+        calls.append(("dispatch", adapter_key, request.prompt, request.reference_images))
+        return {"ok": True}, {"raw": True}
+
+    monkeypatch.setattr(main, "assert_provider_budget_available", budget)
+    monkeypatch.setattr(main.IMAGE_ADAPTERS, "dispatch", dispatch)
+
+    result = asyncio.run(main.generate_ai_image(
+        "draw", "1024x1024", "high", "image-1", [{"url": "ref"}], "demo-provider",
+    ))
+
+    assert result == ({"ok": True}, {"raw": True})
+    assert calls == [
+        ("budget", "demo-provider", "user-a"),
+        ("dispatch", "demo", "draw", [{"url": "ref"}]),
+    ]
+
+
+def test_legacy_video_gateway_applies_authorization_budget_and_dispatch():
+    from app.ai.videos import LegacyVideoGateway
+
+    calls = []
+
+    async def budget(provider, user_id):
+        calls.append(("budget", provider["id"], user_id))
+
+    def authorize(provider_id, model):
+        calls.append(("authorize", provider_id, model))
+        return model
+
+    async def dispatch(protocol, payload, provider):
+        calls.append(("dispatch", protocol, provider["id"]))
+        return {"video": "ok"}
+
+    class Payload:
+        provider_id = "video-main"
+        model = "veo3-fast"
+
+    video_gateway = LegacyVideoGateway(
+        provider_resolver=lambda provider_id: {"id": provider_id},
+        model_authorizer=authorize,
+        budget_authorizer=budget,
+        dispatcher=dispatch,
+        protocol_resolver=lambda _provider: "openai",
+    )
+
+    result = asyncio.run(video_gateway.generate(payload=Payload(), actor_user_id="user-a"))
+
+    assert result == {"video": "ok"}
+    assert calls == [
+        ("authorize", "video-main", "veo3-fast"),
+        ("budget", "video-main", "user-a"),
+        ("dispatch", "openai", "video-main"),
+    ]
 
 
 def test_provider_operation_records_success_metric():
@@ -145,3 +280,10 @@ def test_distributed_gateway_opens_circuit_after_failures(monkeypatch):
         assert exc.value.status_code == 503
 
     asyncio.run(scenario())
+def test_provider_compatibility_can_be_disabled(monkeypatch):
+    import main
+    from fastapi import HTTPException
+    monkeypatch.setenv("AI_PROVIDER_COMPAT", "0")
+    with pytest.raises(HTTPException) as exc:
+        main.require_provider_compatibility()
+    assert exc.value.status_code == 410
