@@ -73,7 +73,14 @@ def apply() -> dict:
 
         cur.execute("SELECT id,connection_id,upstream_model FROM ai_models")
         model_map = {}
-        for row in cur.fetchall():
+        model_rows = cur.fetchall()
+        cur.execute("SELECT id FROM ai_connections WHERE enabled=TRUE")
+        connection_count = len(cur.fetchall())
+        cur.execute("SELECT id FROM ai_resources WHERE enabled=TRUE")
+        resource_count = len(cur.fetchall())
+        if not connection_count or (not model_rows and not resource_count):
+            raise RuntimeError("authoritative AI tables are empty; run sync-legacy/projection before --apply")
+        for row in model_rows:
             provider = str(row["connection_id"] or "").removeprefix("legacy:").lower()
             model_map[(provider, str(row["upstream_model"]))] = row["id"]
         cur.execute("SELECT id,connection_id,kind,name FROM ai_resources")
