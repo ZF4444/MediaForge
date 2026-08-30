@@ -1229,6 +1229,11 @@ def normalize_provider(item):
     model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("image_models") or [])
     chat_model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("chat_models") or [])
     video_model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("video_models") or [])
+    model_enabled = {
+        str(name).strip(): bool(value)
+        for name, value in (item.get("model_enabled") or {}).items()
+        if str(name).strip() and str(name).strip() in set(model_values + chat_model_values + video_model_values)
+    }
     # AI API 协议归属于模型；旧配置中的供应商协议只用于给未迁移模型补默认值。
     model_protocols = normalize_model_protocols(item.get("model_protocols"))
     if provider_id not in FIXED_PROTOCOL_PROVIDER_IDS and protocol in PER_MODEL_PROTOCOL_OPTIONS:
@@ -1255,6 +1260,7 @@ def normalize_provider(item):
         "image_models": model_values,
         "chat_models": chat_model_values,
         "video_models": video_model_values,
+        "model_enabled": model_enabled,
         "model_protocols": {} if provider_id == "runninghub" else model_protocols,
         "model_aliases": {} if provider_id == "runninghub" else {str(k).strip(): str(v).strip() for k, v in (item.get("model_aliases") or {}).items() if isinstance(k, str) and isinstance(v, str) and str(k).strip() and str(v).strip()},
         "parameter_schema": parameter_schema,

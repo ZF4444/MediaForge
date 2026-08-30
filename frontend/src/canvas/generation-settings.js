@@ -91,7 +91,7 @@ function sortProvidersByPermission(providers, kind='image'){
     });
 }
 function imageProviders(){
-    return sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && (p.image_models || []).length), 'image');
+    return sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && providerImageModels(p.id).length), 'image');
 }
 function volcengineProvider(){
     return (apiProviders || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
@@ -168,7 +168,7 @@ function resolveChatProviderId(providerId=''){
 }
 function providerChatModels(providerId){
     const provider = chatApiProviders().find(p => p.id === providerId);
-    return [...new Set(provider?.chat_models || [])];
+    return [...new Set((provider?.chat_models || []).filter(model => provider?.model_enabled?.[String(model || '').trim()] !== false))];
 }
 function resolveChatModel(model='', providerId=''){
     const models = providerChatModels(resolveChatProviderId(providerId));
@@ -186,7 +186,8 @@ function apiProviderById(providerId){
 function providerImageModels(providerId){
     if(providerId === 'volcengine') return volcengineProvider().image_models || [];
     if(providerId === 'runninghub') return [];
-    return (apiProviders || []).find(p => p.id === providerId)?.image_models || [];
+    const provider = (apiProviders || []).find(p => p.id === providerId);
+    return (provider?.image_models || []).filter(model => provider?.model_enabled?.[String(model || '').trim()] !== false);
 }
 let _rhLastAttachedKindsKey = null;
 // 接入素材的类型（图片/视频/音频）变化时，重新渲染 RunningHub AI 应用选择列表，
@@ -223,7 +224,7 @@ function sanitizeSmartApiSelection(target=settings){
     return target;
 }
 function videoApiProviders(){
-    const fromConfig = sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && (p.video_models || []).length), 'video');
+    const fromConfig = sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && providerVideoModels(p.id).length), 'video');
     return fromConfig;
 }
 function videoProviderById(providerId){
@@ -233,7 +234,7 @@ function videoProviderById(providerId){
 function providerVideoModels(providerId){
     if(providerId === 'volcengine') return volcengineVideoModels();
     const provider = videoApiProviders().find(p => p.id === providerId);
-    return [...new Set(provider?.video_models || [])];
+    return [...new Set((provider?.video_models || []).filter(model => provider?.model_enabled?.[String(model || '').trim()] !== false))];
 }
 // Normalize the mutually-exclusive video input modes used by the API payload
 // and by the compact generation settings popover.

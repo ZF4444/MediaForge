@@ -76,6 +76,8 @@ class ProviderRepository:
                     model = str(raw_model or "").strip()
                     if not model:
                         continue
+                    if (provider.get("model_enabled") or {}).get(model) is False:
+                        continue
                     values.append(ModelResource(
                         id=legacy_model_id(connection.legacy_provider_id, kind, model),
                         connection_id=connection.id,

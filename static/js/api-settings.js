@@ -1005,6 +1005,9 @@ const FIXED_PROTOCOL_PROVIDER_IDS = new Set(['volcengine', 'runninghub']);
 function providerSupportsModelProtocol(item){
     return Boolean(item) && !FIXED_PROTOCOL_PROVIDER_IDS.has(item.id);
 }
+function modelEnabled(item, model){
+    return item?.model_enabled?.[String(model || '').trim()] !== false;
+}
 function modelProtocolSelectHtml(kind, index, model, item){
     if(kind === 'video' || !providerSupportsModelProtocol(item)) return '';
     const map = (item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {};
@@ -1038,6 +1041,7 @@ function renderModels(kind){
             <span class="model-drag-handle"><i data-lucide="grip-vertical" class="w-3.5 h-3.5"></i></span>
             <input value="${escapeAttr(model)}" readonly title="模型 ID" onclick="event.stopPropagation()">
             <input class="model-alias-input" value="${escapeAttr(alias)}" onclick="event.stopPropagation()" oninput="updateModelAlias('${kind}', ${index}, this.value)" placeholder="别名（选填）" title="画布中显示的名称">
+            <label class="model-enabled-toggle" title="${modelEnabled(item, model) ? '已启用' : '已停用'}" onclick="event.stopPropagation()"><input type="checkbox" ${modelEnabled(item, model) ? 'checked' : ''} onchange="toggleModelEnabled('${kind}', ${index}, this.checked)"><span>启用</span></label>
             ${modelProtocolSelectHtml(kind, index, model, item)}
             ${showPrices(model) ? `<div class="model-price-fields"><label>入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.input_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'input_per_million', this.value)" title="输入 USD / 100 万 token"></label><label>出 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.output_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'output_per_million', this.value)" title="输出 USD / 100 万 token"></label></div>` : ''}
             <button class="icon-btn" type="button" onclick="event.stopPropagation();removeModel('${kind}', ${index})" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
@@ -1059,7 +1063,7 @@ function addProvider(){
     providers.push({
         id, name:id, base_url:'', protocol:'openai', image_generation_endpoint:'', image_edit_endpoint:'',
         enabled:true, primary:false, image_models:[], chat_models:[], video_models:[],
-        model_protocols:{}, model_aliases:{}, parameter_schema:{}, rh_apps:[], has_key:false, key_preview:''
+        model_enabled:{}, model_protocols:{}, model_aliases:{}, parameter_schema:{}, rh_apps:[], has_key:false, key_preview:''
     });
     selectedId = id;
     selectedModel = {providerId:'', kind:'', name:'', index:-1};
@@ -1189,6 +1193,16 @@ function updateModelAlias(kind, index, value){
     const alias = String(value || '').trim();
     if(alias) item.model_aliases[model] = alias;
     else delete item.model_aliases[model];
+}
+function toggleModelEnabled(kind, index, enabled){
+    const item = provider();
+    const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
+    const model = String(item?.[key]?.[index] || '').trim();
+    if(!item || !model) return;
+    item.model_enabled = item.model_enabled && typeof item.model_enabled === 'object' ? item.model_enabled : {};
+    item.model_enabled[model] = Boolean(enabled);
+    renderModels(kind);
+    setStatus(`${enabled ? '已启用' : '已停用'}模型 ${model}，点击保存生效`);
 }
 function updateModelProtocol(kind, index, value){
     const item = provider();
@@ -1326,6 +1340,7 @@ async function saveProviders(){
                 image_models:item.id === 'runninghub' ? [] : (item.image_models || []),
                 chat_models:item.id === 'runninghub' ? [] : (item.chat_models || []),
                 video_models:item.id === 'runninghub' ? [] : (item.video_models || []),
+                model_enabled:item.id === 'runninghub' ? {} : ((item.model_enabled && typeof item.model_enabled === 'object') ? item.model_enabled : {}),
                 model_protocols:item.id === 'runninghub' ? {} : ((item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {}),
                 model_aliases:item.id === 'runninghub' ? {} : ((item.model_aliases && typeof item.model_aliases === 'object') ? item.model_aliases : {}),
                 parameter_schema:item.id === 'runninghub' ? {} : ((item.parameter_schema && typeof item.parameter_schema === 'object') ? item.parameter_schema : {}),

@@ -3369,6 +3369,18 @@ html.studio-theme-dark body .recommend-fill:hover {
     }
 }
 
+.model-enabled-toggle {
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    white-space:nowrap;
+    font-size:11px;
+    color:#475569;
+    cursor:pointer;
+}
+.model-enabled-toggle input { accent-color:#2563eb; }
+.model-row:has(.model-enabled-toggle input:not(:checked)) { opacity:.58; }
+
 /* MS / RH 空 Key 新手引导 */
 .provider-onboarding-card[hidden] {
     display:none !important;

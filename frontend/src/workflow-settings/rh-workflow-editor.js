@@ -964,6 +964,7 @@ function renderRhEntryList(target, list, kind){
                     <input type="text" value="${escapeAttr(entry.title || '')}" oninput="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'title', this.value)" placeholder="AI 应用名称">
                 </label>
                 <div class="rh-id-line"><i data-lucide="hash" class="w-3 h-3"></i><span>/run/ai-app/${escapeHtml(entry.id)}</span></div>
+                <label class="model-enabled-toggle" onclick="event.stopPropagation()"><input type="checkbox" ${entry.enabled !== false ? 'checked' : ''} onchange="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'enabled', this.checked)"><span>启用</span></label>
                 <textarea oninput="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'note', this.value)" placeholder="备注、用途、参数说明">${escapeHtml(entry.note || '')}</textarea>
             </div>
             <div class="rh-card-actions">

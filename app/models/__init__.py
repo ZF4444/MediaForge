@@ -138,6 +138,7 @@ class ApiProviderPayload(BaseModel):
     image_models: List[str] = []
     chat_models: List[str] = []
     video_models: List[str] = []
+    model_enabled: Dict[str, bool] = {}
     model_protocols: Dict[str, str] = {}
     model_aliases: Dict[str, str] = {}
     parameter_schema: Dict[str, Any] = {}
