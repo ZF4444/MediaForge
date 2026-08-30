@@ -128,7 +128,7 @@
       + '<div class="fb-kv-label">更新</div><div>' + escapeHtml(fmtTime(item.updated_at)) + '</div>'
       + '</div>'
       + '<div class="fb-detail-content">' + escapeHtml(item.content || '') + '</div>'
-      + '<label class="fb-kv-label" for="fbAdminNote">管理员备注</label>'
+      + '<label class="fb-kv-label" for="fbAdminNote">处理备注</label>'
       + '<textarea id="fbAdminNote" class="fb-textarea" maxlength="1000">' + escapeHtml(item.admin_note || '') + '</textarea>'
       + '<div class="fb-actions">'
       + '<button class="fb-btn" type="button" data-status="open">未处理</button>'

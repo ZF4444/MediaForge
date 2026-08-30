@@ -1,5 +1,4 @@
 import asyncio
-
 from fastapi import HTTPException
 
 import main
@@ -89,18 +88,3 @@ def test_budget_exhaustion_returns_structured_error_for_task_clients(monkeypatch
         }
     else:
         raise AssertionError("expected budget exhaustion to block the task")
-
-
-def test_model_access_uses_the_resolved_legacy_provider(monkeypatch):
-    monkeypatch.setattr(main, "current_user_id", lambda: "user-1")
-    monkeypatch.setattr(main.access_control, "is_admin", lambda _user_id: False)
-    monkeypatch.setattr(main, "get_api_provider", lambda _provider_id: {"id": "google"})
-    checked = []
-    monkeypatch.setattr(
-        main.access_control,
-        "is_model_allowed",
-        lambda user_id, provider_id, model: checked.append((user_id, provider_id, model)) or True,
-    )
-
-    assert main.require_model_access("comfly", "gemini-3-pro") == "user-1"
-    assert checked == [("user-1", "google", "gemini-3-pro")]

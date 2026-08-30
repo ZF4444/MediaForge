@@ -1,4 +1,4 @@
-"""Validation for administrator-configured outbound provider endpoints."""
+"""Validation for configured outbound provider endpoints."""
 
 from __future__ import annotations
 

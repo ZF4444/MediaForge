@@ -1,9 +1,9 @@
-"""Admin endpoints for provider usage and organization cash budgets."""
+"""Provider usage and organization budget endpoints."""
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from app.core.access_control import is_admin
+from app.core.access_control import has_page_access
 from app.core.auth import current_user_id
 from app.core.logging import audit_event
 from app.services.usage import (
@@ -27,16 +27,16 @@ def account_overview(month: str = "", limit: int = 20):
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
-def _require_admin() -> str:
+def _require_user_management() -> str:
     uid = current_user_id()
-    if not is_admin(uid):
-        raise HTTPException(status_code=403, detail="需要管理员权限。")
+    if not has_page_access(uid, "user-management"):
+        raise HTTPException(status_code=403, detail="需要“用户管理”页面权限。")
     return uid
 
 
 @router.get("/api/usage/runninghub")
 def runninghub_usage(month: str = "", limit: int = 100):
-    _require_admin()
+    _require_user_management()
     try:
         return runninghub_usage_dashboard(month or None, limit)
     except ValueError as exc:
@@ -45,7 +45,7 @@ def runninghub_usage(month: str = "", limit: int = 100):
 
 @router.get("/api/usage/omnilojo")
 def omnilojo_usage(month: str = "", limit: int = 100):
-    _require_admin()
+    _require_user_management()
     try:
         result = omnilojo_usage_dashboard(month or None, limit)
         result["source"] = "response_usage"
@@ -56,7 +56,7 @@ def omnilojo_usage(month: str = "", limit: int = 100):
 
 @router.put("/api/organizations/{org_id}/budget")
 def organization_budget_update(org_id: str, payload: dict[str, Any]):
-    _require_admin()
+    _require_user_management()
     try:
         result = set_organization_budget(org_id, payload.get("monthly_budget_cny", 0), bool(payload.get("enabled")))
     except ValueError as exc:
@@ -67,7 +67,7 @@ def organization_budget_update(org_id: str, payload: dict[str, Any]):
 
 @router.put("/api/users/{user_id}/budget")
 def user_budget_update(user_id: str, payload: dict[str, Any]):
-    _require_admin()
+    _require_user_management()
     try:
         result = set_user_budget(user_id, payload.get("monthly_budget_usd", 0), bool(payload.get("enabled")))
     except ValueError as exc:
@@ -78,7 +78,7 @@ def user_budget_update(user_id: str, payload: dict[str, Any]):
 
 @router.get("/api/settings/new-user-budget")
 def new_user_budget_get():
-    _require_admin()
+    _require_user_management()
     value = get_app_setting("new_user_budget", {"monthly_budget_usd": 0, "enabled": True})
     if not isinstance(value, dict):
         value = {"monthly_budget_usd": 0, "enabled": True}
@@ -87,7 +87,7 @@ def new_user_budget_get():
 
 @router.put("/api/settings/new-user-budget")
 def new_user_budget_update(payload: dict[str, Any]):
-    _require_admin()
+    _require_user_management()
     try:
         amount = float(payload.get("monthly_budget_usd", 0))
     except (TypeError, ValueError):

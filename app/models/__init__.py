@@ -487,17 +487,13 @@ class ComfyInstancesPayload(BaseModel):
 
 
 class AccessControlUserEntry(BaseModel):
+    name: str = Field(default="", max_length=80)
     pages: List[str] = Field(default_factory=list)
-    nodes: List[str] = Field(default_factory=list)
 
 
 class AccessControlConfigPayload(BaseModel):
-    users: Dict[str, AccessControlUserEntry] = Field(default_factory=dict)
-    # default 为新用户的默认权限：
-    #   - 字段未出现：保留磁盘已有默认配置（不变更）
-    #   - 显式传 null：清除默认配置（新用户全开）
-    #   - 传对象：作为新的默认配置
-    default: Optional[AccessControlUserEntry] = None
+    types: Dict[str, AccessControlUserEntry] = Field(default_factory=dict)
+    user_types: Dict[str, str] = Field(default_factory=dict)
 
 
 class OrganizationCreatePayload(BaseModel):

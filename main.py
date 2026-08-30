@@ -1380,6 +1380,21 @@ def require_admin() -> str:
     return uid
 
 
+def require_page_access(page_id: str, page_label: str) -> str:
+    uid = current_user_id()
+    if not access_control.has_page_access(uid, page_id):
+        raise HTTPException(status_code=403, detail=f"需要“{page_label}”页面权限。")
+    return uid
+
+
+def require_user_management_access() -> str:
+    return require_page_access("user-management", "用户管理")
+
+
+def require_api_settings_access() -> str:
+    return require_page_access("api-settings", "API 设置")
+
+
 def require_model_access(provider_id: str, model: str) -> str:
     uid = current_user_id()
     # Legacy clients may submit `comfly`; get_api_provider resolves it to the
@@ -1395,7 +1410,8 @@ def require_model_access(provider_id: str, model: str) -> str:
             raise HTTPException(status_code=400, detail='未指定有效的 Provider/模型。Agent 聊天模型与图片生成模型需要分别配置。')
     else:
         provider = get_api_provider(provider_id)
-    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, provider["id"], model):
+    resolved_provider_id = str(provider.get("id") or provider_id)
+    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, resolved_provider_id, model):
         raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员(@飞帆)在访问控制中开放。")
     return uid
 
@@ -4268,7 +4284,7 @@ def _ai_configuration_payload(repository):
 @app.get("/api/ai/configuration")
 async def ai_configuration():
     """Authoritative editable configuration, without exposing connection secrets."""
-    require_admin()
+    require_api_settings_access()
     from app.ai.database_repository import DatabaseAIRepository
     return await asyncio.to_thread(lambda: _ai_configuration_payload(DatabaseAIRepository()))
 
@@ -4276,7 +4292,7 @@ async def ai_configuration():
 @app.put("/api/ai/configuration")
 async def save_ai_configuration(payload: Dict[str, Any]):
     """Atomically replace AI connections/models/resources and update supplied secrets."""
-    require_admin()
+    require_api_settings_access()
     connections = payload.get("connections") if isinstance(payload.get("connections"), list) else []
     models = payload.get("models") if isinstance(payload.get("models"), list) else []
     resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
@@ -4340,7 +4356,7 @@ async def ai_gateway_status():
 @app.post("/api/ai/resources/sync-legacy")
 async def ai_resources_sync_legacy():
     """Admin-only, idempotent import from api_providers into AI resource tables."""
-    require_admin()
+    require_api_settings_access()
     from app.services.business_metadata import sync_ai_legacy_projection
     from app.services.business_metadata import list_comfy_workflows
     def sync_projection():
@@ -4353,7 +4369,7 @@ async def ai_resources_sync_legacy():
 
 @app.get("/api/ai/migration-status")
 async def ai_migration_status():
-    require_admin()
+    require_api_settings_access()
     from app.services.business_metadata import metadata_connection
     try:
         def read_counts():
@@ -4371,7 +4387,7 @@ async def ai_migration_status():
 
 @app.post("/api/ai/connections/{connection_id}/discover")
 async def ai_connection_discover(connection_id: str):
-    require_admin()
+    require_api_settings_access()
     from app.ai.services.discovery import ConnectionDiscoveryService
     from app.ai.database_repository import DatabaseAIRepository
     from app.services.provider_secrets import get_connection_secret
@@ -4399,7 +4415,7 @@ async def ai_connection_discover(connection_id: str):
 @app.post("/api/ai/connections/{connection_id}/test")
 async def ai_connection_test(connection_id: str):
     """Test a persisted connection and return categorized upstream models."""
-    require_admin()
+    require_api_settings_access()
     from app.ai.database_repository import DatabaseAIRepository
     from app.services.provider_secrets import get_connection_secret
     target = next((item for item in DatabaseAIRepository().connections() if item.id == connection_id), None)
@@ -4443,7 +4459,7 @@ async def canvas_parameter_schema_definitions():
 @app.post("/api/canvas/parameter-schema/validate")
 async def validate_canvas_parameter_schema(payload: Dict[str, Any]):
     """Validate one Provider's model-scoped parameter overrides before save."""
-    require_admin()
+    require_api_settings_access()
     from app.services.provider_parameters import normalize_parameter_schema
     try:
         return {"parameter_schema": normalize_parameter_schema(payload.get("parameter_schema"))}
@@ -4453,7 +4469,7 @@ async def validate_canvas_parameter_schema(payload: Dict[str, Any]):
 @app.put("/api/providers")
 def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = Header(None, alias="If-Match")):
     require_provider_compatibility()
-    require_admin()
+    require_api_settings_access()
     if if_match is None:
         raise HTTPException(status_code=428, detail="保存 Provider 配置必须携带 If-Match 版本号，请刷新后重试。")
     try:
@@ -4744,7 +4760,7 @@ def parse_upstream_models(raw, protocol="openai"):
 @app.post("/api/providers/test-connection")
 async def test_provider_connection(payload: TestConnectionPayload):
     """测试请求地址是否可用：调上游 /v1/models。验证通过时同时把模型清单按类别返回，避免再调一次拉取接口。"""
-    require_admin()
+    require_api_settings_access()
     require_provider_compatibility()
     protocol = protocol_from_payload(payload)
     base_url = validate_public_http_url(payload.base_url, label="请求地址")
@@ -4796,7 +4812,8 @@ async def test_provider_connection(payload: TestConnectionPayload):
 async def probe_async_endpoint(payload: TestConnectionPayload):
     """验证异步协议：用假 task_id 请求 GET /v1/tasks/{fake_id}。
     收到 400 Invalid task ID = 端点存在且 Key 有效；401/403 = Key 无效；404/连接失败 = 不支持异步端点。"""
-    require_admin()
+    require_api_settings_access()
+    require_provider_compatibility()
     require_provider_compatibility()
     base_url = validate_public_http_url(payload.base_url, label="请求地址")
     protocol = protocol_from_payload(payload)
@@ -4957,7 +4974,7 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
 @app.post("/api/providers/fetch-models")
 async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
     """按页面当前表单值拉取模型，支持新增平台未保存时直接使用临时 Base URL / Key。"""
-    require_admin()
+    require_api_settings_access()
     require_provider_compatibility()
     protocol = protocol_from_payload(payload)
     api_key = api_key_from_payload(payload, protocol)
@@ -4967,7 +4984,7 @@ async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
 @app.get("/api/providers/{provider_id}/fetch-models")
 async def fetch_upstream_models(provider_id: str):
     """从已保存的上游 OpenAI 兼容接口拉取 /v1/models 列表，按名称智能分类为 image/chat/video。"""
-    require_admin()
+    require_api_settings_access()
     require_provider_compatibility()
     provider = get_api_provider_exact(provider_id)
     api_key = os.getenv(provider_key_env(provider["id"]), "")
@@ -5547,13 +5564,13 @@ async def get_canvas_comfy_task(task_id: str):
 
 @app.get("/api/admin/canvas-task-dead-letters")
 async def admin_list_canvas_task_dead_letters(limit: int = 100):
-    require_admin()
+    require_user_management_access()
     return {"items": await list_dead_letter_canvas_tasks(limit)}
 
 
 @app.post("/api/admin/canvas-task-dead-letters/{entry_id}/retry")
 async def admin_retry_canvas_task_dead_letter(entry_id: str):
-    require_admin()
+    require_user_management_access()
     entries = await list_dead_letter_canvas_tasks(500)
     entry = next((item for item in entries if item.get("entry_id") == entry_id), None)
     if not entry or not entry.get("task_id"):
@@ -5570,7 +5587,7 @@ async def admin_retry_canvas_task_dead_letter(entry_id: str):
 
 @app.delete("/api/admin/canvas-task-dead-letters/{entry_id}")
 async def admin_cancel_canvas_task_dead_letter(entry_id: str):
-    require_admin()
+    require_user_management_access()
     entries = await list_dead_letter_canvas_tasks(500)
     entry = next((item for item in entries if item.get("entry_id") == entry_id), None)
     if not entry:

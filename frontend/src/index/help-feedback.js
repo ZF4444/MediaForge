@@ -121,10 +121,14 @@
                 return id || 'canvas';
             }
             function getHelpPageLabel(pageId) {
-                const nav = document.querySelector(`[onclick*="'${pageId}'"] .nav-text, [onclick*='"${pageId}"'] .nav-text`);
+                const expected = `switchUI(this, '${pageId}')`;
+                const trigger = Array.from(document.querySelectorAll('[onclick]')).find(el =>
+                    (el.getAttribute('onclick') || '').includes(expected)
+                );
+                const nav = trigger?.querySelector('.nav-text, .side-pill-text');
                 return nav ? nav.textContent.trim() : pageId;
             }
-            const state = { loaded:false, isAdmin:false, mode:'preview', content:'', page:'' };
+            const state = { loaded:false, canEdit:false, mode:'preview', content:'', page:'' };
             function escapeHtml(raw) {
                 return String(raw == null ? '' : raw)
                     .replace(/&/g, '&amp;')
@@ -323,7 +327,7 @@
                 });
             }
             function setMode(mode) {
-                if (mode === 'edit' && !state.isAdmin) mode = 'preview';
+                if (mode === 'edit' && !state.canEdit) mode = 'preview';
                 state.mode = mode;
                 const preview = document.getElementById('helpPreview');
                 const editor = document.getElementById('helpEditor');
@@ -333,7 +337,7 @@
                 // 仅管理员可编辑：只有在管理员从编辑模式切回预览模式时，
                 // 才需要把 textarea 里未保存的修改同步回 state.content。
                 // 普通用户没有编辑器交互，editor.value 始终是初始空值，不能用它覆盖已加载的内容。
-                if (editor && mode === 'preview' && state.isAdmin) state.content = editor.value;
+                if (editor && mode === 'preview' && state.canEdit) state.content = editor.value;
                 if (preview) {
                     preview.innerHTML = renderMarkdown(state.content);
                     preview.style.display = mode === 'preview' ? '' : 'none';
@@ -344,7 +348,7 @@
                 }
                 if (previewBtn) previewBtn.classList.toggle('active', mode === 'preview');
                 if (editBtn) editBtn.classList.toggle('active', mode === 'edit');
-                if (saveBtn) saveBtn.style.display = state.isAdmin ? '' : 'none';
+                if (saveBtn) saveBtn.style.display = state.canEdit ? '' : 'none';
             }
             async function loadHelp() {
                 state.page = getHelpPage();
@@ -356,14 +360,16 @@
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
                     state.loaded = true;
-                    state.isAdmin = !!data.is_admin;
+                    const meRes = await fetch('/api/access-control/me', { credentials:'same-origin' });
+                    const me = meRes.ok ? await meRes.json().catch(() => ({})) : {};
+                    state.canEdit = Array.isArray(me.pages) && me.pages.includes('user-management');
                     state.content = data.content || '';
                     const previewBtn = document.getElementById('helpPreviewBtn');
                     const editBtn = document.getElementById('helpEditBtn');
-                    if (previewBtn) previewBtn.style.display = state.isAdmin ? '' : 'none';
-                    if (editBtn) editBtn.style.display = state.isAdmin ? '' : 'none';
-                    setMode(state.isAdmin ? 'edit' : 'preview');
-                    setHelpStatus(state.isAdmin ? '管理员可编辑帮助内容。' : '');
+                    if (previewBtn) previewBtn.style.display = state.canEdit ? '' : 'none';
+                    if (editBtn) editBtn.style.display = state.canEdit ? '' : 'none';
+                    setMode(state.canEdit ? 'edit' : 'preview');
+                    setHelpStatus(state.canEdit ? '当前用户类型可编辑帮助内容。' : '');
                 } catch(e) {
                     setHelpStatus('加载失败：' + e.message, 'err');
                 }
@@ -386,7 +392,7 @@
             // 暴露给外部（如 switchUI 切换功能页时）调用，以便切换 tab 时自动收起帮助面板。
             window.closeHelpDrawer = closeHelp;
             async function saveHelp() {
-                if (!state.isAdmin) return;
+                if (!state.canEdit) return;
                 const editor = document.getElementById('helpEditor');
                 const btn = document.getElementById('helpSaveBtn');
                 state.content = editor ? editor.value : state.content;

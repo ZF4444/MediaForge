@@ -95,7 +95,7 @@
         "smart.deleteImage": { zh: "删除", en: "Delete" },
         "smart.platform": { zh: "平台", en: "Provider" },
         "smart.model": { zh: "模型", en: "Model" },
-        "smart.modelLocked": { zh: "没有权限使用该模型，请联系管理员(@飞帆)开放", en: "You don't have permission to use this model. Contact an admin (@飞帆)." },
+        "smart.modelLocked": { zh: "当前用户类型未授予该模型操作权限", en: "Your user type is not allowed to use this model." },
         "smart.size": { zh: "尺寸", en: "Size" },
         "smart.ratio": { zh: "比例", en: "Ratio" },
         "smart.resolution": { zh: "分辨率", en: "Resolution" },

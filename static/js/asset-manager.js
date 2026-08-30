@@ -160,10 +160,11 @@ async function loadAll(){
     const [assetData, promptData, configurationData, _sharedFolders, _localAssets, meData, usageData] = await Promise.all([
         apiJson('/api/asset-library'),
         apiJson('/api/prompt-libraries'),
-        apiJson('/api/ai/configuration').catch(() => ({connections:[],models:[]})),
+        // Asset users need model choices but must not require API-settings access.
+        apiJson('/api/ai/resources').catch(() => ({connections:[],models:[]})),
         loadSharedFolders(),
         loadLocalAssets(),
-        apiJson('/api/access-control/me').catch(() => ({is_admin:false, user_id:''})),
+        apiJson('/api/access-control/me').catch(() => ({user_id:'', pages:[]})),
         apiJson('/api/storage/usage').catch(() => ({usage_by_category:[]}))
     ]);
     assetLibrary = assetData.library || {libraries:[], categories:[]};
@@ -171,7 +172,7 @@ async function loadAll(){
     const connections = Array.isArray(configurationData.connections) ? configurationData.connections : [];
     const models = Array.isArray(configurationData.models) ? configurationData.models : [];
     apiProviders = connections.map(connection => ({...connection, id: connection.id, image_models: models.filter(model => model.connection_id === connection.id && model.kind === 'image').map(model => model.upstream_model), chat_models: models.filter(model => model.connection_id === connection.id && model.kind === 'chat').map(model => model.upstream_model), video_models: models.filter(model => model.connection_id === connection.id && model.kind === 'video').map(model => model.upstream_model)}));
-    meInfo = meData || {is_admin:false, user_id:''};
+    meInfo = meData || {user_id:'', pages:[]};
     storageUsage = usageData || {usage_by_category:[]};
     storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matches:0, total_pages:0, current_page:1};
     if(activeTab === 'storage'){

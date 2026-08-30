@@ -35,7 +35,7 @@ export function createStorageManagerSandbox(overrides = {}) {
         storageFiltersOpen: overrides.storageFiltersOpen ?? false,
         storageSelectedIds: overrides.storageSelectedIds ?? new Set(),
         storageManageMode: overrides.storageManageMode ?? false,
-        meInfo: overrides.meInfo ?? { is_admin: false, user_id: '' },
+        meInfo: overrides.meInfo ?? { user_id: '', pages: [] },
         root: overrides.root ?? null,
         assetThumb: overrides.fns?.assetThumb || (() => ''),
         escapeHtml: overrides.fns?.escapeHtml || (s => String(s ?? '')),

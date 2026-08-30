@@ -57,6 +57,17 @@
         const LEGACY_USER_MANAGEMENT_TABS = {'access-control':'access','storage-quota':'quota'};
         const LOCAL_PAGE_IDS = ['angle','gaussian','pose-studio'];
 
+        function pageTriggers(pageId) {
+            const expected = `switchUI(this, '${pageId}')`;
+            return Array.from(document.querySelectorAll('[onclick]')).filter(el =>
+                (el.getAttribute('onclick') || '').includes(expected)
+            );
+        }
+
+        function pageTrigger(pageId) {
+            return pageTriggers(pageId)[0] || null;
+        }
+
         function setSidebarPinned(pinned, options = {}) {
             const sidebar = document.getElementById('studioSidebar');
             const logo = document.getElementById('sidebarLogoToggle');
@@ -194,7 +205,7 @@
             const d = event.data || {};
             if (d.type === 'studio-open-asset-storage') {
                 try { localStorage.setItem('asset_manager_requested_tab', 'storage'); } catch(e) {}
-                const trigger = document.querySelector(`[onclick*="'asset-manager'"],[onclick*='"asset-manager"']`);
+                const trigger = pageTrigger('asset-manager');
                 const frame = document.getElementById('frame-asset-manager');
                 const notifyStorageTab = () => {
                     try { frame?.contentWindow?.postMessage({type:'asset-manager-open-tab', tab:'storage'}, location.origin); } catch(e) {}
@@ -212,7 +223,7 @@
             // 子页面确认离开后，宿主强制切换到目标页
             if (d.type === 'page-leave-allow' && d.target) {
                 window.__pageLeaveGuards[d.from] = false; // 放行后解除守卫，避免再次拦截
-                const trigger = document.querySelector(`[onclick*="'${d.target}'"],[onclick*='"${d.target}"']`);
+                const trigger = pageTrigger(d.target);
                 switchUI(trigger, d.target, { force: true });
                 return;
             }
@@ -230,7 +241,7 @@
             const id = PAGE_IDS.includes(savedId) || LEGACY_USER_MANAGEMENT_TABS[savedId] ? savedId : DEFAULT_PAGE_ID;
             if(LEGACY_USER_MANAGEMENT_TABS[id]) localStorage.setItem(ACTIVE_PAGE_KEY, 'user-management');
             restoreLocalNav(id);
-            const trigger = LEGACY_USER_MANAGEMENT_TABS[id] ? document.getElementById('nav-user-management') : document.querySelector(`[onclick*="'${id}'"],[onclick*='"${id}"']`);
+            const trigger = LEGACY_USER_MANAGEMENT_TABS[id] ? document.getElementById('nav-user-management') : pageTrigger(id);
             switchUI(trigger, id, { skipRemember:true });
             document.documentElement.classList.remove('studio-route-booting');
         }
@@ -245,36 +256,19 @@
                 me = await res.json();
             } catch(e) { return; }
 
-            const isAdmin = !!(me && me.is_admin);
-            // 仅 admin 显示用户管理入口
-            const userManagementNav = document.getElementById('nav-user-management');
-            if (userManagementNav) userManagementNav.style.display = isAdmin ? '' : 'none';
-            const feedbackAdminNav = document.getElementById('nav-feedback-admin');
-            if (feedbackAdminNav) feedbackAdminNav.style.display = isAdmin ? '' : 'none';
-            const broadcastAdminNav = document.getElementById('nav-broadcast-admin');
-            if (broadcastAdminNav) broadcastAdminNav.style.display = isAdmin ? '' : 'none';
-            const apiSettingsNav = document.getElementById('nav-api-settings');
-            if (apiSettingsNav) apiSettingsNav.style.display = isAdmin ? '' : 'none';
-            // 仅 admin 显示 online/queue 监控
-            const nanoMon = document.getElementById('nano-monitor');
-            if (nanoMon) nanoMon.style.display = isAdmin ? '' : 'none';
-            if (isAdmin) return;               // admin 拥有全部权限，无需裁剪
-
-            const allowed = new Set(me && Array.isArray(me.pages) ? me.pages : PAGE_IDS);
+            const allowed = new Set(me && Array.isArray(me.pages) ? me.pages : []);
             let hidActive = false;
             PAGE_IDS.forEach(pid => {
-                if (pid === 'my-account' || pid === 'user-data-migration' || pid === 'user-management' || pid === 'feedback-admin' || pid === 'broadcast-admin') return;   // 账户页和用户迁移始终开放；其余入口由管理员处理
-                if (allowed.has(pid)) return;
-                // 隐藏对应导航入口（nav-item 或 side-pill）
-                document.querySelectorAll(`[onclick*="'${pid}'"],[onclick*='"${pid}"']`).forEach(el => {
-                    el.style.display = 'none';
-                    if (el.classList.contains('active')) hidActive = true;
+                pageTriggers(pid).forEach(el => {
+                    const visible = allowed.has(pid);
+                    el.style.display = visible ? '' : 'none';
+                    if (!visible && el.classList.contains('active')) hidActive = true;
                 });
             });
             // 若当前激活页被裁剪，回退到第一个允许的页面
             if (hidActive) {
-                const fallback = PAGE_IDS.find(p => p !== 'user-management' && p !== 'feedback-admin' && p !== 'broadcast-admin' && allowed.has(p)) || DEFAULT_PAGE_ID;
-                const trigger = document.querySelector(`[onclick*="'${fallback}'"],[onclick*='"${fallback}"']`);
+                const fallback = PAGE_IDS.find(p => allowed.has(p)) || DEFAULT_PAGE_ID;
+                const trigger = pageTrigger(fallback);
                 switchUI(trigger, fallback);
             }
         }

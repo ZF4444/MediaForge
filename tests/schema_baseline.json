@@ -22,31 +22,23 @@
   },
   "AccessControlConfigPayload": {
     "properties": {
-      "users": {
+      "types": {
         "type": "object"
       },
-      "default": {
-        "anyOf": [
-          {
-            "$ref": "#/components/schemas/AccessControlUserEntry"
-          },
-          {
-            "type": "null"
-          }
-        ]
+      "user_types": {
+        "type": "object"
       }
     },
     "required": []
   },
   "AccessControlUserEntry": {
     "properties": {
-      "pages": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        }
+      "name": {
+        "type": "string",
+        "default": "",
+        "maxLength": 80
       },
-      "nodes": {
+      "pages": {
         "type": "array",
         "items": {
           "type": "string"

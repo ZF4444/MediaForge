@@ -412,7 +412,7 @@ def record_omnilojo_response_usage(user_id: str, provider: dict[str, Any], model
 
     Omnilojo does not return a cash amount in the completion response. The price
     snapshot is therefore stored alongside the returned usage so historical
-    reports do not change when an administrator later edits model pricing.
+    reports do not change when a user later edits model pricing.
     """
     if not isinstance(raw, dict):
         return False
