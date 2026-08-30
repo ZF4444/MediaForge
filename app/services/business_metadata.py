@@ -366,10 +366,10 @@ def sync_ai_legacy_projection(providers: Iterable[dict[str, Any]], workflows: It
                     if str(provider.get("id") or "").lower() not in {"runninghub", "volcengine"}:
                         protocol = str((provider.get("model_protocols") or {}).get(model) or protocol).strip().lower()
                     cur.execute(
-                        """INSERT INTO ai_models(id,connection_id,kind,upstream_model,protocol,alias,capabilities_json,created_at,updated_at)
-                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT(id) DO UPDATE SET protocol=EXCLUDED.protocol,alias=EXCLUDED.alias,capabilities_json=EXCLUDED.capabilities_json,updated_at=EXCLUDED.updated_at""",
-                        (model_id, connection_id, kind, model, protocol, str((provider.get("model_aliases") or {}).get(model) or model), json_value([]), now, now),
+                        """INSERT INTO ai_models(id,connection_id,kind,upstream_model,protocol,alias,capabilities_json,settings_json,created_at,updated_at)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT(id) DO UPDATE SET protocol=EXCLUDED.protocol,alias=EXCLUDED.alias,capabilities_json=EXCLUDED.capabilities_json,settings_json=EXCLUDED.settings_json,updated_at=EXCLUDED.updated_at""",
+                        (model_id, connection_id, kind, model, protocol, str((provider.get("model_aliases") or {}).get(model) or model), json_value([]), json_value({"parameter_schema": (((provider.get("parameter_schema") or {}).get("models") or {}).get(model) or {})}), now, now),
                     )
                     cur.execute("INSERT INTO ai_legacy_mappings(legacy_key,resource_id,legacy_provider_id,legacy_model,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(legacy_key) DO UPDATE SET resource_id=EXCLUDED.resource_id,updated_at=EXCLUDED.updated_at", (f"{pid}:{kind}:{model}", model_id, pid, model, now, now))
                     count += 1
