@@ -5124,17 +5124,6 @@ async def build_online_image_result(payload: OnlineImageRequest):
 
 CANVAS_IMAGE_SIZE_MAP = {
     "1:1": {"1k": "1024x1024", "2k": "2048x2048", "4k": "4096x4096"},
-    "3:2": {"1k": "1536x1024", "2k": "2048x1360", "4k": "3520x2336"},
-    "2:3": {"1k": "1024x1536", "2k": "1360x2048", "4k": "2336x3520"},
-    "4:3": {"1k": "1024x768", "2k": "2048x1536", "4k": "3312x2480"},
-    "3:4": {"1k": "768x1024", "2k": "1536x2048", "4k": "2480x3312"},
-    "16:9": {"1k": "1536x864", "2k": "2048x1152", "4k": "3840x2160"},
-    "9:16": {"1k": "864x1536", "2k": "1152x2048", "4k": "2160x3840"},
-    "21:9": {"1k": "1536x656", "2k": "2048x880", "4k": "3840x1648"},
-    "9:21": {"1k": "656x1536", "2k": "880x2048", "4k": "1648x3840"},
-}
-GPT_IMAGE2_SIZE_MAP = {
-    "1:1": {"1k": "1024x1024", "2k": "2048x2048", "4k": "4096x4096"},
     "2:3": {"1k": "848x1264", "2k": "1696x2528", "4k": "3392x5056"},
     "3:2": {"1k": "1264x848", "2k": "2528x1696", "4k": "5056x3392"},
     "3:4": {"1k": "896x1200", "2k": "1792x2400", "4k": "3584x4800"},
@@ -5174,7 +5163,7 @@ def _canvas_bool(settings: dict, key: str, fallback: bool = False) -> bool:
     return bool(value)
 
 
-def canvas_image_size_from_settings(settings: dict, *, model: str = "") -> str:
+def canvas_image_size_from_settings(settings: dict) -> str:
     resolution = _canvas_string(settings, "resolution", "1k").lower() or "1k"
     ratio = _canvas_string(settings, "ratio", "1:1") or "1:1"
     if resolution == "custom":
@@ -5196,8 +5185,7 @@ def canvas_image_size_from_settings(settings: dict, *, model: str = "") -> str:
             width = max(64, math.floor(raw_width / 16) * 16)
             height = max(64, math.floor(raw_height / 16) * 16)
             return f"{width}x{height}"
-    size_map = GPT_IMAGE2_SIZE_MAP if is_gpt_image_2_model(model) else CANVAS_IMAGE_SIZE_MAP
-    ratio_sizes = size_map.get(ratio) or size_map["1:1"]
+    ratio_sizes = CANVAS_IMAGE_SIZE_MAP.get(ratio) or CANVAS_IMAGE_SIZE_MAP["1:1"]
     return ratio_sizes.get(resolution) or CANVAS_IMAGE_SIZE_MAP["1:1"]["1k"]
 
 
@@ -5225,7 +5213,7 @@ def normalize_canvas_image_request(payload: OnlineImageRequest) -> OnlineImageRe
         if not execution.get("supported", False) or not target:
             continue
         if transform == "image_size":
-            updates[target] = canvas_image_size_from_settings(values, model=model)
+            updates[target] = canvas_image_size_from_settings(values)
         else:
             updates[target] = values.get(field["id"])
     return payload.model_copy(update=updates)
