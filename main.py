@@ -5692,7 +5692,20 @@ async def execute_canvas_task(task_id: str):
         legacy_repository = ProviderRepository(load_api_providers)
         if task.get("type") == "online-image":
             stable_model_id = str(task.get("model_id") or request.get("model_id") or "")
-            resolved = database_repository.resolve_model(model_id=stable_model_id, connection_id=str(task.get("connection_id") or request.get("connection_id") or ""), model=str(task.get("model") or request.get("model") or ""), kind="image") if stable_model_id else legacy_repository.resolve_model(provider_id=str(task.get("provider_id") or request.get("provider_id") or ""), model=str(task.get("model") or request.get("model") or ""), kind="image")
+            if stable_model_id:
+                resolved = await asyncio.to_thread(
+                    database_repository.resolve_model,
+                    model_id=stable_model_id,
+                    connection_id=str(task.get("connection_id") or request.get("connection_id") or ""),
+                    model=str(task.get("model") or request.get("model") or ""),
+                    kind="image",
+                )
+            else:
+                resolved = legacy_repository.resolve_model(
+                    provider_id=str(task.get("provider_id") or request.get("provider_id") or ""),
+                    model=str(task.get("model") or request.get("model") or ""),
+                    kind="image",
+                )
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
@@ -5702,7 +5715,11 @@ async def execute_canvas_task(task_id: str):
             request = {**request, **{k: v for k, v in task_updates.items() if v}}
             await update_canvas_task(task_id, **task_updates, request=request)
         elif task.get("type") == "comfy" and (task.get("resource_id") or request.get("resource_id")):
-            resolved = database_repository.resolve_executable(resource_id=str(task.get("resource_id") or request.get("resource_id") or ""), kind="comfyui_workflow")
+            resolved = await asyncio.to_thread(
+                database_repository.resolve_executable,
+                resource_id=str(task.get("resource_id") or request.get("resource_id") or ""),
+                kind="comfyui_workflow",
+            )
             await update_canvas_task(task_id, connection_id=resolved.connection.id, resource_id=resolved.resource.id if resolved.resource else "")
     except LookupError as exc:
         await update_canvas_task(task_id, expected_status="queued", status="failed", error=f"任务资源解析失败：{exc}")
