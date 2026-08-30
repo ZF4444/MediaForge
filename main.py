@@ -1369,29 +1369,6 @@ access_control.set_fallback_chat_models_provider(lambda: CHAT_MODELS)
 
 def public_provider(provider, *, include_credentials=False):
     item = {**provider}
-    # The canvas still consumes the legacy-shaped /api/config projection.
-    # Populate per-model enabled flags from the authoritative resource table
-    # so models disabled in the new AI settings page are hidden there too.
-    try:
-        from app.ai.database_repository import DatabaseAIRepository
-        repository = DatabaseAIRepository()
-        connection = next((conn for conn in repository.connections(include_disabled=True)
-                           if conn.id == str(provider.get("connection_id") or "")
-                           or conn.legacy_provider_id == str(provider.get("id") or "")), None)
-        if connection:
-            enabled_by_name = {
-                model.upstream_model: model.enabled
-                for model in repository.models(include_disabled=True)
-                if model.connection_id == connection.id
-            }
-            item["model_enabled"] = {
-                name: bool(enabled_by_name.get(name, True))
-                for key in ("image_models", "chat_models", "video_models")
-                for name in (item.get(key) or [])
-                if name in enabled_by_name
-            }
-    except Exception:
-        logger.exception("failed to project model enabled flags", extra={"event": "model_enabled_projection_failed"})
     # Provider display names are deprecated. Keep the legacy field in the API
     # payload for compatibility with older clients; current UI ignores it.
     if not include_credentials:

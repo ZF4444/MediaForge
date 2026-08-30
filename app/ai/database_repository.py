@@ -60,7 +60,7 @@ class DatabaseAIRepository:
                 "enabled": connection.enabled,
                 "primary": connection.primary,
                 "chat_models": [], "image_models": [], "video_models": [],
-                "model_aliases": {}, "model_protocols": {}, "rh_apps": [], "comfy_workflows": [],
+                "model_aliases": {}, "model_protocols": {}, "model_enabled": {}, "rh_apps": [], "comfy_workflows": [],
             }
         for model in self.models(include_disabled=True):
             config = by_id.get(model.connection_id)
@@ -69,6 +69,7 @@ class DatabaseAIRepository:
             config[key].append(model.upstream_model)
             config["model_aliases"][model.upstream_model] = model.alias
             config["model_protocols"][model.upstream_model] = model.protocol
+            config["model_enabled"][model.upstream_model] = model.enabled
         for resource in self.executable_resources(include_disabled=True):
             config = by_id.get(resource.connection_id)
             if config is None: continue
