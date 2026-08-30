@@ -157,10 +157,10 @@ function assetThumb(item){
 // [asset-manager 迁移] normalizePromptState 已拆分到 frontend/src/asset-manager/prompt-library.js。
 async function loadAll(){
     setStatus('加载中...');
-    const [assetData, promptData, providerData, _sharedFolders, _localAssets, meData, usageData] = await Promise.all([
+    const [assetData, promptData, configurationData, _sharedFolders, _localAssets, meData, usageData] = await Promise.all([
         apiJson('/api/asset-library'),
         apiJson('/api/prompt-libraries'),
-        apiJson('/api/providers').catch(() => ({providers:[]})),
+        apiJson('/api/ai/configuration').catch(() => ({connections:[],models:[]})),
         loadSharedFolders(),
         loadLocalAssets(),
         apiJson('/api/access-control/me').catch(() => ({is_admin:false, user_id:''})),
@@ -168,7 +168,9 @@ async function loadAll(){
     ]);
     assetLibrary = assetData.library || {libraries:[], categories:[]};
     promptLibrary = promptData.library || {libraries:[]};
-    apiProviders = Array.isArray(providerData.providers) ? providerData.providers : [];
+    const connections = Array.isArray(configurationData.connections) ? configurationData.connections : [];
+    const models = Array.isArray(configurationData.models) ? configurationData.models : [];
+    apiProviders = connections.map(connection => ({...connection, id: connection.id, image_models: models.filter(model => model.connection_id === connection.id && model.kind === 'image').map(model => model.upstream_model), chat_models: models.filter(model => model.connection_id === connection.id && model.kind === 'chat').map(model => model.upstream_model), video_models: models.filter(model => model.connection_id === connection.id && model.kind === 'video').map(model => model.upstream_model)}));
     meInfo = meData || {is_admin:false, user_id:''};
     storageUsage = usageData || {usage_by_category:[]};
     storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matches:0, total_pages:0, current_page:1};

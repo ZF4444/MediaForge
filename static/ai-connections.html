@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI 连接与资源</title>
+  <link rel="stylesheet" href="/static/css/api-settings.css">
+  <style>
+    body{margin:0;background:#f6f7f9;color:#20242b;font:14px system-ui,-apple-system,"Segoe UI",sans-serif}
+    main{max-width:1180px;margin:32px auto;padding:0 20px}.toolbar{display:flex;gap:10px;align-items:center;margin:18px 0 24px}
+    button{border:1px solid #cbd1da;background:#fff;border-radius:6px;padding:8px 14px;cursor:pointer}button.primary{background:#1f6feb;color:#fff;border-color:#1f6feb}
+    .status{color:#697386;margin-left:auto}.grid{display:grid;gap:16px}
+    section{background:#fff;border:1px solid #e1e5eb;border-radius:8px;padding:18px}h1{margin:0;font-size:25px}h2{font-size:16px;margin:0}.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.rows{display:grid;gap:8px}.row{display:grid;grid-template-columns:1.1fr .8fr 1.1fr 1.3fr auto auto;gap:8px;align-items:center;border-top:1px solid #edf0f3;padding-top:8px}.model-row,.resource-row{grid-template-columns:1fr 1fr .7fr 1.1fr .9fr auto auto}input,select{box-sizing:border-box;min-width:0;width:100%;border:1px solid #cbd1da;border-radius:5px;padding:7px;background:#fff}.compact{width:auto}.danger{color:#b42318}.hint{font-size:12px;color:#697386;margin:0 0 10px}@media(max-width:900px){.row,.model-row,.resource-row{grid-template-columns:1fr 1fr}.row button,.model-row button,.resource-row button{justify-self:start}}
+  </style>
+</head>
+<body><main>
+  <h1>AI 连接与资源</h1>
+  <div class="toolbar"><button class="primary" id="save">保存配置</button><button id="refresh">重新加载</button><span class="status" id="status"></span></div>
+  <div class="grid">
+    <section><div class="section-head"><h2>Connections</h2><button id="add-connection">添加连接</button></div><p class="hint">密钥不会回显；留空表示保留原密钥。</p><div id="connections" class="rows"></div></section>
+    <section><div class="section-head"><h2>Models</h2><button id="add-model">添加模型</button></div><div id="models" class="rows"></div></section>
+    <section><div class="section-head"><h2>Resources</h2><button id="add-resource">添加资源</button></div><p class="hint">资源设置使用 JSON，例如 RunningHub App 的 webappId。</p><div id="resources" class="rows"></div></section>
+  </div>
+</main><script src="/static/js/ai-connections.js"></script></body></html>

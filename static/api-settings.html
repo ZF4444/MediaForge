@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>API 设置</title>
     <script>
+        // The Provider editor is retired. Keep this URL as a bookmark-safe
+        // redirect so old navigation never loads the legacy API client.
+        location.replace('/static/ai-connections.html');
+    </script>
+    <script>
         (function(){
             try {
                 var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
@@ -325,6 +330,7 @@
 
     <script src="/static/js/upload-quota-dialog.js"></script>
     <script src="/static/dist/api-settings/comfy-instances.js"></script>
+    <script>if(!new URLSearchParams(location.search).has('legacy')){const link=document.createElement('a');link.href='/static/ai-connections.html';link.textContent='打开 AI 连接与资源管理';link.style='position:fixed;right:20px;top:14px;z-index:20';document.body.appendChild(link)}</script>
     <script src="/static/dist/api-settings/provider-onboarding.js"></script>
     <script src="/static/dist/api-settings/main.js"></script>
 </body>
