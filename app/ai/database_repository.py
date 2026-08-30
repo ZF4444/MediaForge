@@ -30,7 +30,7 @@ class DatabaseAIRepository:
         query = "SELECT * FROM ai_models" + ("" if include_disabled else " WHERE enabled=TRUE") + " ORDER BY alias,upstream_model,id"
         with database_connection_sync() as conn, conn.cursor() as cur:
             cur.execute(query); rows = cur.fetchall()
-        return [ModelResource(id=row["id"], connection_id=row["connection_id"], upstream_model=row["upstream_model"], kind=row["kind"], protocol=row["protocol"], enabled=bool(row["enabled"]), alias=row["alias"], capabilities=frozenset(_json(row["capabilities_json"], []))) for row in rows]
+        return [ModelResource(id=row["id"], connection_id=row["connection_id"], upstream_model=row["upstream_model"], kind=row["kind"], protocol=row["protocol"], enabled=bool(row["enabled"]), alias=row["alias"], capabilities=frozenset(_json(row["capabilities_json"], [])), settings=_json(row.get("settings_json"), {})) for row in rows]
 
     def executable_resources(self, *, include_disabled: bool = False) -> list[ExecutableResource]:
         query = "SELECT * FROM ai_resources" + ("" if include_disabled else " WHERE enabled=TRUE") + " ORDER BY name,id"
@@ -104,6 +104,6 @@ class DatabaseAIRepository:
             for item in connection_rows:
                 cur.execute("INSERT INTO ai_connections(id,protocol,name,base_url,secret_ref,enabled,primary_connection,settings_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (item["id"], item["protocol"], item.get("name") or item["id"], item.get("base_url") or "", item.get("secret_ref") or item["id"], bool(item.get("enabled", True)), bool(item.get("primary", False)), json.dumps(item.get("settings") or {}), now, now))
             for item in model_rows:
-                cur.execute("INSERT INTO ai_models(id,connection_id,kind,upstream_model,protocol,alias,capabilities_json,enabled,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (item["id"], item["connection_id"], item["kind"], item["upstream_model"], item.get("protocol") or "openai", item.get("alias") or item["upstream_model"], json.dumps(item.get("capabilities") or []), bool(item.get("enabled", True)), now, now))
+                cur.execute("INSERT INTO ai_models(id,connection_id,kind,upstream_model,protocol,alias,capabilities_json,settings_json,enabled,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (item["id"], item["connection_id"], item["kind"], item["upstream_model"], item.get("protocol") or "openai", item.get("alias") or item["upstream_model"], json.dumps(item.get("capabilities") or []), json.dumps(item.get("settings") or {}), bool(item.get("enabled", True)), now, now))
             for item in resource_rows:
                 cur.execute("INSERT INTO ai_resources(id,connection_id,kind,name,schema_json,settings_json,enabled,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)", (item["id"], item["connection_id"], item["kind"], item.get("name") or item["id"], json.dumps(item.get("schema") or {}), json.dumps(item.get("settings") or {}), bool(item.get("enabled", True)), now, now))

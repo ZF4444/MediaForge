@@ -190,8 +190,10 @@ CREATE TABLE IF NOT EXISTS ai_models (
     id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES ai_connections(id) ON DELETE CASCADE,
     kind TEXT NOT NULL, upstream_model TEXT NOT NULL, protocol TEXT NOT NULL,
     alias TEXT NOT NULL DEFAULT '', capabilities_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    settings_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     enabled BOOLEAN NOT NULL DEFAULT TRUE, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
 );
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS settings_json JSONB NOT NULL DEFAULT '{}'::jsonb;
 CREATE INDEX IF NOT EXISTS idx_ai_models_connection_kind ON ai_models(connection_id, kind, enabled);
 CREATE TABLE IF NOT EXISTS ai_resources (
     id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES ai_connections(id) ON DELETE CASCADE,

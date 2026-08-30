@@ -39,6 +39,7 @@ class ModelResource:
     enabled: bool = True
     alias: str = ""
     capabilities: frozenset[str] = field(default_factory=frozenset)
+    settings: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -4260,7 +4260,7 @@ async def ai_resources():
 def _ai_configuration_payload(repository):
     return {
         "connections": [{"id": item.id, "protocol": item.protocol, "name": item.name, "base_url": item.base_url, "enabled": item.enabled, "primary": item.primary, "settings": dict(item.settings)} for item in repository.connections(include_disabled=True)],
-        "models": [{"id": item.id, "connection_id": item.connection_id, "kind": item.kind, "upstream_model": item.upstream_model, "protocol": item.protocol, "alias": item.alias, "enabled": item.enabled, "capabilities": sorted(item.capabilities)} for item in repository.models(include_disabled=True)],
+        "models": [{"id": item.id, "connection_id": item.connection_id, "kind": item.kind, "upstream_model": item.upstream_model, "protocol": item.protocol, "alias": item.alias, "enabled": item.enabled, "capabilities": sorted(item.capabilities), "settings": dict(item.settings)} for item in repository.models(include_disabled=True)],
         "resources": [{"id": item.id, "connection_id": item.connection_id, "kind": item.kind, "name": item.name, "enabled": item.enabled, "settings": dict(item.settings)} for item in repository.executable_resources(include_disabled=True)],
     }
 
@@ -4372,15 +4372,15 @@ async def ai_migration_status():
 @app.post("/api/ai/connections/{connection_id}/discover")
 async def ai_connection_discover(connection_id: str):
     require_admin()
-    from app.ai.repository import ProviderRepository
     from app.ai.services.discovery import ConnectionDiscoveryService
+    from app.ai.database_repository import DatabaseAIRepository
+    from app.services.provider_secrets import get_connection_secret
 
-    repository = ProviderRepository(load_api_providers)
+    repository = DatabaseAIRepository()
     target = next((item for item in repository.connections() if item.id == connection_id), None)
     if target is None:
         raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用")
-    provider = get_api_provider_exact(target.legacy_provider_id)
-    api_key = provider_env_key_value(provider["id"])
+    api_key = get_connection_secret(connection_id, "api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="该连接未配置 API Key")
     async def discover(connection):
@@ -4394,6 +4394,25 @@ async def ai_connection_discover(connection_id: str):
         return await service.discover(connection_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用") from exc
+
+
+@app.post("/api/ai/connections/{connection_id}/test")
+async def ai_connection_test(connection_id: str):
+    """Test a persisted connection and return categorized upstream models."""
+    require_admin()
+    from app.ai.database_repository import DatabaseAIRepository
+    from app.services.provider_secrets import get_connection_secret
+    target = next((item for item in DatabaseAIRepository().connections() if item.id == connection_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用")
+    api_key = get_connection_secret(connection_id, "api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="该连接未配置 API Key")
+    try:
+        result = await fetch_models_from_upstream(target.base_url, api_key, target.protocol)
+    except HTTPException as exc:
+        return {"ok": False, "status": exc.status_code, "message": str(exc.detail)}
+    return {"ok": True, **result}
 
 @app.get("/api/canvas/capability-parameters")
 async def canvas_capability_parameters(capability: str, provider_id: str = "", model: str = ""):
