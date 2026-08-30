@@ -714,6 +714,8 @@ def provider_key_env(provider_id):
         return "RUNNINGHUB_API_KEY"
     if provider_id == "volcengine":
         return "ARK_API_KEY"
+    if provider_id == "cloudwise":
+        return "CLOUDWISE_API_KEY"
     return f"API_PROVIDER_{re.sub(r'[^A-Za-z0-9]', '_', provider_id).upper()}_KEY"
 
 def omnilojo_management_token_env(provider_id):
@@ -1141,18 +1143,35 @@ def normalize_nonnegative_number(value, default, label):
 
 def provider_endpoint_url(provider, key, default_path):
     base_url = str((provider or {}).get("base_url") or AI_BASE_URL).strip().rstrip("/")
+    provider_id = str((provider or {}).get("id") or "").strip().lower()
+    # Cloudwise publishes its host URL in the docs while the OpenAI-compatible
+    # endpoints live below /api/v1. Accept either form in the settings page.
+    is_cloudwise = provider_id == "cloudwise" or bool(re.match(r"^https?://api\.cloudwise\.ai(?:/.*)?$", base_url, re.I))
+    if is_cloudwise and re.match(r"^https?://api\.cloudwise\.ai$", base_url, re.I):
+        base_url = f"{base_url}/api/v1"
     override = str((provider or {}).get(key) or "").strip()
     if override:
         if re.match(r"^https?://", override, re.I):
             return validate_public_http_url(override, label="Provider 端点")
         parsed = urllib.parse.urlsplit(base_url)
         if parsed.scheme and parsed.netloc:
+            if is_cloudwise and base_url.endswith("/api/v1") and override.startswith("/v1/"):
+                return f"{base_url}{override[len('/v1'):]}"
+            if is_cloudwise and override.startswith("/v1/") and not base_url.endswith("/api/v1"):
+                return f"{parsed.scheme}://{parsed.netloc}/api{override}"
             return f"{parsed.scheme}://{parsed.netloc}{override}"
         return override
-    for prefix in ("/api/v3", "/v1beta", "/v1", "/v2"):
+    for prefix in ("/api/v1", "/api/v3", "/v1beta", "/v1", "/v2"):
         if base_url.endswith(prefix) and default_path.startswith(f"{prefix}/"):
             return f"{base_url}{default_path[len(prefix):]}"
     return f"{base_url}{default_path}"
+
+def is_cloudwise_provider(provider) -> bool:
+    """Return whether a connection targets Cloudwise's GPT Image gateway."""
+    item = provider or {}
+    provider_id = str(item.get("id") or "").strip().lower()
+    base_url = str(item.get("base_url") or "").strip().lower()
+    return provider_id == "cloudwise" or "api.cloudwise.ai" in base_url
 
 def runninghub_endpoint_url(provider, path):
     base_url = str((provider or {}).get("base_url") or RUNNINGHUB_DEFAULT_BASE_URL).strip().rstrip("/")
@@ -3409,6 +3428,8 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
         response = None
         async def post_openai_edits(edit_files=None):
             data = {"model": model, "prompt": prompt, "size": size}
+            if is_gpt2:
+                data["output_format"] = "png"
             if quality:
                 data["quality"] = quality
             return await client.post(
@@ -3420,6 +3441,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
 
         if is_gpt2 and not image_refs and not mask_refs:
             body = {"model": model, "prompt": prompt, "size": size}
+            body["output_format"] = "png"
             if quality:
                 body["quality"] = quality
             response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
@@ -3439,7 +3461,8 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
                         continue
                     fh = open(path, "rb")
                     opened.append(fh)
-                    files.append(("image", (os.path.basename(path), fh, content_type_for_path(path))))
+                    field_name = "image[]" if is_cloudwise_provider(provider) else "image"
+                    files.append((field_name, (os.path.basename(path), fh, content_type_for_path(path))))
                 if mask_refs:
                     mask_path = await run_storage_io(output_file_from_url, mask_refs[0].get("url", ""))
                     if mask_path:
@@ -4886,6 +4909,10 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
     if not api_key:
         key_name = "方舟 API Key" if protocol == "volcengine" else "API Key"
         raise HTTPException(status_code=400, detail=f"请先填写或保存 {key_name}")
+    if protocol == "openai" and "api.cloudwise.ai" in base_url.lower():
+        # Cloudwise's GPT Image endpoint documents a fixed model and does not
+        # expose an OpenAI /v1/models discovery endpoint.
+        return {"total": 1, "protocol": "openai", "image_models": ["gpt-image-2"], "chat_models": [], "video_models": [], "all": ["gpt-image-2"]}
     url = upstream_models_url(base_url, protocol)
     try:
         async with shared_http_client(timeout=30) as client:

@@ -7,6 +7,23 @@ from app.services import business_metadata
 from fastapi import HTTPException
 
 
+def test_cloudwise_openai_image_endpoints_accept_host_only_base_url():
+    provider = {"id": "cloudwise", "base_url": "https://api.cloudwise.ai"}
+    assert main.provider_endpoint_url(provider, "image_generation_endpoint", "/v1/images/generations") == "https://api.cloudwise.ai/api/v1/images/generations"
+    assert main.provider_endpoint_url(provider, "image_edit_endpoint", "/v1/images/edits") == "https://api.cloudwise.ai/api/v1/images/edits"
+    assert main.is_cloudwise_provider(provider) is True
+
+    aliased = {"id": "gpt-image-cloud", "base_url": "https://api.cloudwise.ai/api/v1"}
+    assert main.provider_endpoint_url(aliased, "image_generation_endpoint", "/v1/images/generations") == "https://api.cloudwise.ai/api/v1/images/generations"
+    assert main.is_cloudwise_provider(aliased) is True
+
+
+def test_cloudwise_model_discovery_uses_documented_fixed_gpt_image_model():
+    result = asyncio.run(main.fetch_models_from_upstream("https://api.cloudwise.ai", "test-key", "openai"))
+    assert result["image_models"] == ["gpt-image-2"]
+    assert result["chat_models"] == []
+
+
 def test_parameter_schema_only_applies_model_overrides():
     from app.services.provider_parameters import capability_parameters
 
