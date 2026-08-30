@@ -5386,16 +5386,35 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
     payload = normalize_canvas_image_request(payload)
-    if payload.model_id:
+    # Canvas clients may send the stable connection id as provider_id while
+    # omitting model_id (older saved node settings). Resolve that shape through
+    # the authoritative connection/model tables before falling back to legacy
+    # provider resolution.
+    stable_connection_id = str(payload.connection_id or "").strip() if hasattr(payload, "connection_id") else ""
+    if not stable_connection_id and str(payload.provider_id or "").startswith("connection-"):
+        stable_connection_id = str(payload.provider_id).strip()
+    if payload.model_id or stable_connection_id:
         from app.ai.database_repository import DatabaseAIRepository
         try:
-            target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.model_id, kind="image")
+            target = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_model,
+                model_id=payload.model_id,
+                connection_id=stable_connection_id,
+                model=payload.model,
+                kind="image",
+            )
         except LookupError as exc:
-            raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
-        payload = payload.model_copy(update={
-            "provider_id": await ensure_runtime_provider_id(target.connection.id),
-            "model": target.model.upstream_model if target.model else payload.model,
-        })
+            if payload.model_id or stable_connection_id:
+                raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
+            # A legacy provider id is not a stable connection id; preserve the
+            # compatibility path for clients that still send that identifier.
+        else:
+            payload = payload.model_copy(update={
+                "provider_id": await ensure_runtime_provider_id(target.connection.id),
+                "model_id": target.model.id if target.model else payload.model_id,
+                "model": target.model.upstream_model if target.model else payload.model,
+                "connection_id": target.connection.id,
+            })
     require_model_access(payload.provider_id, payload.model)
     await assert_provider_budget_available(get_api_provider(payload.provider_id), current_user_id())
     from app.ai.repository import legacy_connection_id
