@@ -3,15 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
-import httpx
 from pydantic import ConfigDict, Field
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from app.core.http_client import new_outbound_http_client, shared_http_client
 from app.core.logging import get_logger
-from app.core.retry import retry_delay_seconds, retry_max_attempts
 
 logger = get_logger("canvas_agent_model")
 _RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
@@ -20,7 +17,7 @@ _RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523
 class CanvasAgentUpstreamError(RuntimeError):
     """The configured model provider was unavailable after bounded retries."""
 
-class MediaForgeChatModel(BaseChatModel):
+class GatewayChatModel(BaseChatModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     endpoint: str
     headers: dict[str, str] = Field(default_factory=dict)
@@ -68,35 +65,14 @@ class MediaForgeChatModel(BaseChatModel):
         """Translate LangChain's internal required-tool sentinel to OpenAI JSON."""
         return "required" if value == "any" else value
 
-    @staticmethod
-    def _retryable_provider_error(exc: Exception) -> bool:
-        if isinstance(exc, httpx.HTTPStatusError):
-            return exc.response.status_code in _RETRYABLE_STATUS_CODES
-        return isinstance(exc, (httpx.NetworkError, httpx.TimeoutException))
-
     async def _post_with_retry(self, body: dict[str, Any]) -> dict[str, Any]:
-        attempts = retry_max_attempts()
-        for attempt in range(1, attempts + 1):
-            try:
-                if attempt == 1:
-                    async with shared_http_client(timeout=self.request_timeout) as client:
-                        response = await client.post(self.endpoint, headers=self.headers, json=body)
-                else:
-                    async with new_outbound_http_client(timeout=self.request_timeout) as client:
-                        response = await client.post(self.endpoint, headers=self.headers, json=body)
-                response.raise_for_status()
-                return response.json()
-            except (httpx.HTTPError, ValueError) as exc:
-                if not self._retryable_provider_error(exc) or attempt == attempts:
-                    if self._retryable_provider_error(exc):
-                        raise CanvasAgentUpstreamError("模型服务暂时不可用，请稍后重试") from exc
-                    raise
-                logger.warning(
-                    "canvas agent model request failed; retrying",
-                    extra={"event": "canvas_agent_model_retry", "attempt": attempt, "max_attempts": attempts, "error_type": type(exc).__name__},
-                )
-                await asyncio.sleep(retry_delay_seconds(attempt))
-        raise AssertionError("unreachable")
+        from app.ai.chat import complete_with_retry
+        try:
+            return await complete_with_retry(endpoint=self.endpoint, headers=self.headers, body=body, timeout=self.request_timeout, retryable_status_codes=_RETRYABLE_STATUS_CODES)
+        except Exception as exc:
+            if exc.__class__.__name__ in {"NetworkError", "TimeoutException"}:
+                raise CanvasAgentUpstreamError("模型服务暂时不可用，请稍后重试") from exc
+            raise
 
     async def _agenerate(self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
         body: dict[str, Any] = {"model": self.model_name, "messages": [self._message(message) for message in messages], "stream": False}
@@ -123,8 +99,14 @@ class MediaForgeChatModel(BaseChatModel):
     def bind_tools(self, tools, *, tool_choice: str | None = None, **kwargs: Any):
         return self.bind(_bound_tools=list(tools), _tool_choice=tool_choice, **kwargs)
 
-def resolve_canvas_agent_model(provider: str = "", model: str = "") -> MediaForgeChatModel:
-    from main import require_model_access, resolve_chat_provider
-    endpoint, headers, resolved_model = resolve_chat_provider(provider, model)
-    require_model_access(provider, resolved_model)
-    return MediaForgeChatModel(endpoint=f"{endpoint}/chat/completions", headers=dict(headers), model_name=resolved_model)
+MediaForgeChatModel = GatewayChatModel
+
+
+def resolve_canvas_agent_model(
+    provider: str = "", model: str = "", *, model_id: str = "", connection_id: str = "",
+) -> GatewayChatModel:
+    from app.ai.runtime import resolve_chat_model
+    endpoint, headers, resolved_model = resolve_chat_model(
+        provider, model, model_id=model_id, connection_id=connection_id,
+    )
+    return GatewayChatModel(endpoint=f"{endpoint}/chat/completions", headers=dict(headers), model_name=resolved_model)

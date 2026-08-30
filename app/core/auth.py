@@ -99,10 +99,16 @@ def register_user(user_id: str, username: str) -> bool:
             cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING id", (user_id, username, created_at))
             if not cur.fetchone():
                 return False
-            cur.execute(
-                "INSERT INTO user_budgets(user_id,monthly_budget_usd,enabled,created_at,updated_at) VALUES(%s,%s,%s,%s,%s)",
-                (user_id, default_budget["monthly_budget_usd"], default_budget["enabled"], created_at, created_at),
-            )
+            if default_budget["monthly_budget_usd"] == 0 and default_budget["enabled"] is True:
+                cur.execute(
+                    "INSERT INTO user_budgets(user_id,monthly_budget_usd,enabled,created_at,updated_at) VALUES(%s,0,TRUE,%s,%s)",
+                    (user_id, created_at, created_at),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO user_budgets(user_id,monthly_budget_usd,enabled,created_at,updated_at) VALUES(%s,%s,%s,%s,%s)",
+                    (user_id, default_budget["monthly_budget_usd"], default_budget["enabled"], created_at, created_at),
+                )
         USERS[user_id] = {"username": username, "created_at": created_at, "org_id": None}
     return True
 

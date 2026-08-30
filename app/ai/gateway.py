@@ -8,6 +8,8 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from typing import Any, Protocol
 
 from fastapi import HTTPException
 
@@ -31,6 +33,44 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
 end
 return 0
 """
+
+
+class AIGateway(Protocol):
+    """Stable capability boundary used by routes and orchestration services."""
+
+    async def chat(self, command: Any, *, actor: Any) -> Any: ...
+    async def stream_chat(self, command: Any, *, actor: Any) -> AsyncIterator[Any]: ...
+    async def generate_image(self, command: Any, *, actor: Any) -> Any: ...
+    async def generate_video(self, command: Any, *, actor: Any) -> Any: ...
+    async def run_app(self, command: Any, *, actor: Any) -> Any: ...
+    async def run_workflow(self, command: Any, *, actor: Any) -> Any: ...
+
+
+class ResourceGateway:
+    """Executable-resource gateway with injected resolution and adapters.
+
+    This is deliberately small and framework-neutral; HTTP routes can inject
+    the existing repository and task handlers while migration is in progress.
+    """
+
+    def __init__(self, *, resolver, adapters: dict[str, Any]):
+        self._resolver = resolver
+        self._adapters = {str(key).lower(): value for key, value in adapters.items()}
+
+    async def _run(self, command: Any, actor: Any, capability: str, operation: str) -> Any:
+        target = self._resolver(command)
+        adapter = self._adapters.get(str(target.protocol).lower())
+        if adapter is None or not adapter.supports(target, capability):
+            raise HTTPException(status_code=400, detail=f"未注册可执行资源适配器: {target.protocol}")
+        provider = str(target.connection.id or target.connection.legacy_provider_id)
+        async with provider_operation(provider, operation, user_id=str(getattr(actor, "user_id", "") or "")):
+            return await adapter.execute(target, command, actor=actor)
+
+    async def run_app(self, command: Any, *, actor: Any) -> Any:
+        return await self._run(command, actor, "run_app", "app_generation")
+
+    async def run_workflow(self, command: Any, *, actor: Any) -> Any:
+        return await self._run(command, actor, "run_workflow", "workflow_execution")
 
 
 def _positive_int(value: str, fallback: int) -> int:

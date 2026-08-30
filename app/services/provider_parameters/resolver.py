@@ -181,8 +181,8 @@ def _normalize_rh_field(field: dict[str, Any]) -> dict[str, Any]:
 def capability_parameters(*, capability: str, provider_id: str = "", model: str = "", provider_loader=None, workflow_loader=None) -> dict[str, Any]:
     """Return the field contract for a Provider model or native workflow."""
     if provider_loader is None:
-        from main import load_api_providers
-        provider_loader = load_api_providers
+        from app.ai.runtime import load_legacy_providers
+        provider_loader = load_legacy_providers
     providers = [item for item in (provider_loader() or []) if isinstance(item, dict) and item.get("enabled", True)]
     selected = next((item for item in providers if item.get("id") == provider_id), None)
     if capability.startswith("comfyui.workflow."):

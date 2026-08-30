@@ -61,8 +61,8 @@ def from_provider_configuration(provider_loader=None, workflow_loader=None) -> C
         # Agent task submission runs inside the command worker's event loop.
         # The cache is refreshed by startup/config-change handling; reading it
         # here avoids the synchronous database bridge in that async path.
-        from main import load_api_providers
-        provider_loader = load_api_providers
+        from app.ai.runtime import load_legacy_providers
+        provider_loader = load_legacy_providers
     providers = provider_loader() or []
     registry = CapabilityRegistry(providers)
     comfyui_enabled = any(

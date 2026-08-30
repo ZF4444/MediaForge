@@ -4,6 +4,7 @@ import uuid
 import asyncio
 import time
 from app.config import CANVAS_TASK_TIMEOUT_SECONDS
+from app.ai.runtime import authorize_image_task, normalize_canvas_image_payload
 from typing import Any
 from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_tasks import create_canvas_task, enqueue_canvas_task
@@ -44,8 +45,7 @@ def _image_request_for_node(node: dict[str, Any], fallback_capability: Any, fall
     # pass through this normalizer in the HTTP endpoint. Reuse it here so
     # both paths use identical ratio/size and provider-field conversion.
     from app.models import OnlineImageRequest
-    from main import normalize_canvas_image_request
-    return normalize_canvas_image_request(OnlineImageRequest.model_validate(request)).model_dump(mode="json")
+    return normalize_canvas_image_payload(OnlineImageRequest.model_validate(request)).model_dump(mode="json")
 
 
 async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, requests: list[dict[str, Any]], *, prompt: str, prompts_by_node: dict[str, str] | None = None) -> list[dict[str, Any]]:
@@ -73,9 +73,7 @@ async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, request
         request = _image_request_for_node(node, capability, prompt, prompts_by_node)
         # Reuse the existing access-control resolver; the Agent never chooses
         # an unapproved provider/model pair directly.
-        from main import assert_provider_budget_available, get_api_provider, require_model_access
-        await asyncio.to_thread(require_model_access, request["provider_id"], request["model"])
-        await assert_provider_budget_available(get_api_provider(request["provider_id"]), user_id)
+        await authorize_image_task(request["provider_id"], request["model"], user_id)
         await create_canvas_task({"id": task_id, "type": "online-image", "status": "queued", "provider_id": request["provider_id"], "model": request["model"], "owner_id": user_id, "agent_run_id": run_id, "agent_node_id": node["id"], "deadline_at": time.time() + CANVAS_TASK_TIMEOUT_SECONDS, "attempt": 1, "request": request})
         # Queue submission is the first authoritative lifecycle transition.
         # Project it immediately so the canvas node shows a pending state

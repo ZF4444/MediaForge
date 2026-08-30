@@ -22,6 +22,9 @@ class AgentEventService:
         if severity not in SEVERITIES:
             raise ValueError(f"unsupported agent event severity: {severity}")
         body = sanitize_payload(payload)
+        # Keep the payload self-describing for persisted-event consumers that
+        # do not read the event envelope columns.
+        body.setdefault("schema_version", EVENT_SCHEMA_VERSION)
         now = now_ms()
         with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
             cur.execute("SELECT 1 FROM canvas_agent_runs WHERE id=%s AND user_id=%s FOR UPDATE", (run_id, user_id))

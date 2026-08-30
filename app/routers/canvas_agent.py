@@ -348,7 +348,9 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
         context["run_id"] = run_id
         context["user_id"] = user_id
         context["canvas_id"] = run["canvas_id"]
-        model = await asyncio.to_thread(resolve_canvas_agent_model, payload.provider, payload.model)
+        model = await asyncio.to_thread(
+            resolve_canvas_agent_model, payload.provider, payload.model, model_id=payload.model_id,
+        )
         async def progress(event_run_id, progress_payload):
             await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
         async def emit_skill_event(event_type, event_payload):
@@ -368,7 +370,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
             await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
             return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": reply}
         plan = SemanticPlan.model_validate(latest["content_json"])
-        await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model})
+        await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model, "model_id": payload.model_id})
         plan_json = plan.model_dump(mode="json")
         plan_json = _hydrate_plan_nodes(plan_json, await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"]))
         estimate = estimate_plan_cost(plan_json)
@@ -409,7 +411,8 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
         context["user_id"] = user_id
         context["canvas_id"] = run["canvas_id"]
         provider, model_name = payload.provider or metadata.get("model_provider", ""), payload.model or metadata.get("model_name", "")
-        model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
+        model_id = payload.model_id or metadata.get("model_id", "")
+        model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name, model_id=model_id)
         async def progress(event_run_id, progress_payload):
             await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
         async def emit_skill_event(event_type, event_payload):
@@ -428,7 +431,7 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
         plan_json = _hydrate_plan_nodes(plan.model_dump(mode="json"), await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"]))
         plan = SemanticPlan.model_validate(plan_json)
         saved = await asyncio.to_thread(save_plan, user_id, run_id, plan.model_dump(mode="json"), status="awaiting_confirmation")
-        await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name})
+        await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name, "model_id": model_id})
         reply = await _append_plan_reply(user_id, run_id)
         await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json"), "resumed": True})
         return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved, "reply": reply}
@@ -469,7 +472,9 @@ async def execute_confirm_command(user_id: str, run_id: str, payload: CanvasAgen
     # execution tool call, records its ToolMessage, then dispatches tasks.
     metadata = run.get("metadata_json") or {}
     provider, model_name = metadata.get("model_provider", ""), metadata.get("model_name", "")
-    model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name)
+    model = await asyncio.to_thread(
+        resolve_canvas_agent_model, provider, model_name, model_id=metadata.get("model_id", ""),
+    )
     await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在校验当前画布…"})
     context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"])
     context.update({"run_id": run_id, "user_id": user_id, "canvas_id": run["canvas_id"]})

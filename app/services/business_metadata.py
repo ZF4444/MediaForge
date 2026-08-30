@@ -174,6 +174,37 @@ CREATE TABLE IF NOT EXISTS app_settings (
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL DEFAULT 1
 );
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS ai_connections (
+    id TEXT PRIMARY KEY, protocol TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
+    base_url TEXT NOT NULL DEFAULT '', secret_ref TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE, primary_connection BOOLEAN NOT NULL DEFAULT FALSE,
+    settings_json JSONB NOT NULL DEFAULT '{}'::jsonb, version BIGINT NOT NULL DEFAULT 1,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_connection_secrets (
+    connection_id TEXT NOT NULL, secret_name TEXT NOT NULL,
+    secret_ciphertext BYTEA NOT NULL, version BIGINT NOT NULL DEFAULT 1,
+    updated_at BIGINT NOT NULL, PRIMARY KEY(connection_id, secret_name)
+);
+CREATE TABLE IF NOT EXISTS ai_models (
+    id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES ai_connections(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, upstream_model TEXT NOT NULL, protocol TEXT NOT NULL,
+    alias TEXT NOT NULL DEFAULT '', capabilities_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_models_connection_kind ON ai_models(connection_id, kind, enabled);
+CREATE TABLE IF NOT EXISTS ai_resources (
+    id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES ai_connections(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', schema_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    settings_json JSONB NOT NULL DEFAULT '{}'::jsonb, enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_resources_connection_kind ON ai_resources(connection_id, kind, enabled);
+CREATE TABLE IF NOT EXISTS ai_legacy_mappings (
+    legacy_key TEXT PRIMARY KEY, resource_id TEXT NOT NULL, legacy_provider_id TEXT NOT NULL DEFAULT '',
+    legacy_model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS comfy_workflows (
     name TEXT PRIMARY KEY, workflow_json JSONB NOT NULL, config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     builtin BOOLEAN NOT NULL DEFAULT FALSE, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
@@ -279,6 +310,87 @@ def new_id() -> str:
 
 def json_value(value: Any) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False)
+
+
+def sync_ai_legacy_projection(providers: Iterable[dict[str, Any]], workflows: Iterable[dict[str, Any]] = ()) -> int:
+    """Idempotently import legacy providers into the new AI resource tables."""
+    from urllib.parse import quote
+    now = int(time.time() * 1000)
+    count = 0
+    rows = [item for item in (providers or []) if isinstance(item, dict) and item.get("id")]
+    if not rows:
+        return 0
+    with metadata_connection() as conn, conn.cursor() as cur:
+        # A previous projection version attached workflows to every Provider.
+        # Clear only migration-owned rows before rebuilding the canonical set.
+        cur.execute("DELETE FROM ai_resources WHERE id LIKE 'legacy:%'")
+        cur.execute("DELETE FROM ai_legacy_mappings WHERE resource_id LIKE 'legacy:%'")
+        for provider in rows:
+            pid = str(provider["id"]).strip().lower()
+            connection_id = f"legacy:{pid}"
+            cur.execute(
+                """INSERT INTO ai_connections(id,protocol,name,base_url,enabled,primary_connection,settings_json,created_at,updated_at)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(id) DO UPDATE SET protocol=EXCLUDED.protocol,name=EXCLUDED.name,base_url=EXCLUDED.base_url,
+                enabled=EXCLUDED.enabled,primary_connection=EXCLUDED.primary_connection,settings_json=EXCLUDED.settings_json,updated_at=EXCLUDED.updated_at""",
+                (connection_id, str(provider.get("protocol") or "openai"), str(provider.get("name") or pid), str(provider.get("base_url") or ""), bool(provider.get("enabled", True)), bool(provider.get("primary", False)), json_value(provider), now, now),
+            )
+            # Copy centralized secrets once to the connection namespace. The
+            # old secret remains readable only during this migration release.
+            try:
+                from app.services.provider_secrets import get_provider_secret, set_connection_secret
+                secret = get_provider_secret(pid, "api_key")
+                if secret:
+                    set_connection_secret(connection_id, "api_key", secret)
+                for name in ("omnilojo_management_token", "access_key_id", "secret_access_key"):
+                    value = get_provider_secret(pid, name)
+                    if value:
+                        set_connection_secret(connection_id, name, value)
+            except RuntimeError:
+                # APP_SECRET_KEY is optional for legacy .env deployments; the
+                # final deployment validator rejects that mode before cutover.
+                pass
+            # This import owns only legacy-namespaced execution resources.
+            # Rebuild them so a repeated import cannot attach a workflow to an
+            # unrelated connection or retain removed RunningHub applications.
+            cur.execute("DELETE FROM ai_resources WHERE connection_id=%s", (connection_id,))
+            for kind, key in (("chat", "chat_models"), ("image", "image_models"), ("video", "video_models")):
+                for raw_model in provider.get(key) or []:
+                    model = str(raw_model or "").strip()
+                    if not model:
+                        continue
+                    model_id = f"{connection_id}:{kind}:{quote(model, safe='')}"
+                    protocol = str(provider.get("protocol") or "openai").strip().lower()
+                    if str(provider.get("id") or "").lower() not in {"runninghub", "volcengine"}:
+                        protocol = str((provider.get("model_protocols") or {}).get(model) or protocol).strip().lower()
+                    cur.execute(
+                        """INSERT INTO ai_models(id,connection_id,kind,upstream_model,protocol,alias,capabilities_json,created_at,updated_at)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT(id) DO UPDATE SET protocol=EXCLUDED.protocol,alias=EXCLUDED.alias,capabilities_json=EXCLUDED.capabilities_json,updated_at=EXCLUDED.updated_at""",
+                        (model_id, connection_id, kind, model, protocol, str((provider.get("model_aliases") or {}).get(model) or model), json_value([]), now, now),
+                    )
+                    cur.execute("INSERT INTO ai_legacy_mappings(legacy_key,resource_id,legacy_provider_id,legacy_model,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(legacy_key) DO UPDATE SET resource_id=EXCLUDED.resource_id,updated_at=EXCLUDED.updated_at", (f"{pid}:{kind}:{model}", model_id, pid, model, now, now))
+                    count += 1
+            if pid == "runninghub":
+                for app in provider.get("rh_apps") or []:
+                    if not isinstance(app, dict) or not (app.get("id") or app.get("appId") or app.get("webappId")):
+                        continue
+                    app_id = str(app.get("id") or app.get("appId") or app.get("webappId"))
+                    resource_id = f"{connection_id}:runninghub_app:{quote(app_id, safe='')}"
+                    cur.execute("""INSERT INTO ai_resources(id,connection_id,kind,name,schema_json,settings_json,created_at,updated_at)
+                        VALUES(%s,%s,'runninghub_app',%s,%s,%s,%s,%s)""",
+                        (resource_id, connection_id, str(app.get("name") or app_id), json_value(app.get("fields") or {}), json_value(app), now, now))
+                    cur.execute("INSERT INTO ai_legacy_mappings(legacy_key,resource_id,legacy_provider_id,legacy_model,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(legacy_key) DO UPDATE SET resource_id=EXCLUDED.resource_id,updated_at=EXCLUDED.updated_at", (f"{pid}:app:{app_id}", resource_id, pid, app_id, now, now))
+            if pid == "comfyui":
+                for workflow in (workflows or []):
+                    if not isinstance(workflow, dict) or not workflow.get("name"):
+                        continue
+                    resource_id = f"{connection_id}:comfyui_workflow:{quote(str(workflow['name']), safe='')}"
+                    cur.execute("""INSERT INTO ai_resources(id,connection_id,kind,name,schema_json,settings_json,created_at,updated_at)
+                        VALUES(%s,%s,'comfyui_workflow',%s,%s,%s,%s,%s)""",
+                        (resource_id, connection_id, str(workflow["name"]), json_value(workflow.get("config") or {}), json_value(workflow), now, now))
+                    cur.execute("INSERT INTO ai_legacy_mappings(legacy_key,resource_id,legacy_provider_id,legacy_model,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(legacy_key) DO UPDATE SET resource_id=EXCLUDED.resource_id,updated_at=EXCLUDED.updated_at", (f"{pid}:workflow:{workflow['name']}", resource_id, pid, str(workflow["name"]), now, now))
+    return count
 
 
 def migrate_local_workflows() -> int:

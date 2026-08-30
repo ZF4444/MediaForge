@@ -73,6 +73,7 @@ class AIReference(BaseModel):
 class OnlineImageRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
+    model_id: str = ""
     model: str = ""
     size: str = "1024x1024"
     quality: str = "auto"
@@ -89,6 +90,7 @@ class ImageTaskQueryRequest(BaseModel):
 class CanvasVideoRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
+    model_id: str = ""
     model: str = "veo3-fast"
     duration: int = 5
     aspect_ratio: str = "16:9"
@@ -114,6 +116,7 @@ class CloudVideoUploadRequest(BaseModel):
 
 
 class RunningHubSubmitRequest(BaseModel):
+    resource_id: str = ""
     webappId: str = ""
     nodeInfoList: List[Dict[str, Any]] = []
     instanceType: str = ""
@@ -170,6 +173,8 @@ class ChatRequest(BaseModel):
     quality: str = "auto"
     reference_images: List[AIReference] = []
     provider: str = "comfly"
+    model_id: str = ""
+    connection_id: str = ""
     ms_model: str = ""
 
 
@@ -180,6 +185,8 @@ class CanvasLLMRequest(BaseModel):
     model: str = ""
     messages: List[Dict[str, Any]] = []
     provider: str = "comfly"
+    model_id: str = ""
+    connection_id: str = ""
     images: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
     videos: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
 
@@ -232,6 +239,7 @@ class CanvasAgentMessageRequest(BaseModel):
     use_model: bool = True
     provider: str = ""
     model: str = ""
+    model_id: str = ""
     client_request_id: str = Field(default="", max_length=128)
 
 class CanvasAgentAnswerRequest(BaseModel):
@@ -239,6 +247,7 @@ class CanvasAgentAnswerRequest(BaseModel):
     use_model: bool = True
     provider: str = ""
     model: str = ""
+    model_id: str = ""
     client_request_id: str = Field(default="", max_length=128)
 
 class CanvasAgentConfirmRequest(BaseModel):
@@ -469,6 +478,8 @@ class WorkflowRunRequest(BaseModel):
     fields: Dict[str, Any] = {}
     config: WorkflowConfig
     client_id: str = ""
+    connection_id: str = ""
+    resource_id: str = ""
 
 
 class ComfyInstancesPayload(BaseModel):

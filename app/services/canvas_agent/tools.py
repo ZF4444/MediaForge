@@ -21,6 +21,11 @@ from .skills import (
     read_skill_resource,
 )
 
+
+def submit_semantic_plan(plan: dict[str, Any]) -> SemanticPlan:
+    """Validate the legacy planner payload against the canonical plan schema."""
+    return SemanticPlan.model_validate(plan)
+
 def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
                        get_canvas: Callable[[], Awaitable[dict[str, Any]]] | None = None,
                        execute_patch: Callable[[int, list[str]], Awaitable[dict[str, Any]]] | None = None,
