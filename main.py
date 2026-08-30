@@ -3185,11 +3185,23 @@ def runninghub_api_key(provider):
         raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     return key
 
-def runninghub_api_headers(provider):
-    return {"Accept": "application/json", "Authorization": bearer_auth_value(runninghub_api_key(provider)), "Content-Type": "application/json"}
+async def runninghub_api_key_async(provider):
+    """Read RunningHub credentials without blocking the ASGI event loop."""
+    try:
+        key = await asyncio.to_thread(runninghub_api_key, provider)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="AI 密钥存储暂不可用，请稍后重试。") from exc
+    if not key:
+        raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
+    return key
 
-def runninghub_app_headers(json_body=True):
-    headers = {"Accept": "application/json", "Authorization": bearer_auth_value(runninghub_api_key(runninghub_provider()))}
+def runninghub_api_headers(provider, api_key=None):
+    key = api_key if api_key is not None else runninghub_api_key(provider)
+    return {"Accept": "application/json", "Authorization": bearer_auth_value(key), "Content-Type": "application/json"}
+
+def runninghub_app_headers(json_body=True, api_key=None):
+    key = api_key if api_key is not None else runninghub_api_key(runninghub_provider())
+    headers = {"Accept": "application/json", "Authorization": bearer_auth_value(key)}
     if json_body:
         headers["Content-Type"] = "application/json"
     return headers
@@ -4030,11 +4042,11 @@ async def runninghub_app_info(webappId: str = ""):
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = runninghub_provider()
-    api_key = runninghub_api_key(provider)
+    api_key = await runninghub_api_key_async(provider)
     url = runninghub_endpoint_url(provider, f"/api/webapp/apiCallDemo?apiKey={urllib.parse.quote(api_key)}&webappId={urllib.parse.quote(webapp_id)}")
     async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0)) as client:
         try:
-            response = await client.get(url, headers=runninghub_app_headers(False))
+            response = await client.get(url, headers=runninghub_app_headers(False, api_key))
             raw = response.json()
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text[:500]) from exc
@@ -4067,7 +4079,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = get_api_provider_exact(selected_resource.connection.legacy_provider_id) if selected_resource else runninghub_provider()
     await assert_provider_budget_available(provider, user_id)
-    api_key = runninghub_api_key(provider)
+    api_key = await runninghub_api_key_async(provider)
     body = {
         "apiKey": api_key,
         "webappId": webapp_id,
@@ -4080,7 +4092,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     async with provider_operation("runninghub", "app_generation", user_id=user_id):
         async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0)) as client:
             try:
-                response = await client.post(url, headers=runninghub_app_headers(True), json=body)
+                response = await client.post(url, headers=runninghub_app_headers(True, api_key), json=body)
                 raw = response.json()
             except Exception as exc:
                 raise HTTPException(status_code=502, detail=f"提交 RunningHub 任务失败：{exc}") from exc
@@ -4110,11 +4122,11 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
     if not task_id:
         raise HTTPException(status_code=400, detail="taskId 必填")
     provider = runninghub_provider()
-    api_key = runninghub_api_key(provider)
+    api_key = await runninghub_api_key_async(provider)
     url = runninghub_endpoint_url(provider, "/task/openapi/outputs")
     async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0)) as client:
         try:
-            response = await client.post(url, headers=runninghub_app_headers(True), json={"apiKey": api_key, "taskId": task_id})
+            response = await client.post(url, headers=runninghub_app_headers(True, api_key), json={"apiKey": api_key, "taskId": task_id})
             raw = response.json()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"查询 RunningHub 任务失败：{exc}") from exc
@@ -4157,7 +4169,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     if not source_url:
         raise HTTPException(status_code=400, detail="url 必填")
     provider = runninghub_provider()
-    api_key = runninghub_api_key(provider)
+    api_key = await runninghub_api_key_async(provider)
     filename = "asset.bin"
     content_type = "application/octet-stream"
     content = b""
@@ -4193,7 +4205,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
         files = {"file": (filename, content, content_type)}
         data = {"apiKey": api_key, "fileType": "input"}
         try:
-            response = await client.post(upload_url, headers=runninghub_app_headers(False), data=data, files=files)
+            response = await client.post(upload_url, headers=runninghub_app_headers(False, api_key), data=data, files=files)
             raw = response.json()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"上传素材到 RunningHub 失败：{exc}") from exc
@@ -4207,7 +4219,7 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
 @app.post("/api/runninghub/upload-asset-file")
 async def runninghub_upload_asset_file(file: UploadFile = File(...)):
     provider = runninghub_provider()
-    api_key = runninghub_api_key(provider)
+    api_key = await runninghub_api_key_async(provider)
     filename = os.path.basename(str(file.filename or "").strip()) or "asset.bin"
     content_type = str(file.content_type or "").strip() or "application/octet-stream"
     try:
@@ -4221,7 +4233,7 @@ async def runninghub_upload_asset_file(file: UploadFile = File(...)):
         files = {"file": (filename, content, content_type)}
         data = {"apiKey": api_key, "fileType": "input"}
         try:
-            response = await client.post(upload_url, headers=runninghub_app_headers(False), data=data, files=files)
+            response = await client.post(upload_url, headers=runninghub_app_headers(False, api_key), data=data, files=files)
             raw = response.json()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"上传素材到 RunningHub 失败：{exc}") from exc
