@@ -1326,6 +1326,19 @@ def runtime_provider_id_for_connection(connection_id: str) -> str:
     return str(item["id"])
 
 
+async def ensure_runtime_provider_id(connection_id: str) -> str:
+    """Resolve a stable connection through a freshly loaded execution cache."""
+    provider_id = next(
+        (str(entry.get("id") or "") for entry in load_api_providers()
+         if entry.get("connection_id") == connection_id),
+        "",
+    )
+    if provider_id:
+        return provider_id
+    await asyncio.to_thread(refresh_api_providers_cache)
+    return runtime_provider_id_for_connection(connection_id)
+
+
 # Consumers below the HTTP layer read Provider configuration through the AI
 # runtime boundary instead of importing this ASGI entry module.
 from app.ai.runtime import configure_provider_loader
@@ -5377,7 +5390,7 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
         payload = payload.model_copy(update={
-            "provider_id": runtime_provider_id_for_connection(target.connection.id),
+            "provider_id": await ensure_runtime_provider_id(target.connection.id),
             "model": target.model.upstream_model if target.model else payload.model,
         })
     require_model_access(payload.provider_id, payload.model)
@@ -5683,7 +5696,7 @@ async def execute_canvas_task(task_id: str):
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
-                "provider_id": runtime_provider_id_for_connection(resolved.connection.id),
+                "provider_id": await ensure_runtime_provider_id(resolved.connection.id),
                 "model": resolved.model.upstream_model if resolved.model else task.get("model", ""),
             }
             request = {**request, **{k: v for k, v in task_updates.items() if v}}
@@ -6143,7 +6156,7 @@ async def canvas_video(payload: CanvasVideoRequest):
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="视频模型资源不存在或已禁用") from exc
         payload = payload.model_copy(update={
-            "provider_id": runtime_provider_id_for_connection(target.connection.id),
+            "provider_id": await ensure_runtime_provider_id(target.connection.id),
             "model": target.model.upstream_model if target.model else payload.model,
         })
     from app.ai.videos import LegacyVideoGateway
