@@ -32,7 +32,7 @@
         // --- 夜间模式 ---
 
         function syncThemeToFrame(iframe) {
-            const theme = (window.StudioTheme || {get: () => 'light'}).get();
+            const theme = (window.StudioTheme || {get: () => 'dark'}).get();
             try {
                 if (iframe && iframe.contentWindow) {
                     iframe.contentWindow.postMessage({ type: 'studio-theme', theme }, '*');
@@ -93,7 +93,7 @@
 
         // init icon state on load
         window.addEventListener('DOMContentLoaded', () => {
-            const theme = window.StudioTheme ? window.StudioTheme.get() : 'light';
+            const theme = window.StudioTheme ? window.StudioTheme.get() : 'dark';
             updateThemeIcon(theme);
             if(window.StudioI18n) window.StudioI18n.apply();
             broadcastLanguage();

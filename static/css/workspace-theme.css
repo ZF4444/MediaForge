@@ -1,0 +1,62 @@
+/* Shared reference direction: lavender-peach atmosphere with soft glass surfaces. */
+:root {
+  --workspace-lavender: #eee9ff;
+  --workspace-peach: #ffe1d0;
+  --workspace-blue: #328df7;
+  --workspace-ink: #17151d;
+  --workspace-muted: #6e6978;
+}
+html:not(.studio-theme-dark):not(.theme-dark) body,
+html:not(.studio-theme-dark):not(.theme-dark) .app-shell {
+  background: linear-gradient(115deg, #c9c1ff 0%, var(--workspace-lavender) 36%, #f8ebf5 67%, var(--workspace-peach) 100%) !important;
+  color: var(--workspace-ink);
+}
+html:not(.studio-theme-dark):not(.theme-dark) .sidebar {
+  width: 326px;
+  min-width: 326px;
+  padding: 34px 18px 26px 20px;
+  border-right: 1px solid rgba(255,255,255,.78);
+  background: rgba(250,248,255,.46);
+  backdrop-filter: blur(25px) saturate(125%);
+}
+html:not(.studio-theme-dark):not(.theme-dark) .sidebar:hover { width: 326px; }
+html:not(.studio-theme-dark):not(.theme-dark) .sidebar .nav-item,
+html:not(.studio-theme-dark):not(.theme-dark) .sidebar .nav-fold-toggle {
+  width: 100%;
+  height: 48px;
+  margin: 3px 0;
+  padding-left: 24px;
+  border-radius: 15px;
+  color: #3f3d49;
+  font-size: 16px;
+}
+html:not(.studio-theme-dark):not(.theme-dark) .sidebar .nav-text { opacity: 1; max-width: none; margin-left: 12px; }
+html:not(.studio-theme-dark):not(.theme-dark) .nav-item.active { color: #fff; background: linear-gradient(105deg, #328df7, #5d6ff2); box-shadow: 0 13px 26px rgba(54,119,240,.25); }
+html:not(.studio-theme-dark):not(.theme-dark) .stage { background: transparent; }
+html:not(.studio-theme-dark):not(.theme-dark) .workbench-topbar { background: rgba(255,255,255,.42); border-color: rgba(255,255,255,.7); backdrop-filter: blur(18px); }
+html:not(.studio-theme-dark):not(.theme-dark) .nano-monitor { background: rgba(255,255,255,.62); border-color: rgba(255,255,255,.8); box-shadow: 0 12px 30px rgba(102,84,153,.12); }
+@media (max-width: 760px) {
+  html:not(.studio-theme-dark):not(.theme-dark) .mobile-dock { background: rgba(255,255,255,.72); border-color: rgba(255,255,255,.8); backdrop-filter: blur(18px); }
+}
+
+html:not(.studio-theme-dark):not(.theme-dark) body:has(.asset-page) {
+  background: linear-gradient(115deg, #c9c1ff 0%, var(--workspace-lavender) 36%, #f8ebf5 67%, var(--workspace-peach) 100%) !important;
+  color: var(--workspace-ink);
+}
+html:not(.studio-theme-dark):not(.theme-dark) .asset-page { max-width: 1520px; padding: 50px 56px 64px; gap: 18px; }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-title { font-size: clamp(36px, 4vw, 58px); letter-spacing: -.05em; line-height: 1; }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-sub { margin-top: 14px; color: var(--workspace-muted); font-size: 14px; }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-status,
+html:not(.studio-theme-dark):not(.theme-dark) .asset-tabs,
+html:not(.studio-theme-dark):not(.theme-dark) .asset-panel { border-color: rgba(255,255,255,.82); background: rgba(255,255,255,.68); box-shadow: 0 18px 42px rgba(102,84,153,.11); backdrop-filter: blur(20px) saturate(130%); }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-tabs { border-radius: 16px; padding: 5px; }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-tabs button { height: 38px; padding: 0 14px; border-radius: 11px; font-size: 12px; }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-tabs button.active { background: linear-gradient(105deg, #328df7, #5d6ff2); color: #fff; box-shadow: 0 9px 18px rgba(54,119,240,.2); }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-btn,
+html:not(.studio-theme-dark):not(.theme-dark) .asset-icon-btn { border-color: rgba(255,255,255,.84); border-radius: 11px; background: rgba(255,255,255,.7); }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-card,
+html:not(.studio-theme-dark):not(.theme-dark) .prompt-row,
+html:not(.studio-theme-dark):not(.theme-dark) .nav-row { border-color: rgba(255,255,255,.76); border-radius: 15px; background: rgba(255,255,255,.64); }
+@media (max-width: 760px) {
+  html:not(.studio-theme-dark):not(.theme-dark) .asset-page { padding: 28px 16px 44px; }
+}

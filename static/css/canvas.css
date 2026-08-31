@@ -467,13 +467,13 @@ video.node-img { object-fit:contain; background:#0f172a; }
 .image-node.selected:not(.smart-group-node) { z-index:10; }
 .image-node.dragging:not(.smart-group-node) { z-index:12; }
 .image-node.smart-group-node.dragging { z-index:3; }
-.node-port { position:absolute; top:50%; width:28px; height:28px; border-radius:50%; background:var(--card); border:3.6px solid var(--strong); transform:translateY(-50%); z-index:6; cursor:crosshair; opacity:0; pointer-events:auto; transition:opacity .15s ease, background .15s ease, transform .15s ease, box-shadow .15s ease; box-shadow:0 8px 20px rgba(15,23,42,.18); }
+.node-port { position:absolute; top:50%; width:28px; height:28px; border-radius:50%; background:var(--card); border:3.6px solid var(--strong); transform:translateY(-50%) scale(var(--node-port-scale, 1)); transform-origin:center; z-index:6; cursor:crosshair; opacity:0; pointer-events:auto; transition:opacity .15s ease, background .15s ease, transform .15s ease, box-shadow .15s ease; box-shadow:0 8px 20px rgba(15,23,42,.18); }
 .node-port::before { content:""; position:absolute; inset:-14px; border-radius:50%; }
-.node-port.port-in { left:-16px; }
-.node-port.port-out { right:-16px; }
+.node-port.port-in { left:var(--node-port-edge-offset, -16px); }
+.node-port.port-out { right:var(--node-port-edge-offset, -16px); }
 .image-node:hover .node-port, .image-node.selected .node-port, .image-node.port-hover .node-port, .node-port:hover { opacity:1; pointer-events:auto; }
 .shell.port-dragging .node-port { opacity:1; pointer-events:auto; }
-.node-port:hover, .node-port.is-active { background:var(--strong); transform:translateY(-50%) scale(1.22); box-shadow:0 12px 28px rgba(15,23,42,.26); }
+.node-port:hover, .node-port.is-active { background:var(--strong); transform:translateY(-50%) scale(var(--node-port-hover-scale, 1.22)); box-shadow:0 12px 28px rgba(15,23,42,.26); }
 .image-node.dragging .node-port { opacity:0 !important; pointer-events:none !important; }
 .shell.port-dragging { cursor:crosshair !important; }
 .image-node.drop-target { outline:2px dashed var(--strong); outline-offset:4px; border-radius:18px; }
@@ -1378,4 +1378,198 @@ input[type=range].smart-range::-webkit-slider-thumb { -webkit-appearance:none; w
     .video-config-detail-grid { grid-template-columns:minmax(0,1fr); gap:0; }
     .video-config-provider-grid,.video-config-model-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
     .video-generation-control .video-config-ratio-grid { grid-template-columns:repeat(6,minmax(0,1fr)); }
+}
+
+/* MediaForge Apple-style workbench layer */
+:root { --mf-canvas-bg:#0b0d11; --mf-canvas-surface:#12161d; --mf-canvas-surface-2:#171c24; --mf-canvas-line:rgba(255,255,255,.1); --mf-canvas-accent:#5b9dff; }
+.theme-dark { --page:var(--mf-canvas-bg); --panel:var(--mf-canvas-surface); --card:var(--mf-canvas-surface-2); --soft:#10141a; --line:var(--mf-canvas-line); --text:#f2f5f8; --muted:#8c98a8; --strong:var(--mf-canvas-accent); --strong-text:#07111f; --shadow:rgba(0,0,0,.35); }
+.shell { background-image:radial-gradient(rgba(141,160,184,.16) 1px,transparent 1px); background-size:28px 28px; }
+.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.canvas-toolbar { backdrop-filter:blur(18px) saturate(130%); }
+.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle { border-radius:8px; background:rgba(18,22,29,.9); border-color:var(--mf-canvas-line); }
+.canvas-log-toggle.active,.canvas-shortcut-toggle.active,.canvas-workflow-toggle.active { background:var(--mf-canvas-accent); color:#07111f; border-color:var(--mf-canvas-accent); }
+.image-node.empty-node,.image-node.prompt-smart-node,.image-node.loop-smart-node { border-radius:12px; background:rgba(18,22,29,.94); border-color:var(--mf-canvas-line); box-shadow:0 18px 48px rgba(0,0,0,.3); }
+.image-node.empty-node:hover,.image-node.prompt-smart-node:hover,.image-node.loop-smart-node:hover { border-color:var(--mf-canvas-accent); box-shadow:0 18px 52px rgba(0,0,0,.38); }
+.image-node.selected:not(.group-node) .image-wrap img,.image-node.selected:not(.group-node) .node-img { border-color:var(--mf-canvas-accent); box-shadow:0 0 0 2px var(--mf-canvas-accent); }
+.prompt-node-text,.prompt-composer-instruction,.loop-smart-count,.loop-smart-toggle,.prompt-node-pill { background:var(--mf-canvas-surface-2); border-color:var(--mf-canvas-line); color:var(--text); }
+button:active { transform:scale(.97); }
+@media (max-width:760px) { .canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle { top:64px; width:38px; padding:0; font-size:0; } .canvas-log-toggle { right:14px; } .canvas-shortcut-toggle { right:58px; } .canvas-workflow-toggle { right:102px; } }
+
+/* Apple interaction pass for the dark canvas workbench. */
+.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.asset-toggle { border-radius:11px; border-color:rgba(148,163,184,.24); background:rgba(18,22,29,.78); box-shadow:0 12px 30px rgba(0,0,0,.24),inset 0 1px rgba(255,255,255,.08); backdrop-filter:blur(22px) saturate(145%); -webkit-backdrop-filter:blur(22px) saturate(145%); transition:transform .22s cubic-bezier(.22,1,.36,1),border-color .18s ease,background .18s ease,box-shadow .18s ease; }
+.canvas-log-toggle:hover,.canvas-shortcut-toggle:hover,.canvas-workflow-toggle:hover,.asset-toggle:hover { transform:translateY(-2px); border-color:rgba(91,157,255,.72); background:rgba(30,43,63,.88); box-shadow:0 16px 34px rgba(0,0,0,.3),0 0 0 3px rgba(91,157,255,.1); }
+.canvas-log-toggle:active,.canvas-shortcut-toggle:active,.canvas-workflow-toggle:active,.asset-toggle:active { transform:scale(.96); }
+.canvas-log-toggle.active,.canvas-shortcut-toggle.active,.canvas-workflow-toggle.active,.asset-toggle.active { background:#5b9dff; border-color:#7db5ff; color:#07111f; box-shadow:0 12px 28px rgba(91,157,255,.3); }
+.composer,.asset-panel { transform-origin:top right; }
+.composer { transition:opacity .2s ease,transform .42s cubic-bezier(.22,1,.36,1),filter .42s cubic-bezier(.22,1,.36,1); filter:blur(3px); }
+.composer.open { filter:blur(0); }
+.asset-panel { transition:opacity .2s ease,transform .42s cubic-bezier(.22,1,.36,1),filter .42s cubic-bezier(.22,1,.36,1),visibility .2s ease; filter:blur(3px); }
+.asset-panel.open { filter:blur(0); }
+.composer-card,.asset-panel,.canvas-minimap { border-color:rgba(148,163,184,.22); box-shadow:0 24px 64px rgba(0,0,0,.34),inset 0 1px rgba(255,255,255,.08); backdrop-filter:blur(26px) saturate(150%); -webkit-backdrop-filter:blur(26px) saturate(150%); }
+.prompt-input:focus,.prompt-composer-instruction:focus,.engine-select:focus,.asset-category-select:focus,.mention-library-select:focus { border-color:#5b9dff; box-shadow:0 0 0 3px rgba(91,157,255,.18); }
+.run-btn:active,.create-card:active,.asset-tab:active,.asset-mini-btn:active,.composer-template-btn:active { transform:scale(.96); }
+@media (prefers-reduced-motion:reduce) { .composer,.asset-panel { filter:none; transition:opacity 180ms ease; transform:none !important; } .canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.asset-toggle { transition:background 160ms ease,border-color 160ms ease; } }
+@media (prefers-reduced-transparency:reduce) { .canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.asset-toggle,.composer-card,.asset-panel,.canvas-minimap { background:#12161d; backdrop-filter:none; -webkit-backdrop-filter:none; } }
+
+/* Dropdowns must escape the compact node/composer frame. The frame stays
+   bounded; only the floating menu is allowed to extend beyond it. */
+.composer,
+.composer-card,
+.composer-card .param-row,
+.composer-card .dynamic-params,
+.dynamic-params > .smart-control,
+.image-node.prompt-smart-node,
+.image-node.loop-smart-node { overflow:visible !important; }
+.dynamic-params > .smart-control:has(.smart-popover),
+.composer-head-params > .smart-control:has(.smart-popover) { z-index:80; }
+.dynamic-params > .smart-control.pinned,
+.composer-head-params > .smart-control.pinned { z-index:240; }
+.model-popover,
+.workflow-control > .smart-popover,
+.rh-picker-popover { z-index:250; max-height:min(360px, calc(100vh - 24px)); overflow:visible; }
+.model-popover .model-list,
+.workflow-control > .smart-popover .model-list,
+.rh-picker-popover .model-list { max-height:min(280px, calc(100vh - 112px)); overflow-y:auto; overscroll-behavior:contain; }
+/* Generation controls sit near the top edge of the composer. Open their
+   menus downward so the first options are never clipped by the viewport. */
+.composer .dynamic-params .smart-popover,
+.composer .dynamic-params .model-popover,
+.composer .dynamic-params .workflow-control > .smart-popover { top:calc(100% + 8px); bottom:auto; transform:translate(-50%, -4px); }
+.composer .dynamic-params .smart-control.pinned > .smart-popover,
+.composer .dynamic-params .video-model-control.pinned > .smart-popover,
+.composer .dynamic-params .video-generation-control.pinned > .smart-popover { transform:translate(-50%, 0); }
+.composer .dynamic-params .video-model-control > .smart-popover,
+.composer .dynamic-params .video-generation-control > .smart-popover { transform:translate(0, -4px); }
+.composer .dynamic-params .video-model-control.pinned > .smart-popover,
+.composer .dynamic-params .video-generation-control.pinned > .smart-popover { transform:translate(0, 0); }
+@media (max-width:760px) {
+    .model-popover,
+    .workflow-control > .smart-popover,
+    .rh-picker-popover { max-width:calc(100vw - 24px); }
+}
+
+/* Aspect-ratio picker: a calm, legible selection surface in dark mode. */
+.ratio-control .smart-popover {
+    min-width:276px;
+    padding:10px;
+    border-radius:14px;
+    background:color-mix(in srgb, var(--panel) 92%, #000 8%);
+    box-shadow:0 18px 46px rgba(0,0,0,.34), inset 0 1px rgba(255,255,255,.07);
+}
+.ratio-control .smart-popover-title {
+    margin:1px 3px 8px;
+    font-size:10px;
+    line-height:1.3;
+    letter-spacing:.04em;
+}
+.ratio-control .ratio-grid {
+    grid-template-columns:repeat(4, minmax(48px, 1fr));
+    gap:4px;
+}
+.ratio-control .ratio-option {
+    position:relative;
+    min-height:40px;
+    height:40px;
+    border-radius:9px;
+    gap:4px;
+    color:var(--muted);
+    font-size:10px;
+    line-height:1.1;
+    font-weight:550;
+    transition:background .16s ease, color .16s ease, border-color .16s ease, transform .16s ease;
+}
+.ratio-control .ratio-option:hover {
+    color:var(--text);
+    background:color-mix(in srgb, var(--card) 78%, var(--strong) 22%);
+    border-color:rgba(91,157,255,.38);
+    transform:translateY(-1px);
+}
+.ratio-control .ratio-option:active { transform:scale(.96); }
+.ratio-control .ratio-option.active {
+    color:var(--strong);
+    background:rgba(91,157,255,.16);
+    border-color:rgba(91,157,255,.72);
+    box-shadow:inset 0 0 0 1px rgba(91,157,255,.14);
+}
+.ratio-control .ratio-option.active::after {
+    content:'✓';
+    position:absolute;
+    top:3px;
+    right:5px;
+    color:var(--strong);
+    font-size:9px;
+    line-height:1;
+    font-weight:800;
+}
+.ratio-control .ratio-option:focus-visible {
+    outline:2px solid var(--strong);
+    outline-offset:2px;
+}
+@media (max-width:360px) {
+    .ratio-control .smart-popover { min-width:0; width:min(276px, calc(100vw - 24px)); }
+    .ratio-control .ratio-grid { grid-template-columns:repeat(3, minmax(48px, 1fr)); }
+}
+
+/* Light canvas appearance. The dark workbench layer above is intentionally
+   retained for dark mode, but must not leak into the default surface. */
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-log-toggle,
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-shortcut-toggle,
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-workflow-toggle,
+html:not(.theme-dark):not(.studio-theme-dark) .asset-toggle {
+    border-color:rgba(60,60,67,.16);
+    background:rgba(255,255,255,.72);
+    color:var(--text);
+    box-shadow:0 12px 30px rgba(60,60,67,.12), inset 0 1px rgba(255,255,255,.82);
+}
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-log-toggle:hover,
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-shortcut-toggle:hover,
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-workflow-toggle:hover,
+html:not(.theme-dark):not(.studio-theme-dark) .asset-toggle:hover {
+    background:rgba(255,255,255,.92);
+    border-color:rgba(10,132,255,.54);
+    box-shadow:0 16px 34px rgba(60,60,67,.15), 0 0 0 3px rgba(10,132,255,.1);
+}
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-log-toggle.active,
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-shortcut-toggle.active,
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-workflow-toggle.active,
+html:not(.theme-dark):not(.studio-theme-dark) .asset-toggle.active { background:#0a84ff; border-color:#409cff; color:#fff; }
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card,
+html:not(.theme-dark):not(.studio-theme-dark) .asset-panel,
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-minimap {
+    border-color:rgba(60,60,67,.16);
+    box-shadow:0 24px 64px rgba(60,60,67,.14), inset 0 1px rgba(255,255,255,.72);
+}
+html:not(.theme-dark):not(.studio-theme-dark) .image-node.empty-node,
+html:not(.theme-dark):not(.studio-theme-dark) .image-node.prompt-smart-node,
+html:not(.theme-dark):not(.studio-theme-dark) .image-node.loop-smart-node {
+    background:rgba(255,255,255,.84);
+    border-color:rgba(60,60,67,.16);
+    box-shadow:0 18px 48px rgba(60,60,67,.12);
+}
+html:not(.theme-dark):not(.studio-theme-dark) .prompt-node-text,
+html:not(.theme-dark):not(.studio-theme-dark) .prompt-composer-instruction,
+html:not(.theme-dark):not(.studio-theme-dark) .loop-smart-count,
+html:not(.theme-dark):not(.studio-theme-dark) .loop-smart-toggle,
+html:not(.theme-dark):not(.studio-theme-dark) .prompt-node-pill {
+    background:rgba(255,255,255,.72);
+    border-color:rgba(60,60,67,.16);
+    color:var(--text);
+}
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .smart-pill,
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .param-row select,
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .dynamic-params input,
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .dynamic-params textarea { color:var(--text); }
+html:not(.theme-dark):not(.studio-theme-dark) .smart-control:hover .smart-pill { background:rgba(255,255,255,.78); border-color:rgba(60,60,67,.16); }
+html:not(.theme-dark):not(.studio-theme-dark) .smart-control.pinned .smart-pill { border-color:#0a84ff; }
+html:not(.theme-dark):not(.studio-theme-dark) .smart-popover { background:rgba(255,255,255,.9); border-color:rgba(60,60,67,.16); color:var(--text); box-shadow:0 18px 46px rgba(60,60,67,.18), inset 0 1px rgba(255,255,255,.8); }
+html:not(.theme-dark):not(.studio-theme-dark) .smart-popover .direct-option:hover { background:rgba(10,132,255,.08); border-color:rgba(10,132,255,.26); color:var(--text); }
+html:not(.theme-dark):not(.studio-theme-dark) .smart-popover .direct-option.active { background:rgba(10,132,255,.12); border-color:rgba(10,132,255,.36); color:#007aff; }
+html:not(.theme-dark):not(.studio-theme-dark) .canvas-minimap-content { background-color:#f2f2f7; }
+@media (prefers-reduced-transparency:reduce) {
+    html:not(.theme-dark):not(.studio-theme-dark) .canvas-log-toggle,
+    html:not(.theme-dark):not(.studio-theme-dark) .canvas-shortcut-toggle,
+    html:not(.theme-dark):not(.studio-theme-dark) .canvas-workflow-toggle,
+    html:not(.theme-dark):not(.studio-theme-dark) .asset-toggle,
+    html:not(.theme-dark):not(.studio-theme-dark) .composer-card,
+    html:not(.theme-dark):not(.studio-theme-dark) .asset-panel,
+    html:not(.theme-dark):not(.studio-theme-dark) .canvas-minimap { background:#fff; backdrop-filter:none; -webkit-backdrop-filter:none; }
 }

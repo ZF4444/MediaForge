@@ -8,7 +8,7 @@
     <script>
         (function(){
             try {
-                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'dark';
                 if(theme === 'dark') {
                     document.documentElement.classList.add('studio-theme-dark');
                     document.documentElement.classList.add('theme-dark');
@@ -458,6 +458,17 @@
         #messageInput::-webkit-scrollbar-thumb {
             background:transparent !important;
         }
+        /* Apple-style conversation surface */
+        :root { --chat-accent:#5b9dff; --chat-surface:#12161d; --chat-surface-2:#171c24; --chat-line:rgba(255,255,255,.1); }
+        html.studio-theme-dark body .topbar, body.studio-theme-dark .topbar { background:rgba(18,22,29,.88) !important; border-bottom:1px solid var(--chat-line) !important; }
+        html.studio-theme-dark body .action-btn, body.studio-theme-dark .action-btn { background:var(--chat-surface-2); border-color:var(--chat-line); color:#c7d0dc; border-radius:8px; }
+        html.studio-theme-dark body .composer, body.studio-theme-dark .composer { background:rgba(18,22,29,.96); border-color:var(--chat-line); box-shadow:0 16px 40px rgba(0,0,0,.32); }
+        html.studio-theme-dark body .composer-body, body.studio-theme-dark .composer-body { background:var(--chat-surface-2); border-color:var(--chat-line); }
+        html.studio-theme-dark body .bubble.assistant, body.studio-theme-dark .bubble.assistant { background:var(--chat-surface); border-color:var(--chat-line); }
+        html.studio-theme-dark body .send-btn, body.studio-theme-dark .send-btn { background:var(--chat-accent); color:#07111f; border-radius:8px; }
+        html.studio-theme-dark body .model-picker-button, body.studio-theme-dark .model-picker-button, html.studio-theme-dark body .resolution-picker-button, body.studio-theme-dark .resolution-picker-button { background:var(--chat-surface-2); border-color:var(--chat-line); border-radius:8px; }
+        button:active { transform:scale(.97); }
+        @media (prefers-reduced-motion: reduce) { .messages *, .composer *, .topbar * { transition:none !important; animation:none !important; } }
     </style>
 </head>
 <body>

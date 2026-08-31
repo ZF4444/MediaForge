@@ -5,7 +5,7 @@
     const SCALE_OPTIONS = ['auto', '100', '115', '125', '140'];
 
     function currentTheme(){
-        return localStorage.getItem(KEY) || localStorage.getItem(LEGACY_KEY) || 'light';
+        return localStorage.getItem(KEY) || localStorage.getItem(LEGACY_KEY) || 'dark';
     }
 
     function applyTheme(theme){

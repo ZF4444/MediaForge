@@ -5218,7 +5218,7 @@ function windowStudioLangChangeHandler(){
 window.addEventListener('studio-lang-change', windowStudioLangChangeHandler);
 async function windowLoadHandler(){
     showBootLoadingOverlay();
-    applyTheme(localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light');
+    applyTheme(localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'dark');
     bindNodeShortcutOverlayEvents();
     bindNodeContextMenuEvents();
     loadPromptPresets();

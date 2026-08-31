@@ -6,6 +6,195 @@ body.studio-theme-dark {
     color: #e8e8ea !important;
 }
 
+/* Shared MediaForge surface tokens consumed by standalone pages and iframes. */
+:root {
+    --mf-bg: #0b0d11;
+    --mf-surface: #12161d;
+    --mf-surface-2: #171c24;
+    --mf-line: rgba(255,255,255,.09);
+    --mf-text: #f2f5f8;
+    --mf-muted: #8c98a8;
+    --mf-accent: #5b9dff;
+    --mf-radius-sm: 8px;
+    --mf-radius-md: 12px;
+    --mf-focus: rgba(91,157,255,.55);
+}
+html:not(.studio-theme-dark):not(.theme-dark) {
+    --mf-bg: #f4f6f8;
+    --mf-surface: #ffffff;
+    --mf-surface-2: #f1f4f7;
+    --mf-line: rgba(15,23,42,.11);
+    --mf-text: #10151d;
+    --mf-muted: #687384;
+    --mf-accent: #2563eb;
+    --mf-focus: rgba(37,99,235,.35);
+}
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--mf-focus);
+    outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+@media (prefers-reduced-transparency: reduce) {
+    [style*="backdrop-filter"], .topbar, .toolbar, .modal, .drawer { backdrop-filter: none !important; }
+}
+
+/* Page-specific shells use the same macOS graphite hierarchy. */
+html.studio-theme-dark .account,
+html.theme-dark .account,
+html.studio-theme-dark .ac-wrap,
+html.theme-dark .ac-wrap,
+html.studio-theme-dark .shell,
+html.theme-dark .shell,
+html.studio-theme-dark .workflow-settings-shell,
+html.theme-dark .workflow-settings-shell {
+    background: transparent !important;
+    color: #f5f5f7 !important;
+}
+html.studio-theme-dark .metric,
+html.theme-dark .metric,
+html.studio-theme-dark .profile,
+html.theme-dark .profile,
+html.studio-theme-dark .ac-workspace,
+html.theme-dark .ac-workspace,
+html.studio-theme-dark .ac-assignment,
+html.theme-dark .ac-assignment,
+html.studio-theme-dark .org-panel,
+html.theme-dark .org-panel,
+html.studio-theme-dark .budget-row,
+html.theme-dark .budget-row,
+html.studio-theme-dark .head,
+html.theme-dark .head,
+html.studio-theme-dark .tabs,
+html.theme-dark .tabs {
+    background: rgba(44,44,46,.78) !important;
+    border-color: rgba(255,255,255,.12) !important;
+    color: #f5f5f7 !important;
+    box-shadow: 0 16px 40px rgba(0,0,0,.18), inset 0 1px rgba(255,255,255,.06) !important;
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+}
+html.studio-theme-dark .title,
+html.theme-dark .title,
+html.studio-theme-dark .ac-title,
+html.theme-dark .ac-title,
+html.studio-theme-dark .page-head .title,
+html.theme-dark .page-head .title,
+html.studio-theme-dark h1,
+html.theme-dark h1,
+html.studio-theme-dark h2,
+html.theme-dark h2 { color: #f5f5f7 !important; }
+html.studio-theme-dark .subtitle,
+html.theme-dark .subtitle,
+html.studio-theme-dark .ac-sub,
+html.theme-dark .ac-sub,
+html.studio-theme-dark .sub,
+html.theme-dark .sub,
+html.studio-theme-dark .faint,
+html.theme-dark .faint { color: #a1a1a6 !important; }
+html.studio-theme-dark .tab.active,
+html.theme-dark .tab.active,
+html.studio-theme-dark .ac-save-btn,
+html.theme-dark .ac-save-btn { background: #0a84ff !important; border-color: #0a84ff !important; color: #fff !important; }
+
+/* macOS dark system surface tokens shared by every standalone page. */
+html.studio-theme-dark,
+html.theme-dark,
+body.studio-theme-dark,
+body.theme-dark {
+    --bg: #1c1c1e !important;
+    --bg-base: #1c1c1e !important;
+    --page: #1c1c1e !important;
+    --panel: rgba(44,44,46,.84) !important;
+    --card: rgba(44,44,46,.82) !important;
+    --soft: #2c2c2e !important;
+    --line: rgba(255,255,255,.12) !important;
+    --line-strong: rgba(255,255,255,.24) !important;
+    --text: #f5f5f7 !important;
+    --text-main: #f5f5f7 !important;
+    --muted: #a1a1a6 !important;
+    --faint: #8e8e93 !important;
+    --accent: #0a84ff !important;
+    --mf-bg: #1c1c1e !important;
+    --mf-surface: rgba(44,44,46,.84) !important;
+    --mf-surface-2: #323234 !important;
+    --mf-line: rgba(255,255,255,.12) !important;
+    --mf-text: #f5f5f7 !important;
+    --mf-muted: #a1a1a6 !important;
+    --mf-accent: #0a84ff !important;
+    --wf-bg: #1c1c1e !important;
+    --wf-panel: rgba(44,44,46,.84) !important;
+    --wf-line: rgba(255,255,255,.12) !important;
+    --wf-text: #f5f5f7 !important;
+    --wf-muted: #a1a1a6 !important;
+    --wf-soft: #2c2c2e !important;
+    --wf-accent: #0a84ff !important;
+}
+html.studio-theme-dark body,
+html.theme-dark body,
+body.studio-theme-dark,
+body.theme-dark {
+    background: #1c1c1e !important;
+    color: #f5f5f7 !important;
+    background-image: radial-gradient(ellipse 70% 55% at 80% -10%, rgba(57,75,105,.2), transparent 70%) !important;
+}
+html.studio-theme-dark .page,
+html.theme-dark .page,
+html.studio-theme-dark .asset-page,
+html.theme-dark .asset-page,
+html.studio-theme-dark .workflow-config-view,
+html.theme-dark .workflow-config-view,
+html.studio-theme-dark .content-head,
+html.theme-dark .content-head,
+html.studio-theme-dark .panel,
+html.theme-dark .panel,
+html.studio-theme-dark .card,
+html.theme-dark .card,
+html.studio-theme-dark .toolbar,
+html.theme-dark .toolbar,
+html.studio-theme-dark .topbar,
+html.theme-dark .topbar,
+html.studio-theme-dark .modal,
+html.theme-dark .modal,
+html.studio-theme-dark .drawer,
+html.theme-dark .drawer,
+html.studio-theme-dark .control-panel,
+html.theme-dark .control-panel,
+html.studio-theme-dark .setting-row,
+html.theme-dark .setting-row {
+    border-color: rgba(255,255,255,.12) !important;
+    background-color: rgba(44,44,46,.78) !important;
+    color: #f5f5f7 !important;
+    box-shadow: 0 18px 44px rgba(0,0,0,.2), inset 0 1px rgba(255,255,255,.07) !important;
+    backdrop-filter: blur(26px) saturate(145%);
+    -webkit-backdrop-filter: blur(26px) saturate(145%);
+}
+html.studio-theme-dark input,
+html.studio-theme-dark textarea,
+html.studio-theme-dark select,
+html.theme-dark input,
+html.theme-dark textarea,
+html.theme-dark select {
+    background-color: rgba(28,28,30,.8) !important;
+    border-color: rgba(255,255,255,.14) !important;
+    color: #f5f5f7 !important;
+}
+html.studio-theme-dark button,
+html.theme-dark button { color: inherit; }
+html.studio-theme-dark button.primary,
+html.theme-dark button.primary,
+html.studio-theme-dark .primary,
+html.theme-dark .primary { background-color: #0a84ff !important; border-color: #0a84ff !important; color: #fff !important; }
+@media (prefers-reduced-transparency: reduce) {
+    html.studio-theme-dark .page, html.theme-dark .page, html.studio-theme-dark .asset-page, html.theme-dark .asset-page,
+    html.studio-theme-dark .content-head, html.theme-dark .content-head, html.studio-theme-dark .panel, html.theme-dark .panel,
+    html.studio-theme-dark .card, html.theme-dark .card, html.studio-theme-dark .toolbar, html.theme-dark .toolbar,
+    html.studio-theme-dark .topbar, html.theme-dark .topbar, html.studio-theme-dark .modal, html.theme-dark .modal,
+    html.studio-theme-dark .drawer, html.theme-dark .drawer, html.studio-theme-dark .control-panel, html.theme-dark .control-panel,
+    html.studio-theme-dark .setting-row, html.theme-dark .setting-row { backdrop-filter: none; -webkit-backdrop-filter: none; background-color: #2c2c2e !important; }
+}
+
 html,
 body {
     overscroll-behavior: auto;
@@ -1631,3 +1820,80 @@ body.studio-theme-dark .shell .comfy-random-btn.active svg {
     fill: none !important;
     stroke: #0f172a !important;
 }
+
+/* Final macOS shell pass, kept at EOF so legacy dark rules cannot reintroduce blue-black surfaces. */
+html.studio-theme-dark body .app-shell,
+html.theme-dark body .app-shell,
+body.studio-theme-dark .app-shell,
+body.theme-dark .app-shell { background: #1c1c1e !important; }
+html.studio-theme-dark body .sidebar,
+html.theme-dark body .sidebar,
+body.studio-theme-dark .sidebar,
+body.theme-dark .sidebar { background: rgba(37,37,38,.86) !important; border-color: rgba(255,255,255,.1) !important; }
+html.studio-theme-dark body .stage,
+html.theme-dark body .stage,
+body.studio-theme-dark .stage,
+body.theme-dark .stage { background: #1c1c1e !important; }
+html.studio-theme-dark body .nav-item.active,
+html.theme-dark body .nav-item.active,
+body.studio-theme-dark .nav-item.active,
+body.theme-dark .nav-item.active { background: #0a84ff !important; color: #fff !important; box-shadow: 0 8px 22px rgba(10,132,255,.25) !important; }
+html.studio-theme-dark body .workbench-topbar,
+html.theme-dark body .workbench-topbar,
+body.studio-theme-dark .workbench-topbar,
+body.theme-dark .workbench-topbar { background: rgba(44,44,46,.76) !important; border-color: rgba(255,255,255,.12) !important; backdrop-filter: blur(24px) saturate(145%); }
+
+/* Primary actions use the macOS system blue consistently across legacy pages. */
+html.studio-theme-dark body .save-btn,
+html.theme-dark body .save-btn,
+html.studio-theme-dark body .save-meta-btn,
+html.theme-dark body .save-meta-btn,
+html.studio-theme-dark body .api-link-btn,
+html.theme-dark body .api-link-btn,
+html.studio-theme-dark body .action-btn.save-btn,
+html.theme-dark body .action-btn.save-btn,
+html.studio-theme-dark body .random-btn.active,
+html.theme-dark body .random-btn.active,
+html.studio-theme-dark body .comfy-random-btn.active,
+html.theme-dark body .comfy-random-btn.active,
+html.studio-theme-dark body .org-btn,
+html.theme-dark body .org-btn {
+    background: #0a84ff !important;
+    background-color: #0a84ff !important;
+    border-color: #0a84ff !important;
+    color: #fff !important;
+    box-shadow: 0 8px 20px rgba(10,132,255,.22) !important;
+}
+html.studio-theme-dark body .save-btn:hover,
+html.theme-dark body .save-btn:hover,
+html.studio-theme-dark body .save-meta-btn:hover,
+html.theme-dark body .save-meta-btn:hover,
+html.studio-theme-dark body .api-link-btn:hover,
+html.theme-dark body .api-link-btn:hover,
+html.studio-theme-dark body .org-btn:hover,
+html.theme-dark body .org-btn:hover { background: #409cff !important; border-color: #409cff !important; }
+html.studio-theme-dark body .action-btn,
+html.theme-dark body .action-btn,
+html.studio-theme-dark body .toolbar-icon,
+html.theme-dark body .toolbar-icon,
+html.studio-theme-dark body .refresh,
+html.theme-dark body .refresh { background: rgba(44,44,46,.76) !important; border-color: rgba(255,255,255,.14) !important; color: #d1d1d6 !important; }
+
+/* Canvas picker menus must render outside the composer card. */
+html.studio-theme-dark body .composer,
+html.theme-dark body .composer,
+body.studio-theme-dark .composer,
+body.theme-dark .composer { overflow: visible !important; }
+
+html.studio-theme-dark body .composer-card,
+html.theme-dark body .composer-card,
+body.studio-theme-dark .composer-card,
+body.theme-dark .composer-card,
+html.studio-theme-dark body .composer-card .param-row,
+html.theme-dark body .composer-card .param-row,
+body.studio-theme-dark .composer-card .param-row,
+body.theme-dark .composer-card .param-row,
+html.studio-theme-dark body .composer-card .dynamic-params,
+html.theme-dark body .composer-card .dynamic-params,
+body.studio-theme-dark .composer-card .dynamic-params,
+body.theme-dark .composer-card .dynamic-params { overflow: visible !important; }
