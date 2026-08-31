@@ -2279,17 +2279,6 @@ async def wait_for_runninghub_image_task(client, provider, task_id):
         await asyncio.sleep(min(IMAGE_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
     raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{task_id}")
 
-async def generate_runninghub_app_image(prompt, reference_images, provider, entry):
-    fields = entry.get("fields") or []
-    node_info = [{"nodeId": str(field.get("nodeId") or ""), "fieldName": str(field.get("fieldName") or ""), "fieldValue": prompt} for field in fields if str(field.get("fieldName") or "").lower() in {"prompt", "text"}]
-    body = {"apiKey": runninghub_api_key(provider), "webappId": entry.get("webappId") or entry.get("appId") or entry.get("id"), "nodeInfoList": node_info}
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=180.0, pool=20.0)) as client:
-        response = await client.post(runninghub_endpoint_url(provider, "/task/openapi/ai-app/run"), headers=runninghub_app_headers(True), json=body)
-        response.raise_for_status(); raw = response.json(); task_id = runninghub_extract_task_id(raw)
-        if not task_id: raise HTTPException(status_code=502, detail="RunningHub 未返回 taskId。")
-        result = await wait_for_runninghub_image_task(client, provider, task_id)
-    return runninghub_extract_image(result), result
-
 def runninghub_local_asset_path(source_url):
     return output_file_from_url(source_url)
 
