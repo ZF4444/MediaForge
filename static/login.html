@@ -9,7 +9,7 @@
     <script>
         (function () {
             try {
-                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'dark';
                 if (theme === 'dark') {
                     document.documentElement.classList.add('studio-theme-dark');
                     document.documentElement.classList.add('theme-dark');
@@ -159,6 +159,8 @@
 
         .hint { margin-top: 16px; font-size: 12px; color: var(--muted); line-height: 1.55; text-align: center; }
     </style>
+    <link rel="stylesheet" href="/static/css/theme.css">
+    <link rel="stylesheet" href="/static/css/macos-dark.css">
 </head>
 
 <body>

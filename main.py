@@ -780,6 +780,13 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 async def api_version():
     return Response(current_app_version(), media_type="text/plain", headers={"Cache-Control": "no-store"})
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    logo_path = os.path.join(STATIC_DIR, "images", "logo.png")
+    if os.path.isfile(logo_path):
+        return FileResponse(logo_path, media_type="image/png")
+    raise HTTPException(status_code=404)
+
 @app.get("/static/{page}.html")
 async def static_html_page(page: str):
     # 仅拦截顶层 HTML 页面（如 /static/angle.html），运行时动态注入版本号。

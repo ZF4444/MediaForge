@@ -7,7 +7,7 @@
     <script>
         (function(){
             try {
-                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'dark';
                 if(theme === 'dark') document.documentElement.classList.add('theme-dark');
             } catch(e) {}
         })();
@@ -49,6 +49,7 @@
             }
         }
     </script>
+    <link rel="stylesheet" href="/static/css/macos-dark.css">
 </head>
 <body>
     <div id="host">

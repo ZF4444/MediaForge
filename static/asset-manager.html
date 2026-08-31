@@ -8,7 +8,7 @@
     <script>
         (function(){
             try {
-                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'dark';
                 if(theme === 'dark') {
                     document.documentElement.classList.add('studio-theme-dark');
                     document.documentElement.classList.add('theme-dark');
@@ -20,6 +20,7 @@
     <script src="/static/js/theme.js"></script>
     <link rel="stylesheet" href="/static/css/theme.css">
     <link rel="stylesheet" href="/static/css/asset-manager.css">
+    <link rel="stylesheet" href="/static/css/workspace-theme.css">
 </head>
 <body>
     <div class="asset-page">

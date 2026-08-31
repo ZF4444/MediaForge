@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>用户管理</title>
     <script>
-        try { if ((localStorage.getItem('studio_theme') || 'light') === 'dark') document.documentElement.classList.add('theme-dark'); } catch(e) {}
+        try { if ((localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'dark') === 'dark') document.documentElement.classList.add('theme-dark'); } catch(e) {}
     </script>
     <script src="/static/vendor/js/lucide.js"></script>
     <script src="/static/js/theme.js"></script>
