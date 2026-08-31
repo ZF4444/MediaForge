@@ -2665,12 +2665,11 @@ async def build_chat_text_reply(payload, conversation):
 @app.get("/api/view")
 async def view_image(filename: str, type: str = "input", subfolder: str = ""):
     # 先按原逻辑去各 ComfyUI 后端找
-    client = get_http_client()
+    from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+    transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
     for addr in COMFYUI_INSTANCES:
         try:
-            url = comfyui_url(addr, "/view")
-            params = {"filename": filename, "type": type, "subfolder": subfolder}
-            r = await client.get(url, params=params, timeout=1)
+            r = await transport.view(addr, filename, kind=type, subfolder=subfolder)
             if r.status_code == 200:
                 return Response(content=r.content, media_type=r.headers.get('Content-Type'))
         except Exception:
