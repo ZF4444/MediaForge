@@ -115,7 +115,7 @@ function runningHubEntries(kind){
     // authoritative list as a fallback when the connection uses a custom ID.
     const resourceApps = (Array.isArray(aiResourceIndex?.resources) ? aiResourceIndex.resources : [])
         .filter(item => item?.kind === 'runninghub_app')
-        .map(item => ({...(item.settings || {}), id:item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id, name:item.name, enabled:item.enabled !== false}));
+        .map(item => ({...(item.settings || {}), id:item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id, title:item.title || item.settings?.title, name:item.name, enabled:item.enabled !== false}));
     const apps = providerApps.length ? providerApps : resourceApps;
     return apps.filter(item => item?.enabled !== false && item?.hidden !== true);
 }
@@ -1763,6 +1763,7 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
             rh_apps:(stableCfg.resources || []).filter(r => r.connection_id === c.id && r.kind === 'runninghub_app').map(r => ({
                 ...(r.settings || {}),
                 id: r.settings?.id || r.settings?.appId || r.settings?.webappId || r.id,
+                title: r.title || r.settings?.title || r.name,
                 name: r.name,
                 enabled: r.enabled !== false,
             })),

@@ -3106,6 +3106,7 @@ async def ai_resources():
                 "connection_id": item.connection_id,
                 "kind": item.kind,
                 "name": item.name,
+                "title": (dict(item.settings).get("title") or dict(item.settings).get("name") or item.name),
             }
             for item in repository.executable_resources()
             ],
