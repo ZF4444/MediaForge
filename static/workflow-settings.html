@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>工作流设置</title>
+    <script src="/static/vendor/js/lucide.js"></script>
     <script src="/static/js/theme.js"></script>
     <link rel="stylesheet" href="/static/css/theme.css">
     <link rel="stylesheet" href="/static/css/workflow-settings.css">
@@ -12,17 +13,20 @@
     <main class="workflow-settings-shell">
         <header class="workflow-settings-head">
             <div class="head-copy">
-                <div class="eyebrow">WORKFLOW SETTINGS</div>
-                <h1>工作流设置</h1>
-                <p>统一管理 ComfyUI 工作流与 RH 应用。</p>
+                <div class="eyebrow"><span class="eyebrow-dot"></span>工作区设置</div>
+                <h1>工作流</h1>
+                <p>集中管理可用于画布生成的工作流与 AI 应用。</p>
             </div>
-            <button id="newWorkflowBtn" class="primary-btn" type="button"><span class="plus">+</span> 新建工作流</button>
+            <div class="head-actions">
+                <span class="head-status"><i data-lucide="check-circle-2"></i>服务正常</span>
+                <button id="newWorkflowBtn" class="primary-btn" type="button"><i data-lucide="plus"></i><span>新建工作流</span></button>
+            </div>
         </header>
 
         <section id="workflowListView" class="workflow-list-view">
             <div class="list-toolbar">
-                <div><h2>工作流列表</h2><span id="workflowCount" class="list-count">0 个</span></div>
-                <button id="refreshWorkflowsBtn" class="icon-btn" type="button" title="刷新">↻</button>
+                <div><h2>工作流列表</h2><span id="workflowCount" class="list-count">0 个</span><p>启用后才会出现在画布的生成选择中</p></div>
+                <button id="refreshWorkflowsBtn" class="icon-btn" type="button" title="刷新工作流" aria-label="刷新工作流"><i data-lucide="refresh-cw"></i></button>
             </div>
             <div id="workflowList" class="workflow-grid" aria-live="polite"></div>
         </section>

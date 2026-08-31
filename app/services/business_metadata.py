@@ -440,7 +440,7 @@ def list_comfy_workflows() -> list[dict[str, Any]]:
     result = []
     for row in rows:
         config = row['config_json'] or {}
-        result.append({'name': row['name'], 'title': config.get('title') or row['name'].replace('.json', ''), 'builtin': bool(row['builtin']), 'field_count': len(config.get('fields') or []), 'media': config.get('media') if config.get('media') in {'image','video'} else 'image'})
+        result.append({'name': row['name'], 'title': config.get('title') or row['name'].replace('.json', ''), 'builtin': bool(row['builtin']), 'field_count': len(config.get('fields') or []), 'media': config.get('media') if config.get('media') in {'image','video'} else 'image', 'enabled': config.get('enabled', True) is not False})
     return sorted(result, key=lambda item: (0 if item['name'].startswith('custom/') else 1, item['title']))
 
 
@@ -454,6 +454,7 @@ def get_comfy_workflow(name: str) -> dict[str, Any] | None:
     config.setdefault('title', name.replace('.json', ''))
     config.setdefault('fields', [])
     config['media'] = config.get('media') if config.get('media') in {'image','video'} else 'image'
+    config['enabled'] = config.get('enabled', True) is not False
     return {'name': row['name'], 'workflow': row['workflow_json'], 'config': config, 'builtin': bool(row['builtin'])}
 
 

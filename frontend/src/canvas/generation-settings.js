@@ -1732,7 +1732,7 @@ async function loadConfig({invalidateParameterSchemas=false}={}){
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
         const wf = await fetch('/api/workflows').then(r => r.json()).catch(() => ({workflows:[]}));
-        comfyWorkflows = Array.isArray(wf.workflows) ? wf.workflows : [];
+        comfyWorkflows = Array.isArray(wf.workflows) ? wf.workflows.filter(item => item?.enabled !== false) : [];
         // The workflow settings page broadcasts `workflows-changed` after
         // saving fields. Drop cached per-workflow configs so the canvas reads
         // the newly saved `config.fields` instead of rendering stale controls.
