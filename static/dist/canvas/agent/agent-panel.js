@@ -193,11 +193,11 @@
   const system = content => message(content, 'system');
   const modelStorageKey = () => `canvas-agent-model:${window.CanvasAgentBridge.canvasId()}`;
   function modelSelection() {
-    if (state.modelConnection && state.modelId) return {connection_id:state.modelConnection, model_id:state.modelId, model:state.modelName || ''};
+    if (state.modelConnection && state.modelId) return {connection_id:state.modelConnection, model_id:state.modelId};
     // “自动选择” must still send a concrete configured model. Otherwise the
     // server can observe a cold provider cache while the UI lists usable models.
     const option=[...$('canvasAgentModelSelect').options].find(item=>item.dataset.connection&&item.dataset.modelId);
-    return {connection_id:option?.dataset.connection || '', model_id:option?.dataset.modelId || '', model:option?.dataset.model || ''};
+    return {connection_id:option?.dataset.connection || '', model_id:option?.dataset.modelId || ''};
   }
   function saveModelSelection() { localStorage.setItem(modelStorageKey(), JSON.stringify(modelSelection())); }
   function loadModelSelection() { try { const saved=JSON.parse(localStorage.getItem(modelStorageKey()) || '{}'); state.modelName=String(saved.model || ''); state.modelConnection=String(saved.connection_id || ''); state.modelId=String(saved.model_id || ''); } catch (_) {} }
