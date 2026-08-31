@@ -1051,17 +1051,13 @@ def download_comfy_output(comfy_address, item, prefix="studio_"):
         raise
 
 def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "", prefix: str = "studio_"):
+    from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
     ext = os.path.splitext(str(comfy_filename or ""))[1].lower() or ".bin"
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
-    query = urllib.parse.urlencode({
-        "filename": str(comfy_filename or ""),
-        "subfolder": str(subfolder or ""),
-        "type": str(file_type or "output"),
-    })
-    full_url = comfyui_url(comfy_address, f"/view?{query}")
-    with urllib.request.urlopen(full_url, timeout=30) as response:
-        payload = response.read()
-        content_type = response.headers.get_content_type()
+    async def fetch():
+        transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
+        return await transport.download(comfy_address, str(comfy_filename or ""), kind=str(file_type or "output"), subfolder=str(subfolder or ""))
+    payload, content_type = asyncio.run(fetch())
     kind = "file"
     if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}:
         kind = "image"
@@ -1075,14 +1071,12 @@ def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_
 
 
 def fetch_comfy_output_bytes_by_name(comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "") -> bytes:
-    query = urllib.parse.urlencode({
-        "filename": str(comfy_filename or ""),
-        "subfolder": str(subfolder or ""),
-        "type": str(file_type or "output"),
-    })
-    full_url = comfyui_url(comfy_address, f"/view?{query}")
-    with urllib.request.urlopen(full_url, timeout=30) as response:
-        return response.read()
+    from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+    async def fetch():
+        transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
+        payload, _ = await transport.download(comfy_address, str(comfy_filename or ""), kind=str(file_type or "output"), subfolder=str(subfolder or ""))
+        return payload
+    return asyncio.run(fetch())
 
 def save_comfy_text_output(value, prefix="studio_", name=""):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
