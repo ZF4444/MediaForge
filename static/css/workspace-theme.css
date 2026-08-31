@@ -34,7 +34,6 @@ html:not(.studio-theme-dark):not(.theme-dark) .sidebar .nav-text { opacity: 1; m
 html:not(.studio-theme-dark):not(.theme-dark) .nav-item.active { color: #fff; background: linear-gradient(105deg, #328df7, #5d6ff2); box-shadow: 0 13px 26px rgba(54,119,240,.25); }
 html:not(.studio-theme-dark):not(.theme-dark) .stage { background: transparent; }
 html:not(.studio-theme-dark):not(.theme-dark) .workbench-topbar { background: rgba(255,255,255,.42); border-color: rgba(255,255,255,.7); backdrop-filter: blur(18px); }
-html:not(.studio-theme-dark):not(.theme-dark) .nano-monitor { background: rgba(255,255,255,.62); border-color: rgba(255,255,255,.8); box-shadow: 0 12px 30px rgba(102,84,153,.12); }
 @media (max-width: 760px) {
   html:not(.studio-theme-dark):not(.theme-dark) .mobile-dock { background: rgba(255,255,255,.72); border-color: rgba(255,255,255,.8); backdrop-filter: blur(18px); }
 }

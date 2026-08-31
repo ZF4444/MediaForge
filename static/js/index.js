@@ -15,8 +15,8 @@
 // 状态）、跨 iframe 广播供应商/工作流/ComfyUI 实例变更消息
 // （forwardStudioApiChange）、页面刷新后恢复上次激活的页面
 // （restoreActivePage）、按登录用户的权限裁剪侧边栏可见入口
-// （applyAccessControl）、到 `/ws/stats` 的 WebSocket 连接（在线人数/
-// 云端状态/画布更新/资产库更新等消息的接收和跨 iframe 转发）。
+// （applyAccessControl）、到 `/ws/stats` 的 WebSocket 连接（云端状态/
+// 画布更新/资产库更新等消息的接收和跨 iframe 转发）。
 //
 // 经典 <script>，非 ES module：跟其它四个页面同样的方法论（见
 // frontend/README.md），本页面有内联 onclick 直接引用顶层函数
@@ -342,9 +342,7 @@
             const ws = new WebSocket(`${protocol}://${host}/ws/stats?client_id=${CID}`);
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                if (data.type === 'stats') {
-                    document.getElementById('online-val').innerText = data.online_count;
-                } else if (data.type === 'cloud_status') {
+                if (data.type === 'cloud_status') {
                     const iframe = document.querySelector('iframe.active');
                     if (iframe && iframe.contentWindow) {
                         iframe.contentWindow.postMessage(data, '*');

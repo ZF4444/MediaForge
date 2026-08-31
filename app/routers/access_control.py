@@ -5,13 +5,14 @@
 - GET  /api/access-control/config  拥有“用户管理”页面权限：返回用户类型、分配和用户列表。
 - PUT  /api/access-control/config  拥有“用户管理”页面权限：保存用户类型及其分配。
 - GET  /api/access-control/users   拥有“用户管理”页面权限：返回已注册用户列表。
+- GET  /api/access-control/sessions 拥有“用户管理”页面权限：返回有效登录会话。
 
 依赖：
 - app.core.auth：current_user_id, USERS（注册表）, USERS_LOCK
 - app.core.access_control：全集清单/读写/有效权限
 - app.models：AccessControlConfigPayload
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.core.access_control import (
     all_pages,
@@ -20,7 +21,9 @@ from app.core.access_control import (
     load_config,
     save_config,
 )
-from app.core.auth import USERS, USERS_LOCK, current_user_id, delete_user
+from app.core.auth import USERS, USERS_LOCK, current_user_id, delete_user, SESSION_COOKIE_NAME, _token_hash
+from app.core.database import database_connection
+from app.core.utils import now_ms
 from app.core.logging import audit_event
 from app.core.storage_io import run_storage_io
 from app.models import AccessControlConfigPayload
@@ -104,6 +107,40 @@ def access_control_users():
         "types": config.get("types", {}),
         "user_types": config.get("user_types", {}),
     }
+
+
+@router.get("/api/access-control/sessions")
+async def access_control_sessions(request: Request):
+    """返回有效登录会话及最近活动状态，不返回任何可复用凭据。"""
+    _require_user_management()
+    now = now_ms()
+    online_cutoff = now - 5 * 60 * 1000
+    current_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    current_hash = _token_hash(current_token) if current_token else ""
+    async with database_connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """SELECT s.token_hash,s.user_id,s.username,s.created_at,s.last_seen,s.expires_at,
+                      COALESCE(u.org_id,'') AS org_id
+               FROM user_sessions s LEFT JOIN users u ON u.id=s.user_id
+              WHERE s.expires_at>%s ORDER BY s.last_seen DESC""",
+            (now,),
+        )
+        rows = await cur.fetchall()
+    sessions = [
+        {
+            "session_id": str(row["token_hash"])[:10],
+            "user_id": str(row["user_id"]),
+            "username": str(row.get("username") or row["user_id"]),
+            "org_id": row.get("org_id") or None,
+            "created_at": int(row.get("created_at") or 0),
+            "last_seen": int(row.get("last_seen") or 0),
+            "expires_at": int(row.get("expires_at") or 0),
+            "online": int(row.get("last_seen") or 0) >= online_cutoff,
+            "is_current": bool(current_hash and str(row["token_hash"]) == current_hash),
+        }
+        for row in rows
+    ]
+    return {"sessions": sessions, "online_count": sum(1 for item in sessions if item["online"]), "online_window_minutes": 5}
 
 
 @router.put("/api/access-control/users/{user_id}/type")

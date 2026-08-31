@@ -283,14 +283,6 @@ body.studio-theme-dark #logo-dot {
     background: #d8dee9 !important;
 }
 
-html.studio-theme-dark body .nano-monitor,
-body.studio-theme-dark .nano-monitor {
-    background: rgba(17,18,22,.88) !important;
-    color: #d8dee9;
-    border-color: rgba(255,255,255,.10) !important;
-    box-shadow: 0 12px 34px rgba(0,0,0,.24);
-}
-
 html.studio-theme-dark body .divider,
 body.studio-theme-dark .divider {
     background: rgba(216,222,233,.14) !important;
@@ -422,14 +414,12 @@ html.studio-theme-dark body .text-gray-500,
 html.studio-theme-dark body .text-slate-400,
 html.studio-theme-dark body .text-slate-500,
 html.studio-theme-dark body .setting-meta,
-html.studio-theme-dark body .label-nano,
 body.studio-theme-dark .text-gray-300,
 body.studio-theme-dark .text-gray-400,
 body.studio-theme-dark .text-gray-500,
 body.studio-theme-dark .text-slate-400,
 body.studio-theme-dark .text-slate-500,
-body.studio-theme-dark .setting-meta,
-body.studio-theme-dark .label-nano {
+body.studio-theme-dark .setting-meta {
     color: #8f9aab !important;
 }
 
