@@ -33,7 +33,7 @@ body { background: var(--wf-bg); }
 .workflow-row { display:flex; align-items:stretch; gap:12px; min-height:76px; padding:8px; border:1px solid var(--wf-line); border-radius:14px; background:color-mix(in srgb,var(--wf-panel) 88%,transparent); box-shadow:0 8px 22px rgba(0,0,0,.08); transition:transform .22s cubic-bezier(.22,1,.36,1),border-color .18s ease,box-shadow .18s ease,opacity .18s ease; }
 .workflow-row:hover { transform:translateY(-2px); border-color:color-mix(in srgb,var(--wf-accent) 48%,var(--wf-line)); box-shadow:0 14px 30px rgba(0,0,0,.15); background:color-mix(in srgb,var(--wf-panel) 96%,var(--wf-accent) 4%); }
 .workflow-row.is-disabled { opacity:.62; }
-.workflow-row-main { display:flex; align-items:center; flex:1; min-width:0; gap:13px; padding:7px 8px; border:0; background:transparent; color:var(--wf-text); text-align:left; cursor:pointer; }
+.workflow-row-main { display:flex; flex-direction:row; align-items:center; flex:1; min-width:0; gap:13px; padding:7px 8px; border:0; background:transparent; color:var(--wf-text); text-align:left; cursor:pointer; }
 .workflow-row-icon { width:42px; height:42px; flex:0 0 42px; display:grid; place-items:center; border:1px solid color-mix(in srgb,var(--wf-accent) 34%,var(--wf-line)); border-radius:12px; background:color-mix(in srgb,var(--wf-accent) 14%,var(--wf-soft)); color:var(--wf-accent); font-size:11px; letter-spacing:.02em; }
 .workflow-row-icon.runninghub { color:#b594ff; border-color:rgba(181,148,255,.35); background:rgba(181,148,255,.12); }
 .workflow-row-copy { display:flex; flex:1; min-width:0; flex-direction:column; gap:5px; }
