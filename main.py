@@ -2705,20 +2705,20 @@ async def view_image(filename: str, type: str = "input", subfolder: str = ""):
 
 @app.post("/api/upload")
 async def upload_image(files: List[UploadFile] = File(...)):
+    from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
     uploaded_files = []
     files_content = []
     for file in files:
         content = await file.read()
         files_content.append((file, content))
 
-    client = get_http_client()
+    transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
     for file, content in files_content:
         success_count = 0
         last_result = None
         for addr in COMFYUI_INSTANCES:
             try:
-                files_data = {'image': (file.filename, content, file.content_type)}
-                response = await client.post(comfyui_url(addr, "/upload/image"), files=files_data, timeout=5)
+                response = await transport.upload(addr, file.filename or "upload.bin", content, file.content_type or "application/octet-stream")
                 if response.status_code == 200:
                     last_result = response.json()
                     success_count += 1
