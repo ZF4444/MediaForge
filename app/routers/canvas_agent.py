@@ -38,8 +38,8 @@ from app.core.auth import current_user_id
 
 def _require_canvas_agent_access() -> str:
     user_id = current_user_id()
-    if not has_page_access(user_id, "canvas"):
-        raise HTTPException(status_code=403, detail="需要“无限画布”页面权限。")
+    if not has_page_access(user_id, "canvas-agent"):
+        raise HTTPException(status_code=403, detail="需要“画布 Agent”页面权限。")
     return user_id
 
 router = APIRouter(dependencies=[Depends(_require_canvas_agent_access)])

@@ -49,6 +49,7 @@ _FALLBACK_ALL_PAGES: List[Dict[str, str]] = [
     {"id": "pose-studio", "label": "姿势编辑"},
     {"id": "gpt-chat", "label": "GPT 对话"},
     {"id": "canvas", "label": "无限画布"},
+    {"id": "canvas-agent", "label": "画布 Agent"},
     {"id": "asset-manager", "label": "素材库"},
     {"id": "my-account", "label": "我的账户"},
     {"id": "api-settings", "label": "API 设置"},
@@ -95,6 +96,9 @@ def _load_all_pages() -> List[Dict[str, str]]:
             html = f.read()
         items = _extract_nav_items(html)
         if items:
+            if not any(item.get("id") == "canvas-agent" for item in items):
+                canvas_index = next((i for i, item in enumerate(items) if item.get("id") == "canvas"), len(items) - 1)
+                items.insert(canvas_index + 1, {"id": "canvas-agent", "label": "画布 Agent"})
             return items
     except Exception:
         logger.exception("failed to parse navigation pages; using fallback", extra={"event": "navigation_pages_parse_failed"})
