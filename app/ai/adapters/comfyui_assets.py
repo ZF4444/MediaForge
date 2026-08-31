@@ -17,3 +17,8 @@ class ComfyUIAssetTransport:
     async def upload(self, backend: str, filename: str, content: bytes, content_type: str = "application/octet-stream", *, overwrite: bool = False):
         data = {"overwrite": "true", "type": "input"} if overwrite else None
         return await self._client.post(self._endpoint(backend, "/upload/image"), data=data, files={"image": (filename, content, content_type)}, timeout=30 if overwrite else 5)
+
+    async def download(self, backend: str, filename: str, *, kind: str = "output", subfolder: str = "", timeout: float = 30) -> tuple[bytes, str]:
+        response = await self._client.get(self._endpoint(backend, "/view"), params={"filename": filename, "subfolder": subfolder, "type": kind}, timeout=timeout)
+        response.raise_for_status()
+        return response.content, response.headers.get("content-type", "application/octet-stream")

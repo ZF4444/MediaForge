@@ -1043,20 +1043,15 @@ def comfy_output_kind(item):
     return "file"
 
 def download_comfy_output(comfy_address, item, prefix="studio_"):
+    from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
     ext = comfy_output_extension(item)
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
-    subfolder = urllib.parse.quote(str(item.get("subfolder") or ""))
-    file_type = urllib.parse.quote(str(item.get("type") or "output"))
-    comfy_url_path = f"/view?filename={urllib.parse.quote(str(item['filename']))}&subfolder={subfolder}&type={file_type}"
-    full_url = comfyui_url(comfy_address, comfy_url_path)
     try:
-        with urllib.request.urlopen(full_url) as response:
-            return store_generated_media_bytes(
-                response.read(),
-                filename,
-                comfy_output_kind(item),
-                response.headers.get_content_type(),
-            )
+        async def fetch():
+            transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
+            return await transport.download(comfy_address, str(item["filename"]), kind=str(item.get("type") or "output"), subfolder=str(item.get("subfolder") or ""))
+        payload, content_type = asyncio.run(fetch())
+        return store_generated_media_bytes(payload, filename, comfy_output_kind(item), content_type)
     except Exception:
         logger.exception("failed to download ComfyUI output", extra={"event": "comfyui_output_download_failed", "provider": "comfyui", "operation": "download"})
         raise
