@@ -193,7 +193,6 @@ from app.ai.database_repository import DatabaseAIRepository
 from app.ai.registry import ImageGenerationRequest
 from app.ai.image_registry import build_image_adapter_registry, select_target_image_adapter
 from app.ai.adapters.image_protocol import extract_image, extract_task_id
-from app.ai.adapters.openai import OpenAIImageAdapter
 from app.ai.adapters.runninghub_protocol import (
     extract_task_id as runninghub_extract_task_id,
     extract_outputs as runninghub_extract_outputs,
@@ -2343,113 +2342,6 @@ async def generate_openai_image(prompt, size, quality, model, reference_images=N
     )
     target = SimpleNamespace(connection=SimpleNamespace(id=connection.get("connection_id") or connection.get("id") or "", base_url=connection.get("base_url") or "", settings=connection), model=SimpleNamespace(id="", upstream_model=model), resource=None)
     return await executor.generate(ImageGenerationRequest(prompt=prompt, size=size, quality=quality, model=model, reference_images=list(reference_images or []), connection=connection, target=target))
-
-    # Kept below only as a temporary source reference while downstream callers
-    # migrate; the canonical path above is the sole runtime implementation.
-    is_gpt2 = is_gpt_image_2_model(model)
-    quality = str(quality or "").strip().lower()
-    if quality not in {"low", "medium", "high"}:
-        quality = ""
-    base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
-    if not base_url:
-        raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
-    gen_url = connection_endpoint_url(provider, "image_generation_endpoint", "/v1/images/generations")
-    edit_url = connection_endpoint_url(provider, "image_edit_endpoint", "/v1/images/edits")
-    image_refs, mask_refs = OpenAIImageAdapter.split_references(reference_images)
-    request_timeout = httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0) if is_gpt2 else AI_REQUEST_TIMEOUT
-    # Secret storage uses a synchronous compatibility bridge; resolve it off
-    # the event loop before constructing request headers.
-    provider_api_key = await asyncio.to_thread(connection_api_key, provider.get("connection_id") or provider["id"])
-    async with shared_http_client(timeout=request_timeout) as client:
-        response = None
-        async def post_openai_edits(edit_files=None):
-            data = OpenAIImageAdapter.edit_fields(model=model, prompt=prompt, size=size, quality=quality, gpt_image_2=is_gpt2)
-            return await client.post(
-                edit_url,
-                headers=api_headers(json_body=False, connection=provider, model=model, api_key=provider_api_key),
-                data=data,
-                files=edit_files if edit_files is not None else {},
-            )
-
-        if is_gpt2 and not image_refs and not mask_refs:
-            body = OpenAIImageAdapter.generation_body(model=model, prompt=prompt, size=size, quality=quality, gpt_image_2=True)
-            response = await client.post(gen_url, headers=api_headers(connection=provider, model=model, api_key=provider_api_key), json=body)
-            if response.status_code >= 400 and images_api_unsupported(response):
-                response = await post_openai_edits()
-        elif image_refs:
-            # 1) OpenAI 协议的图生图/编辑用 multipart 提交到 /images/edits；
-            # GPT-Image-2 参考图不能走 /images/generations JSON，否则部分平台会忽略原图或报 Images API unsupported。
-            files = []
-            opened = []
-            edit_failed_status = None
-            edit_failed_text = ""
-            try:
-                for ref in image_refs[:4]:
-                    path = await run_storage_io(output_file_from_url, ref.get("url", ""))
-                    if not path:
-                        continue
-                    fh = open(path, "rb")
-                    opened.append(fh)
-                    field_name = "image[]" if is_cloudwise_connection(provider) else "image"
-                    files.append((field_name, (os.path.basename(path), fh, content_type_for_path(path))))
-                if mask_refs:
-                    mask_path = await run_storage_io(output_file_from_url, mask_refs[0].get("url", ""))
-                    if mask_path:
-                        fh = open(mask_path, "rb")
-                        opened.append(fh)
-                        files.append(("mask", (os.path.basename(mask_path), fh, content_type_for_path(mask_path))))
-                try:
-                    response = await post_openai_edits(files)
-                    if response.status_code >= 400:
-                        edit_failed_status = response.status_code
-                        edit_failed_text = response.text[:500]
-                        response = None
-                except httpx.HTTPError as e:
-                    edit_failed_status = -1
-                    edit_failed_text = str(e)
-                    response = None
-            finally:
-                for fh in opened:
-                    fh.close()
-            # 2) edits 失败 → 非 GPT-Image-2 可回退到 /images/generations + JSON image:[urls/base64]（grsai 风格）
-            if response is None:
-                if is_gpt2:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"GPT-Image-2 编辑接口 /images/edits 调用失败：{edit_failed_text[:300] or edit_failed_status}。已停止自动重试，避免上游可能已扣费后再次请求。"
-                    )
-                logger.warning("image edit endpoint failed; using generation fallback", extra={"event": "image_edit_fallback", "provider": provider.get("id"), "operation": "image_edit", "status_code": edit_failed_status, "response_excerpt": edit_failed_text[:200]})
-                image_payload = [
-                    await run_storage_io(reference_to_data_url, ref, 1536)
-                    for ref in image_refs[:4]
-                ]
-                body = OpenAIImageAdapter.generation_body(model=model, prompt=prompt, size=size, quality=quality, image=image_payload)
-                response = await client.post(gen_url, headers=api_headers(connection=provider, model=model, api_key=provider_api_key), json=body)
-                if response.status_code >= 400 and images_api_unsupported(response):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"编辑接口 /images/edits 调用失败，且该平台不支持 /images/generations：{edit_failed_text[:300] or edit_failed_status}"
-                    )
-        else:
-            body = OpenAIImageAdapter.generation_body(model=model, prompt=prompt, size=size, quality=quality)
-            response = await client.post(
-                gen_url,
-                headers=api_headers(connection=provider, model=model, api_key=provider_api_key),
-                json=body,
-            )
-            if response.status_code >= 400 and images_api_unsupported(response):
-                response = await post_openai_edits()
-        response.raise_for_status()
-        raw = response.json()
-        try:
-            return extract_image(raw), raw
-        except HTTPException:
-            task_id = extract_task_id(raw)
-            if not task_id:
-                raise
-        task_result = await wait_for_image_task(client, task_id, provider)
-        return extract_image(task_result), task_result
-
 
 async def generate_gemini_image(prompt, size, model, reference_images=None, provider=None):
     """Generate an image through Gemini's OpenAI-compatible chat facade."""
