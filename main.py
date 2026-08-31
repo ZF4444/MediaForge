@@ -2767,16 +2767,11 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
     success_count = 0
     last_error = ""
     uploaded_image_name = comfy_image_name
-    client = get_http_client()
+    from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+    transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
     for addr in COMFYUI_INSTANCES:
         try:
-            files_data = {"image": (comfy_image_name, content, file.content_type or "image/png")}
-            response = await client.post(
-                comfyui_url(addr, "/upload/image"),
-                data={"overwrite": "true", "type": "input"},
-                files=files_data,
-                timeout=30,
-            )
+            response = await transport.upload(addr, comfy_image_name, content, file.content_type or "image/png", overwrite=True)
             if response.status_code == 200:
                 try:
                     uploaded_image_name = str(response.json().get("name") or uploaded_image_name)
