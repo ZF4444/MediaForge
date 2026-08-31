@@ -434,7 +434,8 @@ async function refreshCanvasParameterSchema(kind, providerId, model){
         return;
     }
     try {
-        const query = new URLSearchParams({capability:kind === 'video' ? 'video.text_to_video' : 'image.text_to_image', connection_id:target.connection_id || '', model_id:target.model_id || '', resource_id:target.resource_id || '', model:model || ''});
+    const query = new URLSearchParams({capability:kind === 'video' ? 'video.text_to_video' : 'image.text_to_image', connection_id:target.connection_id || '', model_id:target.model_id || '', resource_id:target.resource_id || ''});
+    if(!target.connection_id && !target.model_id && !target.resource_id && model) query.set('model', model);
         const response = await fetch(`/api/canvas/capability-parameters?${query.toString()}`, {credentials:'same-origin'});
         if(!response.ok) return;
         const schema = await response.json();
