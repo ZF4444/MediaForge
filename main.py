@@ -974,16 +974,6 @@ def store_generated_media_bytes(payload: bytes, filename: str, kind: str, conten
     )
     return stored["url"]
 
-def download_image(comfy_address, comfy_url_path, prefix="studio_"):
-    filename = f"{prefix}{uuid.uuid4().hex[:10]}.png"
-    full_url = comfyui_url(comfy_address, comfy_url_path)
-    try:
-        with urllib.request.urlopen(full_url) as response:
-            return store_generated_media_bytes(response.read(), filename, "image", response.headers.get_content_type())
-    except Exception:
-        logger.exception("failed to download image", extra={"event": "image_download_failed", "provider": "comfyui", "operation": "download"})
-        raise
-
 def comfy_output_extension(item):
     filename = str((item or {}).get("filename") or "")
     ext = os.path.splitext(filename)[1].lower()
