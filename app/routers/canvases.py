@@ -9,6 +9,7 @@
 - app.models：CanvasCreateRequest / CanvasMetaUpdate / CanvasSaveRequest
 """
 import asyncio
+import urllib.parse
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -124,6 +125,11 @@ def normalize_canvas_color(value):
 
 
 def canvas_record(data):
+    thumbnail = data.get("thumbnail") if isinstance(data.get("thumbnail"), dict) else {}
+    file_id = str(thumbnail.get("file_id") or "").strip()
+    thumbnail_url = str(thumbnail.get("url") or "").strip()
+    if file_id:
+        thumbnail_url = f"/api/files/{urllib.parse.quote(file_id, safe='')}/thumb"
     return {
         "id": data.get("id"),
         "title": data.get("title", "未命名画布"),
@@ -135,6 +141,7 @@ def canvas_record(data):
         "updated_at": data.get("updated_at", 0),
         "version": data.get("version", 1),
         "node_count": data["node_count"] if "node_count" in data else len(data.get("nodes", [])),
+        "thumbnail_url": thumbnail_url,
     }
 
 

@@ -680,10 +680,28 @@ def load_canvas_payload(user_id: str, canvas_id: str) -> Optional[Dict[str, Any]
     return payload
 
 
-def list_canvas_records(user_id: str) -> list:
-    """聚合查询画布列表：SQL 层直接算出 node_count，不拉取节点 data_json。
+def _latest_canvas_image_ref(node: Any) -> Optional[Dict[str, str]]:
+    """Return the newest image reference from one image node payload."""
+    if not isinstance(node, dict) or not isinstance(node.get("images"), list):
+        return None
+    for item in reversed(node["images"]):
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "image").strip().lower()
+        if kind in {"video", "audio"}:
+            continue
+        file_id = str(item.get("file_id") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if file_id or url:
+            return {"file_id": file_id, "url": url}
+    return None
 
-    避免「先查全部 id 再逐个 load_canvas_payload」的 N+1 + 全量节点加载模式。
+
+def list_canvas_records(user_id: str) -> list:
+    """聚合查询画布列表，并按画布提取一个最新图像节点的引用。
+
+    只通过 LATERAL 子查询读取每个画布的一条候选节点，避免「先查全部 id
+    再逐个 load_canvas_payload」的 N+1 + 全量节点加载模式。
     返回的字典字段与 load_canvas_payload 的元数据字段保持一致（不含 nodes/viewport），
     交由调用方复用现有的规范化逻辑（如 canvas_record）。
     """
@@ -692,12 +710,27 @@ def list_canvas_records(user_id: str) -> list:
             """
             SELECT c.id, c.title, c.icon, c.owner, c.color, c.pinned,
                    c.created_at, c.updated_at, c.version, c.viewport_json,
-                   COUNT(n.id) AS node_count
+                   COUNT(n.id) AS node_count, latest_image.data_json AS latest_image_json
             FROM smart_canvases c
             LEFT JOIN smart_canvas_nodes n ON n.canvas_id = c.id
+            LEFT JOIN LATERAL (
+                SELECT image_node.data_json
+                FROM smart_canvas_nodes image_node
+                WHERE image_node.canvas_id = c.id
+                  AND jsonb_typeof(image_node.data_json->'images') = 'array'
+                  AND jsonb_array_length(image_node.data_json->'images') > 0
+                  AND EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements(image_node.data_json->'images') image_ref
+                      WHERE COALESCE(image_ref->>'kind', 'image') NOT IN ('video', 'audio')
+                        AND (image_ref ? 'file_id' OR image_ref ? 'url')
+                  )
+                ORDER BY image_node.updated_at DESC, image_node.sort_order DESC
+                LIMIT 1
+            ) latest_image ON TRUE
             WHERE c.user_id=%s AND c.deleted_at IS NULL
             GROUP BY c.id, c.title, c.icon, c.owner, c.color, c.pinned,
-                     c.created_at, c.updated_at, c.version, c.viewport_json
+                     c.created_at, c.updated_at, c.version, c.viewport_json, latest_image.data_json
             """,
             (user_id,),
         )
@@ -706,6 +739,7 @@ def list_canvas_records(user_id: str) -> list:
     for row in rows:
         meta = row.get("viewport_json") or {}
         payload = dict(meta.get("payload") or {})
+        thumbnail = _latest_canvas_image_ref(row.get("latest_image_json"))
         records.append({
             "id": row["id"],
             "title": row["title"],
@@ -718,6 +752,7 @@ def list_canvas_records(user_id: str) -> list:
             "version": int(row.get("version") or 1),
             "kind": payload.get("kind"),
             "node_count": int(row["node_count"] or 0),
+            "thumbnail": thumbnail or {},
         })
     return records
 
