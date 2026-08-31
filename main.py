@@ -4577,46 +4577,20 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     body["return_last_frame"] = True
                 if payload.generate_audio:
                     body["generate_audio"] = True
-            # --- 发起视频生成请求 ---
-            raw = None
-            html_response = None
-            last_response = None
-            last_json_error = None
-            for candidate_url in submit_urls:
-                submit_url = candidate_url
-                response = await client.post(submit_url, headers=api_headers(connection=provider), json=body)
-                last_response = response
-                response.raise_for_status()
-                try:
-                    raw = response.json()
-                    break
-                except Exception as exc:
-                    last_json_error = exc
-                    if looks_like_html_response(response.text):
-                        html_response = response
-                        continue
-                    resp_text = response.text[:500]
-                    raise HTTPException(status_code=502, detail=f"上游视频接口返回非 JSON 响应（状态 {response.status_code}）：{resp_text}")
-            if raw is None:
-                resp = html_response or last_response
-                status_code = getattr(resp, "status_code", 200)
-                resp_text = (getattr(resp, "text", "") or "")[:500]
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"上游视频接口返回了网页 HTML，而不是 JSON（状态 {status_code}）。\n\n"
-                        f"这通常表示 API 设置里的 Base URL 指到了第三方聚合平台的管理后台/网页入口，"
-                        f"或该平台不支持当前视频接口路径。请确认 Base URL 是接口地址，例如以 /v1 结尾的 OpenAI 兼容地址，"
-                        f"并确认该平台实际支持视频生成端点。\n\n原始响应：{resp_text}"
-                    )
-                ) from last_json_error
-            task_id = extract_task_id(raw) or raw.get("task_id") or raw.get("id")
-            result = raw
-            if task_id and not video_output_urls(raw):
-                result = await wait_for_video_task(client, provider, task_id, submit_url)
+            # Protocol submission and polling live in the canonical transport.
+            from app.ai.adapters.video_transport import VideoTransport
+            transport = VideoTransport(
+                submit_urls=lambda value: video_submit_url_candidates(value, video_api_root(value)),
+                headers=lambda value: api_headers(connection=value),
+                client_factory=shared_http_client,
+                extract_task_id=lambda value: extract_task_id(value) or value.get("task_id") or value.get("id"),
+                wait_task=lambda active_client, value, task_id, submit_url: wait_for_video_task(active_client, value, task_id, submit_url),
+                output_urls=video_output_urls,
+                looks_like_html=looks_like_html_response,
+                timeout=VIDEO_POLL_TIMEOUT,
+            )
+            result, task_id = await transport.generate_with_client(client, provider, body)
             urls = video_output_urls(result)
-            if not urls:
-                raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
             local_urls = [await save_remote_video_to_output(url) for url in urls]
             video_items = await run_storage_io(media_response_items, local_urls, "video")
             return await _attach_quota_warning_async({"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result})
