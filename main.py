@@ -3011,16 +3011,9 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
             raise HTTPException(status_code=400, detail=f"不支持的素材地址：{source_url}")
         if not content:
             raise HTTPException(status_code=400, detail="素材为空，无法上传到 RunningHub")
-        upload_url = runninghub_endpoint_url(provider, "/task/openapi/upload")
-        files = {"file": (filename, content, content_type)}
-        data = {"apiKey": api_key, "fileType": "input"}
-        try:
-            response = await client.post(upload_url, headers=runninghub_app_headers(False, api_key), data=data, files=files)
-            raw = response.json()
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"上传素材到 RunningHub 失败：{exc}") from exc
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
+    from app.ai.adapters.runninghub_transport import RunningHubTransport
+    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0))
+    raw = await transport.upload(provider, api_key, filename, content, content_type)
     if isinstance(raw, dict) and raw.get("code") in (0, "0") and isinstance(raw.get("data"), dict) and raw["data"].get("fileName"):
         return {"success": True, "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type}}
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}")
