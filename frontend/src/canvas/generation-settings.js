@@ -245,7 +245,9 @@ function videoProviderById(providerId){
 }
 function connectionVideoModels(providerId){
     if(providerId === 'volcengine') return volcengineVideoModels();
-    const provider = videoConnections().find(p => p.id === providerId);
+    // Read the already-loaded provider list directly. Calling videoConnections
+    // here would recurse because videoConnections filters through this helper.
+    const provider = (aiConnections || []).find(p => p.id === providerId);
     return [...new Set((provider?.video_models || []).filter(model => provider?.model_enabled?.[String(model || '').trim()] !== false))];
 }
 // Normalize the mutually-exclusive video input modes used by the API payload
@@ -1711,9 +1713,29 @@ function bindDynamicParams(){
         };
     });
 }
-async function loadConfig({invalidateParameterSchemas=false}={}){
+let configRefreshPromise = null;
+let lastConfigErrorKey = '';
+let lastConfigErrorAt = 0;
+async function loadConfigOnce({invalidateParameterSchemas=false}={}){
+    let stableCfg;
     try {
-        const stableCfg = await fetch('/api/ai/configuration').then(r => r.ok ? r.json() : ({connections:[], models:[], resources:[]})).catch(() => ({connections:[], models:[], resources:[]}));
+        // Canvas users may not have the API settings management page permission.
+        // Read the public, read-only resource projection instead of the protected
+        // editing endpoint; management pages continue to use configuration.
+        const configurationResponse = await fetch('/api/ai/resources', {credentials:'same-origin'});
+        if(!configurationResponse.ok) throw new Error(`配置接口返回 ${configurationResponse.status}`);
+        stableCfg = await configurationResponse.json();
+    } catch(e) {
+        const key = String(e?.message || e);
+        console.error('[canvas] API settings request failed', e);
+        if(key !== lastConfigErrorKey || Date.now() - lastConfigErrorAt > 8000){
+            lastConfigErrorKey = key;
+            lastConfigErrorAt = Date.now();
+            toast(`${tr('smart.toastApiSettingsFail')}：${key}`);
+        }
+        return false;
+    }
+    try {
         const cfg = {comfy_instances:[]};
         aiResourceIndex = stableCfg || {connections:[], models:[], resources:[]};
         aiConnections = (stableCfg.connections || []).map(c => ({...c, id:c.id, connection_id:c.id,
@@ -1733,8 +1755,13 @@ async function loadConfig({invalidateParameterSchemas=false}={}){
         // 提供商配置就绪后立即刷新参数面板。
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
-        const wf = await fetch('/api/workflows').then(r => r.json()).catch(() => ({workflows:[]}));
-        comfyWorkflows = Array.isArray(wf.workflows) ? wf.workflows.filter(item => item?.enabled !== false) : [];
+        const workflowResponse = await fetch('/api/workflows', {credentials:'same-origin'});
+        if(workflowResponse.ok){
+            const wf = await workflowResponse.json();
+            if(Array.isArray(wf.workflows)) comfyWorkflows = wf.workflows.filter(item => item?.enabled !== false);
+        } else {
+            console.warn('[canvas] workflow refresh skipped', workflowResponse.status);
+        }
         // The workflow settings page broadcasts `workflows-changed` after
         // saving fields. Drop cached per-workflow configs so the canvas reads
         // the newly saved `config.fields` instead of rendering stale controls.
@@ -1750,9 +1777,18 @@ async function loadConfig({invalidateParameterSchemas=false}={}){
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
     } catch(e) {
-        console.error('[canvas] API settings refresh failed', e);
-        toast(`${tr('smart.toastApiSettingsFail')}：${e?.message || '页面组件尚未准备完成'}`);
+        console.error('[canvas] API settings apply failed', e);
+        return false;
     }
+    return true;
+}
+async function loadConfig(options={}){
+    if(configRefreshPromise) return configRefreshPromise;
+    configRefreshPromise = loadConfigOnce(options).catch(e => {
+        console.error('[canvas] API settings refresh pipeline failed', e);
+        return false;
+    }).finally(() => { configRefreshPromise = null; });
+    return configRefreshPromise;
 }
 
 function stableCanvasTarget(kind, providerId, model, resourceName=''){
