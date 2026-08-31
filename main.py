@@ -5715,28 +5715,25 @@ def generate(req: GenerateRequest):
                 for input_name, value in node_inputs.items():
                     workflow[node_id]["inputs"][input_name] = value
 
-        p = {"prompt": workflow, "client_id": req.client_id or CLIENT_ID}
-        data = json.dumps(p).encode('utf-8')
+        from app.ai.adapters.comfyui_transport import ComfyUITransport
+
+        async def post_json(url, payload):
+            async with shared_http_client(timeout=httpx.Timeout(connect=10, read=30, write=30, pool=10)) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                return response.json()
+
+        transport = ComfyUITransport(
+            endpoint=lambda backend, path: comfyui_url(backend, path),
+            post_json=post_json,
+            history=get_comfy_history,
+            timeout_seconds=COMFYUI_HISTORY_TIMEOUT,
+        )
         try:
-            post_req = urllib.request.Request(comfyui_url(target_backend, "/prompt"), data=data)
-            prompt_id = json.loads(urllib.request.urlopen(post_req, timeout=10).read())['prompt_id']
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode('utf-8')
-            raise Exception(f"HTTP Error {e.code}: {error_body}")
-
-        history_data = None
-        for i in range(COMFYUI_HISTORY_TIMEOUT):
-            try:
-                res = get_comfy_history(target_backend, prompt_id)
-                if prompt_id in res:
-                    history_data = res[prompt_id]
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
-
-        if not history_data:
-            raise Exception("ComfyUI 渲染超时")
+            prompt_id = asyncio.run(transport.submit(target_backend, workflow, req.client_id or CLIENT_ID))
+            history_data = asyncio.run(transport.wait(target_backend, prompt_id))
+        except Exception as exc:
+            raise Exception(str(exc)) from exc
         history_error = comfy_history_error_message(history_data, prompt_id)
         if history_error:
             raise Exception(history_error)
