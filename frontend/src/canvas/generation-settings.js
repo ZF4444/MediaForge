@@ -203,37 +203,31 @@ function syncRhConfigForRefs(){
 function sanitizeSmartApiSelection(target=settings){
     if(!target || typeof target !== 'object') return target;
     const modelResources = Array.isArray(aiResourceIndex?.models) ? aiResourceIndex.models : [];
-    if(!target.provider_id && (target.connection_id || target.model_id)){
-        const selected = modelResources.find(item => item.enabled !== false && item.kind === 'image' && (item.id === target.model_id || item.connection_id === target.connection_id));
-        if(selected){
-            target.provider_id = selected.connection_id;
-            target.model = selected.upstream_model || selected.alias || target.model || '';
-        }
-    }
-    if(!target.videoProvider && (target.videoConnectionId || target.videoModelId)){
-        const selected = modelResources.find(item => item.enabled !== false && item.kind === 'video' && (item.id === target.videoModelId || item.connection_id === target.videoConnectionId));
-        if(selected){
-            target.videoProvider = selected.connection_id;
-            target.videoModel = selected.upstream_model || selected.alias || target.videoModel || '';
-        }
-    }
+    // Stable IDs are authoritative. Do not derive and persist legacy provider
+    // or model fields from them; historical nodes may still be read below.
+    const hasStableImageTarget = Boolean(target.connection_id || target.model_id || target.resource_id);
+    const hasStableVideoTarget = Boolean(target.videoConnectionId || target.videoModelId || target.videoResourceId);
     if(target.engine === 'volcengine'){
         if(target.apiKind === 'video'){
-            target.videoProvider = 'volcengine';
+            target.videoConnectionId = target.videoConnectionId || 'volcengine';
             const models = volcengineVideoModels();
-            if(!models.includes(target.videoModel)) target.videoModel = models[0] || '';
+            const selected = modelResources.find(item => item.enabled !== false && item.kind === 'video' && item.connection_id === target.videoConnectionId && models.includes(item.upstream_model));
+            if(!target.videoModelId && selected) target.videoModelId = selected.id;
         } else {
-            target.provider_id = 'volcengine';
+            target.connection_id = target.connection_id || 'volcengine';
             const models = connectionImageModels('volcengine');
-            if(!models.includes(target.model)) target.model = models[0] || '';
+            const selected = modelResources.find(item => item.enabled !== false && item.kind === 'image' && item.connection_id === target.connection_id && models.includes(item.upstream_model));
+            if(!target.model_id && selected) target.model_id = selected.id;
         }
         target.engine = 'api';
     }
-    if(target.provider_id){
+    // Legacy selections are intentionally left untouched only when no stable
+    // target exists, so old saved nodes remain readable during migration.
+    if(!hasStableImageTarget && target.provider_id){
         const models = connectionImageModels(target.provider_id);
         if(models.length && !models.includes(target.model)) target.model = models[0] || '';
     }
-    if(target.videoProvider){
+    if(!hasStableVideoTarget && target.videoProvider){
         const models = connectionVideoModels(target.videoProvider);
         if(models.length && !models.includes(target.videoModel)) target.videoModel = models[0] || '';
     }
