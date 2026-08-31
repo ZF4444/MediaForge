@@ -5602,29 +5602,19 @@ def generate(req: GenerateRequest):
         target_backend = reserve_best_backend(required_images)
 
         for image_name in required_images:
+            from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
             need_sync = False
-            try:
-                check_url = comfyui_url(target_backend, f"/view?filename={urllib.parse.quote(image_name)}&type=input")
-                resp = requests.get(check_url, stream=True, timeout=0.5)
-                resp.close()
-                if resp.status_code != 200:
-                    need_sync = True
-            except:
-                need_sync = True
+            need_sync = not ComfyUIAssetTransport.input_exists(comfyui_url, target_backend, image_name)
 
             if need_sync:
                 image_content = None
                 image_type = "image/png"
                 for addr in COMFYUI_INSTANCES:
                     if addr == target_backend: continue
-                    try:
-                        src_url = comfyui_url(addr, f"/view?filename={urllib.parse.quote(image_name)}&type=input")
-                        r = requests.get(src_url, timeout=5)
-                        if r.status_code == 200:
-                            image_content = r.content
-                            image_type = r.headers.get("Content-Type", "image/png")
-                            break
-                    except: continue
+                    fetched = ComfyUIAssetTransport.download_sync(comfyui_url, addr, image_name, kind="input")
+                    if fetched:
+                        image_content, image_type = fetched
+                        break
 
                 if image_content:
                     try:

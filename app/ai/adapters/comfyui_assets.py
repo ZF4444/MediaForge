@@ -49,3 +49,14 @@ class ComfyUIAssetTransport:
             return response.status_code == 200
         except Exception:
             return False
+
+    @staticmethod
+    def download_sync(endpoint: Callable[[str, str], str], backend: str, filename: str, *, kind: str = "input") -> tuple[bytes, str] | None:
+        try:
+            query = urllib.parse.urlencode({"filename": filename, "type": kind})
+            response = requests.get(endpoint(backend, f"/view?{query}"), timeout=5)
+            if response.status_code != 200:
+                return None
+            return response.content, response.headers.get("Content-Type", "application/octet-stream")
+        except Exception:
+            return None
