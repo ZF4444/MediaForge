@@ -56,6 +56,27 @@
         const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','my-account','api-settings','comfyui-settings','user-management','user-data-migration','feedback-admin','broadcast-admin'];
         const LEGACY_USER_MANAGEMENT_TABS = {'access-control':'access','storage-quota':'quota'};
         const LOCAL_PAGE_IDS = ['angle','gaussian','pose-studio'];
+        const PAGE_META = {
+            canvas: ['无限画布', '就绪'],
+            'gpt-chat': ['GPT 对话', '准备开始对话'],
+            'asset-manager': ['素材库', '浏览与整理素材'],
+            'api-settings': ['连接', '管理模型与服务连接'],
+            'comfyui-settings': ['工作流设置', '配置工作流节点'],
+            'my-account': ['我的账户', '账户设置'],
+            'user-management': ['用户管理', '管理团队成员'],
+            'user-data-migration': ['数据迁移', '迁移本地数据'],
+            angle: ['视角粗调', '定制工具'], gaussian: ['视角微调', '定制工具'], 'pose-studio': ['姿势编辑', '定制工具'],
+            'feedback-admin': ['反馈管理', '管理用户反馈'], 'broadcast-admin': ['全局广播', '发布通知']
+        };
+
+        function updateWorkbenchMeta(id) {
+            const meta = PAGE_META[id] || [id, ''];
+            const title = document.getElementById('workbenchTitle');
+            const status = document.getElementById('workbenchStatus');
+            if (title) title.textContent = meta[0];
+            if (status) status.textContent = meta[1];
+            document.title = `${meta[0]} · MediaForge`;
+        }
 
         function pageTriggers(pageId) {
             const expected = `switchUI(this, '${pageId}')`;
@@ -74,6 +95,7 @@
             if(!sidebar) return;
             sidebar.classList.toggle('is-pinned', pinned);
             if(!pinned) {
+                sidebar.classList.remove('is-touch-expanded');
                 sidebar.classList.add('is-collapsing');
                 window.setTimeout(() => sidebar.classList.remove('is-collapsing'), 360);
             } else {
@@ -81,7 +103,8 @@
             }
             if(logo) {
                 logo.setAttribute('aria-pressed', pinned ? 'true' : 'false');
-                logo.title = pinned ? '收起导航栏' : '固定导航栏';
+                logo.setAttribute('aria-label', pinned ? '收起导航栏' : '展开导航栏');
+                logo.title = pinned ? '收起导航栏' : '展开导航栏';
             }
             if(!options.skipRemember) localStorage.setItem(SIDEBAR_PINNED_KEY, pinned ? '1' : '0');
         }
@@ -90,11 +113,34 @@
             event?.preventDefault?.();
             event?.stopPropagation?.();
             const sidebar = document.getElementById('studioSidebar');
-            setSidebarPinned(!sidebar?.classList.contains('is-pinned'));
+            if (!sidebar) return;
+            if (sidebar.classList.contains('is-pinned') || sidebar.classList.contains('is-touch-expanded')) {
+                setSidebarPinned(false);
+            } else {
+                setSidebarPinned(true);
+            }
         }
 
         function restoreSidebarPinned() {
             setSidebarPinned(localStorage.getItem(SIDEBAR_PINNED_KEY) === '1', { skipRemember:true });
+        }
+
+        function bindSidebarTouchExpand() {
+            const sidebar = document.getElementById('studioSidebar');
+            if(!sidebar || sidebar.dataset.touchExpandBound === '1') return;
+            sidebar.dataset.touchExpandBound = '1';
+            const expand = event => {
+                if(event.pointerType && event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+                if(!sidebar.classList.contains('is-pinned')) sidebar.classList.add('is-touch-expanded');
+            };
+            const collapseOutside = event => {
+                if(event.pointerType && event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+                if(!sidebar.contains(event.target) && !sidebar.classList.contains('is-pinned')) sidebar.classList.remove('is-touch-expanded');
+            };
+            sidebar.addEventListener('pointerdown', expand, { passive:true });
+            sidebar.addEventListener('touchstart', expand, { passive:true });
+            document.addEventListener('pointerdown', collapseOutside, { passive:true });
+            document.addEventListener('touchstart', collapseOutside, { passive:true });
         }
 
         function setLocalNavCollapsed(collapsed, options = {}) {
@@ -134,6 +180,8 @@
             const legacyUserTab = LEGACY_USER_MANAGEMENT_TABS[id] || '';
             if(legacyUserTab) id = 'user-management';
             if(!PAGE_IDS.includes(id)) id = DEFAULT_PAGE_ID;
+            updateWorkbenchMeta(id);
+            document.querySelectorAll('[data-mobile-page]').forEach(btn => btn.classList.toggle('active', btn.dataset.mobilePage === id));
 
             // 离开前确认：若当前激活页声明了守卫且非强制切换，则先询问该页能否离开
             try {
@@ -246,6 +294,19 @@
             document.documentElement.classList.remove('studio-route-booting');
         }
         document.addEventListener('DOMContentLoaded', restoreActivePage, { once:true });
+        document.addEventListener('DOMContentLoaded', bindSidebarTouchExpand, { once:true });
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.setAttribute('role', 'button');
+                item.setAttribute('tabindex', '0');
+                item.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    const match = (item.getAttribute('onclick') || '').match(/'([^']+)'/);
+                    if (match) switchUI(item, match[1]);
+                });
+            });
+        }, { once:true });
 
         // --- 访问控制：按当前用户权限过滤侧边栏页面入口 ---
         async function applyAccessControl() {

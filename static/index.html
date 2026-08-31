@@ -1026,6 +1026,65 @@
             }
             .help-resize-handle { display: none; }
         }
+        /* Calm, material sidebar with direct press feedback. */
+        .sidebar { position:relative; isolation:isolate; width:76px; min-width:76px; padding:18px 10px 14px; background:color-mix(in srgb,var(--sidebar-bg) 84%,transparent); border-right:1px solid color-mix(in srgb,var(--border) 78%,transparent); box-shadow:14px 0 36px rgba(15,23,42,.08); backdrop-filter:blur(26px) saturate(145%); -webkit-backdrop-filter:blur(26px) saturate(145%); transition:width .42s cubic-bezier(.22,1,.36,1),min-width .42s cubic-bezier(.22,1,.36,1),background .24s ease,box-shadow .24s ease; }
+        .sidebar:hover,.sidebar.is-pinned { width:248px; }
+        .sidebar:not(.is-pinned):hover,.sidebar.is-collapsing:hover { width:76px; }
+        .sidebar.is-pinned { min-width:248px; box-shadow:18px 0 42px rgba(15,23,42,.12); }
+        .sidebar .nav-item,.sidebar .nav-fold-toggle { height:42px; margin:3px 0; border-radius:12px; padding-left:13px; transition:width .42s cubic-bezier(.22,1,.36,1),background .16s ease,color .16s ease,transform .16s ease; }
+        .sidebar:not(.is-pinned) .nav-item,.sidebar:not(.is-pinned) .nav-fold-toggle { width:48px; }
+        .sidebar.is-pinned .nav-item,.sidebar.is-pinned .nav-fold-toggle { width:208px; }
+        .nav-item:hover,.nav-fold-toggle:hover,.side-pill:hover { background:color-mix(in srgb,var(--text) 7%,transparent); color:var(--text); }
+        .nav-item:active,.nav-fold-toggle:active,.side-pill:active { transform:scale(.975); }
+        .nav-item.active { background:linear-gradient(135deg,#3b82f6,#2563eb); color:#fff; box-shadow:0 7px 18px rgba(37,99,235,.28); }
+        .nav-item::before { content:""; position:absolute; left:4px; top:9px; width:3px; height:24px; border-radius:3px; background:transparent; transform:scaleY(.4); transition:background .16s ease,transform .22s cubic-bezier(.22,1,.36,1); }
+        .nav-item.active::before { background:#bfdbfe; transform:scaleY(1); }
+        .sidebar:not(.is-pinned) .nav-text { opacity:0; max-width:0; margin-left:0; }
+        .sidebar.is-pinned .nav-text { opacity:1; max-width:160px; margin-left:11px; }
+        .logo-ring { width:40px; min-width:40px; max-width:40px; height:40px; min-height:40px; max-height:40px; flex:0 0 40px; aspect-ratio:1 / 1; margin:0 auto 18px !important; border:1px solid rgba(96,165,250,.5); border-radius:13px; background:color-mix(in srgb,#2563eb 13%,var(--sidebar-bg)); box-shadow:0 5px 16px rgba(15,23,42,.08),inset 0 1px 0 rgba(255,255,255,.16); }
+        .sidebar-toggle-label { overflow:hidden; max-width:0; margin-left:0; opacity:0; white-space:nowrap; font-size:13px; font-weight:600; transition:max-width .28s var(--fluid-ease),margin-left .28s var(--fluid-ease),opacity .18s ease; }
+        .logo-ring #sidebar-open-icon,.logo-ring #sidebar-collapse-icon { width:18px; height:18px; display:block; stroke:#60a5fa; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; fill:none; }
+        .logo-ring #sidebar-collapse-icon { display:none; }
+        .sidebar.is-pinned #sidebar-open-icon,
+        .sidebar.is-touch-expanded #sidebar-open-icon { display:none; }
+        .sidebar.is-pinned #sidebar-collapse-icon,
+        .sidebar.is-touch-expanded #sidebar-collapse-icon { display:block; }
+        .sidebar.is-pinned .logo-ring,
+        .sidebar.is-touch-expanded .logo-ring,
+        .sidebar.is-collapsing.is-touch-expanded .logo-ring { transform:none; border-radius:12px; }
+        .sidebar:not(.is-pinned):not(.is-touch-expanded):hover .logo-ring,
+        .sidebar.is-collapsing:not(.is-touch-expanded):hover .logo-ring { transform:none; border-radius:12px; }
+        .sidebar.is-pinned .logo-ring { width:208px; min-width:208px; max-width:208px; flex-basis:208px; aspect-ratio:auto; justify-content:flex-start; padding:0 14px; }
+        .sidebar.is-pinned .sidebar-toggle-label { max-width:140px; margin-left:10px; opacity:1; }
+        .sidebar.is-touch-expanded .logo-ring,
+        .sidebar.is-collapsing.is-touch-expanded .logo-ring { width:190px; min-width:190px; max-width:190px; flex-basis:190px; aspect-ratio:auto; justify-content:flex-start; padding:0 14px; }
+        .sidebar.is-touch-expanded .sidebar-toggle-label,
+        .sidebar.is-collapsing.is-touch-expanded .sidebar-toggle-label { max-width:130px; margin-left:10px; opacity:1; }
+        .side-actions { gap:5px; margin-top:12px; padding-top:12px; border-top:1px solid color-mix(in srgb,var(--border) 78%,transparent); }
+        .side-pill { height:38px; border-radius:11px; transition:width .42s cubic-bezier(.22,1,.36,1),background .16s ease,color .16s ease,transform .16s ease; }
+        .side-pill:hover { background:color-mix(in srgb,#3b82f6 12%,transparent); color:#60a5fa; }
+        .sidebar:not(.is-pinned) .side-pill { width:48px; }
+        .sidebar.is-pinned .side-pill { width:208px; }
+        .sidebar:not(.is-pinned) .side-pill-text { opacity:0; max-width:0; margin-left:0; }
+        .sidebar.is-pinned .side-pill-text { opacity:1; max-width:150px; margin-left:10px; }
+        @media (prefers-reduced-transparency: reduce) { .sidebar { background:var(--sidebar-bg); backdrop-filter:none; -webkit-backdrop-filter:none; } }
+
+        /* Touch devices have no reliable hover state. Keep the existing
+           pin/collapse button, while allowing a temporary touch expansion. */
+        .sidebar.is-touch-expanded,
+        .sidebar.is-collapsing.is-touch-expanded { width:220px; min-width:220px; transition-delay:0s; }
+        .sidebar.is-touch-expanded .logo-ring,
+        .sidebar.is-collapsing.is-touch-expanded .logo-ring { transform:none; border-radius:13px; background:var(--nav-hover-bg); color:var(--text); transition-delay:0s; }
+        .sidebar.is-touch-expanded .nav-item,
+        .sidebar.is-touch-expanded .nav-fold-toggle,
+        .sidebar.is-collapsing.is-touch-expanded .nav-item,
+        .sidebar.is-collapsing.is-touch-expanded .nav-fold-toggle { width:190px; transition-delay:0s; }
+        .sidebar.is-touch-expanded .nav-text,
+        .sidebar.is-collapsing.is-touch-expanded .nav-text { opacity:1; max-width:160px; margin-left:11px; transition-delay:.1s; }
+        .sidebar.is-touch-expanded .side-pill,
+        .sidebar.is-collapsing.is-touch-expanded .side-pill { width:170px; gap:8px; transition-delay:0s; }
+        .sidebar.is-touch-expanded .side-pill-text,
+        .sidebar.is-collapsing.is-touch-expanded .side-pill-text { opacity:1; max-width:120px; margin-left:10px; transition-delay:.15s; }
     </style>
 </head>
 
@@ -1033,8 +1092,10 @@
 
     <div class="app-shell">
         <aside class="sidebar" id="studioSidebar">
-            <button class="logo-ring mb-12" id="sidebarLogoToggle" type="button" onclick="toggleSidebarPinned(event)" aria-pressed="false" title="固定导航栏">
-                <div class="w-1.5 h-1.5 rounded-full transition-colors" id="logo-dot" style="background:var(--text)"></div>
+            <button class="logo-ring mb-12" id="sidebarLogoToggle" type="button" onclick="toggleSidebarPinned(event)" aria-pressed="false" aria-label="展开导航栏" title="展开导航栏">
+                <svg id="sidebar-open-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v18"></path><path d="m14 9 3 3-3 3"></path></svg>
+                <svg id="sidebar-collapse-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3v18"></path><path d="m10 9-3 3 3 3"></path></svg>
+                <span class="sidebar-toggle-label">收起导航栏</span>
             </button>
 
             <nav>
@@ -1288,7 +1349,7 @@
 
     <script src="/static/dist/index/help-feedback.js"></script>
     <script src="/static/dist/index/theme-lang-sync.js"></script>
-    <script src="/static/dist/index/main.js"></script>
+    <script src="/static/dist/index/main.js?v=touch-sidebar"></script>
     <!-- 版本更新检测 -->
     <!-- 热更新提示（仅 c 段变化）：非强制，可手动关闭。 -->
     <div id="versionToast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:99999;background:var(--bg);color:var(--text);padding:12px 24px;border-radius:12px;font-size:13px;font-weight:500;box-shadow:0 8px 24px rgba(0,0,0,.12);border:1px solid var(--border);align-items:center;gap:12px;">
@@ -1306,6 +1367,30 @@
         </div>
     </div>
     <script src="/static/dist/index/version-check.js"></script>
+    <script>
+        /* Cache-proof fallback for touch expansion of the collapsible sidebar. */
+        (() => {
+            const bindTouchSidebar = () => {
+                const sidebar = document.getElementById('studioSidebar');
+                if (!sidebar || sidebar.dataset.touchExpandBound === '1') return;
+                sidebar.dataset.touchExpandBound = '1';
+                const expand = event => {
+                    if (event.pointerType && event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+                    if (!sidebar.classList.contains('is-pinned')) sidebar.classList.add('is-touch-expanded');
+                };
+                const collapseOutside = event => {
+                    if (event.pointerType && event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+                    if (!sidebar.contains(event.target) && !sidebar.classList.contains('is-pinned')) sidebar.classList.remove('is-touch-expanded');
+                };
+                sidebar.addEventListener('pointerdown', expand, {passive:true});
+                sidebar.addEventListener('touchstart', expand, {passive:true});
+                document.addEventListener('pointerdown', collapseOutside, {passive:true});
+                document.addEventListener('touchstart', collapseOutside, {passive:true});
+            };
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindTouchSidebar, {once:true});
+            else bindTouchSidebar();
+        })();
+    </script>
 </body>
 
 </html>
