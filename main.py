@@ -5115,7 +5115,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
     elif isinstance(raw, dict) and raw.get("usage"):
         from app.services.usage import record_omnilojo_response_usage
         await asyncio.gather(*(
-            asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider, model, raw_item, operation="image_generation")
+            asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider, model, {**raw_item, "local_request_id": f"image:{uuid.uuid4().hex}"}, operation="image_generation")
             for _url, raw_item in generated
         ))
     await asyncio.to_thread(save_to_history, result)

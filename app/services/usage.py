@@ -428,8 +428,12 @@ def record_omnilojo_response_usage(user_id: str, provider: dict[str, Any], model
         return False
     usage = raw.get("usage")
     request_id = str(raw.get("id") or raw.get("request_id") or "").strip()
-    if not isinstance(usage, dict) or not request_id:
+    if not isinstance(usage, dict):
         return False
+    # Some OpenAI-compatible image gateways omit an ID. Use a deterministic
+    # local correlation key supplied by the caller, or generate one so the
+    # successful generation still appears in the account usage ledger.
+    request_id = request_id or str(raw.get("local_request_id") or new_id())
     values = omnilojo_response_usage_values(provider, model, usage)
     now = now_ms()
     raw_usage = {
