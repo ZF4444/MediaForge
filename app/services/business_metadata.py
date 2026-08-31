@@ -435,7 +435,10 @@ def migrate_local_workflows() -> int:
 
 def list_comfy_workflows() -> list[dict[str, Any]]:
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT name,config_json,builtin FROM comfy_workflows WHERE builtin=FALSE")
+        # Built-in workflows are valid canvas sources too. They remain
+        # undeletable at the router layer, but must be visible alongside
+        # custom workflows in the unified workflow selector.
+        cur.execute("SELECT name,config_json,builtin FROM comfy_workflows")
         rows = cur.fetchall()
     result = []
     for row in rows:

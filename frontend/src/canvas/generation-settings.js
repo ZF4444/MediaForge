@@ -110,7 +110,14 @@ function runningHubConnection(){
 }
 function runningHubEntries(kind){
     const provider = runningHubConnection();
-    return Array.isArray(provider?.rh_apps) ? provider.rh_apps.filter(item => item?.enabled !== false && item?.hidden !== true) : [];
+    const providerApps = Array.isArray(provider?.rh_apps) ? provider.rh_apps : [];
+    // The settings API stores executable apps in `resources`; use that
+    // authoritative list as a fallback when the connection uses a custom ID.
+    const resourceApps = (Array.isArray(aiResourceIndex?.resources) ? aiResourceIndex.resources : [])
+        .filter(item => item?.kind === 'runninghub_app')
+        .map(item => ({...(item.settings || {}), id:item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id, name:item.name, enabled:item.enabled !== false}));
+    const apps = providerApps.length ? providerApps : resourceApps;
+    return apps.filter(item => item?.enabled !== false && item?.hidden !== true);
 }
 function runningHubEntryId(entry, kind){
     return String(entry?.appId || entry?.webappId || entry?.id || '').trim();
@@ -736,6 +743,14 @@ function renderComfyParams(){
     `;
 }
 function renderWorkflowNodeParams(){
+    // Workflow nodes can retain the last selected engine in persisted canvas
+    // settings. If that source is no longer configured, prefer the other
+    // available workflow source instead of showing the RH-only "add workflow"
+    // hint for a perfectly valid ComfyUI workflow.
+    const hasComfy = Array.isArray(comfyWorkflows) && comfyWorkflows.length > 0;
+    const hasRunningHub = runningHubAllEntries().length > 0;
+    if(settings.engine === 'runninghub' && !hasRunningHub && hasComfy) settings.engine = 'comfy';
+    else if(settings.engine === 'comfy' && !hasComfy && hasRunningHub) settings.engine = 'runninghub';
     const isComfy = settings.engine === 'comfy';
     let fields = [];
     let body = '';
@@ -748,7 +763,7 @@ function renderWorkflowNodeParams(){
         const ref = selectedRunningHubRef();
         settings.rhParams = settings.rhParams || {};
         settings.rhRandomActive = settings.rhRandomActive || {};
-        if(!ref) body = `${renderRhMachineControl()}<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>`;
+        if(!ref) body = `${renderRhMachineControl()}<div class="muted-note">${escapeHtml(hasComfy ? tr('smart.noWorkflow') : tr('smart.rhNeedConfig'))}</div>`;
         else {
             fields = rhActiveFields().filter(field => !['image','video','audio','prompt'].includes(rhFieldRole(field)));
             body = `${renderRhMachineControl()}${fields.length ? fields.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(tr('smart.rhNoParams'))}</div>`}`;
@@ -1741,7 +1756,22 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
         aiConnections = (stableCfg.connections || []).map(c => ({...c, id:c.id, connection_id:c.id,
             image_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'image' && m.enabled !== false).map(m => m.upstream_model),
             chat_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'chat' && m.enabled !== false).map(m => m.upstream_model),
-            video_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'video' && m.enabled !== false).map(m => m.upstream_model)}));
+            video_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'video' && m.enabled !== false).map(m => m.upstream_model),
+            // Executable workflows/apps live in `resources` in the authoritative
+            // configuration. Attach them to their connection for the legacy
+            // provider-shaped canvas selectors.
+            rh_apps:(stableCfg.resources || []).filter(r => r.connection_id === c.id && r.kind === 'runninghub_app').map(r => ({
+                ...(r.settings || {}),
+                id: r.settings?.id || r.settings?.appId || r.settings?.webappId || r.id,
+                name: r.name,
+                enabled: r.enabled !== false,
+            })),
+            comfy_workflows:(stableCfg.resources || []).filter(r => r.connection_id === c.id && r.kind === 'comfyui_workflow').map(r => ({
+                ...(r.settings || {}),
+                name: r.settings?.name || r.name,
+                enabled: r.enabled !== false,
+            }))
+        }));
         if(invalidateParameterSchemas) canvasParameterSchemaCache.clear();
         const imageProvider = imageConnections().find(provider => provider.id === settings.provider_id) || imageConnections()[0];
         const videoProvider = videoConnections().find(provider => provider.id === settings.videoProvider) || videoConnections()[0];
@@ -1758,7 +1788,27 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
         const workflowResponse = await fetch('/api/workflows', {credentials:'same-origin'});
         if(workflowResponse.ok){
             const wf = await workflowResponse.json();
-            if(Array.isArray(wf.workflows)) comfyWorkflows = wf.workflows.filter(item => item?.enabled !== false);
+            const legacyWorkflows = Array.isArray(wf.workflows) ? wf.workflows : [];
+            // ComfyUI workflows created through API settings are persisted as
+            // executable resources, while older uploads use the comfy_workflows
+            // table. Merge both sources for the canvas selector.
+            const resourceWorkflows = (stableCfg.resources || [])
+                .filter(item => item?.kind === 'comfyui_workflow')
+                .map(item => {
+                    const s = item.settings || {};
+                    return {
+                        ...s,
+                        name: s.workflow_name || s.workflowName || s.name || item.name,
+                        title: s.title || item.name,
+                        enabled: item.enabled !== false,
+                    };
+                })
+                .filter(item => item.name);
+            const workflowByName = new Map();
+            [...legacyWorkflows, ...resourceWorkflows].forEach(item => {
+                if(item?.name && !workflowByName.has(item.name)) workflowByName.set(item.name, item);
+            });
+            comfyWorkflows = [...workflowByName.values()].filter(item => item?.enabled !== false);
         } else {
             console.warn('[canvas] workflow refresh skipped', workflowResponse.status);
         }
