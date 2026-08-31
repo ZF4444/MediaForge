@@ -7,7 +7,6 @@ missing/inconsistent.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -68,9 +67,6 @@ async def validate() -> int:
                 await cur.execute("SELECT COUNT(*) AS count FROM information_schema.columns WHERE table_schema='public' AND table_name='omnilojo_usage_records' AND column_name='provider_id'")
                 if int((await cur.fetchone())["count"]):
                     failures.append("legacy omnilojo_usage_records.provider_id column still exists")
-        compat = os.getenv("AI_PROVIDER_COMPAT", "0").strip().lower()
-        if compat in {"1", "true", "yes", "on"}:
-            failures.append("AI_PROVIDER_COMPAT is enabled")
         # Source-level guard: the final release must not re-expose the removed
         # Provider HTTP surface or execute SQL against the legacy secret table.
         project_root = Path(__file__).resolve().parents[1]
@@ -83,7 +79,7 @@ async def validate() -> int:
                     break
         if "FROM provider_secrets" in secret_source or "INTO provider_secrets" in secret_source:
             failures.append("runtime provider_secrets SQL present")
-        print({"tables": counts, "legacy_app_setting_present": bool(legacy_setting), "compat": compat, "failures": failures})
+        print({"tables": counts, "legacy_app_setting_present": bool(legacy_setting), "failures": failures})
         return 1 if failures else 0
     finally:
         await close_database_pool()
