@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from app.services import usage
 from app.services.usage import _omnilojo_log_items, _omnilojo_request_ids, omnilojo_response_usage_values
-from main import gemini_image_config, normalize_provider
+from app.ai.transport import gemini_image_options
 
 
 def test_omnilojo_log_items_accepts_new_api_paginated_response():
@@ -27,57 +27,8 @@ def test_omnilojo_request_ids_support_top_level_and_embedded_log_fields():
     }) == ("request-1", "upstream-1")
 
 
-def test_omnilojo_provider_preserves_protocol_and_cash_conversion_settings():
-    provider = normalize_provider({
-        "id": "omnilojo-main", "name": "Omnilojo", "base_url": "",
-        "protocol": "omnilojo", "omnilojo_quota_per_usd": 250000, "omnilojo_cny_per_usd": 7.15,
-    })
-
-    assert provider["protocol"] == "omnilojo"
-    assert provider["omnilojo_quota_per_usd"] == 250000
-    assert provider["omnilojo_cny_per_usd"] == 7.15
-
-
-def test_omnilojo_provider_preserves_per_model_prices():
-    provider = normalize_provider({
-        "id": "omnilojo-main", "name": "Omnilojo", "base_url": "",
-        "protocol": "omnilojo", "omnilojo_model_prices": {
-            "gemini-3-pro-image": {"input_per_million": 2, "output_per_million": 120},
-        },
-    })
-
-    assert provider["omnilojo_model_prices"] == {
-        "gemini-3-pro-image": {"input_per_million": 2.0, "output_per_million": 120.0},
-    }
-
-
-def test_omnilojo_provider_requires_both_prices_for_enabled_models():
-    try:
-        normalize_provider({
-            "id": "omnilojo-main", "name": "Omnilojo", "base_url": "", "protocol": "omnilojo",
-            "image_models": ["gemini-3-pro-image"],
-            "omnilojo_model_prices": {"gemini-3-pro-image": {"input_per_million": 2}},
-        })
-    except Exception as exc:
-        assert "输入和输出单价" in str(exc.detail)
-    else:
-        raise AssertionError("expected missing output price to be rejected")
-
-
-def test_legacy_omnilojo_provider_protocol_still_requires_model_prices():
-    try:
-        normalize_provider({
-            "id": "omnilojo-main", "name": "Omnilojo", "base_url": "", "protocol": "omnilojo",
-            "image_models": ["gemini-3-pro-image"],
-        })
-    except Exception as exc:
-        assert "输入和输出单价" in str(exc.detail)
-    else:
-        raise AssertionError("expected missing model price to be rejected after protocol migration")
-
-
 def test_omnilojo_image_request_uses_google_image_size_and_nearest_ratio():
-    assert gemini_image_config("2048x1024") == {"aspectRatio": "16:9", "imageSize": "2K"}
+    assert gemini_image_options("2048x1024") == {"aspectRatio": "16:9", "imageSize": "2K"}
 
 
 def test_omnilojo_response_usage_calculates_model_pricing():

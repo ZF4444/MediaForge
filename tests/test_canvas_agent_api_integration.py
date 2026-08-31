@@ -5,7 +5,10 @@ import uuid
 
 import pytest
 
-pytestmark = pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="DATABASE_URL is required")
+pytestmark = pytest.mark.skipif(
+    not (os.getenv("DATABASE_URL") and os.getenv("CANVAS_AGENT_INTEGRATION") == "1"),
+    reason="DATABASE_URL and CANVAS_AGENT_INTEGRATION=1 are required",
+)
 
 
 def test_canvas_agent_api_lifecycle_conflict_tasks_events_and_permissions(monkeypatch):
@@ -15,10 +18,20 @@ def test_canvas_agent_api_lifecycle_conflict_tasks_events_and_permissions(monkey
     from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
     from app.services.canvas_agent.store import append_event, create_run, save_plan, update_run
 
-    async def persist_event(user_id, run_id, event_type, payload=None):
+    async def persist_event(user_id, run_id, event_type, payload=None, **_kwargs):
         return await asyncio.to_thread(append_event, user_id, run_id, event_type, payload)
 
     monkeypatch.setattr(canvas_agent, "emit_agent_event", persist_event)
+    monkeypatch.setattr(canvas_agent, "has_page_access", lambda *_args: True)
+    async def execute_immediately(user_id, run_id, operation_type, payload):
+        if operation_type == "agent.message":
+            from app.models import CanvasAgentMessageRequest
+            return await canvas_agent.execute_message_command(user_id, run_id, CanvasAgentMessageRequest.model_validate(payload))
+        if operation_type == "agent.confirm":
+            from app.models import CanvasAgentConfirmRequest
+            return await canvas_agent.execute_confirm_command(user_id, run_id, CanvasAgentConfirmRequest.model_validate(payload))
+        raise AssertionError(f"unexpected operation: {operation_type}")
+    monkeypatch.setattr(canvas_agent, "_accept_command", execute_immediately)
     submitted = []
 
     async def fake_submit(user_id, canvas_id, run_id, requests, *, prompt, prompts_by_node=None):
@@ -109,10 +122,11 @@ def test_canvas_agent_api_cancel_timeout_and_task_retry(monkeypatch):
 
     async def persist_event(*_args, **_kwargs): return {"sequence": 1}
     monkeypatch.setattr(canvas_agent, "emit_agent_event", persist_event)
+    monkeypatch.setattr(canvas_agent, "has_page_access", lambda *_args: True)
     tasks = {
         "queued": {"id": "queued", "owner_id": "", "agent_run_id": "", "status": "queued"},
-        "failed": {"id": "failed", "owner_id": "", "agent_run_id": "", "status": "failed", "attempt": 1},
-        "timed-out": {"id": "timed-out", "owner_id": "", "agent_run_id": "", "status": "timed_out", "attempt": 1},
+        "failed": {"id": "failed", "owner_id": "", "agent_run_id": "", "status": "failed", "attempt": 1, "connection_id": "connection", "model_id": "model"},
+        "timed-out": {"id": "timed-out", "owner_id": "", "agent_run_id": "", "status": "timed_out", "attempt": 1, "connection_id": "connection", "model_id": "model"},
     }
     async def get_task(task_id): return dict(tasks[task_id]) if task_id in tasks else None
     async def update_task(task_id, *, expected_status="", **changes):

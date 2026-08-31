@@ -26,16 +26,16 @@ class CanvasAgentState(TypedDict, total=False):
 def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canvas_id: str = "",
                         checkpointer: Any = None, emit_progress: Callable[..., Awaitable[Any]] | None = None,
                         get_canvas=None, execute_patch=None, dispatch_tasks=None, tools: list[StructuredTool] | None = None,
-                        provider_loader=None, emit_skill_event: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None):
+                        emit_skill_event: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None):
     planning_tools = tools or build_canvas_tools(
         user_id=user_id, run_id=run_id, canvas_id=canvas_id,
-        get_canvas=get_canvas, provider_loader=provider_loader,
+        get_canvas=get_canvas,
         emit_skill_event=emit_skill_event,
     )
     execution_tools = build_canvas_tools(
         user_id=user_id, run_id=run_id, canvas_id=canvas_id,
         get_canvas=get_canvas, execute_patch=execute_patch, include_execution=True,
-        provider_loader=provider_loader, emit_skill_event=emit_skill_event,
+        emit_skill_event=emit_skill_event,
     ) if execute_patch is not None else []
     planning_tool_node = ToolNode(planning_tools)
     execution_tool_node = ToolNode(execution_tools) if execution_tools else None
@@ -62,8 +62,8 @@ def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canv
             "创建节点时 semantic_type 只能是 prompt、image_generation、video_generation、workflow_generation 或 group；"
             "capability 必须填写 read_capability_registry 返回的能力名，绝不能写入 semantic_type。"
             "例如图片节点使用 semantic_type=image_generation、capability=image.text_to_image。"
-            "选择 capability、provider 或 model 后，必须先调用 read_capability_parameters 获取字段、枚举、默认值和范围，再调用 propose_canvas_patch。"
-            "read_capability_registry 和 read_capability_parameters 返回的 provider_name、model_label、display_name、display_fields 是给用户看的名称；"
+            "选择 capability、connection 或 model 后，必须先调用 read_capability_parameters 获取字段、枚举、默认值和范围，再调用 propose_canvas_patch。"
+            "read_capability_registry 和 read_capability_parameters 返回的 connection_name、model_label、display_name、display_fields 是给用户看的名称；"
             "优先使用这些展示名称理解和描述参数，display_fields[].display_options 中的 label 是选项显示值，value 是提交执行时必须保留的原始值。"
             "参数工具返回的 params_path 指定字段写入位置；图片/视频写入 node.params.runSettings，"
             "ComfyUI 写入 node.params.runSettings.comfyParams，提示词节点字段直接写入 node.params。"

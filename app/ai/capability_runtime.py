@@ -1,19 +1,13 @@
-"""Capability-based Provider dispatch for image, video, chat and discovery.
-
-HTTP routes register protocol implementations once and dispatch only by a
-normalized capability key. This prevents routes from accumulating Provider
-specific ``if/elif`` branches.
-"""
+"""Protocol-neutral dispatch registry for executable AI capabilities."""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-
 Handler = Callable[..., Awaitable[Any]]
 
 
-class ProviderRuntime:
+class CapabilityRuntime:
     def __init__(self) -> None:
         self._handlers: dict[tuple[str, str], Handler] = {}
 
@@ -22,7 +16,7 @@ class ProviderRuntime:
         if not all(key):
             raise ValueError("capability and protocol are required")
         if key in self._handlers:
-            raise ValueError(f"provider handler already registered: {key}")
+            raise ValueError(f"capability handler already registered: {key}")
         self._handlers[key] = handler
 
     async def dispatch(self, capability: str, protocol: str, *args: Any, **kwargs: Any) -> Any:
@@ -30,5 +24,5 @@ class ProviderRuntime:
         proto = str(protocol).strip().lower()
         handler = self._handlers.get((cap, proto)) or self._handlers.get((cap, "default"))
         if handler is None:
-            raise LookupError(f"provider capability is not registered: {cap}/{proto}")
+            raise LookupError(f"capability is not registered: {cap}/{proto}")
         return await handler(*args, **kwargs)

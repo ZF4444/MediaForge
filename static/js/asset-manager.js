@@ -12,7 +12,7 @@ try {
 let activeTab = ASSET_MANAGER_TABS.has(requestedInitialTab) ? requestedInitialTab : 'assets';
 let assetLibrary = {libraries:[], categories:[]};
 let promptLibrary = {libraries:[]};
-let apiProviders = [];
+let aiConnections = [];
 let avatarRegisterProvider = '';
 let avatarBusyId = '';
 let activeAssetLibraryId = '';
@@ -171,7 +171,7 @@ async function loadAll(){
     promptLibrary = promptData.library || {libraries:[]};
     const connections = Array.isArray(configurationData.connections) ? configurationData.connections : [];
     const models = Array.isArray(configurationData.models) ? configurationData.models : [];
-    apiProviders = connections.map(connection => ({...connection, id: connection.id, image_models: models.filter(model => model.connection_id === connection.id && model.kind === 'image').map(model => model.upstream_model), chat_models: models.filter(model => model.connection_id === connection.id && model.kind === 'chat').map(model => model.upstream_model), video_models: models.filter(model => model.connection_id === connection.id && model.kind === 'video').map(model => model.upstream_model)}));
+    aiConnections = connections.map(connection => ({...connection, id: connection.id, image_models: models.filter(model => model.connection_id === connection.id && model.kind === 'image').map(model => model.upstream_model), chat_models: models.filter(model => model.connection_id === connection.id && model.kind === 'chat').map(model => model.upstream_model), video_models: models.filter(model => model.connection_id === connection.id && model.kind === 'video').map(model => model.upstream_model)}));
     meInfo = meData || {user_id:'', pages:[]};
     storageUsage = usageData || {usage_by_category:[]};
     storageFiles = {entries:[], offset:0, limit:50, has_more:false, total_matches:0, total_pages:0, current_page:1};

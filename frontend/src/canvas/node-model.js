@@ -117,6 +117,8 @@ function createNode(x, y, images=[], options={}){
 function createPromptNode(x, y, options={}){
     if(!options.skipUndo) pushUndo();
     const providerId = resolveChatProviderId();
+    const model = resolveChatModel('', providerId);
+    const target = stableCanvasTarget('chat', providerId, model);
     const node = {
         id:uid('prompt'),
         type:'smart-prompt',
@@ -127,8 +129,8 @@ function createPromptNode(x, y, options={}){
         title:'Prompt',
         text:'',
         llmEnabled:false,
-        llmProvider:providerId,
-        llmModel:resolveChatModel('', providerId),
+        llmConnectionId:target.connection_id,
+        llmModelId:target.model_id,
         llmTask:'llm',
         captionTemplateId:'',
         expandTemplateId:'',

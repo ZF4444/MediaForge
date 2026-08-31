@@ -528,7 +528,7 @@
                                                 <div id="modelPickerScope" class="model-picker-scope"></div>
                                             </div>
                                             <div class="model-picker-body">
-                                                <div id="modelProviderList" class="model-picker-list"></div>
+                                                <div id="modelConnectionList" class="model-picker-list"></div>
                                                 <div id="modelList" class="model-picker-list"></div>
                                             </div>
                                         </div>
@@ -660,14 +660,15 @@
         let conversations = [];
         let currentConversation = null;
         let mode = 'agent';
-        let provider = savedChatSettings.provider || 'comfly';
+        let chatConnectionId = savedChatSettings.chatConnectionId || '';
         let msModel = savedChatSettings.msModel || '';
         let activeChatModel = savedChatSettings.activeChatModel || '';
-        let activeImageProvider = savedChatSettings.activeImageProvider || 'comfly';
+        let imageConnectionId = savedChatSettings.imageConnectionId || '';
         let activeImageModel = savedChatSettings.activeImageModel || '';
         let systemPrompt = String(savedChatSettings.systemPrompt || '').trim();
-        let apiProviders = [];
-        let chatProviderModels = isObject(savedChatSettings.chatProviderModels) ? savedChatSettings.chatProviderModels : {};
+        let aiConnections = [];
+        let aiResources = {connections:[], models:[], resources:[]};
+        let chatConnectionModels = isObject(savedChatSettings.chatConnectionModels) ? savedChatSettings.chatConnectionModels : {};
         let chatRatio = ['square','portrait','portrait43','landscape43','landscape','story','wide'].includes(savedChatSettings.chatRatio) ? savedChatSettings.chatRatio : 'square';
         let chatResolution = savedChatSettings.chatSizeModeVersion === CHAT_SIZE_MODE_VERSION && ['auto','1k','2k','4k','custom'].includes(savedChatSettings.chatResolution) ? savedChatSettings.chatResolution : 'auto';
         let chatPresetResolution = ['1k','2k','4k'].includes(savedChatSettings.chatPresetResolution) ? savedChatSettings.chatPresetResolution : (chatResolution === 'custom' ? '1k' : chatResolution);
@@ -699,6 +700,19 @@
 
         const headers = () => ({'Content-Type':'application/json', 'X-User-ID':userId});
 
+        function stableTarget(connectionId, model, kind='chat'){
+            const connection = (aiResources.connections || []).find(item =>
+                item.enabled !== false && (item.id === connectionId || item.runtime_id === connectionId || item.settings?.runtime_id === connectionId)
+            );
+            const models = (aiResources.models || []).filter(item => item.enabled !== false && item.kind === kind && (!connection || item.connection_id === connection.id));
+            const selected = models.find(item => item.upstream_model === model || item.alias === model) || models[0];
+            return {connection_id: selected?.connection_id || connection?.id || '', model_id: selected?.id || '', resource_id: ''};
+        }
+
+        function stableImageTarget(){
+            return stableTarget(imageConnectionId, activeImageModel, 'image');
+        }
+
         function rememberConversation(id){
             try {
                 if(id) localStorage.setItem(CHAT_LAST_CONVERSATION_KEY, id);
@@ -715,13 +729,13 @@
             try {
                 localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({
                     mode,
-                    provider,
+                    chatConnectionId,
                     msModel,
                     activeChatModel,
-                    activeImageProvider,
+                    imageConnectionId,
                     activeImageModel,
                     systemPrompt,
-                    chatProviderModels,
+                    chatConnectionModels,
                     chatRatio,
                     chatResolution,
                     chatPresetResolution,
@@ -774,34 +788,34 @@
             const seen = new Set();
             return (list || []).map(item => String(item || '').trim()).filter(item => item && !seen.has(item) && seen.add(item));
         }
-        function chatProviders(){
-            const list = (apiProviders || []).filter(p => p.enabled !== false && (p.chat_models || []).length);
+        function chatConnections(){
+            const list = (aiConnections || []).filter(p => p.enabled !== false && (p.chat_models || []).length);
             if(config.ms_chat_models?.length && !list.some(p => p.id === 'modelscope')) list.push({id:'modelscope', name:'ModelScope', chat_models:config.ms_chat_models, image_models:[]});
             return list.length ? list : [{id:'comfly', name:'API', chat_models:[config.chat_model || 'gpt-4o-mini'], image_models:[config.image_model || 'gpt-image-2']}];
         }
-        function imageProviders(){
-            const list = (apiProviders || []).filter(p => p.enabled !== false && (p.image_models || []).length);
+        function imageConnections(){
+            const list = (aiConnections || []).filter(p => p.enabled !== false && (p.image_models || []).length);
             return list.length ? list : [{id:'comfly', name:'API', image_models:[config.image_model || 'gpt-image-2'], chat_models:[config.chat_model || 'gpt-4o-mini']}];
         }
-        function providerById(id, kind='chat'){
-            const list = kind === 'image' ? imageProviders() : chatProviders();
+        function connectionById(id, kind='chat'){
+            const list = kind === 'image' ? imageConnections() : chatConnections();
             return list.find(p => p.id === id) || list[0];
         }
         function activePickerKind(){
             return mode === 'image' ? 'image' : (mode === 'agent' ? modelPickerScope : 'chat');
         }
-        function currentProviderId(kind=activePickerKind()){
-            return kind === 'image' ? activeImageProvider : provider;
+        function currentConnectionId(kind=activePickerKind()){
+            return kind === 'image' ? imageConnectionId : chatConnectionId;
         }
         function modelListForCurrent(kind=activePickerKind()){
-            const item = providerById(currentProviderId(kind), kind);
+            const item = connectionById(currentConnectionId(kind), kind);
             return uniqueModels(kind === 'image' ? item.image_models : item.chat_models);
         }
         function currentModel(kind=activePickerKind()){
-            return kind === 'image' ? activeImageModel : (provider === 'modelscope' ? (msModel || activeChatModel) : activeChatModel);
+            return kind === 'image' ? activeImageModel : activeChatModel;
         }
-        function providerNameById(id, kind=activePickerKind()){
-            const item = providerById(id, kind);
+        function connectionNameById(id, kind=activePickerKind()){
+            const item = connectionById(id, kind);
             return item?.name || item?.id || 'API';
         }
         function shortModelName(value){
@@ -809,35 +823,33 @@
         }
         function renderProviderControls(){
             const kind = activePickerKind();
-            const providers = kind === 'image' ? imageProviders() : chatProviders();
-            const pid = currentProviderId(kind);
-            if(!providers.some(p => p.id === pid)) {
-                if(kind === 'image') activeImageProvider = providers[0]?.id || 'comfly';
-                else provider = providers[0]?.id || 'comfly';
+            const connections = kind === 'image' ? imageConnections() : chatConnections();
+            const cid = currentConnectionId(kind);
+            if(!connections.some(p => p.id === cid)) {
+                if(kind === 'image') imageConnectionId = connections[0]?.id || '';
+                else chatConnectionId = connections[0]?.id || '';
             }
             const models = modelListForCurrent(kind);
             if(kind === 'image' && !models.includes(activeImageModel)) activeImageModel = models[0] || config.image_model;
-            if(kind !== 'image' && !models.includes(activeChatModel)) activeChatModel = chatProviderModels[provider] && models.includes(chatProviderModels[provider]) ? chatProviderModels[provider] : (models[0] || config.chat_model);
-            if(kind !== 'image' && provider === 'modelscope') msModel = activeChatModel;
+            if(kind !== 'image' && !models.includes(activeChatModel)) activeChatModel = chatConnectionModels[chatConnectionId] && models.includes(chatConnectionModels[chatConnectionId]) ? chatConnectionModels[chatConnectionId] : (models[0] || config.chat_model);
             renderModelPicker();
         }
 
         function validateSavedProviderState(){
-            const chatProviderList = chatProviders();
-            provider = chatProviderList.some(p => p.id === provider) ? provider : (chatProviderList[0]?.id || 'comfly');
-            const chatModels = uniqueModels(providerById(provider, 'chat')?.chat_models || []);
-            const rememberedChatModel = chatProviderModels[provider];
+            const chatProviderList = chatConnections();
+            chatConnectionId = chatProviderList.some(p => p.id === chatConnectionId) ? chatConnectionId : (chatProviderList[0]?.id || '');
+            const chatModels = uniqueModels(connectionById(chatConnectionId, 'chat')?.chat_models || []);
+            const rememberedChatModel = chatConnectionModels[chatConnectionId];
             activeChatModel = chatModels.includes(activeChatModel)
                 ? activeChatModel
                 : (chatModels.includes(rememberedChatModel) ? rememberedChatModel : (chatModels[0] || config.chat_model));
-            chatProviderModels[provider] = activeChatModel;
-            if(provider === 'modelscope') msModel = activeChatModel;
+            chatConnectionModels[chatConnectionId] = activeChatModel;
             if(config.ms_chat_models?.length && msModel && !config.ms_chat_models.includes(msModel)) msModel = config.ms_chat_models[0];
-            if(config.ms_chat_models?.length && provider === 'modelscope') activeChatModel = msModel || config.ms_chat_models[0];
+            if(config.ms_chat_models?.length && chatConnectionId === 'modelscope') activeChatModel = msModel || config.ms_chat_models[0];
 
-            const imageProviderList = imageProviders();
-            activeImageProvider = imageProviderList.some(p => p.id === activeImageProvider) ? activeImageProvider : (imageProviderList[0]?.id || 'comfly');
-            const imageModels = uniqueModels(providerById(activeImageProvider, 'image')?.image_models || []);
+            const imageProviderList = imageConnections();
+            imageConnectionId = imageProviderList.some(p => p.id === imageConnectionId) ? imageConnectionId : (imageProviderList[0]?.id || '');
+            const imageModels = uniqueModels(connectionById(imageConnectionId, 'image')?.image_models || []);
             activeImageModel = imageModels.includes(activeImageModel) ? activeImageModel : (imageModels[0] || config.image_model);
             if(mode !== 'agent' && mode !== 'chat' && mode !== 'image') mode = 'chat';
             if(mode === 'chat') modelPickerScope = 'chat';
@@ -846,9 +858,19 @@
 
         async function loadConfig(){
             try {
-                const data = await fetch('/api/config').then(r=>r.json());
+                const resourceResponse = await fetch('/api/ai/configuration');
+                const stable = await resourceResponse.json();
+                if(!resourceResponse.ok) throw new Error(stable.detail || '加载 AI 配置失败');
+                aiResources = stable;
+                const byConnection = new Map((stable.connections || []).map(c => [c.id, c]));
+                aiConnections = [...byConnection.values()].map(c => ({...c, id:c.id, connection_id:c.id,
+                    chat_models:(stable.models || []).filter(m => m.connection_id === c.id && m.kind === 'chat' && m.enabled !== false).map(m => m.upstream_model),
+                    image_models:(stable.models || []).filter(m => m.connection_id === c.id && m.kind === 'image' && m.enabled !== false).map(m => m.upstream_model),
+                    video_models:(stable.models || []).filter(m => m.connection_id === c.id && m.kind === 'video' && m.enabled !== false).map(m => m.upstream_model),
+                    rh_apps:(stable.resources || []).filter(r => r.connection_id === c.id && r.kind === 'runninghub_app' && r.enabled !== false).map(r => ({...r.settings, id:r.id, name:r.name}))
+                }));
+                const data = {chat_models:aiConnections.flatMap(p => p.chat_models), image_models:aiConnections.flatMap(p => p.image_models), video_models:aiConnections.flatMap(p => p.video_models)};
                 config = { ...config, ...data };
-                apiProviders = Array.isArray(config.api_providers) ? config.api_providers : [];
                 config.chat_model = (config.chat_models || []).find(m => m === 'gpt-5.5') || config.chat_model || 'gpt-5.5';
                 config.image_model = config.image_model || ((config.image_models || [])[0]) || 'gpt-image-2';
                 validateSavedProviderState();
@@ -860,7 +882,7 @@
         try {
             const apiChannel = new BroadcastChannel('studio-api');
             apiChannel.onmessage = async (e) => {
-                if(e.data?.type === 'providers-changed'){
+                if(e.data?.type === 'ai-configuration-changed'){
                     await loadConfig();
                     renderProviderControls();
                     updateModelLabel();
@@ -868,14 +890,13 @@
             };
         } catch(e) {}
 
-        function setProvider(p, kind=activePickerKind()) {
-            if(kind === 'image') activeImageProvider = p;
-            else provider = p;
+        function setConnection(p, kind=activePickerKind()) {
+            if(kind === 'image') imageConnectionId = p;
+            else chatConnectionId = p;
             const models = modelListForCurrent(kind);
             if(kind === 'image') activeImageModel = models[0] || activeImageModel;
             else {
-                activeChatModel = chatProviderModels[provider] && models.includes(chatProviderModels[provider]) ? chatProviderModels[provider] : (models[0] || activeChatModel);
-                if(provider === 'modelscope') msModel = activeChatModel;
+                activeChatModel = chatConnectionModels[chatConnectionId] && models.includes(chatConnectionModels[chatConnectionId]) ? chatConnectionModels[chatConnectionId] : (models[0] || activeChatModel);
             }
             renderProviderControls();
             updateModelLabel();
@@ -885,8 +906,7 @@
             if(kind === 'image') activeImageModel = model;
             else {
                 activeChatModel = model;
-                chatProviderModels[provider] = model;
-                if(provider === 'modelscope') msModel = model;
+                chatConnectionModels[chatConnectionId] = model;
             }
             renderProviderControls();
             updateModelLabel();
@@ -1014,15 +1034,15 @@
             const kind = activePickerKind();
             const picker = document.getElementById('modelPicker');
             const scope = document.getElementById('modelPickerScope');
-            const providerList = document.getElementById('modelProviderList');
+            const providerList = document.getElementById('modelConnectionList');
             const modelList = document.getElementById('modelList');
             const providerLabel = document.getElementById('modelPickerProvider');
             const modelLabel = document.getElementById('modelPickerModel');
             const title = document.getElementById('modelPickerTitle');
             if(!picker || !scope || !providerList || !modelList) return;
-            const currentPid = currentProviderId(kind);
+            const currentPid = currentConnectionId(kind);
             const currentMdl = currentModel(kind);
-            providerLabel.textContent = providerNameById(currentPid, kind);
+            providerLabel.textContent = connectionNameById(currentPid, kind);
             if(mode === 'agent') {
                 modelLabel.textContent = `${shortModelName(activeChatModel)} + ${shortModelName(activeImageModel)}`;
             } else {
@@ -1033,9 +1053,9 @@
                 ? `<button class="${kind === 'chat' ? 'active' : ''}" onclick="setModelPickerScope('chat')">对话</button><button class="${kind === 'image' ? 'active' : ''}" onclick="setModelPickerScope('image')">图像</button>`
                 : '';
             scope.style.display = mode === 'agent' ? 'flex' : 'none';
-            const providers = kind === 'image' ? imageProviders() : chatProviders();
+            const providers = kind === 'image' ? imageConnections() : chatConnections();
             providerList.innerHTML = providers.length
-                ? providers.map(p => `<button class="model-picker-option ${p.id === currentPid ? 'active' : ''}" onclick="setProvider('${escapeHtml(p.id)}','${kind}')"><span>${escapeHtml(p.name || p.id)}</span>${p.id === currentPid ? '<i data-lucide="check"></i>' : ''}</button>`).join('')
+                ? providers.map(p => `<button class="model-picker-option ${p.id === currentPid ? 'active' : ''}" onclick="setConnection('${escapeHtml(p.id)}','${kind}')"><span>${escapeHtml(p.name || p.id)}</span>${p.id === currentPid ? '<i data-lucide="check"></i>' : ''}</button>`).join('')
                 : `<div class="model-picker-empty">暂无平台</div>`;
             const models = modelListForCurrent(kind);
             modelList.innerHTML = models.length
@@ -1152,12 +1172,12 @@
             if (mode === 'image') {
                 label = activeImageModel || config.image_model || 'Image';
             } else if (mode === 'agent') {
-                const chatLabel = provider === 'modelscope'
+                const chatLabel = chatConnectionId === 'modelscope'
                     ? (msModel || (config.ms_chat_models?.[0]) || 'ModelScope').split('/').pop().split(':')[0]
                     : (activeChatModel || config.chat_model || 'Chat');
                 const imageLabel = (activeImageModel || config.image_model || 'Image').split('/').pop().split(':')[0];
                 label = `Agent · ${chatLabel} + ${imageLabel}`;
-            } else if (provider === 'modelscope') {
+            } else if (chatConnectionId === 'modelscope') {
                 label = msModel || (config.ms_chat_models?.[0]) || 'ModelScope';
                 // Shorten the display label
                 label = label.split('/').pop().split(':')[0];
@@ -1548,10 +1568,8 @@
                             size: requestedSize,
                             aspect_ratio: requestAspectRatio,
                             resolution: requestResolution,
-                            model: provider === 'modelscope' ? (msModel || activeChatModel) : (activeChatModel || config.chat_model),
-                            ms_model: provider === 'modelscope' ? (msModel || activeChatModel) : '',
                             reference_images: pendingRefs,
-                            provider,
+                            ...stableTarget(chatConnectionId, activeChatModel || config.chat_model, 'chat'),
                         })
                     }).then(async r => { if(!r.ok) throw new Error((await r.json()).detail || tr('chat.requestFailed')); return r.json(); });
                     currentConversation = data.conversation;
@@ -1571,12 +1589,11 @@
                             size: requestedSize,
                             aspect_ratio: requestAspectRatio,
                             resolution: requestResolution,
-                            model: provider === 'modelscope' ? (msModel || activeChatModel) : (activeChatModel || config.chat_model),
-                            ms_model: provider === 'modelscope' ? (msModel || activeChatModel) : '',
-                            image_model: activeImageModel || config.image_model,
+                            image_model_id: stableImageTarget().model_id,
+                            image_connection_id: stableImageTarget().connection_id,
+                            image_resource_id: stableImageTarget().resource_id,
                             reference_images: pendingRefs,
-                            provider,
-                            image_provider: activeImageProvider,
+                            ...stableTarget(chatConnectionId, activeChatModel || config.chat_model, 'chat'),
                         })
                     }).then(async r => { if(!r.ok) throw new Error((await r.json()).detail || tr('chat.requestFailed')); return r.json(); });
                     currentConversation = data.conversation;
@@ -1596,10 +1613,9 @@
                             size: requestedSize,
                             aspect_ratio: requestAspectRatio,
                             resolution: requestResolution,
-                            model: activeChatModel || config.chat_model,
-                            image_model: activeImageModel || config.image_model,
+                            image_model_id: stableImageTarget().model_id,
                             reference_images: pendingRefs,
-                            provider: activeImageProvider,
+                            ...stableImageTarget(),
                         })
                     }).then(async r => { if(!r.ok) throw new Error((await r.json()).detail || tr('chat.requestFailed')); return r.json(); });
                     currentConversation = data.conversation;
@@ -1617,8 +1633,8 @@
         }
 
         async function streamChatMessage(message, pendingRefs, assistantBubble){
-            const currentProvider = provider;
-            const currentMsModel = provider === 'modelscope' ? (msModel || activeChatModel || (config.ms_chat_models?.[0] || '')) : '';
+            const currentConnection = chatConnectionId;
+            const currentMsModel = chatConnectionId === 'modelscope' ? (msModel || activeChatModel || (config.ms_chat_models?.[0] || '')) : '';
             const currentChatModel = activeChatModel || config.chat_model;
 
             const res = await fetch('/api/chat/stream', {
@@ -1629,9 +1645,7 @@
                     message,
                     system_prompt: currentSystemPrompt(),
                     mode:'chat',
-                    model: currentProvider === 'modelscope' ? currentMsModel : currentChatModel,
-                    ms_model: currentProvider === 'modelscope' ? currentMsModel : '',
-                    provider: currentProvider,
+                    ...stableTarget(currentConnection, currentChatModel, 'chat'),
                     reference_images: pendingRefs
                 })
             });

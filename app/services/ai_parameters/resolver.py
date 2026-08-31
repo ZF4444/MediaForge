@@ -178,12 +178,32 @@ def _normalize_rh_field(field: dict[str, Any]) -> dict[str, Any]:
     return {"id": f"{field.get('nodeId') or ''}::{field.get('fieldName') or ''}", "nodeId": str(field.get("nodeId") or ""), "fieldName": str(field.get("fieldName") or ""), "name": str(field.get("label") or field.get("fieldName") or "Field"), "type": field_type, "default": default if default is not None and not isinstance(default, dict) else "", "options": options or [], "min": field.get("min"), "max": field.get("max"), "step": field.get("step")}
 
 
-def capability_parameters(*, capability: str, provider_id: str = "", model: str = "", provider_loader=None, workflow_loader=None) -> dict[str, Any]:
+def capability_parameters(*, capability: str, provider_id: str = "", model: str = "", connection_id: str = "", model_id: str = "", resource_id: str = "", provider_loader=None, workflow_loader=None) -> dict[str, Any]:
     """Return the field contract for a Provider model or native workflow."""
-    if provider_loader is None:
-        from app.ai.runtime import load_legacy_providers
-        provider_loader = load_legacy_providers
-    providers = [item for item in (provider_loader() or []) if isinstance(item, dict) and item.get("enabled", True)]
+    stable_target = bool(connection_id or model_id or resource_id)
+    if stable_target:
+        from app.ai.database_repository import DatabaseAIRepository
+        repo = DatabaseAIRepository()
+        if resource_id:
+            target = repo.resolve_executable(resource_id=resource_id)
+            provider_id, connection_id, model = target.connection.id, target.connection.id, target.resource.id
+            selected = {"id": target.connection.id, "name": target.connection.name, "protocol": target.connection.protocol, "enabled": target.connection.enabled, "rh_apps": [], "comfy_workflows": []}
+            if target.resource.kind == "runninghub_app":
+                selected["rh_apps"] = [{**target.resource.settings, "id": target.resource.id, "name": target.resource.name}]
+            elif target.resource.kind == "comfyui_workflow":
+                selected["comfy_workflows"] = [{**target.resource.settings, "name": target.resource.name}]
+        else:
+            target = repo.resolve_model(model_id=model_id, connection_id=connection_id, model=model)
+            provider_id, connection_id, model = target.connection.id, target.connection.id, target.model.upstream_model
+            selected = {"id": target.connection.id, "name": target.connection.name, "protocol": target.connection.protocol, "enabled": target.connection.enabled, f"{target.model.kind}_models": [model], "model_aliases": {model: target.model.alias}}
+        providers = [selected]
+    else:
+        # Provider-shaped input is retained solely for reading historical
+        # canvas definitions. New runtime requests must provide a canonical
+        # connection/model/resource identifier.
+        if provider_loader is None:
+            raise ValueError("capability parameters require connection_id, model_id, or resource_id")
+        providers = [item for item in (provider_loader() or []) if isinstance(item, dict) and item.get("enabled", True)]
     selected = next((item for item in providers if item.get("id") == provider_id), None)
     if capability.startswith("comfyui.workflow."):
         if workflow_loader is None:
@@ -192,15 +212,15 @@ def capability_parameters(*, capability: str, provider_id: str = "", model: str 
         if not model:
             raise ValueError("ComfyUI workflow capability requires model/workflow")
         config = (workflow_loader(model).get("config") or {})
-        return {"capability": capability, "provider_id": "comfyui", "model": model, "params_path": "runSettings.comfyParams", "fields": list(config.get("fields") or []), "source": ["workflow.config.fields"]}
+        return {"capability": capability, "connection_id": connection_id, "model_id": model_id, "resource_id": resource_id, "model": model, "params_path": "runSettings.comfyParams", "fields": list(config.get("fields") or []), "source": ["workflow.config.fields"]}
     if provider_id == "runninghub" or capability.startswith("runninghub."):
         provider = selected or next((item for item in providers if item.get("id") == "runninghub"), None)
         app = next((item for item in (provider or {}).get("rh_apps") or [] if model in {str(item.get("id") or ""), str(item.get("appId") or ""), str(item.get("webappId") or "")}), None)
         if app is None:
             raise ValueError("RunningHub application not found")
-        return {"capability": capability, "provider_id": "runninghub", "model": model, "params_path": "runSettings.rhParams", "fields": [_normalize_rh_field(field) for field in app.get("fields") or [] if isinstance(field, dict)], "source": ["runninghub.rh_apps.fields"]}
+        return {"capability": capability, "connection_id": connection_id, "model_id": model_id, "resource_id": resource_id, "model": model, "params_path": "runSettings.rhParams", "fields": [_normalize_rh_field(field) for field in app.get("fields") or [] if isinstance(field, dict)], "source": ["runninghub.rh_apps.fields"]}
     if capability == "prompt.generate":
-        return {"capability": capability, "provider_id": provider_id, "model": model, "fields": [_field(field_id="llmProvider", name="Provider", field_type="dropdown", default=provider_id, options=[item.get("id") for item in providers if item.get("chat_models")]), _field(field_id="llmModel", name="Model", field_type="dropdown", default=model, options=list((selected or {}).get("chat_models") or [])), _field(field_id="llmInstruction", name="Instruction", field_type="textarea", default="")], "params_path": "node", "source": ["provider.chat_models"]}
+        return {"capability": capability, "connection_id": connection_id, "model_id": model_id, "resource_id": resource_id, "provider_id": provider_id, "model": model, "fields": [_field(field_id="llmProvider", name="Provider", field_type="dropdown", default=provider_id, options=[item.get("id") for item in providers if item.get("chat_models")]), _field(field_id="llmModel", name="Model", field_type="dropdown", default=model, options=list((selected or {}).get("chat_models") or [])), _field(field_id="llmInstruction", name="Instruction", field_type="textarea", default="")], "params_path": "node", "source": ["provider.chat_models"]}
     kind = "video" if capability == "video.text_to_video" else "image"
     fields, sources = _resolved_api_schema(kind, selected, model)
     provider_field = next(field for field in fields if field["id"] in {"provider_id", "videoProvider"})
@@ -213,12 +233,12 @@ def capability_parameters(*, capability: str, provider_id: str = "", model: str 
         options=models,
         option_labels=[str(aliases.get(item) or item) for item in models],
     )
-    return {"capability": capability, "provider_id": provider_id, "model": model, "params_path": "runSettings", "fields": fields, "source": sources}
+    return {"capability": capability, "connection_id": connection_id, "model_id": model_id, "resource_id": resource_id, "provider_id": provider_id, "model": model, "params_path": "runSettings", "fields": fields, "source": sources}
 
 
-def validate_run_settings(*, kind: str, provider_id: str, model: str, settings: dict[str, Any], provider_loader=None) -> dict[str, Any]:
+def validate_run_settings(*, kind: str, provider_id: str, model: str, settings: dict[str, Any], provider_loader=None, connection_id: str = "", model_id: str = "", resource_id: str = "") -> dict[str, Any]:
     """Validate declared ordinary-Provider settings and return canonical values."""
-    schema = capability_parameters(capability="video.text_to_video" if kind == "video" else "image.text_to_image", provider_id=provider_id, model=model, provider_loader=provider_loader)
+    schema = capability_parameters(capability="video.text_to_video" if kind == "video" else "image.text_to_image", provider_id=provider_id, model=model, connection_id=connection_id, model_id=model_id, resource_id=resource_id, provider_loader=provider_loader)
     values: dict[str, Any] = {}
     for field in schema["fields"]:
         field_id, value, field_type = str(field["id"]), settings.get(field["id"], field.get("default")), field.get("type")

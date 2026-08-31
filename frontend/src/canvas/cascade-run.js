@@ -64,6 +64,15 @@ function smartCascadeParallelLimit(chain=[]){
     if(hasRunningHub) return 1;
     return hasComfy ? Math.max(1, Math.min(6, Number(comfyInstanceCount) || 1)) : 6;
 }
+function canonicalRunSettings(value={}){
+    const settings={...(value || {})};
+    delete settings.provider_id;
+    delete settings.provider;
+    delete settings.model;
+    delete settings.videoProvider;
+    delete settings.videoModel;
+    return settings;
+}
 async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runState=null){
     let next = 0;
     const workerCount = Math.max(1, Math.min(Number(limit) || 1, roundIndexes.length));
@@ -147,10 +156,10 @@ function comfyFieldKind(field){
     return 'setting';
 }
 async function runApiGeneration(prompt, refs, runSettings=settings){
-    if(!runSettings.provider_id || !runSettings.model) throw new Error(tr('smart.errNoApiModel'));
+    if(!runSettings.connection_id || !runSettings.model_id) throw new Error(tr('smart.errNoApiModel'));
     // Keep the canvas contract intact. Provider-specific field mapping belongs
     // to the backend, where it is shared by direct runs and Agent executions.
-    const payload = {prompt, run_settings:runSettings, reference_images:imageRefsOnly(refs)};
+    const payload = {prompt, run_settings:canonicalRunSettings(runSettings), reference_images:imageRefsOnly(refs), connection_id:runSettings.connection_id, model_id:runSettings.model_id, resource_id:runSettings.resource_id || ''};
     const task = await fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
         if(!r.ok) throw await smartResponseError(r);
         return r.json();
@@ -158,7 +167,7 @@ async function runApiGeneration(prompt, refs, runSettings=settings){
     const taskIds = Array.isArray(task?.child_task_ids) && task.child_task_ids.length
         ? task.child_task_ids
         : (task?.task_id ? [task.task_id] : []);
-    return {taskIds, count:Number(task?.count || 1), providerId:runSettings.provider_id, model:runSettings.model};
+    return {taskIds, count:Number(task?.count || 1), connectionId:runSettings.connection_id, modelId:runSettings.model_id, resourceId:runSettings.resource_id || ''};
 }
 async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const ref = selectedRunningHubRef(runSettings);
@@ -168,7 +177,8 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const randomValues = {};
     const media = rhMediaForRun(prompt, refs);
     const nodeInfoList = await rhBuildNodeInfoList(media, runSettings, randomValues);
-    const body = {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || ''};
+        const stable = stableCanvasTarget('runninghub_app', runSettings.connection_id || runSettings.provider_id || 'runninghub', ref.id);
+    const body = {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || '', connection_id:stable.connection_id, resource_id:stable.resource_id};
     const submit = await fetch('/api/runninghub/submit', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -184,19 +194,20 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     return {
         ...submit,
         taskId,
-        providerId:'runninghub',
-        model:ref.id,
+        connectionId:stable.connection_id,
+        resourceId:stable.resource_id,
         mode:'app'
     };
 }
-async function pollRunningHubTask(taskId){
+async function pollRunningHubTask(taskId, target={}){
     if(!taskId) throw new Error(tr('smart.rhNoTaskId'));
     if(activeRunningHubTaskPolls.has(taskId)) return activeRunningHubTaskPolls.get(taskId);
     const promise = (async () => {
         let sawSuccessWithoutOutputs = false;
         for(let i = 0; i < 360; i++){
             await sleep(5000);
-            const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
+            const query = new URLSearchParams({taskId, connection_id:target.connectionId || target.connection_id || '', resource_id:target.resourceId || target.resource_id || ''});
+            const data = await fetch(`/api/runninghub/query?${query}`).then(async r => {
                 const json = await r.json();
                 if(!r.ok || json.success === false){
                     throw new Error(json.detail || json.error || tr('smart.rhFailed'));
@@ -222,10 +233,10 @@ async function pollRunningHubTask(taskId){
 }
 async function runRunningHubGeneration(prompt, refs, runSettings=settings){
     const submit = await submitRunningHubGeneration(prompt, refs, runSettings);
-    return pollRunningHubTask(submit.taskId);
+    return pollRunningHubTask(submit.taskId, submit);
 }
 async function runApiVideoGeneration(prompt, refs, runSettings=settings){
-    if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
+    if(!runSettings.videoConnectionId || !runSettings.videoModelId) throw new Error(tr('smart.errNoVideoModel'));
     const generationMode = videoGenerationMode(runSettings);
     const useReferences = generationMode !== 'text';
     const refImages = (useReferences ? imageRefsOnly(refs) : []).map((ref, i) => ({
@@ -233,7 +244,8 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     }));
     const payload = {
         prompt,
-        run_settings: runSettings,
+        run_settings: canonicalRunSettings(runSettings),
+        connection_id:runSettings.videoConnectionId, model_id:runSettings.videoModelId, resource_id:runSettings.videoResourceId || '',
         images: refImages,
         videos: useReferences ? videoRefsOnly(refs).map(ref => ref.url).filter(Boolean) : [],
         audios: useReferences ? audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3) : []
@@ -290,10 +302,11 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
             values[field.id] = settings.comfyParams?.[field.id] ?? field.default;
         }
     });
-    const task = await createSmartComfyTask({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
+    const stable = stableCanvasTarget('comfyui_workflow', 'comfyui', workflowName);
+    const task = await createSmartComfyTask({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId, ...stable});
     if(!task?.task_id) throw new Error(tr('smart.errRunFailed'));
     if(pendingNode){
-        pendingNode.pendingTasks = [{taskId:task.task_id, kind:'image', providerId:'comfyui', taskType:'comfy'}];
+        pendingNode.pendingTasks = [{taskId:task.task_id, kind:'image', connectionId:stable.connection_id, resourceId:stable.resource_id, taskType:'comfy'}];
         pendingNode.pending = 1;
         pendingNode.pendingCandidatePool = true;
         pendingNode.running = false;
@@ -535,7 +548,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
                 addGeneratedCandidatesToNode(outputSlot, existing, {main:'preserve'});
                 outputSlot.images = [];
             }
-            outputSlot.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:taskResult.providerId, model:taskResult.model}));
+            outputSlot.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', connectionId:taskResult.connectionId, modelId:taskResult.modelId, resourceId:taskResult.resourceId}));
             outputSlot.pending = Math.max(taskIds.length, Number(outputSlot.pending || 0) || taskIds.length);
             outputSlot.pendingCandidatePool = true;
             outputSlot.running = false;
@@ -1042,7 +1055,7 @@ async function runGeneration(){
             const taskResult = await submitRunningHubGeneration(prompt, refs);
             const taskIds = [taskResult.taskId].filter(Boolean);
             if(!taskIds.length) throw new Error(tr('smart.rhNoTaskId'));
-            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:'runninghub', model:taskResult.model, mode:taskResult.mode}));
+            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', connectionId:taskResult.connectionId, resourceId:taskResult.resourceId, mode:taskResult.mode}));
             pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
             pendingNode.pendingCandidatePool = true;
             pendingNode.runStartedAt = nowMs();
@@ -1064,7 +1077,7 @@ async function runGeneration(){
         if(isApiLikeEngine(settings.engine)){
             const taskIds = Array.isArray(outImages?.taskIds) ? outImages.taskIds : [];
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
-            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:outImages.providerId, model:outImages.model}));
+            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', connectionId:outImages.connectionId, modelId:outImages.modelId, resourceId:outImages.resourceId}));
             pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
             pendingNode.pendingCandidatePool = true;
             pendingNode.runStartedAt = nowMs();

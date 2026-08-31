@@ -62,14 +62,17 @@ def apply() -> dict:
     initialize_business_metadata()
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
         cur.execute("CREATE TABLE IF NOT EXISTS ai_cutover_archive (id BIGSERIAL PRIMARY KEY, archived_at BIGINT NOT NULL, api_providers JSONB NOT NULL)")
+        cur.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='ai_legacy_mappings'")
+        if cur.fetchone():
+            cur.execute("CREATE TABLE IF NOT EXISTS ai_legacy_mappings_archive AS SELECT *, NOW() AS archived_at FROM ai_legacy_mappings WHERE FALSE")
+            cur.execute("INSERT INTO ai_legacy_mappings_archive SELECT *, NOW() FROM ai_legacy_mappings")
         cur.execute("SELECT value_json FROM app_settings WHERE key='api_providers' FOR UPDATE")
         setting = cur.fetchone()
-        if not setting:
-            return {"status": "already_cut_over", "tasks": 0, "canvases": 0}
-        providers = setting["value_json"] if isinstance(setting, dict) else setting[0]
-        if _contains_secret(providers) and len(str(os.getenv("APP_SECRET_KEY") or "")) < 16:
-            raise RuntimeError("legacy configuration contains secrets; set APP_SECRET_KEY (at least 16 characters) before --apply")
-        cur.execute("INSERT INTO ai_cutover_archive(archived_at,api_providers) VALUES(%s,%s)", (int(time.time() * 1000), json.dumps(providers, ensure_ascii=False)))
+        providers = setting["value_json"] if isinstance(setting, dict) else setting[0] if setting else []
+        if setting:
+            if _contains_secret(providers) and len(str(os.getenv("APP_SECRET_KEY") or "")) < 16:
+                raise RuntimeError("legacy configuration contains secrets; set APP_SECRET_KEY (at least 16 characters) before --apply")
+            cur.execute("INSERT INTO ai_cutover_archive(archived_at,api_providers) VALUES(%s,%s)", (int(time.time() * 1000), json.dumps(providers, ensure_ascii=False)))
 
         cur.execute("SELECT id,connection_id,upstream_model FROM ai_models")
         model_map = {}
@@ -85,6 +88,10 @@ def apply() -> dict:
             model_map[(provider, str(row["upstream_model"]))] = row["id"]
         cur.execute("SELECT id,connection_id,kind,name FROM ai_resources")
         resource_map = {str(row["id"]): str(row["id"]) for row in cur.fetchall()}
+        comfy_resource_map = {}
+        cur.execute("SELECT id,name,settings_json FROM ai_resources WHERE kind='comfyui_workflow'")
+        for row in cur.fetchall():
+            comfy_resource_map[str(row["name"])] = str(row["id"])
 
         # Move encrypted secrets without ever materializing plaintext in the
         # migration process. The legacy table is optional on fresh installs.
@@ -103,15 +110,26 @@ def apply() -> dict:
         cur.execute("ALTER TABLE ai_task_archive ADD COLUMN IF NOT EXISTS connection_id TEXT NOT NULL DEFAULT ''")
         cur.execute("ALTER TABLE ai_task_archive ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT ''")
         cur.execute("ALTER TABLE ai_task_archive ADD COLUMN IF NOT EXISTS resource_id TEXT NOT NULL DEFAULT ''")
-        cur.execute("SELECT task_id,provider_id,model,payload_json FROM ai_task_archive")
+        cur.execute("SELECT task_id,task_type,provider_id,model,resource_id,payload_json FROM ai_task_archive")
         tasks = 0
+        unresolved_tasks = 0
         for row in cur.fetchall():
             provider = str(row["provider_id"] or "").lower()
             model = str(row["model"] or "")
             model_id = model_map.get((provider, model), "")
             connection_id = f"legacy:{provider}" if model_id else ""
+            resource_id = str(row["resource_id"] or "")
+            if not resource_id and str(row["task_type"] or "") == "comfy":
+                workflow_name = str((row["payload_json"] or {}).get("workflow_json") or "")
+                resource_id = comfy_resource_map.get(workflow_name, "")
+                if resource_id:
+                    connection_id = "legacy:comfyui"
             payload = _rewrite(row["payload_json"] or {}, model_map, resource_map)
-            cur.execute("UPDATE ai_task_archive SET connection_id=%s,model_id=%s,payload_json=%s WHERE task_id=%s", (connection_id, model_id, json.dumps(payload, ensure_ascii=False), row["task_id"]))
+            unresolved = not (connection_id or model_id or resource_id)
+            if unresolved:
+                unresolved_tasks += 1
+                payload["migration_error"] = "无法将历史 Provider/模型映射到已启用的 AI 连接或模型"
+            cur.execute("UPDATE ai_task_archive SET connection_id=%s,model_id=%s,resource_id=%s,status=CASE WHEN %s THEN 'failed' ELSE status END,error=CASE WHEN %s THEN 'ai_cutover_unresolved_model' ELSE error END,payload_json=%s WHERE task_id=%s", (connection_id, model_id, resource_id, unresolved, unresolved, json.dumps(payload, ensure_ascii=False), row["task_id"]))
             tasks += 1
 
         cur.execute("SELECT id,data_json FROM smart_canvas_nodes")
@@ -121,7 +139,8 @@ def apply() -> dict:
             cur.execute("UPDATE smart_canvas_nodes SET data_json=%s,updated_at=%s WHERE id=%s", (json.dumps(rewritten, ensure_ascii=False), int(time.time() * 1000), row["id"]))
             canvases += 1
         cur.execute("DELETE FROM app_settings WHERE key='api_providers'")
-    return {"status": "applied", "tasks": tasks, "canvas_nodes": canvases}
+        cur.execute("DROP TABLE IF EXISTS ai_legacy_mappings")
+    return {"status": "applied", "tasks": tasks, "unresolved_tasks": unresolved_tasks, "canvas_nodes": canvases}
 
 
 def rollback() -> dict:

@@ -202,11 +202,6 @@ CREATE TABLE IF NOT EXISTS ai_resources (
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ai_resources_connection_kind ON ai_resources(connection_id, kind, enabled);
-CREATE TABLE IF NOT EXISTS ai_legacy_mappings (
-    legacy_key TEXT PRIMARY KEY, resource_id TEXT NOT NULL, legacy_provider_id TEXT NOT NULL DEFAULT '',
-    legacy_model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
-    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS comfy_workflows (
     name TEXT PRIMARY KEY, workflow_json JSONB NOT NULL, config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     builtin BOOLEAN NOT NULL DEFAULT FALSE, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
@@ -214,10 +209,14 @@ CREATE TABLE IF NOT EXISTS comfy_workflows (
 CREATE INDEX IF NOT EXISTS idx_comfy_workflows_updated ON comfy_workflows(updated_at DESC);
 CREATE TABLE IF NOT EXISTS ai_task_archive (
     task_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT '',
-    provider_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+    status TEXT NOT NULL,
     created_at DOUBLE PRECISION NOT NULL, completed_at DOUBLE PRECISION NOT NULL,
-    upstream_task_id TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', payload_json JSONB NOT NULL DEFAULT '{}'::jsonb
+    upstream_task_id TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    connection_id TEXT NOT NULL DEFAULT '', model_id TEXT NOT NULL DEFAULT '', resource_id TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE ai_task_archive ADD COLUMN IF NOT EXISTS connection_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE ai_task_archive ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE ai_task_archive ADD COLUMN IF NOT EXISTS resource_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_ai_task_archive_owner_created ON ai_task_archive(owner_id, completed_at DESC);
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id TEXT NOT NULL, key TEXT NOT NULL, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -246,6 +245,7 @@ ALTER TABLE user_budgets ALTER COLUMN monthly_budget_usd SET DEFAULT 0;
 ALTER TABLE user_budgets ALTER COLUMN enabled SET DEFAULT TRUE;
 CREATE TABLE IF NOT EXISTS runninghub_usage_records (
     id TEXT PRIMARY KEY, upstream_task_id TEXT NOT NULL UNIQUE,
+    connection_id TEXT NOT NULL DEFAULT '', model_id TEXT NOT NULL DEFAULT '', resource_id TEXT NOT NULL DEFAULT '',
     user_id TEXT NOT NULL DEFAULT '', org_id TEXT,
     operation TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'submitted',
     submitted_at BIGINT NOT NULL, completed_at BIGINT,
@@ -257,20 +257,26 @@ CREATE TABLE IF NOT EXISTS runninghub_usage_records (
     raw_usage JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
 );
+ALTER TABLE runninghub_usage_records ADD COLUMN IF NOT EXISTS connection_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE runninghub_usage_records ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE runninghub_usage_records ADD COLUMN IF NOT EXISTS resource_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_runninghub_usage_org_submitted ON runninghub_usage_records(org_id, submitted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runninghub_usage_user_submitted ON runninghub_usage_records(user_id, submitted_at DESC);
 CREATE TABLE IF NOT EXISTS omnilojo_usage_records (
-    id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, upstream_log_id TEXT NOT NULL,
+    id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, upstream_log_id TEXT NOT NULL,
+    connection_id TEXT NOT NULL DEFAULT '', model_id TEXT NOT NULL DEFAULT '', resource_id TEXT NOT NULL DEFAULT '',
     request_id TEXT NOT NULL DEFAULT '', upstream_request_id TEXT NOT NULL DEFAULT '',
     user_id TEXT NOT NULL DEFAULT '', org_id TEXT, external_username TEXT NOT NULL DEFAULT '', token_name TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL DEFAULT '', quota NUMERIC(18, 4) NOT NULL DEFAULT 0,
     cost_usd NUMERIC(14, 6) NOT NULL DEFAULT 0, total_money_cny NUMERIC(14, 4) NOT NULL DEFAULT 0,
     prompt_tokens BIGINT NOT NULL DEFAULT 0, completion_tokens BIGINT NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'succeeded', created_at BIGINT NOT NULL, raw_log JSONB NOT NULL DEFAULT '{}'::jsonb,
-    inserted_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, UNIQUE(provider_id, upstream_log_id)
+    inserted_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, UNIQUE(connection_id, upstream_log_id)
 );
 ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS request_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS upstream_request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS resource_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_org_created ON omnilojo_usage_records(org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_created ON omnilojo_usage_records(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_user_created ON omnilojo_usage_records(user_id, created_at DESC);
@@ -326,7 +332,6 @@ def sync_ai_legacy_projection(providers: Iterable[dict[str, Any]], workflows: It
         # A previous projection version attached workflows to every Provider.
         # Clear only migration-owned rows before rebuilding the canonical set.
         cur.execute("DELETE FROM ai_resources WHERE id LIKE 'legacy:%'")
-        cur.execute("DELETE FROM ai_legacy_mappings WHERE resource_id LIKE 'legacy:%'")
         for provider in rows:
             pid = str(provider["id"]).strip().lower()
             connection_id = f"legacy:{pid}"
@@ -340,12 +345,12 @@ def sync_ai_legacy_projection(providers: Iterable[dict[str, Any]], workflows: It
             # Copy centralized secrets once to the connection namespace. The
             # old secret remains readable only during this migration release.
             try:
-                from app.services.provider_secrets import get_provider_secret, set_connection_secret
-                secret = get_provider_secret(pid, "api_key")
+                from app.services.connection_secrets import get_connection_secret, set_connection_secret
+                secret = get_connection_secret(f"legacy:{pid}", "api_key")
                 if secret:
                     set_connection_secret(connection_id, "api_key", secret)
                 for name in ("omnilojo_management_token", "access_key_id", "secret_access_key"):
-                    value = get_provider_secret(pid, name)
+                    value = get_connection_secret(f"legacy:{pid}", name)
                     if value:
                         set_connection_secret(connection_id, name, value)
             except RuntimeError:
@@ -362,16 +367,15 @@ def sync_ai_legacy_projection(providers: Iterable[dict[str, Any]], workflows: It
                     if not model:
                         continue
                     model_id = f"{connection_id}:{kind}:{quote(model, safe='')}"
+                    # Legacy projections now carry one canonical protocol per
+                    # connection; no per-model protocol override is consulted.
                     protocol = str(provider.get("protocol") or "openai").strip().lower()
-                    if str(provider.get("id") or "").lower() not in {"runninghub", "volcengine"}:
-                        protocol = str((provider.get("model_protocols") or {}).get(model) or protocol).strip().lower()
                     cur.execute(
                         """INSERT INTO ai_models(id,connection_id,kind,upstream_model,protocol,alias,capabilities_json,settings_json,created_at,updated_at)
                         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT(id) DO UPDATE SET protocol=EXCLUDED.protocol,alias=EXCLUDED.alias,capabilities_json=EXCLUDED.capabilities_json,settings_json=EXCLUDED.settings_json,updated_at=EXCLUDED.updated_at""",
                         (model_id, connection_id, kind, model, protocol, str((provider.get("model_aliases") or {}).get(model) or model), json_value([]), json_value({"parameter_schema": (((provider.get("parameter_schema") or {}).get("models") or {}).get(model) or {})}), now, now),
                     )
-                    cur.execute("INSERT INTO ai_legacy_mappings(legacy_key,resource_id,legacy_provider_id,legacy_model,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(legacy_key) DO UPDATE SET resource_id=EXCLUDED.resource_id,updated_at=EXCLUDED.updated_at", (f"{pid}:{kind}:{model}", model_id, pid, model, now, now))
                     count += 1
             if pid == "runninghub":
                 for app in provider.get("rh_apps") or []:
@@ -382,7 +386,6 @@ def sync_ai_legacy_projection(providers: Iterable[dict[str, Any]], workflows: It
                     cur.execute("""INSERT INTO ai_resources(id,connection_id,kind,name,schema_json,settings_json,created_at,updated_at)
                         VALUES(%s,%s,'runninghub_app',%s,%s,%s,%s,%s)""",
                         (resource_id, connection_id, str(app.get("name") or app_id), json_value(app.get("fields") or {}), json_value(app), now, now))
-                    cur.execute("INSERT INTO ai_legacy_mappings(legacy_key,resource_id,legacy_provider_id,legacy_model,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(legacy_key) DO UPDATE SET resource_id=EXCLUDED.resource_id,updated_at=EXCLUDED.updated_at", (f"{pid}:app:{app_id}", resource_id, pid, app_id, now, now))
             if pid == "comfyui":
                 for workflow in (workflows or []):
                     if not isinstance(workflow, dict) or not workflow.get("name"):
@@ -391,7 +394,6 @@ def sync_ai_legacy_projection(providers: Iterable[dict[str, Any]], workflows: It
                     cur.execute("""INSERT INTO ai_resources(id,connection_id,kind,name,schema_json,settings_json,created_at,updated_at)
                         VALUES(%s,%s,'comfyui_workflow',%s,%s,%s,%s,%s)""",
                         (resource_id, connection_id, str(workflow["name"]), json_value(workflow.get("config") or {}), json_value(workflow), now, now))
-                    cur.execute("INSERT INTO ai_legacy_mappings(legacy_key,resource_id,legacy_provider_id,legacy_model,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(legacy_key) DO UPDATE SET resource_id=EXCLUDED.resource_id,updated_at=EXCLUDED.updated_at", (f"{pid}:workflow:{workflow['name']}", resource_id, pid, str(workflow["name"]), now, now))
     return count
 
 
@@ -562,16 +564,25 @@ def archive_ai_task(task: Dict[str, Any]) -> None:
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         return
-    payload = {key: value for key, value in task.items() if key not in {"request", "result"}}
+    request = task.get("request") if isinstance(task.get("request"), dict) else {}
+    connection_id = str(task.get("connection_id") or request.get("connection_id") or "")
+    model_id = str(task.get("model_id") or request.get("model_id") or "")
+    resource_id = str(task.get("resource_id") or request.get("resource_id") or "")
+    payload = {key: value for key, value in task.items() if key not in {"request", "result", "provider_id", "provider", "model"}}
+    payload.update({key: value for key, value in {
+        "connection_id": connection_id, "model_id": model_id, "resource_id": resource_id,
+    }.items() if value})
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO ai_task_archive(task_id,owner_id,task_type,provider_id,model,status,created_at,completed_at,upstream_task_id,error,payload_json)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """INSERT INTO ai_task_archive(task_id,owner_id,task_type,status,created_at,completed_at,upstream_task_id,error,payload_json,connection_id,model_id,resource_id)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT(task_id) DO UPDATE SET status=EXCLUDED.status, completed_at=EXCLUDED.completed_at,
-                 upstream_task_id=EXCLUDED.upstream_task_id, error=EXCLUDED.error, payload_json=EXCLUDED.payload_json""",
-            (task_id, str(task.get("owner_id") or ""), str(task.get("type") or ""), str(task.get("provider_id") or ""),
-             str(task.get("model") or ""), str(task.get("status") or ""), float(task.get("created_at") or now_ms() / 1000),
-             float(task.get("updated_at") or now_ms() / 1000), str(task.get("upstream_task_id") or ""), str(task.get("error") or ""), json_value(payload)),
+                 upstream_task_id=EXCLUDED.upstream_task_id, error=EXCLUDED.error, payload_json=EXCLUDED.payload_json,
+                 connection_id=EXCLUDED.connection_id, model_id=EXCLUDED.model_id, resource_id=EXCLUDED.resource_id""",
+            (task_id, str(task.get("owner_id") or ""), str(task.get("type") or ""), str(task.get("status") or ""),
+             float(task.get("created_at") or now_ms() / 1000), float(task.get("updated_at") or now_ms() / 1000),
+             str(task.get("upstream_task_id") or ""), str(task.get("error") or ""), json_value(payload),
+             connection_id, model_id, resource_id),
         )
 
 

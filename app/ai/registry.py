@@ -1,9 +1,11 @@
-"""Protocol-neutral registry for AI provider adapters."""
+"""Protocol-neutral registry for AI connection adapters."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
+
+from app.ai.domain import ResolvedTarget
 
 
 @dataclass(frozen=True)
@@ -13,7 +15,25 @@ class ImageGenerationRequest:
     quality: str
     model: str
     reference_images: list[dict[str, Any]]
-    provider: Mapping[str, Any]
+    connection: Mapping[str, Any]
+    target: ResolvedTarget | None = None
+
+    @property
+    def connection_id(self) -> str:
+        """Stable connection identifier used for governance and accounting."""
+        if self.target is not None:
+            return self.target.connection.id
+        return str(self.connection.get("connection_id") or self.connection.get("id") or "")
+
+    @property
+    def model_id(self) -> str:
+        """Stable model identifier; upstream model names are transport-only."""
+        return self.target.model.id if self.target and self.target.model else ""
+
+    @property
+    def resource_id(self) -> str:
+        """Stable executable resource identifier when the request targets one."""
+        return self.target.resource.id if self.target and self.target.resource else ""
 
 
 ImageGenerationHandler = Callable[[ImageGenerationRequest], Awaitable[Any]]
@@ -34,6 +54,8 @@ class ImageAdapterRegistry:
         self._handlers[name] = handler
 
     async def dispatch(self, key: str, request: ImageGenerationRequest) -> Any:
+        if request.target is None:
+            raise ValueError("image adapter requests require a resolved connection/model/resource target")
         name = str(key or "").strip().lower()
         handler = self._handlers.get(name)
         if handler is None:

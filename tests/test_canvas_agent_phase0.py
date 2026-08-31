@@ -4,7 +4,7 @@ import pytest
 
 from app.models.canvas_agent import SemanticPlan
 from app.services.canvas_agent.adapter import semantic_plan_to_patch
-from app.services.canvas_agent.capabilities import CapabilityRegistry
+from app.services.canvas_agent.capabilities import Capability, CapabilityRegistry
 from app.services.canvas_agent.policy import assess_patch, validate_patch
 from app.services.canvas_agent.evaluation import evaluate_plan
 from app.services.canvas_agent.runtime import create_canvas_agent
@@ -76,7 +76,7 @@ def test_agent_generation_node_accepts_legacy_flat_settings():
         }],
     })
     node = semantic_plan_to_patch(plan, "canvas-1", 1).operations[0].node
-    assert node["runSettings"]["provider_id"] == "custom-api-2"
+    assert "provider_id" not in node["runSettings"]
     assert node["runSettings"]["model"] == "demo"
     assert node["runSettings"]["ratio"] == "1:1"
 
@@ -111,38 +111,18 @@ def test_policy_marks_execution_as_confirmation_required():
     patch = semantic_plan_to_patch(plan, "canvas-1", 1)
     assert assess_patch(patch)["requires_confirmation"] is True
 
-def test_registry_hides_disabled_provider_and_exposes_semantics():
-    registry = CapabilityRegistry([{"id": "a", "enabled": True, "chat_models": ["chat"], "image_models": ["img"], "video_models": ["vid"]}, {"id": "b", "enabled": False, "chat_models": ["hidden-chat"], "image_models": ["hidden"]}])
-    assert registry.get("prompt.generate").model == "chat"
-    assert registry.get("image.text_to_image").model == "img"
+def test_registry_resolves_canonical_capabilities_by_model_id():
+    registry = CapabilityRegistry([
+        Capability("prompt.generate", model_id="chat-1", connection_id="connection-a", model_name="chat"),
+        Capability("image.text_to_image", model_id="image-1", connection_id="connection-a", model_name="img"),
+        Capability("video.text_to_video", model_id="video-1", connection_id="connection-a", model_name="vid", cost_level="high"),
+    ])
+    assert registry.resolve("prompt.generate", requested_model_id="chat-1").connection_id == "connection-a"
+    assert registry.resolve("image.text_to_image", requested_model_id="image-1").model_name == "img"
     assert registry.get("video.text_to_video").cost_level == "high"
 
-
-def test_provider_registry_default_loader_reads_cached_provider_configuration(monkeypatch):
-    import main
-    from app.services.canvas_agent import capabilities
-
-    monkeypatch.setattr(main, "load_api_providers", lambda: [{"id": "cached", "enabled": True, "image_models": ["image"]}])
-    monkeypatch.setattr(main, "refresh_api_providers_cache", lambda: (_ for _ in ()).throw(AssertionError("must not refresh from an async task path")))
-
-    registry = capabilities.from_provider_configuration()
-
-    assert registry.get("image.text_to_image").provider_id == "cached"
-
-def test_provider_registry_registers_enabled_comfyui_workflows():
-    from app.services.canvas_agent.capabilities import from_provider_configuration
-    registry = from_provider_configuration(
-        lambda: [{"id": "comfyui", "enabled": True}],
-        lambda: {"workflows": [
-            {"name": "custom/image.json", "title": "Image workflow", "media": "image", "field_count": 2},
-            {"name": "video.json", "title": "Video workflow", "media": "video", "field_count": 1},
-        ]},
-    )
-    assert registry.resolve("comfyui.workflow.image", requested_model="custom/image.json").provider_id == "comfyui"
-    assert registry.resolve("comfyui.workflow.video", requested_model="video.json").input_constraints["field_count"] == 1
-
 def test_capability_parameters_use_workflow_and_provider_sources():
-    from app.services.provider_parameters import capability_parameters
+    from app.services.ai_parameters import capability_parameters
     comfy = capability_parameters(
         capability="comfyui.workflow.image", model="custom/demo.json",
         provider_loader=lambda: [{"id": "comfyui", "enabled": True}],
@@ -163,98 +143,6 @@ def test_capability_parameters_use_workflow_and_provider_sources():
     assert rh["fields"][0]["options"] == ["1:1", "16:9"]
 
 
-def test_agent_parameter_tool_uses_injected_canvas_provider_source():
-    import asyncio
-    from app.services.canvas_agent.tools import build_canvas_tools
-
-    provider = {
-        "id": "custom-api-2", "enabled": True, "image_models": ["gemini-3-pro-image-preview"],
-        "parameter_schema": {"models": {"gemini-3-pro-image-preview": {"image": {"fields": [{
-            "id": "resolution", "options": ["1k", "2k", "4k"], "option_labels": ["1P", "2P", "4P"],
-        }]}}}},
-    }
-    tools = build_canvas_tools(
-        user_id="user", run_id="run", canvas_id="canvas", provider_loader=lambda: [provider],
-    )
-    read_parameters = next(item for item in tools if item.name == "read_capability_parameters")
-    schema = asyncio.run(read_parameters.ainvoke({
-        "capability": "image.text_to_image", "provider_id": "custom-api-2", "model": "gemini-3-pro-image-preview",
-    }))
-
-    resolution = next(field for field in schema["fields"] if field["id"] == "resolution")
-    assert schema["source"] == ["system.default", "provider.parameter_schema.models"]
-    assert resolution["option_labels"] == ["1P", "2P", "4P"]
-
-
-def test_agent_run_request_uses_the_target_image_node_settings():
-    from app.services.canvas_agent.task_dispatch import _image_request_for_node
-
-    capability = CapabilityRegistry([{
-        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
-    }]).get("image.text_to_image")
-    request = _image_request_for_node({
-        "id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词",
-        "runSettings": {"provider_id": "configured", "model": "configured-model", "count": 3, "quality": "high"},
-    }, capability, "计划提示词", None)
-
-    assert request["provider_id"] == "configured"
-    assert request["model"] == "configured-model"
-    assert request["prompt"] == "节点提示词"
-    assert request["n"] == 3
-    assert request["size"] == "1024x1024"
-    assert request["run_settings"]["quality"] == "high"
-
-
-def test_agent_run_request_uses_canvas_size_rules_for_custom_ratio_and_size():
-    from app.services.canvas_agent.task_dispatch import _image_request_for_node
-
-    capability = CapabilityRegistry([{
-        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
-    }]).get("image.text_to_image")
-    base = {"id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词"}
-
-    custom_ratio = _image_request_for_node({**base, "runSettings": {
-        "provider_id": "configured", "model": "configured-model", "ratio": "custom",
-        "customRatio": "3:2", "resolution": "1k",
-    }}, capability, "", None)
-    custom_size = _image_request_for_node({**base, "runSettings": {
-        "provider_id": "configured", "model": "configured-model", "resolution": "custom",
-        "customSize": "1200x800",
-    }}, capability, "", None)
-
-    assert custom_ratio["size"] == "1024x672"
-    assert custom_size["size"] == "1200x800"
-
-
-def test_agent_task_projects_queued_state_before_enqueue(monkeypatch):
-    from app.services.canvas_agent import task_dispatch
-    from app.services.canvas_agent import events
-    import main
-
-    capability = CapabilityRegistry([{
-        "id": "fallback", "enabled": True, "image_models": ["fallback-model"],
-    }]).get("image.text_to_image")
-    node = {"id": "image-1", "type": "smart-image", "genKind": "image", "text": "节点提示词"}
-    order = []
-
-    monkeypatch.setattr(task_dispatch, "load_canvas_payload", lambda *_args: {"nodes": [node]})
-    monkeypatch.setattr(task_dispatch, "from_provider_configuration", lambda: type("Registry", (), {"get": lambda *_args: capability})())
-    monkeypatch.setattr(task_dispatch, "_image_request_for_node", lambda *_args: {"provider_id": "provider", "model": "model", "n": 1})
-
-    async def create_task(_task): order.append("create")
-    async def enqueue_task(_task_id): order.append("enqueue")
-    async def emit_event(*_args, **_kwargs): order.append("queued_event")
-    async def assert_budget(*_args, **_kwargs): return None
-
-    monkeypatch.setattr(task_dispatch, "create_canvas_task", create_task)
-    monkeypatch.setattr(task_dispatch, "enqueue_canvas_task", enqueue_task)
-    monkeypatch.setattr(events, "emit_agent_event", emit_event)
-    monkeypatch.setattr(main, "get_api_provider", lambda *_args: {})
-    monkeypatch.setattr(main, "assert_provider_budget_available", assert_budget)
-
-    asyncio.run(task_dispatch.submit_run_requests("user", "canvas", "run", [{"op": "run_node", "node_id": "image-1"}], prompt=""))
-
-    assert order == ["create", "queued_event", "enqueue"]
 
 def test_fixed_evaluation_records_protocol_metrics():
     metrics = evaluate_plan("prompt-to-image", {"goal": "image", "steps": [

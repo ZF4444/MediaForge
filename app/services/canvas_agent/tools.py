@@ -9,7 +9,7 @@ from langchain_core.tools import StructuredTool, tool
 from langgraph.types import Command
 from app.models.canvas_agent import SemanticPlan
 from .capabilities import CapabilityRegistry
-from app.services.provider_parameters import capability_parameters
+from app.services.ai_parameters import capability_parameters
 from .context import build_canvas_context
 from .policy import assess_patch
 from .adapter import semantic_plan_to_patch
@@ -31,16 +31,16 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
                        execute_patch: Callable[[int, list[str]], Awaitable[dict[str, Any]]] | None = None,
                        include_execution: bool = False,
                        registry: CapabilityRegistry | None = None,
-                       provider_loader: Callable[[], list[dict[str, Any]]] | None = None,
                        emit_skill_event: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None) -> list[StructuredTool]:
     """Create tools scoped to one authenticated Agent Run."""
-    def agent_display_schema(schema: dict[str, Any], provider_id: str, model: str) -> dict[str, Any]:
-        providers = [item for item in (provider_loader() if provider_loader else []) if isinstance(item, dict)]
-        provider = next((item for item in providers if str(item.get("id") or "") == str(provider_id or "")), {})
-        aliases = provider.get("model_aliases") if isinstance(provider.get("model_aliases"), dict) else {}
-        model_label = str(aliases.get(model) or model or "")
+    def agent_display_schema(schema: dict[str, Any], connection_id: str, model: str) -> dict[str, Any]:
+        from app.ai.database_repository import DatabaseAIRepository
+        repository = DatabaseAIRepository()
+        connection = next((item for item in repository.connections() if item.id == connection_id), None)
+        selected = next((item for item in repository.models() if item.connection_id == connection_id and item.upstream_model == model), None)
+        model_label = str(selected.alias if selected else model or "")
         result = dict(schema)
-        result["display_provider"] = str(provider.get("name") or provider_id or "")
+        result["display_connection"] = str(connection.name if connection else connection_id or "")
         result["display_model"] = model_label
         result["display_fields"] = []
         for field in schema.get("fields") or []:
@@ -66,16 +66,17 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
         return (registry or CapabilityRegistry()).as_dict()
 
     @tool
-    async def read_capability_parameters(capability: str, provider_id: str = "", model: str = "") -> dict[str, Any]:
+    async def read_capability_parameters(capability: str, connection_id: str = "", model_id: str = "", resource_id: str = "", model: str = "") -> dict[str, Any]:
         """Read the same node parameter schema used by the canvas configuration UI."""
         schema = await asyncio.to_thread(
             capability_parameters,
             capability=capability,
-            provider_id=provider_id,
+            connection_id=connection_id,
+            model_id=model_id,
+            resource_id=resource_id,
             model=model,
-            provider_loader=provider_loader,
         )
-        return agent_display_schema(schema, provider_id, model)
+        return agent_display_schema(schema, connection_id, model)
 
     @tool
     async def read_artifact(artifact_type: str = "") -> dict[str, Any] | None:

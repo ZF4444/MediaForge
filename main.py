@@ -67,6 +67,7 @@ from app.core.retry import retry_operation_id
 from app.core.logging import audit_event, configure_logging, get_logger, get_task_logger
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.core.comfyui import comfyui_url, normalize_comfyui_endpoint
+from app.ai.transport import gemini_image_options, parse_models_payload
 
 configure_logging()
 logger = get_logger("main")
@@ -167,7 +168,6 @@ AGENT_COMMAND_WORKER_TASK = None
 WEBSOCKET_PUBSUB_TASK = None
 AGENT_EVENT_PUBSUB_TASK = None
 AGENT_EVENT_OUTBOX_TASK = None
-PROVIDER_CONFIG_SYNC_TASK = None
 APP_VERSION = "2026.05.19"
 RUN_BACKGROUND_MAINTENANCE = os.getenv("RUN_BACKGROUND_MAINTENANCE", "true").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -176,7 +176,7 @@ import app.core.shared_state as shared_state
 from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup, check_storage_quota
 from app.services.business_metadata import archive_ai_task, initialize_business_metadata, get_comfy_workflow
 from app.services.canvas_agent.skills import register_builtin_skills
-from app.services.provider_secrets import initialize_provider_secrets, get_provider_secret, set_provider_secret, legacy_provider_secrets_available
+from app.services.connection_secrets import initialize_connection_secrets, get_connection_secret, set_connection_secret
 from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
 from app.core.redis_client import RedisUnavailableError, close_redis_client, open_redis_client, redis_readiness_status
 from app.core.metrics import render_metrics
@@ -187,11 +187,34 @@ from app.core.ws_pubsub import publish_websocket_event, websocket_pubsub_loop
 from app.core.agent_event_pubsub import agent_event_pubsub_loop
 from app.services.canvas_agent.event_bus import agent_event_outbox_loop
 from app.workers.agent_commands import agent_command_worker_loop
-from app.core.provider_config_events import provider_config_event_loop, publish_provider_config_changed
-from app.ai.gateway import provider_operation
+from app.ai.gateway import connection_operation
+from app.ai.database_repository import DatabaseAIRepository
 from app.ai.registry import ImageGenerationRequest
-from app.ai.providers.images import build_image_adapter_registry, select_image_adapter
-from app.ai.providers.runtime import ProviderRuntime
+from app.ai.image_registry import build_image_adapter_registry, select_target_image_adapter
+from app.ai.adapters.image_protocol import extract_image, extract_task_id
+from app.ai.adapters.openai import OpenAIImageAdapter
+from app.ai.adapters.runninghub_protocol import (
+    extract_task_id as runninghub_extract_task_id,
+    extract_outputs as runninghub_extract_outputs,
+    output_ext as runninghub_output_ext,
+    output_kind as runninghub_output_kind,
+    normalized_status as runninghub_normalized_status,
+    fail_reason as runninghub_fail_reason,
+    extract_image as runninghub_extract_image,
+    endpoint as runninghub_protocol_endpoint,
+    authorization_headers as runninghub_protocol_headers,
+)
+from app.ai.adapters.video_protocol import (
+    VIDEO_TASK_FAILURE_STATUSES,
+    VIDEO_TASK_SUCCESS_STATUSES,
+    humanize_video_task_failure,
+    video_output_urls,
+    api_root as video_protocol_api_root,
+    submit_url_candidates as video_protocol_submit_urls,
+    task_url_candidates as video_protocol_task_urls,
+    volcengine_generation_body,
+)
+from app.ai.capability_runtime import CapabilityRuntime
 from app.services.canvas_tasks import (
     acknowledge_canvas_task,
     claim_canvas_task,
@@ -215,7 +238,7 @@ from app.services.canvas_tasks import (
 
 @app.on_event("startup")
 async def startup_event():
-    global GLOBAL_LOOP, SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, AGENT_COMMAND_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, PROVIDER_CONFIG_SYNC_TASK, AGENT_EVENT_PUBSUB_TASK, AGENT_EVENT_OUTBOX_TASK
+    global GLOBAL_LOOP, SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, AGENT_COMMAND_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, AGENT_EVENT_PUBSUB_TASK, AGENT_EVENT_OUTBOX_TASK
     try:
         await open_database_pool()
         await open_redis_client()
@@ -228,12 +251,12 @@ async def startup_event():
         await asyncio.to_thread(initialize_business_metadata)
         await asyncio.to_thread(register_builtin_skills)
         if os.getenv("APP_SECRET_KEY"):
-            await asyncio.to_thread(initialize_provider_secrets)
+            await asyncio.to_thread(initialize_connection_secrets)
         await asyncio.to_thread(load_users_registry)
         await asyncio.to_thread(load_sessions)
-        await refresh_api_providers_cache_async()
-        if os.getenv("APP_SECRET_KEY"):
-            await asyncio.to_thread(migrate_provider_secrets_from_legacy_env)
+        # Legacy Provider secrets are migrated explicitly by
+        # scripts/finalize_ai_cutover.py. Startup must never attempt to write
+        # the removed legacy secret table after cutover.
         await asyncio.to_thread(access_control.warm_access_control_cache)
         await asyncio.to_thread(load_storage_quota_config)
         GLOBAL_LOOP = asyncio.get_running_loop()
@@ -252,8 +275,6 @@ async def startup_event():
             AGENT_EVENT_OUTBOX_TASK = asyncio.create_task(agent_event_outbox_loop())
         if RUN_BACKGROUND_MAINTENANCE and AGENT_COMMAND_WORKER_ENABLED and AGENT_COMMAND_WORKER_TASK is None:
             AGENT_COMMAND_WORKER_TASK = asyncio.create_task(agent_command_worker_loop())
-        if PROVIDER_CONFIG_SYNC_TASK is None:
-            PROVIDER_CONFIG_SYNC_TASK = asyncio.create_task(provider_config_event_loop(refresh_api_providers_cache_async))
         # API-only replicas do not consume or recover stream messages.  Avoid
         # requiring stream ACL commands in that mode; the dedicated worker (or
         # a combined single-process deployment) initializes the group instead.
@@ -273,7 +294,7 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, AGENT_COMMAND_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, PROVIDER_CONFIG_SYNC_TASK, AGENT_EVENT_PUBSUB_TASK, AGENT_EVENT_OUTBOX_TASK
+    global SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, AGENT_COMMAND_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, AGENT_EVENT_PUBSUB_TASK, AGENT_EVENT_OUTBOX_TASK
     if STORAGE_CLEANUP_TASK is not None:
         STORAGE_CLEANUP_TASK.cancel()
         STORAGE_CLEANUP_TASK = None
@@ -301,9 +322,6 @@ async def shutdown_event():
     if AGENT_EVENT_OUTBOX_TASK is not None:
         AGENT_EVENT_OUTBOX_TASK.cancel()
         AGENT_EVENT_OUTBOX_TASK = None
-    if PROVIDER_CONFIG_SYNC_TASK is not None:
-        PROVIDER_CONFIG_SYNC_TASK.cancel()
-        PROVIDER_CONFIG_SYNC_TASK = None
     try:
         await flush_session_last_seen()
     except Exception:
@@ -390,14 +408,10 @@ from app.config import (
     REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS,
     BASE_DIR,
     STATIC_DIR,
-    STATIC_RUNNINGHUB_DIR,
-    STATIC_RUNNINGHUB_THUMBNAIL_DIR,
-    STATIC_RUNNINGHUB_API_PROVIDERS_FILE,
     API_ENV_FILE,
     DATA_DIR,
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
-    RUNNINGHUB_THUMBNAIL_EXTS,
     STORAGE_CACHE_CLEANUP_ENABLED,
     STORAGE_CLEANUP_ENABLED,
     TASK_ID_LOCK,
@@ -435,117 +449,10 @@ from app.core.auth import (
 
 NEXT_TASK_ID = 1
 
-PROVIDER_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{2,40}$")
 SUPPORTED_PROVIDER_PROTOCOLS = {"openai", "gemini", "volcengine", "runninghub", "omnilojo"}
 RUNNINGHUB_DEFAULT_BASE_URL = "https://www.runninghub.cn"
 VOLCENGINE_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 from app.config import VOLCENGINE_DEFAULT_PROJECT_NAME, VOLCENGINE_DEFAULT_REGION
-RUNNINGHUB_DEFAULT_APPS = [
-    {
-        "id": "2058517022748798977",
-        "appId": "2058517022748798977",
-        "title": "2511-风格迁移",
-        "note": "",
-        "thumbnail": "",
-        "enabled": True,
-        "fields": [
-            {
-                "id": "100::image",
-                "nodeId": "100",
-                "fieldName": "image",
-                "fieldValue": "pasted/57ef7dc980b6446bca366caaf3f94eb12b22b23f78aa30e294b39cabd7d0187b.png",
-                "fieldType": "IMAGE",
-                "label": "image",
-                "enabled": True,
-                "sourceFromUpstream": True,
-                "group": "AI 应用参数",
-                "note": "image",
-                "options": [],
-                "random_enabled": False,
-                "min": "",
-                "max": "",
-                "step": "",
-                "imageOrder": 0,
-                "required": False,
-            },
-            {
-                "id": "112::image",
-                "nodeId": "112",
-                "fieldName": "image",
-                "fieldValue": "8cff63ee4b3e0285ca85ab90a52e26746df84ed0dec0be9d76c679cbb62a247d.png",
-                "fieldType": "IMAGE",
-                "label": "image",
-                "enabled": True,
-                "sourceFromUpstream": True,
-                "group": "AI 应用参数",
-                "note": "image",
-                "options": [],
-                "random_enabled": False,
-                "min": "",
-                "max": "",
-                "step": "",
-                "imageOrder": 0,
-                "required": False,
-            },
-            {
-                "id": "14::seed",
-                "nodeId": "14",
-                "fieldName": "seed",
-                "fieldValue": "554049736557817",
-                "fieldType": "INT",
-                "label": "seed",
-                "enabled": True,
-                "sourceFromUpstream": True,
-                "group": "AI 应用参数",
-                "note": "seed",
-                "options": [],
-                "random_enabled": True,
-                "min": "",
-                "max": "",
-                "step": "",
-                "imageOrder": 0,
-                "required": False,
-            },
-        ],
-    },
-    {
-        "id": "1997622492837646338",
-        "appId": "1997622492837646338",
-        "title": "2511-光线迁移",
-        "note": "",
-        "thumbnail": "",
-        "enabled": True,
-    },
-]
-def ensure_runtime_config_files():
-    """首次运行时提前创建配置目录，避免第一次保存 API Key 时才创建目录/文件。"""
-    try:
-        os.makedirs(os.path.dirname(API_ENV_FILE), exist_ok=True)
-        os.makedirs(DATA_DIR, exist_ok=True)
-        if not os.path.exists(API_ENV_FILE):
-            with open(API_ENV_FILE, "a", encoding="utf-8"):
-                pass
-    except Exception:
-        logger.exception("failed to initialize API config directory", extra={"event": "api_config_directory_init_failed"})
-
-def load_env_file():
-    if not os.path.exists(API_ENV_FILE):
-        return
-    try:
-        with open(API_ENV_FILE, 'r', encoding='utf-8-sig') as f:
-            for raw_line in f.read().splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                os.environ.setdefault(key, value)
-    except Exception:
-        logger.exception("failed to load API environment file", extra={"event": "api_env_load_failed"})
-ensure_runtime_config_files()
-load_env_file()
-
 COMFYUI_INSTANCES = [normalize_comfyui_endpoint(s) for s in os.getenv("COMFYUI_INSTANCES", "127.0.0.1:8188").split(",") if s.strip()]
 COMFYUI_ADDRESS = COMFYUI_INSTANCES[0]
 
@@ -707,108 +614,38 @@ VIDEO_MODELS = model_list("VIDEO_MODELS", "veo3-fast", [
     "doubao-seedance-1-0-lite-i2v-250428",
 ])
 
-def provider_key_env(provider_id):
-    if provider_id == "comfly":
-        return "COMFLY_API_KEY"
-    if provider_id == "runninghub":
-        return "RUNNINGHUB_API_KEY"
-    if provider_id == "volcengine":
-        return "ARK_API_KEY"
-    if provider_id == "cloudwise":
-        return "CLOUDWISE_API_KEY"
-    return f"API_PROVIDER_{re.sub(r'[^A-Za-z0-9]', '_', provider_id).upper()}_KEY"
+def connection_api_key(connection_id: str) -> str:
+    """Return the API key for a canonical AI connection.
 
-def omnilojo_management_token_env(provider_id):
-    return f"API_PROVIDER_{re.sub(r'[^A-Za-z0-9]', '_', str(provider_id or '').lower()).upper()}_OMNILOJO_MANAGEMENT_TOKEN"
-
-def volcengine_access_key_env():
-    return "VOLCENGINE_ACCESS_KEY_ID"
-
-def volcengine_secret_key_env():
-    return "VOLCENGINE_SECRET_ACCESS_KEY"
-
-def read_api_env_value(key: str) -> str:
-    key = str(key or "").strip()
-    if not key or not os.path.exists(API_ENV_FILE):
+    Request execution must never consult the historical provider configuration
+    or legacy environment aliases. Migration tooling has its own readers.
+    """
+    connection_id = str(connection_id or "").strip()
+    if not connection_id:
         return ""
+    return get_connection_secret(connection_id, "api_key")
+
+def _protocol_connection_id(protocol: str) -> str:
     try:
-        with open(API_ENV_FILE, "r", encoding="utf-8-sig") as f:
-            for raw_line in f.read().splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                env_key, value = line.split("=", 1)
-                if env_key.strip() == key:
-                    return value.strip().strip('"').strip("'")
+        for connection in DatabaseAIRepository().connections():
+            if connection.enabled and connection.protocol == protocol:
+                return connection.id
     except Exception:
         return ""
     return ""
 
-def provider_env_key_value(provider_id: str) -> str:
-    provider_id = str(provider_id or "").strip().lower()
-    # Runtime configuration is now sourced from ai_connections. Resolve the
-    # legacy-shaped execution ID back to its stable connection before falling
-    # back to the migration-only Provider secret/env value.
-    for item in (_API_PROVIDERS_CACHE or []):
-        if str(item.get("id") or "").strip().lower() == provider_id and item.get("connection_id"):
-            try:
-                from app.services.provider_secrets import get_connection_secret
-                value = get_connection_secret(str(item["connection_id"]), "api_key")
-                if value:
-                    return value
-            except RuntimeError:
-                pass
-    env_key = provider_key_env(provider_id)
-    if os.getenv("APP_SECRET_KEY"):
-        return get_provider_secret(provider_id, "api_key")
-    key = os.getenv(env_key, "") or read_api_env_value(env_key)
-    if key:
-        return key
-    return ""
-
 def volcengine_access_key_value() -> str:
-    env_key = volcengine_access_key_env()
-    if os.getenv("APP_SECRET_KEY"):
-        return get_provider_secret("volcengine", "access_key_id")
-    return os.getenv(env_key, "") or read_api_env_value(env_key)
+    return get_connection_secret(_protocol_connection_id("volcengine"), "access_key_id")
 
 def volcengine_secret_key_value() -> str:
-    env_key = volcengine_secret_key_env()
-    if os.getenv("APP_SECRET_KEY"):
-        return get_provider_secret("volcengine", "secret_access_key")
-    return os.getenv(env_key, "") or read_api_env_value(env_key)
+    return get_connection_secret(_protocol_connection_id("volcengine"), "secret_access_key")
 
-
-def migrate_provider_secrets_from_legacy_env() -> None:
-    """One-way startup import for pre-centralized Provider keys.
-
-    Reads legacy values only during migration. Runtime lookups use PostgreSQL
-    exclusively whenever ``APP_SECRET_KEY`` is configured.
-    """
-    if not os.getenv("APP_SECRET_KEY") or not legacy_provider_secrets_available():
-        return
-    updates = []
-    for provider in load_api_providers():
-        provider_id = str(provider.get("id") or "").strip().lower()
-        if not provider_id:
-            continue
-        value = os.getenv(provider_key_env(provider_id), "") or read_api_env_value(provider_key_env(provider_id))
-        if value and not get_provider_secret(provider_id, "api_key"):
-            updates.append((provider_id, "api_key", value))
-    for name, env_key in (("access_key_id", volcengine_access_key_env()), ("secret_access_key", volcengine_secret_key_env())):
-        value = os.getenv(env_key, "") or read_api_env_value(env_key)
-        if value and not get_provider_secret("volcengine", name):
-            updates.append(("volcengine", name, value))
-    for provider_id, name, value in updates:
-        set_provider_secret(provider_id, name, value)
-    if updates:
-        audit_event("provider_secrets_migrated", action="migrate", resource_type="provider_secret", resource_id="central_store", after={"count": len(updates)})
 
 def volcengine_provider_api_key(explicit_key: str = "") -> str:
     explicit_key = str(explicit_key or "").strip()
     if explicit_key:
         return explicit_key
-    return provider_env_key_value("volcengine")
+    return connection_api_key(_protocol_connection_id("volcengine"))
 
 def mask_secret(value):
     if not value:
@@ -827,346 +664,11 @@ def bearer_auth_value(value):
     token = strip_auth_scheme(value, "Bearer")
     return f"Bearer {token}" if token else ""
 
-def default_api_providers():
-    return [
-        {
-            "id": "comfyui",
-            "name": "ComfyUI",
-            "base_url": "",
-            "protocol": "openai",
-            "image_generation_endpoint": "",
-            "image_edit_endpoint": "",
-            "enabled": True,
-            "primary": False,
-            "image_models": [],
-            "chat_models": [],
-            "video_models": [],
-        },
-        {
-            "id": "runninghub",
-            "name": "RunningHub",
-            "base_url": RUNNINGHUB_DEFAULT_BASE_URL,
-            "protocol": "runninghub",
-            "image_generation_endpoint": "",
-            "image_edit_endpoint": "",
-            "enabled": True,
-            "primary": False,
-            "image_models": [],
-            "chat_models": [],
-            "video_models": [],
-            "rh_apps": RUNNINGHUB_DEFAULT_APPS,
-            "model_aliases": {},
-        },
-        {
-            "id": "volcengine",
-            "name": "火山引擎",
-            "base_url": VOLCENGINE_DEFAULT_BASE_URL,
-            "protocol": "volcengine",
-            "image_generation_endpoint": "",
-            "image_edit_endpoint": "",
-            "enabled": True,
-            "primary": False,
-            "image_models": [],
-            "chat_models": [],
-            "video_models": [],
-            "volcengine_project_name": VOLCENGINE_DEFAULT_PROJECT_NAME,
-            "volcengine_region": VOLCENGINE_DEFAULT_REGION,
-        },
-    ]
+def connection_endpoint_url(connection, key, default_path):
+    from app.ai.transport import endpoint_for_connection
+    return endpoint_for_connection(connection, key, default_path, fallback_base=AI_BASE_URL)
 
-def merge_default_api_providers(providers):
-    merged = [dict(item) for item in providers]
-    rh_default = load_static_runninghub_provider() or next((d for d in default_api_providers() if d["id"] == "runninghub"), None)
-    if rh_default:
-        current = next((item for item in merged if item.get("id") == "runninghub"), None)
-        if not current:
-            merged.append(rh_default)
-        else:
-            if not current.get("base_url"):
-                current["base_url"] = rh_default["base_url"]
-            if not current.get("protocol") or current.get("protocol") == "openai":
-                current["protocol"] = "runninghub"
-            current["image_models"] = []
-            current["chat_models"] = []
-            current["video_models"] = []
-            current["rh_apps"] = merge_runninghub_system_entries(rh_default.get("rh_apps") or [], current.get("rh_apps") or [], "app")
-            current["model_aliases"] = {}
-            current["model_protocols"] = {}
-    # Volcengine is an optional Provider. Keep its established defaults when it
-    # exists, but do not recreate it after a user has deleted the platform.
-    volc_default = next((d for d in default_api_providers() if d["id"] == "volcengine"), None)
-    current = next((item for item in merged if item.get("id") == "volcengine"), None)
-    legacy = next((item for item in merged if item.get("id") != "volcengine" and str(item.get("protocol") or "").lower() == "volcengine"), None)
-    if volc_default and not current and legacy:
-        current = {
-            **volc_default,
-            "base_url": legacy.get("base_url") or volc_default["base_url"],
-            "image_models": model_list_from_values(legacy.get("image_models") or []) or model_list_from_values(volc_default.get("image_models") or []),
-            "chat_models": model_list_from_values(legacy.get("chat_models") or []),
-            "video_models": model_list_from_values(legacy.get("video_models") or []),
-        }
-        merged.append(current)
-    if volc_default and current:
-        if not current.get("base_url"):
-            current["base_url"] = volc_default["base_url"]
-        current["protocol"] = "volcengine"
-        current["volcengine_project_name"] = str(current.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME
-        current["volcengine_region"] = str(current.get("volcengine_region") or VOLCENGINE_DEFAULT_REGION).strip() or VOLCENGINE_DEFAULT_REGION
-    comfy_default = next((d for d in default_api_providers() if d["id"] == "comfyui"), None)
-    if comfy_default:
-        current = next((item for item in merged if item.get("id") == "comfyui"), None)
-        if not current:
-            merged.append(comfy_default)
-        else:
-            current["name"] = "ComfyUI"
-            current["protocol"] = "openai"
-            current["base_url"] = ""
-            current["image_models"] = []
-            current["chat_models"] = []
-            current["video_models"] = []
-    return merged
-
-def normalize_model_list(values):
-    return model_list_from_values(values)
-
-def model_list_from_values(values):
-    deduped = []
-    for value in values or []:
-        item = str(value or "").strip()
-        if item and item not in deduped:
-            selected_model(item, item)
-            deduped.append(item)
-    return deduped
-
-def normalize_runninghub_entry(raw, kind):
-    if not isinstance(raw, dict):
-        return None
-    entry_id = str(raw.get("appId") or raw.get("id") or "").strip()
-    match = re.search(r"/run/ai-app/([0-9A-Za-z_-]+)", entry_id)
-    if match:
-        entry_id = match.group(1)
-    if not entry_id:
-        return None
-    title = re.sub(r"\s+", " ", str(raw.get("title") or raw.get("name") or "").strip())[:80]
-    note = str(raw.get("note") or raw.get("description") or "").strip()[:500]
-    thumb = str(raw.get("thumbnail") or "").strip()
-    if len(thumb) > 1500000:
-        thumb = ""
-    entry = {
-        "id": entry_id[:80],
-        "title": title or f"AI 应用 {entry_id[-6:]}",
-        "note": note,
-        "thumbnail": thumb,
-        "enabled": bool(raw.get("enabled", True)),
-        "media": "video" if str(raw.get("media") or "").strip().lower() == "video" else "image",
-    }
-    if raw.get("hidden") is True:
-        entry["hidden"] = True
-    fields = raw.get("fields")
-    if isinstance(fields, list):
-        entry["fields"] = [runninghub_normalize_field(field) for field in fields if isinstance(field, dict)]
-    raw_payload = raw.get("raw")
-    if isinstance(raw_payload, dict):
-        entry["raw"] = raw_payload
-    try:
-        updated_at = int(raw.get("updatedAt") or raw.get("updated_at") or 0)
-        if updated_at > 0:
-            entry["updatedAt"] = updated_at
-    except Exception:
-        pass
-    entry["appId"] = entry["id"]
-    return entry
-
-def normalize_runninghub_entries(values, kind):
-    normalized = []
-    seen = set()
-    for raw in values or []:
-        entry = normalize_runninghub_entry(raw, kind)
-        if not entry or entry["id"] in seen:
-            continue
-        seen.add(entry["id"])
-        normalized.append(entry)
-    return normalized
-
-def runninghub_entry_id(entry, kind):
-    if not isinstance(entry, dict):
-        return ""
-    return str(entry.get("appId") or entry.get("id") or "").strip()
-
-def static_runninghub_thumbnail_url(entry_id, kind):
-    entry_id = re.sub(r"[^0-9A-Za-z_-]", "", str(entry_id or "").strip())
-    if not entry_id:
-        return ""
-    candidates = []
-    for name in (f"app-{entry_id}", entry_id):
-        for ext in RUNNINGHUB_THUMBNAIL_EXTS:
-            candidates.append((STATIC_RUNNINGHUB_THUMBNAIL_DIR, f"{name}{ext}"))
-            candidates.append((STATIC_RUNNINGHUB_DIR, f"{name}{ext}"))
-    for root, filename in candidates:
-        path = os.path.abspath(os.path.join(root, filename))
-        if not path.startswith(os.path.abspath(STATIC_RUNNINGHUB_DIR) + os.sep):
-            continue
-        if os.path.exists(path) and os.path.isfile(path):
-            rel = os.path.relpath(path, STATIC_DIR).replace(os.sep, "/")
-            return f"/static/{urllib.parse.quote(rel, safe='/._-')}?v={int(os.path.getmtime(path))}"
-    return ""
-
-def apply_runninghub_system_thumbnails(entries, kind):
-    result = []
-    for entry in normalize_runninghub_entries(entries or [], kind):
-        if not entry.get("thumbnail"):
-            thumb = static_runninghub_thumbnail_url(runninghub_entry_id(entry, kind), kind)
-            if thumb:
-                entry["thumbnail"] = thumb
-        result.append(entry)
-    return result
-
-def merge_runninghub_entry_overlay(system_entry, user_entry):
-    # 用户条目优先，但空字段列表继续继承系统应用模板。
-    if not isinstance(system_entry, dict):
-        return user_entry
-    if not isinstance(user_entry, dict):
-        return system_entry
-    merged = dict(user_entry)
-    user_fields = user_entry.get("fields")
-    sys_fields = system_entry.get("fields")
-    if not (isinstance(user_fields, list) and user_fields) and isinstance(sys_fields, list) and sys_fields:
-        merged["fields"] = sys_fields
-    if not (isinstance(user_entry.get("raw"), dict) and user_entry.get("raw")) and isinstance(system_entry.get("raw"), dict) and system_entry.get("raw"):
-        merged["raw"] = system_entry["raw"]
-    return merged
-
-def merge_runninghub_system_entries(system_entries, user_entries, kind):
-    merged = []
-    index = {}
-    hidden_ids = set()
-    for entry in apply_runninghub_system_thumbnails(system_entries or [], kind):
-        entry_id = runninghub_entry_id(entry, kind)
-        if not entry_id:
-            continue
-        index[entry_id] = len(merged)
-        merged.append(entry)
-    for entry in apply_runninghub_system_thumbnails(user_entries or [], kind):
-        entry_id = runninghub_entry_id(entry, kind)
-        if not entry_id:
-            continue
-        if entry.get("hidden") is True:
-            hidden_ids.add(entry_id)
-            if entry_id in index:
-                merged.pop(index[entry_id])
-                index = {runninghub_entry_id(item, kind): idx for idx, item in enumerate(merged)}
-            continue
-        if entry_id in index:
-            merged[index[entry_id]] = merge_runninghub_entry_overlay(merged[index[entry_id]], entry)
-        else:
-            index[entry_id] = len(merged)
-            merged.append(entry)
-    return [entry for entry in merged if runninghub_entry_id(entry, kind) not in hidden_ids]
-
-def load_static_runninghub_provider():
-    if not os.path.exists(STATIC_RUNNINGHUB_API_PROVIDERS_FILE):
-        return None
-    try:
-        with open(STATIC_RUNNINGHUB_API_PROVIDERS_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        candidates = raw if isinstance(raw, list) else raw.get("providers") if isinstance(raw, dict) else []
-        if isinstance(raw, dict) and raw.get("id") == "runninghub":
-            candidates = [raw]
-        for item in candidates or []:
-            if isinstance(item, dict) and str(item.get("id") or "").strip().lower() == "runninghub":
-                provider = normalize_provider(item)
-                provider["rh_apps"] = apply_runninghub_system_thumbnails(provider.get("rh_apps") or [], "app")
-                return provider
-    except Exception:
-        logger.exception("failed to load static RunningHub config", extra={"event": "runninghub_static_config_load_failed", "provider": "runninghub"})
-    return None
-
-def merge_runninghub_provider_with_static(provider):
-    static_provider = load_static_runninghub_provider()
-    if not static_provider:
-        return provider
-    if not isinstance(provider, dict):
-        return static_provider
-    merged = {**static_provider, **provider}
-    merged["protocol"] = "runninghub"
-    merged["image_models"] = []
-    merged["rh_apps"] = merge_runninghub_system_entries(static_provider.get("rh_apps") or [], provider.get("rh_apps") or [], "app")
-    return normalize_provider(merged)
-
-def preserve_runninghub_hidden_overrides(provider):
-    if not isinstance(provider, dict) or provider.get("id") != "runninghub":
-        return provider
-    static_provider = load_static_runninghub_provider()
-    if not static_provider:
-        return provider
-    provider = dict(provider)
-    current = normalize_runninghub_entries(provider.get("rh_apps") or [], "app")
-    current_ids = {runninghub_entry_id(item, "app") for item in current}
-    for static_entry in static_provider.get("rh_apps") or []:
-        entry_id = runninghub_entry_id(static_entry, "app")
-        if entry_id and entry_id not in current_ids:
-            tombstone = normalize_runninghub_entry({**static_entry, "enabled": False, "hidden": True}, "app")
-            if tombstone:
-                current.append(tombstone)
-    provider["rh_apps"] = current
-    return provider
-
-def normalize_endpoint_override(value, label):
-    endpoint = str(value or "").strip()
-    if not endpoint:
-        return ""
-    if len(endpoint) > 300 or re.search(r"\s", endpoint):
-        raise HTTPException(status_code=400, detail=f"{label} 不合法，请填写类似 /v1/images/edits 的路径")
-    if re.match(r"^https?://", endpoint, re.I):
-        return validate_public_http_url(endpoint, label=label)
-    if not endpoint.startswith("/"):
-        raise HTTPException(status_code=400, detail=f"{label} 需要以 /v1/... 开头，或填写完整 http(s) 地址")
-    return endpoint
-
-def normalize_positive_number(value, default, label):
-    try:
-        number = float(value if value not in (None, "") else default)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail=f"{label} 必须是数字") from None
-    if not 0 < number <= 999999999:
-        raise HTTPException(status_code=400, detail=f"{label} 必须大于 0")
-    return number
-
-def normalize_nonnegative_number(value, default, label):
-    try:
-        number = float(value if value not in (None, "") else default)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail=f"{label} 必须是数字") from None
-    if not 0 <= number <= 999999999:
-        raise HTTPException(status_code=400, detail=f"{label} 必须为非负数")
-    return number
-
-def provider_endpoint_url(provider, key, default_path):
-    base_url = str((provider or {}).get("base_url") or AI_BASE_URL).strip().rstrip("/")
-    provider_id = str((provider or {}).get("id") or "").strip().lower()
-    # Cloudwise publishes its host URL in the docs while the OpenAI-compatible
-    # endpoints live below /api/v1. Accept either form in the settings page.
-    is_cloudwise = provider_id == "cloudwise" or bool(re.match(r"^https?://api\.cloudwise\.ai(?:/.*)?$", base_url, re.I))
-    if is_cloudwise and re.match(r"^https?://api\.cloudwise\.ai$", base_url, re.I):
-        base_url = f"{base_url}/api/v1"
-    override = str((provider or {}).get(key) or "").strip()
-    if override:
-        if re.match(r"^https?://", override, re.I):
-            return validate_public_http_url(override, label="Provider 端点")
-        parsed = urllib.parse.urlsplit(base_url)
-        if parsed.scheme and parsed.netloc:
-            if is_cloudwise and base_url.endswith("/api/v1") and override.startswith("/v1/"):
-                return f"{base_url}{override[len('/v1'):]}"
-            if is_cloudwise and override.startswith("/v1/") and not base_url.endswith("/api/v1"):
-                return f"{parsed.scheme}://{parsed.netloc}/api{override}"
-            return f"{parsed.scheme}://{parsed.netloc}{override}"
-        return override
-    for prefix in ("/api/v1", "/api/v3", "/v1beta", "/v1", "/v2"):
-        if base_url.endswith(prefix) and default_path.startswith(f"{prefix}/"):
-            return f"{base_url}{default_path[len(prefix):]}"
-    return f"{base_url}{default_path}"
-
-def is_cloudwise_provider(provider) -> bool:
+def is_cloudwise_connection(provider) -> bool:
     """Return whether a connection targets Cloudwise's GPT Image gateway."""
     item = provider or {}
     provider_id = str(item.get("id") or "").strip().lower()
@@ -1174,243 +676,11 @@ def is_cloudwise_provider(provider) -> bool:
     return provider_id == "cloudwise" or "api.cloudwise.ai" in base_url
 
 def runninghub_endpoint_url(provider, path):
-    base_url = str((provider or {}).get("base_url") or RUNNINGHUB_DEFAULT_BASE_URL).strip().rstrip("/")
-    return f"{validate_public_http_url(base_url, label='Provider Base URL')}{path}"
+    from app.ai.transport import endpoint_for_connection
+    base_url = endpoint_for_connection(provider, "endpoint", "", fallback_base=RUNNINGHUB_DEFAULT_BASE_URL).rstrip("/")
+    return runninghub_protocol_endpoint(validate_public_http_url(base_url, label="Connection Base URL"), path)
 
-def normalize_provider(item):
-    provider_id = str(item.get("id") or "").strip().lower()
-    if not PROVIDER_ID_RE.fullmatch(provider_id):
-        raise HTTPException(status_code=400, detail=f"API 平台 ID 不合法：{provider_id or '(empty)'}")
-    name = re.sub(r"\s+", " ", str(item.get("name") or provider_id).strip())[:60] or provider_id
-    enabled = bool(item.get("enabled", True))
-    base_url = str(item.get("base_url") or "").strip().rstrip("/")
-    # Disabled providers remain persisted for easy re-enablement. Do not let
-    # an unavailable DNS record for an unused provider invalidate all config.
-    if base_url and enabled:
-        base_url = validate_public_http_url(base_url, label=f"{name} 的 Base URL")
-    protocol = str(item.get("protocol") or "openai").strip().lower()
-    if protocol not in SUPPORTED_PROVIDER_PROTOCOLS:
-        protocol = "openai"
-    image_generation_endpoint = normalize_endpoint_override(item.get("image_generation_endpoint"), "文生图端口")
-    image_edit_endpoint = normalize_endpoint_override(item.get("image_edit_endpoint"), "图生图/编辑端口")
-    volc_project = re.sub(r"\s+", " ", str(item.get("volcengine_project_name") or "").strip())[:80]
-    volc_region = re.sub(r"\s+", " ", str(item.get("volcengine_region") or "").strip())[:40]
-    if provider_id == "volcengine":
-        protocol = "volcengine"
-        base_url = base_url or VOLCENGINE_DEFAULT_BASE_URL
-        volc_project = volc_project or VOLCENGINE_DEFAULT_PROJECT_NAME
-        volc_region = volc_region or VOLCENGINE_DEFAULT_REGION
-    elif provider_id == "runninghub":
-        protocol = "runninghub"
-        base_url = base_url or RUNNINGHUB_DEFAULT_BASE_URL
-    elif provider_id == "comfyui":
-        name = "ComfyUI"
-        protocol = "openai"
-        base_url = ""
-    elif protocol not in {"openai", "gemini", "omnilojo"}:
-        protocol = "openai"
-    raw_omnilojo_prices = item.get("omnilojo_model_prices") or {}
-    omnilojo_model_prices = {}
-    if isinstance(raw_omnilojo_prices, dict):
-        for raw_model, raw_price in raw_omnilojo_prices.items():
-            model_name = str(raw_model or "").strip()[:160]
-            if not model_name or not isinstance(raw_price, dict):
-                continue
-            omnilojo_model_prices[model_name] = {
-                "text_input_per_million": normalize_nonnegative_number(raw_price.get("text_input_per_million", raw_price.get("input_per_million")), 0, "文本输入单价"),
-                "image_input_per_million": normalize_nonnegative_number(raw_price.get("image_input_per_million"), 0, "图片输入单价"),
-                "output_per_million": normalize_nonnegative_number(raw_price.get("output_per_million"), 0, "Omnilojo 输出单价"),
-            }
-    rh_apps = normalize_runninghub_entries(item.get("rh_apps") or [], "app")
-    try:
-        from app.services.provider_parameters import normalize_parameter_schema
-        parameter_schema = normalize_parameter_schema(item.get("parameter_schema"))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Provider 参数 schema 不合法：{exc}") from exc
-    model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("image_models") or [])
-    chat_model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("chat_models") or [])
-    video_model_values = [] if provider_id == "runninghub" else model_list_from_values(item.get("video_models") or [])
-    model_enabled = {
-        str(name).strip(): bool(value)
-        for name, value in (item.get("model_enabled") or {}).items()
-        if str(name).strip() and str(name).strip() in set(model_values + chat_model_values + video_model_values)
-    }
-    # AI API 协议归属于模型；旧配置中的供应商协议只用于给未迁移模型补默认值。
-    model_protocols = normalize_model_protocols(item.get("model_protocols"))
-    if provider_id not in FIXED_PROTOCOL_PROVIDER_IDS and protocol in PER_MODEL_PROTOCOL_OPTIONS:
-        for model_name in (*model_values, *chat_model_values, *video_model_values):
-            model_protocols.setdefault(model_name, protocol)
-    configured_models = {
-        model_name
-        for model_name in (*model_values, *chat_model_values, *video_model_values)
-        if effective_protocol({"id": provider_id, "protocol": protocol, "model_protocols": model_protocols}, model_name) == "omnilojo"
-    }
-    if configured_models:
-        missing_prices = [model for model in configured_models if not omnilojo_model_prices.get(model) or omnilojo_model_prices[model]["text_input_per_million"] <= 0 or omnilojo_model_prices[model]["output_per_million"] <= 0]
-        if missing_prices:
-            raise HTTPException(status_code=400, detail=f"Omnilojo 模型必须配置输入和输出单价：{', '.join(sorted(missing_prices)[:3])}")
-    return {
-        "id": provider_id,
-        "name": name,
-        "base_url": base_url,
-        "protocol": protocol,
-        "image_generation_endpoint": image_generation_endpoint,
-        "image_edit_endpoint": image_edit_endpoint,
-        "enabled": enabled,
-        "primary": bool(item.get("primary", False)),
-        "image_models": model_values,
-        "chat_models": chat_model_values,
-        "video_models": video_model_values,
-        "model_enabled": model_enabled,
-        "model_protocols": {} if provider_id == "runninghub" else model_protocols,
-        "model_aliases": {} if provider_id == "runninghub" else {str(k).strip(): str(v).strip() for k, v in (item.get("model_aliases") or {}).items() if isinstance(k, str) and isinstance(v, str) and str(k).strip() and str(v).strip()},
-        "parameter_schema": parameter_schema,
-        "rh_apps": rh_apps,
-        "volcengine_project_name": volc_project,
-        "volcengine_region": volc_region,
-        "omnilojo_admin_user_id": re.sub(r"\s+", "", str(item.get("omnilojo_admin_user_id") or ""))[:80],
-        "omnilojo_usage_scope": "admin" if str(item.get("omnilojo_usage_scope") or "token").lower() == "admin" else "token",
-        "omnilojo_quota_per_usd": normalize_positive_number(item.get("omnilojo_quota_per_usd"), 500000, "Omnilojo 每美元额度"),
-        "omnilojo_cny_per_usd": normalize_positive_number(item.get("omnilojo_cny_per_usd"), 7.2, "Omnilojo 美元兑人民币汇率"),
-        "omnilojo_model_prices": omnilojo_model_prices,
-    }
-
-_API_PROVIDERS_CACHE = None
-
-
-def _normalized_provider_cache(raw: Any, defaults: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    providers = []
-    for item in raw if isinstance(raw, list) else []:
-        if not isinstance(item, dict):
-            continue
-        try:
-            providers.append(normalize_provider(item))
-        except Exception as exc:
-            logger.warning(
-                "skipping invalid API provider config entry",
-                extra={"event": "api_provider_config_entry_invalid", "provider_id": str(item.get("id") or "")[:80], "error": str(exc)[:300]},
-            )
-    return merge_default_api_providers(providers or defaults)
-
-
-def refresh_api_providers_cache():
-    global _API_PROVIDERS_CACHE
-    try:
-        from app.ai.database_repository import DatabaseAIRepository
-        _API_PROVIDERS_CACHE = DatabaseAIRepository().runtime_configurations()
-    except Exception:
-        # The application cannot serve production traffic without PostgreSQL;
-        # retain defaults solely for tooling that imports this module before
-        # the database pool exists.
-        logger.exception("failed to load AI connection configuration", extra={"event": "ai_connection_config_load_failed"})
-        _API_PROVIDERS_CACHE = default_api_providers()
-    return [dict(item) for item in _API_PROVIDERS_CACHE]
-
-
-async def refresh_api_providers_cache_async():
-    """Refresh the execution cache from the authoritative AI tables."""
-    global _API_PROVIDERS_CACHE
-    try:
-        from app.ai.database_repository import DatabaseAIRepository
-        _API_PROVIDERS_CACHE = await asyncio.to_thread(lambda: DatabaseAIRepository().runtime_configurations())
-    except Exception:
-        logger.exception("failed to load AI connection configuration", extra={"event": "ai_connection_config_load_failed"})
-        _API_PROVIDERS_CACHE = default_api_providers()
-    return [dict(item) for item in _API_PROVIDERS_CACHE]
-
-
-def load_api_providers():
-    providers = _API_PROVIDERS_CACHE
-    if providers is None:
-        return default_api_providers()
-    return [dict(item) for item in providers]
-
-
-def runtime_provider_id_for_connection(connection_id: str) -> str:
-    item = next((entry for entry in load_api_providers() if entry.get("connection_id") == connection_id), None)
-    if item is None:
-        raise LookupError("AI connection is not loaded into the execution runtime")
-    return str(item["id"])
-
-
-async def ensure_runtime_provider_id(connection_id: str) -> str:
-    """Resolve a stable connection through a freshly loaded execution cache."""
-    provider_id = next(
-        (str(entry.get("id") or "") for entry in load_api_providers()
-         if entry.get("connection_id") == connection_id),
-        "",
-    )
-    if provider_id:
-        return provider_id
-    await asyncio.to_thread(refresh_api_providers_cache)
-    return runtime_provider_id_for_connection(connection_id)
-
-
-# Consumers below the HTTP layer read Provider configuration through the AI
-# runtime boundary instead of importing this ASGI entry module.
-from app.ai.runtime import configure_provider_loader
-configure_provider_loader(lambda: load_api_providers())
-
-def save_api_providers(providers):
-    global _API_PROVIDERS_CACHE
-    from app.services.business_metadata import set_app_setting
-    set_app_setting("api_providers", providers)
-    _API_PROVIDERS_CACHE = merge_default_api_providers([
-        normalize_provider(item) for item in providers if isinstance(item, dict)
-    ])
-    if GLOBAL_LOOP and GLOBAL_LOOP.is_running():
-        asyncio.run_coroutine_threadsafe(publish_provider_config_changed(), GLOBAL_LOOP)
-
-# 依赖注入：把 load_api_providers 交给 access_control 模块，用于动态枚举
-# 画布「AI生成」引擎下的可选模型清单（画布节点访问控制）。避免 access_control
-# 反向 import main.py 造成循环依赖。
 import app.core.access_control as access_control
-access_control.set_image_models_provider(load_api_providers)
-access_control.set_fallback_chat_models_provider(lambda: CHAT_MODELS)
-
-def public_provider(provider, *, include_credentials=False):
-    item = {**provider}
-    # Provider display names are deprecated. Keep the legacy field in the API
-    # payload for compatibility with older clients; current UI ignores it.
-    if not include_credentials:
-        return item
-    key = provider_env_key_value(provider["id"])
-    item.update({
-        "has_key": bool(key),
-        "key_preview": mask_secret(key),
-        "key_env": provider_key_env(provider["id"]),
-    })
-    if provider.get("id") == "volcengine":
-        ak = volcengine_access_key_value()
-        sk = volcengine_secret_key_value()
-        item.update({
-            "has_volcengine_access_key": bool(ak),
-            "volcengine_access_key_preview": mask_secret(ak),
-            "volcengine_access_key_env": volcengine_access_key_env(),
-            "has_volcengine_secret_key": bool(sk),
-            "volcengine_secret_key_preview": mask_secret(sk),
-            "volcengine_secret_key_env": volcengine_secret_key_env(),
-            "volcengine_project_name": provider.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME,
-            "volcengine_region": provider.get("volcengine_region") or VOLCENGINE_DEFAULT_REGION,
-        })
-    if provider_protocol(provider) == "omnilojo":
-        management_token = get_provider_secret(provider["id"], "omnilojo_management_token") if os.getenv("APP_SECRET_KEY") else (os.getenv(omnilojo_management_token_env(provider["id"]), "") or read_api_env_value(omnilojo_management_token_env(provider["id"])))
-        item.update({
-            "has_omnilojo_management_token": bool(management_token),
-            "omnilojo_management_token_preview": mask_secret(management_token),
-        })
-    return item
-
-def public_api_providers(*, include_credentials=False):
-    return [public_provider(p, include_credentials=include_credentials) for p in load_api_providers()]
-
-
-def require_provider_compatibility() -> None:
-    """Disable the legacy Provider API after final AI resource cutover."""
-    enabled = os.getenv("AI_PROVIDER_COMPAT", "0").strip().lower() in {"1", "true", "yes", "on"}
-    if not enabled:
-        raise HTTPException(status_code=410, detail="Provider API 已下线，请使用 /api/ai/configuration。")
-
 
 def require_admin() -> str:
     uid = current_user_id()
@@ -1434,83 +704,15 @@ def require_api_settings_access() -> str:
     return require_page_access("api-settings", "API 设置")
 
 
-def require_model_access(provider_id: str, model: str) -> str:
-    uid = current_user_id()
-    # Legacy clients may submit `comfly`; get_api_provider resolves it to the
-    # active provider. Authorization must use that same concrete provider ID.
-    if not str(provider_id or '').strip():
-        model_text = str(model or '').strip()
-        provider = next((item for item in load_api_providers() if item.get('enabled', True) and model_text in {
-            str(value or '').strip()
-            for key in ('chat_models', 'image_models', 'video_models')
-            for value in (item.get(key) or [])
-        }), None)
-        if provider is None:
-            raise HTTPException(status_code=400, detail='未指定有效的 Provider/模型。Agent 聊天模型与图片生成模型需要分别配置。')
-    else:
-        provider = get_api_provider(provider_id)
-    resolved_provider_id = str(provider.get("id") or provider_id)
-    if not access_control.is_admin(uid) and not access_control.is_model_allowed(uid, resolved_provider_id, model):
-        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员(@飞帆)在访问控制中开放。")
-    return uid
+def require_target_access(target, user_id: str) -> None:
+    """Authorize a resolved canonical target without consulting legacy providers."""
+    connection = getattr(target, "connection", None)
+    model = getattr(target, "model", None)
+    connection_id = str(getattr(connection, "id", "") or "")
+    upstream_model = str(getattr(model, "upstream_model", "") or "")
+    if not access_control.is_admin(user_id) and not access_control.is_model_allowed(user_id, connection_id, upstream_model):
+        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员开放。")
 
-
-def require_chat_model_access(provider_id: str, model: str) -> str:
-    """GPT 对话对所有登录用户开放，仍校验 Provider 和聊天模型有效性。"""
-    uid = current_user_id()
-    provider = get_api_provider(provider_id)
-    chat_models = {str(value or '').strip() for value in (provider.get('chat_models') or []) if str(value or '').strip()}
-    if chat_models and str(model or '').strip() not in chat_models:
-        raise HTTPException(status_code=400, detail='指定的聊天模型不属于当前 Provider。')
-    return uid
-
-
-def require_gpt_image_access(provider_id: str, model: str) -> str:
-    """GPT 对话的图片模型对所有登录用户开放，仍校验模型归属。"""
-    uid = current_user_id()
-    provider = get_api_provider(provider_id)
-    image_models = {str(value or '').strip() for value in (provider.get('image_models') or []) if str(value or '').strip()}
-    if image_models and str(model or '').strip() not in image_models:
-        raise HTTPException(status_code=400, detail='指定的图片模型不属于当前 Provider。')
-    return uid
-
-def get_primary_provider_id(providers=None):
-    """返回当前首选 provider 的 id。"""
-    providers = providers if providers is not None else load_api_providers()
-    primary = next((p for p in providers if p.get("primary") and p.get("enabled", True)), None)
-    if primary:
-        return primary["id"]
-    return next((p["id"] for p in providers if p.get("enabled", True)), "")
-
-def get_api_provider(provider_id="comfly"):
-    providers = load_api_providers()
-    target = (provider_id or "").strip().lower()
-    # 兼容旧的 "comfly" 硬编码：若 comfly 不存在或未指定，回退到首选 provider
-    if not target or not any(p["id"] == target for p in providers):
-        target = get_primary_provider_id(providers)
-    provider = next((p for p in providers if p["id"] == target), None)
-    if not provider:
-        raise HTTPException(status_code=400, detail=f"未找到 API 平台：{target}")
-    if not provider.get("enabled", True):
-        raise HTTPException(status_code=400, detail=f"API 平台已禁用：{target}")
-    return provider
-
-def get_api_provider_exact(provider_id: str):
-    providers = load_api_providers()
-    target = (provider_id or "").strip().lower()
-    provider = next((p for p in providers if p["id"] == target), None)
-    if not provider:
-        # This resolver is only called from synchronous request/worker-thread
-        # boundaries (for example ``resolve_canvas_agent_model`` via
-        # ``asyncio.to_thread``). Refreshing here fixes a cold or stale
-        # process-local cache without using the sync bridge on the event loop.
-        providers = refresh_api_providers_cache()
-        provider = next((p for p in providers if p["id"] == target), None)
-    if not provider:
-        raise HTTPException(status_code=400, detail=f"未找到 API 平台：{target or '(empty)'}。请确认平台已保存。")
-    if not provider.get("enabled", True):
-        raise HTTPException(status_code=400, detail=f"API 平台已禁用：{target}")
-    return provider
 
 def env_quote(value):
     text = str(value or "")
@@ -1629,7 +831,6 @@ from app.models import (
     CloudVideoUploadRequest,
     RunningHubSubmitRequest,
     RunningHubUploadAssetRequest,
-    ApiProviderPayload,
     ChatRequest,
     CanvasLLMRequest,
     ConversationCreateRequest,
@@ -1656,7 +857,6 @@ from app.models import (
     PromptLibraryBatchDeleteRequest,
     PromptLibraryCategoryRequest,
     LoginRequest,
-    TestConnectionPayload,
     WorkflowField,
     WorkflowConfig,
     WorkflowUploadRequest,
@@ -1980,91 +1180,24 @@ def display_title(text):
     title = re.sub(r"\s+", " ", text or "").strip()
     return title[:24] or "新对话"
 
-def resolve_chat_provider(provider: str, model: str, ms_model: str = ""):
-    requested_provider = str(provider or '').strip().lower()
-    if requested_provider == 'comfyui':
-        raise HTTPException(status_code=400, detail='ComfyUI 仅用于工作流执行，不能作为 Agent 聊天模型 Provider。请在模型选择中选择可用的聊天 Provider。')
-    if requested_provider:
-        # get_api_provider() is intentionally permissive for legacy callers:
-        # an unknown ID becomes the primary provider. Agent requests carry an
-        # explicit user choice and must not silently turn custom-api-2 into
-        # ComfyUI (or any other primary provider).
-        api_provider = get_api_provider_exact(requested_provider)
-    else:
-        # A default Provider may have a built-in Base URL even when the user
-        # has never configured its credentials. It must not win automatic
-        # selection, otherwise Agent reports a missing API key after planning.
-        candidates = [
-            item for item in load_api_providers()
-            if item.get('enabled', True)
-            and item.get('id') not in {'comfyui', 'runninghub'}
-            and (item.get('chat_models') or item.get('base_url') or AI_BASE_URL)
-            and provider_env_key_value(str(item.get('id') or ''))
-        ]
-        # Startup cache loading is asynchronous. This synchronous resolver runs
-        # in a worker thread, so it can safely refresh a cold cache before
-        # declaring that automatic Agent model selection is unavailable.
-        if not candidates:
-            candidates = [
-                item for item in refresh_api_providers_cache()
-                if item.get('enabled', True)
-                and item.get('id') not in {'comfyui', 'runninghub'}
-                and (item.get('chat_models') or item.get('base_url') or AI_BASE_URL)
-                and provider_env_key_value(str(item.get('id') or ''))
-            ]
-        api_provider = next((item for item in candidates if item.get('primary')), None) or (candidates[0] if candidates else None)
-        if api_provider is None:
-            raise HTTPException(status_code=400, detail='未配置可用于 Agent 的聊天 Provider，请先在 API 平台管理中配置聊天模型。')
-    base_root = (api_provider.get("base_url") or AI_BASE_URL).rstrip("/")
-    if not base_root:
-        raise HTTPException(status_code=400, detail=f"{api_provider['id']} 未配置 Base URL")
-    default_model = preferred_chat_model(api_provider)
-    mdl = selected_model(model or ms_model, default_model)
-    protocol = effective_protocol(api_provider, mdl)
-    if protocol == "gemini":
-        base = base_root if base_root.endswith("/v1beta") else base_root + "/v1beta"
-    elif protocol == "volcengine":
-        base = base_root if base_root.endswith("/api/v3") else base_root + "/api/v3"
-    else:
-        base = base_root if base_root.endswith("/v1") else base_root + "/v1"
-    hdrs = api_headers(provider=api_provider, model=mdl)
-    return base, hdrs, mdl
-
-def api_headers(json_body=True, provider=None, model="", api_key=""):
-    if provider:
-        # Provider keys are stored in the encrypted provider_secrets table
-        # when APP_SECRET_KEY is enabled. Never bypass provider_env_key_value()
-        # here by reading os.environ directly, otherwise Agent requests report
-        # a saved key as missing.
-        api_key = str(api_key or provider_env_key_value(provider["id"]) or "").strip()
-        provider_name = provider["id"]
+def api_headers(json_body=True, connection=None, model="", api_key=""):
+    if connection:
+        api_key = str(api_key or connection_api_key(connection.get("connection_id") or connection.get("id")) or "").strip()
+        connection_name = connection.get("name") or connection.get("id") or "connection"
         if not api_key:
-            raise HTTPException(status_code=400, detail=f"未配置 {provider_name} 的 API Key，请在 API 平台管理中填写。")
+            raise HTTPException(status_code=400, detail=f"未配置 {connection_name} 的 API Key，请在 API 平台管理中填写。")
     else:
         api_key = AI_API_KEY
         if not api_key:
             raise HTTPException(status_code=400, detail="未配置 COMFLY_API_KEY，请在 API/.env 中填写。")
-    if provider and effective_protocol(provider, model) == "gemini":
-        headers = {"Accept": "application/json", "x-goog-api-key": api_key}
-    else:
-        headers = {"Accept": "application/json", "Authorization": bearer_auth_value(api_key)}
-    if json_body:
-        headers["Content-Type"] = "application/json"
+    from app.ai.transport import headers_for_connection
+    headers = dict(headers_for_connection(connection or {"protocol": "openai", "api_key": api_key}, json_body=json_body, api_key=api_key))
     # Most AI gateways accept this standard header, while gateways that do not
     # implement idempotency safely ignore it. It is stable for an HTTP request
     # or durable canvas task, so transport retries cannot create a second job.
     headers["Idempotency-Key"] = retry_operation_id("ai")
     return headers
 
-
-# Canvas Agent and other downstream services must not import this root module.
-# Keep this narrow compatibility binding until the connection-backed gateway
-# replaces the legacy resolver entirely.
-from app.ai.runtime import configure_legacy_chat_runtime
-configure_legacy_chat_runtime(
-    resolver=lambda provider, model: resolve_chat_provider(provider, model),
-    authorizer=lambda provider, model: require_model_access(provider, model),
-)
 
 def selected_model(requested, fallback):
     model = (requested or fallback).strip()
@@ -2089,7 +1222,7 @@ def preferred_chat_model(provider):
     models = [item for item in values if item]
     if not models:
         return CHAT_MODEL
-    if is_volcengine_provider(provider):
+    if is_volcengine_connection(provider):
         endpoint_models = [item for item in models if item.lower().startswith("ep-")]
         if endpoint_models:
             return endpoint_models[0]
@@ -2133,115 +1266,23 @@ def text_delta_from_chat_chunk(data):
 def sse_event(data):
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-def extract_image(data):
-    candidates = data.get("candidates") if isinstance(data, dict) else None
-    if isinstance(candidates, list):
-        for candidate in candidates:
-            if not isinstance(candidate, dict):
-                continue
-            content = candidate.get("content") or {}
-            parts = content.get("parts") if isinstance(content, dict) else None
-            if not isinstance(parts, list):
-                continue
-            for part in parts:
-                if not isinstance(part, dict):
-                    continue
-                inline = part.get("inlineData") or part.get("inline_data") or {}
-                if not isinstance(inline, dict):
-                    continue
-                value = inline.get("data")
-                if value:
-                    return {
-                        "type": "b64",
-                        "value": value,
-                        "mime_type": inline.get("mimeType") or inline.get("mime_type") or "image/png",
-                    }
-    if isinstance(data.get("data"), dict) and isinstance(data["data"].get("result"), dict):
-        data = data["data"]
-    if isinstance(data.get("result"), dict):
-        result_images = data["result"].get("images") or []
-        if result_images:
-            first = result_images[0]
-            url = first.get("url")
-            if isinstance(url, list) and url:
-                return {"type": "url", "value": url[0]}
-            if isinstance(url, str) and url:
-                return {"type": "url", "value": url}
-    if isinstance(data.get("data"), dict) and isinstance(data["data"].get("data"), dict):
-        data = data["data"]["data"]
-    images = data.get("data") or []
-    if not isinstance(images, list) or not images:
-        raise HTTPException(status_code=502, detail="生图接口没有返回图片数据")
-    first = images[0]
-    if first.get("url"):
-        return {"type": "url", "value": first["url"]}
-    if first.get("b64_json"):
-        return {"type": "b64", "value": first["b64_json"]}
-    raise HTTPException(status_code=502, detail="无法识别生图接口返回格式")
-
-def extract_task_id(data):
-    if data.get("task_id"):
-        return str(data["task_id"])
-    if data.get("id") and str(data.get("id", "")).startswith("task"):
-        return str(data["id"])
-    nested = data.get("data")
-    if isinstance(nested, list) and nested:
-        first = nested[0]
-        if isinstance(first, dict):
-            return extract_task_id(first)
-    if isinstance(nested, dict):
-        return extract_task_id(nested)
-    return None
-
 def images_api_unsupported(response):
     text = str(getattr(response, "text", "") or "").lower()
     return "images api is not supported" in text or "not supported for this platform" in text
 
-def provider_protocol(provider):
-    return str((provider or {}).get("protocol") or "openai").strip().lower()
+def is_gemini_connection(provider):
+    return str((provider or {}).get("protocol") or "").strip().lower() == "gemini"
 
-# 单模型可覆盖的协议；三种协议可共用同一站点的 Base URL + Key。
-PER_MODEL_PROTOCOL_OPTIONS = {"openai", "gemini", "omnilojo"}
-# 协议固定、不支持单模型覆盖的内置平台
-FIXED_PROTOCOL_PROVIDER_IDS = {"volcengine", "runninghub"}
+def is_volcengine_connection(provider):
+    return str((provider or {}).get("protocol") or "").strip().lower() == "volcengine"
 
-def normalize_model_protocols(value):
-    """规整 {模型名: 协议} 覆盖表，仅保留支持的模型协议。"""
-    out = {}
-    if isinstance(value, dict):
-        for raw_name, raw_proto in value.items():
-            name = str(raw_name or "").strip()
-            proto = str(raw_proto or "").strip().lower()
-            if name and proto in PER_MODEL_PROTOCOL_OPTIONS:
-                out[name] = proto
-    return out
+def is_runninghub_connection(provider):
+    return str((provider or {}).get("protocol") or "").strip().lower() == "runninghub" or str((provider or {}).get("id") or "").strip().lower() == "runninghub"
 
-def effective_protocol(provider, model=""):
-    """返回某模型实际生效的协议：优先单模型覆盖，否则用平台全局协议。"""
-    base = provider_protocol(provider)
-    pid = str((provider or {}).get("id") or "").strip().lower()
-    if pid in FIXED_PROTOCOL_PROVIDER_IDS:
-        return base
-    overrides = (provider or {}).get("model_protocols")
-    if isinstance(overrides, dict):
-        val = str(overrides.get(str(model or "").strip()) or "").strip().lower()
-        if val in PER_MODEL_PROTOCOL_OPTIONS:
-            return val
-    return base
-
-def is_gemini_provider(provider):
-    return provider_protocol(provider) == "gemini"
-
-def is_volcengine_provider(provider):
-    return provider_protocol(provider) == "volcengine"
-
-def is_runninghub_provider(provider):
-    return provider_protocol(provider) == "runninghub" or str((provider or {}).get("id") or "").strip().lower() == "runninghub"
-
-def is_omnilojo_provider(provider):
+def is_omnilojo_connection(provider):
     # Omnilojo 通过 OpenAI v1/chat/completions 协议返回图片（图片内嵌在聊天回复里）。
     base_url = str((provider or {}).get("base_url") or "").lower()
-    return provider_protocol(provider) == "omnilojo" or "omnilojo" in base_url
+    return str((provider or {}).get("protocol") or "").strip().lower() == "omnilojo" or "omnilojo" in base_url
 
 # ---- 数字人/真人认证：平台无关分发 ----
 # 认证是一个跨平台功能。每个平台用不同的资产 API 实现，但对外是统一入口。
@@ -2252,19 +1293,16 @@ AVATAR_SUPPORTED_PLATFORMS = {"volcengine"}  # 已接入官方资产 API 的平�
 def avatar_platform_for_provider(provider) -> str:
     if not provider:
         return ""
-    if is_volcengine_provider(provider):
+    if is_volcengine_connection(provider):
         return "volcengine"
     return ""
-
-def provider_supports_avatar(provider) -> bool:
-    return avatar_platform_for_provider(provider) in AVATAR_SUPPORTED_PLATFORMS
 
 def extract_task_id_from_text(text):
     match = re.search(r"(?:task_id|taskId|task id)\s*[=:：]\s*([A-Za-z0-9_.:-]+)", str(text or ""), re.I)
     return match.group(1) if match else ""
 
-def image_task_url_for_provider(provider, task_id):
-    base_url = (provider.get("base_url") if provider else AI_BASE_URL).rstrip("/")
+def image_task_url_for_connection(connection, task_id):
+    base_url = (connection.get("base_url") if connection else AI_BASE_URL).rstrip("/")
     return f"{base_url}/images/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/images/tasks/{task_id}"
 
 def image_task_data(payload):
@@ -2276,13 +1314,22 @@ def image_task_status(payload):
     task_data = image_task_data(payload)
     return str(task_data.get("status") or task_data.get("task_status") or "").upper()
 
+
+IMAGE_TASK_SUCCESS_STATUSES = {"SUCCESS", "SUCCEEDED", "COMPLETED", "COMPLETE", "DONE", "FINISHED", "READY"}
+IMAGE_TASK_FAILED_STATUSES = {"FAILED", "FAILURE", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "EXPIRED"}
+
+
+def log_net_error(message: str, exc: BaseException) -> None:
+    """Log an upstream network failure without exposing credentials."""
+    logger.warning(message, extra={"event": "upstream_network_error", "error_type": type(exc).__name__})
+
 def image_task_fail_reason(payload):
     task_data = image_task_data(payload)
     error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
     return task_data.get("fail_reason") or task_data.get("message") or error.get("message") or (payload.get("message") if isinstance(payload, dict) else "") or "生图任务失败"
 
 async def fetch_image_task_payload(client, task_id, provider=None):
-    response = await client.get(image_task_url_for_provider(provider, task_id), headers=api_headers(provider=provider))
+    response = await client.get(image_task_url_for_connection(provider, task_id), headers=api_headers(connection=provider))
     response.raise_for_status()
     return response.json()
 
@@ -3048,6 +2095,8 @@ def gpt_image_2_size_exceeds_supported(size):
     return bool(width and height and (max(width, height) > GPT_IMAGE2_MAX_EDGE or width * height > GPT_IMAGE2_MAX_PIXELS))
 
 VOLCENGINE_MAX_EDGE = 4096
+VOLCENGINE_MIN_PIXELS = 262144
+VOLCENGINE_MIN_EDGE = 256
 VOLCENGINE_RATIO_CHOICES = [
     (1, 1, "1:1"),
     (4, 3, "4:3"),
@@ -3161,7 +2210,7 @@ def friendly_chat_error_detail(text, model="", provider=None):
     message_lc = message.lower()
     model_name = str(model or "").strip()
 
-    if is_volcengine_provider(provider):
+    if is_volcengine_connection(provider):
         if code_lc in {"invalidendpointormodel.notfound", "invalidendpointormodel.modelidaccessdisabled"}:
             provider_name = provider.get("id") or "火山方舟"
             return (
@@ -3183,11 +2232,19 @@ def friendly_chat_error_detail(text, model="", provider=None):
     return ""
 
 # ---- RunningHub task protocol helpers ----
-def runninghub_provider():
-    return get_api_provider_exact("runninghub")
+def runninghub_connection():
+    from app.ai.database_repository import DatabaseAIRepository
+    try:
+        target = next(
+            item for item in DatabaseAIRepository().connections()
+            if item.enabled and item.protocol == "runninghub"
+        )
+    except StopIteration as exc:
+        raise HTTPException(status_code=400, detail="未配置或已禁用 RunningHub 连接") from exc
+    return canonical_connection_view(target)
 
 def runninghub_api_key(provider):
-    key = provider_env_key_value((provider or {}).get("id") or "runninghub")
+    key = connection_api_key((provider or {}).get("connection_id") or (provider or {}).get("id"))
     if not key:
         raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     return key
@@ -3204,71 +2261,12 @@ async def runninghub_api_key_async(provider):
 
 def runninghub_api_headers(provider, api_key=None):
     key = api_key if api_key is not None else runninghub_api_key(provider)
-    return {"Accept": "application/json", "Authorization": bearer_auth_value(key), "Content-Type": "application/json"}
+    return runninghub_protocol_headers(key, json_body=True)
 
 def runninghub_app_headers(json_body=True, api_key=None):
-    key = api_key if api_key is not None else runninghub_api_key(runninghub_provider())
-    headers = {"Accept": "application/json", "Authorization": bearer_auth_value(key)}
-    if json_body:
-        headers["Content-Type"] = "application/json"
-    return headers
+    key = api_key if api_key is not None else runninghub_api_key(runninghub_connection())
+    return runninghub_protocol_headers(key, json_body=json_body)
 
-def runninghub_extract_task_id(payload):
-    if not isinstance(payload, dict): return ""
-    for key in ("taskId", "task_id"):
-        if payload.get(key): return str(payload[key])
-    return runninghub_extract_task_id(payload.get("data")) if isinstance(payload.get("data"), dict) else ""
-
-def runninghub_extract_outputs(payload):
-    found, seen = [], set(); keys = {"fileUrl", "file_url", "download_url", "imageUrl", "image_url", "videoUrl", "video_url", "audioUrl", "audio_url", "fileName"}
-    def visit(value, depth=0):
-        if depth > 10: return
-        if isinstance(value, dict):
-            for key, child in value.items():
-                if key in keys:
-                    for item in child if isinstance(child, list) else [child]:
-                        text = str(item or "").strip()
-                        if text and text not in seen: seen.add(text); found.append(text)
-                elif key != "fieldValue": visit(child, depth + 1)
-        elif isinstance(value, list):
-            for item in value: visit(item, depth + 1)
-    visit(payload); return found
-
-def runninghub_output_ext(remote):
-    return os.path.splitext(urllib.parse.urlsplit(str(remote or "")).path)[1].lstrip(".").lower()
-
-def runninghub_output_kind(ext):
-    ext = str(ext or "").lower().lstrip(".")
-    if ext in {"mp4", "mov", "webm", "mkv", "avi"}: return "video"
-    if ext in {"mp3", "wav", "m4a", "aac", "ogg", "flac"}: return "audio"
-    if ext in {"png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"}: return "image"
-    return "file"
-
-def runninghub_normalized_status(raw, code, urls):
-    data = raw.get("data") if isinstance(raw, dict) else {}
-    status = next((str(item.get("status") or "").upper() for item in (raw, data) if isinstance(item, dict) and item.get("status")), "")
-    if status in {"SUCCESS", "SUCCEEDED", "COMPLETED"}: return "SUCCESS"
-    if status in {"FAILED", "ERROR", "CANCELLED"}: return "FAILED"
-    if urls: return "SUCCESS"
-    # /task/openapi/outputs returns 803 (APIKEY_TASK_IS_QUEUED) while an
-    # accepted AI App task is waiting for a worker, and 804
-    # (APIKEY_TASK_IS_RUNNING) while it is executing. Keep polling instead
-    # of converting either transient state into a failed canvas task.
-    return "RUNNING" if code in (0, "0", None, 803, "803", 804, "804") else "FAILED"
-
-def runninghub_fail_reason(raw):
-    if not isinstance(raw, dict): return "RunningHub 任务失败"
-    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
-    return str(data.get("errorMessage") or data.get("failReason") or raw.get("msg") or raw.get("errorMessage") or "RunningHub 任务失败")
-
-def runninghub_entry_config_from_model(provider, model):
-    key = str(model or "").strip()
-    return next((entry for entry in ((provider or {}).get("rh_apps") or []) if key in {str(entry.get("id") or ""), str(entry.get("appId") or ""), str(entry.get("webappId") or "")}), None)
-
-def runninghub_extract_image(raw):
-    item = next((item for item in runninghub_extract_outputs(raw) if runninghub_output_kind(runninghub_output_ext(item)) == "image"), "")
-    if not item: raise HTTPException(status_code=502, detail="RunningHub 未返回图片结果。")
-    return {"type": "url", "value": item}
 
 async def wait_for_runninghub_image_task(client, provider, task_id):
     deadline = time.monotonic() + IMAGE_TASK_TIMEOUT
@@ -3301,148 +2299,31 @@ async def runninghub_store_remote_output(client, remote):
     saved = await run_storage_io(save_media_bytes, "output", filename, response.content, original_name=filename, content_type=response.headers.get("content-type") or "", kind=runninghub_output_kind(runninghub_output_ext(remote)), source="generated")
     return saved["url"]
 
-async def generate_runninghub_provider_image(prompt, size, model, reference_images=None, provider=None, quality=""):
-    entry = runninghub_entry_config_from_model(provider, model)
-    if not entry:
-        raise HTTPException(status_code=400, detail="RunningHub 仅支持配置好的 AI 应用")
-    return await generate_runninghub_app_image(prompt, reference_images, provider, entry)
+async def generate_omnilojo_image(prompt, size, model, reference_images=None, provider=None):
+    from app.ai.adapters.omnilojo import OmnilojoImageAdapter
 
-def omnilojo_image_from_value(value):
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if text.startswith("data:image/") and ";base64," in text:
-        header, encoded = text.split(";base64,", 1)
-        mime_type = header.replace("data:", "", 1) or "image/png"
-        return {"type": "b64", "value": encoded, "mime_type": mime_type}
-    if text.startswith(("http://", "https://")):
-        return {"type": "url", "value": text}
-    return None
+    connection = provider or {}
+    adapter = OmnilojoImageAdapter(
+        endpoint=lambda value: connection_endpoint_url(value, "image_generation_endpoint", "/v1/chat/completions"),
+        headers=lambda value, upstream_model: api_headers(connection=value, model=upstream_model),
+        resolve_reference=lambda reference: run_storage_io(reference_to_data_url, reference, 1536),
+        client_factory=shared_http_client,
+        image_options=lambda requested_size: {
+            "aspect_ratio": gemini_image_options(requested_size)["aspectRatio"],
+            "image_size": gemini_image_options(requested_size)["imageSize"],
+        },
+        timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
+    )
+    return await adapter.generate(ImageGenerationRequest(
+        prompt=prompt,
+        size=size,
+        quality="",
+        model=model,
+        reference_images=list(reference_images or []),
+        connection=connection,
+    ))
 
-GEMINI_IMAGE_RATIO_CHOICES = (
-    (1, 1, "1:1"), (16, 9, "16:9"), (9, 16, "9:16"),
-    (4, 3, "4:3"), (3, 4, "3:4"), (3, 2, "3:2"), (2, 3, "2:3"),
-    (5, 4, "5:4"), (4, 5, "4:5"),
-)
-
-def gemini_image_config(size):
-    """Translate the canvas pixel size into Google image-generation options."""
-    raw = str(size or "").strip().upper()
-    width, height = parse_size_pair(size)
-    if not width or not height:
-        return {"aspectRatio": "1:1", "imageSize": raw if raw in {"1K", "2K", "4K"} else "1K"}
-    ratio = width / max(1, height)
-    _rw, _rh, aspect_ratio = min(GEMINI_IMAGE_RATIO_CHOICES, key=lambda item: abs(ratio - item[0] / item[1]))
-    longest_edge = max(width, height)
-    image_size = "4K" if longest_edge > 3000 else "2K" if longest_edge > 1500 else "1K"
-    return {"aspectRatio": aspect_ratio, "imageSize": image_size}
-
-def image_from_inline_payload(value):
-    if not isinstance(value, dict):
-        return None
-    mime_type = value.get("mimeType") or value.get("mime_type") or value.get("type") or value.get("media_type") or ""
-    data = value.get("b64_json") or value.get("base64") or value.get("base64_data")
-    mime_text = str(mime_type or "").lower()
-    if data is None and ("mimeType" in value or "mime_type" in value or "media_type" in value or mime_text == "image" or mime_text.startswith("image/")):
-        data = value.get("data")
-    if not isinstance(data, str) or not data.strip():
-        return None
-    data = data.strip()
-    result = omnilojo_image_from_value(data)
-    if result:
-        return result
-    if isinstance(mime_type, str) and mime_type.startswith("image/"):
-        return {"type": "b64", "value": data, "mime_type": mime_type}
-    return {"type": "b64", "value": data, "mime_type": "image/png"}
-
-def extract_image_deep(value, depth=0):
-    if depth > 8 or value is None:
-        return None
-    result = omnilojo_image_from_value(value) if isinstance(value, str) else None
-    if result:
-        return result
-    if isinstance(value, list):
-        for item in value:
-            result = extract_image_deep(item, depth + 1)
-            if result:
-                return result
-        return None
-    if not isinstance(value, dict):
-        return None
-    for key in ("inlineData", "inline_data", "image_data"):
-        result = image_from_inline_payload(value.get(key))
-        if result:
-            return result
-    result = image_from_inline_payload(value)
-    if result:
-        return result
-    image_url = value.get("image_url")
-    if isinstance(image_url, dict):
-        result = extract_image_deep(image_url.get("url"), depth + 1)
-        if result:
-            return result
-    elif image_url:
-        result = extract_image_deep(image_url, depth + 1)
-        if result:
-            return result
-    file_data = value.get("fileData") or value.get("file_data") or {}
-    if isinstance(file_data, dict):
-        result = extract_image_deep(file_data.get("fileUri") or file_data.get("file_uri") or file_data.get("url"), depth + 1)
-        if result:
-            return result
-    for key in (
-        "url", "uri", "src", "path", "image", "images", "imageUrl", "image_url",
-        "output", "outputs", "output_url", "outputUrl", "download_url", "downloadUrl",
-        "data", "result", "results", "content", "parts", "message", "choices",
-    ):
-        if key in value:
-            result = extract_image_deep(value.get(key), depth + 1)
-            if result:
-                return result
-    return None
-
-def extract_image_from_chat_response(data):
-    """从 OpenAI v1/chat/completions 响应里抽取图片。
-    支持：message.images[]、多模态 content 里的 image_url/inlineData、以及正文里的 data URL / markdown 图片链接。"""
-    choices = data.get("choices") if isinstance(data, dict) else None
-    text = ''
-    if isinstance(choices, list) and choices:
-        message = choices[0].get("message") if isinstance(choices[0], dict) else {}
-        message = message or {}
-        result = extract_image_deep(message)
-        if result:
-            return result
-        content = message.get("content", "")
-        text = text_from_chat_response(data)
-        for match in re.findall(r"!\[[^\]]*\]\(([^)]+)\)|(data:image/[^\s)\"']+)|(https?://[^\s)\"']+\.(?:png|jpe?g|webp|gif))", text or "", re.I):
-            for candidate in match:
-                result = omnilojo_image_from_value(candidate)
-                if result:
-                    return result
-    raise HTTPException(status_code=502, detail=f"聊天接口没有返回可识别的图片, 完成原因: {choices[0].get('finish_reason') if choices else ''}, 响应文本为: {text}")
-
-async def generate_omnilojo_provider_image(prompt, size, model, reference_images=None, provider=None):
-    base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
-    if not base_url:
-        raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
-    chat_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/chat/completions")
-    content = [{"type": "text", "text": str(prompt or "").strip()}]
-    for ref in (reference_images or [])[:16]:
-        ref_url = await run_storage_io(reference_to_data_url, ref, 1536) if ref.get("url") else ""
-        if ref_url:
-            content.append({"type": "image_url", "image_url": {"url": ref_url}})
-    body = {"model": model, "messages": [{"role": "user", "content": content}]}
-    cfg = gemini_image_config(size)
-    body["extra_body"] = {"google": {"image_config": {"aspect_ratio": cfg["aspectRatio"], "image_size": cfg["imageSize"]}}}
-    async with shared_http_client(timeout=httpx.Timeout(
-        connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
-    )) as client:
-        response = await client.post(chat_url, headers=api_headers(provider=provider, model=model), json=body)
-        response.raise_for_status()
-        raw = response.json()
-        return extract_image_from_chat_response(raw), raw
-
-async def generate_openai_compatible_provider_image(prompt, size, quality, model, reference_images=None, provider=None):
+async def generate_openai_image(prompt, size, quality, model, reference_images=None, provider=None):
     is_gpt2 = is_gpt_image_2_model(model)
     quality = str(quality or "").strip().lower()
     if quality not in {"low", "medium", "high"}:
@@ -3450,36 +2331,27 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
     base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
     if not base_url:
         raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
-    gen_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/images/generations")
-    edit_url = provider_endpoint_url(provider, "image_edit_endpoint", "/v1/images/edits")
-    refs = [ref for ref in (reference_images or []) if ref.get("url")]
-    mask_refs = [ref for ref in refs if str(ref.get("role") or "").strip().lower() == "mask" or str(ref.get("name") or "").lower().endswith("_mask.png")]
-    image_refs = [ref for ref in refs if ref not in mask_refs]
+    gen_url = connection_endpoint_url(provider, "image_generation_endpoint", "/v1/images/generations")
+    edit_url = connection_endpoint_url(provider, "image_edit_endpoint", "/v1/images/edits")
+    image_refs, mask_refs = OpenAIImageAdapter.split_references(reference_images)
     request_timeout = httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0) if is_gpt2 else AI_REQUEST_TIMEOUT
     # Secret storage uses a synchronous compatibility bridge; resolve it off
     # the event loop before constructing request headers.
-    provider_api_key = await asyncio.to_thread(provider_env_key_value, provider["id"])
+    provider_api_key = await asyncio.to_thread(connection_api_key, provider.get("connection_id") or provider["id"])
     async with shared_http_client(timeout=request_timeout) as client:
         response = None
         async def post_openai_edits(edit_files=None):
-            data = {"model": model, "prompt": prompt, "size": size}
-            if is_gpt2:
-                data["output_format"] = "png"
-            if quality:
-                data["quality"] = quality
+            data = OpenAIImageAdapter.edit_fields(model=model, prompt=prompt, size=size, quality=quality, gpt_image_2=is_gpt2)
             return await client.post(
                 edit_url,
-                headers=api_headers(json_body=False, provider=provider, model=model, api_key=provider_api_key),
+                headers=api_headers(json_body=False, connection=provider, model=model, api_key=provider_api_key),
                 data=data,
                 files=edit_files if edit_files is not None else {},
             )
 
         if is_gpt2 and not image_refs and not mask_refs:
-            body = {"model": model, "prompt": prompt, "size": size}
-            body["output_format"] = "png"
-            if quality:
-                body["quality"] = quality
-            response = await client.post(gen_url, headers=api_headers(provider=provider, model=model, api_key=provider_api_key), json=body)
+            body = OpenAIImageAdapter.generation_body(model=model, prompt=prompt, size=size, quality=quality, gpt_image_2=True)
+            response = await client.post(gen_url, headers=api_headers(connection=provider, model=model, api_key=provider_api_key), json=body)
             if response.status_code >= 400 and images_api_unsupported(response):
                 response = await post_openai_edits()
         elif image_refs:
@@ -3496,7 +2368,7 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
                         continue
                     fh = open(path, "rb")
                     opened.append(fh)
-                    field_name = "image[]" if is_cloudwise_provider(provider) else "image"
+                    field_name = "image[]" if is_cloudwise_connection(provider) else "image"
                     files.append((field_name, (os.path.basename(path), fh, content_type_for_path(path))))
                 if mask_refs:
                     mask_path = await run_storage_io(output_file_from_url, mask_refs[0].get("url", ""))
@@ -3529,26 +2401,18 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
                     await run_storage_io(reference_to_data_url, ref, 1536)
                     for ref in image_refs[:4]
                 ]
-                body = {
-                    "model": model, "prompt": prompt, "size": size,
-                    "response_format": "url", "n": 1,
-                    "image": image_payload,
-                }
-                if quality:
-                    body["quality"] = quality
-                response = await client.post(gen_url, headers=api_headers(provider=provider, model=model, api_key=provider_api_key), json=body)
+                body = OpenAIImageAdapter.generation_body(model=model, prompt=prompt, size=size, quality=quality, image=image_payload)
+                response = await client.post(gen_url, headers=api_headers(connection=provider, model=model, api_key=provider_api_key), json=body)
                 if response.status_code >= 400 and images_api_unsupported(response):
                     raise HTTPException(
                         status_code=502,
                         detail=f"编辑接口 /images/edits 调用失败，且该平台不支持 /images/generations：{edit_failed_text[:300] or edit_failed_status}"
                     )
         else:
-            body = {"model": model, "prompt": prompt, "size": size, "response_format": "url", "n": 1}
-            if quality:
-                body["quality"] = quality
+            body = OpenAIImageAdapter.generation_body(model=model, prompt=prompt, size=size, quality=quality)
             response = await client.post(
                 gen_url,
-                headers=api_headers(provider=provider, model=model, api_key=provider_api_key),
+                headers=api_headers(connection=provider, model=model, api_key=provider_api_key),
                 json=body,
             )
             if response.status_code >= 400 and images_api_unsupported(response):
@@ -3565,33 +2429,80 @@ async def generate_openai_compatible_provider_image(prompt, size, quality, model
         return extract_image(task_result), task_result
 
 
-async def _image_adapter_runninghub(request: ImageGenerationRequest):
-    return await generate_runninghub_provider_image(
-        request.prompt, request.size, request.model, request.reference_images, request.provider, request.quality,
+async def generate_gemini_image(prompt, size, model, reference_images=None, provider=None):
+    """Generate an image through Gemini's OpenAI-compatible chat facade."""
+    from app.ai.adapters.omnilojo import OmnilojoImageAdapter
+
+    adapter = OmnilojoImageAdapter(
+        endpoint=lambda value: connection_endpoint_url(value, "image_generation_endpoint", "/v1beta/chat/completions"),
+        headers=lambda value, upstream_model: api_headers(connection=value, model=upstream_model),
+        resolve_reference=lambda reference: run_storage_io(reference_to_data_url, reference, 1536),
+        client_factory=shared_http_client,
+        image_options=lambda requested_size: {
+            "aspect_ratio": gemini_image_options(requested_size)["aspectRatio"],
+            "image_size": gemini_image_options(requested_size)["imageSize"],
+        },
+        timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
+    )
+    return await adapter.generate(ImageGenerationRequest(
+        prompt=prompt, size=size, quality="", model=model,
+        reference_images=list(reference_images or []), connection=provider or {},
+    ))
+
+
+async def generate_volcengine_image(prompt, size, model, reference_images=None, provider=None):
+    """Generate an image through Volcengine's OpenAI Images-compatible API."""
+    return await generate_openai_image(
+        prompt, normalize_volcengine_size(size, model), "", model,
+        reference_images, provider,
     )
 
 
+async def _image_adapter_runninghub(request: ImageGenerationRequest):
+    from app.ai.adapters.runninghub_app import RunningHubImageAdapter
+
+    def extract_task(payload):
+        return runninghub_extract_task_id(payload)
+
+    async def poll(client, connection, task_id):
+        return await wait_for_runninghub_image_task(client, connection, task_id)
+
+    adapter = RunningHubImageAdapter(
+        submit_url=lambda value: runninghub_endpoint_url(value, "/task/openapi/ai-app/run"),
+        headers=lambda value: runninghub_app_headers(True, runninghub_api_key(value)),
+        api_key=lambda value: runninghub_api_key(value),
+        client_factory=shared_http_client,
+        extract_task_id=extract_task,
+        poll=poll,
+        extract_image=runninghub_extract_image,
+        timeout=httpx.Timeout(connect=20.0, read=1800.0, write=180.0, pool=20.0),
+    )
+    if request.target is None:
+        raise ValueError("RunningHub image request requires a resolved target")
+    return await adapter.generate(request.target, prompt=request.prompt, model=request.model, references=request.reference_images)
+
+
 async def _image_adapter_omnilojo(request: ImageGenerationRequest):
-    return await generate_omnilojo_provider_image(
-        request.prompt, request.size, request.model, request.reference_images, request.provider,
+    return await generate_omnilojo_image(
+        request.prompt, request.size, request.model, request.reference_images, request.connection,
     )
 
 
 async def _image_adapter_gemini(request: ImageGenerationRequest):
-    return await generate_gemini_provider_image(
-        request.prompt, request.size, request.model, request.reference_images, request.provider,
+    return await generate_gemini_image(
+        request.prompt, request.size, request.model, request.reference_images, request.connection,
     )
 
 
 async def _image_adapter_volcengine(request: ImageGenerationRequest):
-    return await generate_volcengine_provider_image(
-        request.prompt, request.size, request.model, request.reference_images, request.provider,
+    return await generate_volcengine_image(
+        request.prompt, request.size, request.model, request.reference_images, request.connection,
     )
 
 
 async def _image_adapter_openai(request: ImageGenerationRequest):
-    return await generate_openai_compatible_provider_image(
-        request.prompt, request.size, request.quality, request.model, request.reference_images, request.provider,
+    return await generate_openai_image(
+        request.prompt, request.size, request.quality, request.model, request.reference_images, request.connection,
     )
 
 
@@ -3604,41 +2515,60 @@ IMAGE_ADAPTERS = build_image_adapter_registry({
 })
 
 
-def image_adapter_key(provider, model: str) -> str:
-    return select_image_adapter(
-        provider, model,
-        runninghub=is_runninghub_provider,
-        omnilojo=lambda item, selected: effective_protocol(item, selected) == "omnilojo",
-        gemini=lambda item, selected: effective_protocol(item, selected) == "gemini",
-        volcengine=is_volcengine_provider,
-    )
+def canonical_connection_view(target) -> dict[str, Any]:
+    """Expose only transport metadata for a resolved canonical target."""
+    connection = getattr(target, "connection", target)
+    protocol = getattr(target, "protocol", None) or connection.protocol
+    return {
+        "id": connection.id,
+        "connection_id": connection.id,
+        "name": connection.name,
+        "protocol": protocol,
+        "base_url": connection.base_url,
+        **dict(connection.settings or {}),
+    }
 
 
-async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly"):
-    from app.ai.contracts import Actor
-    from app.ai.images import LegacyImageGateway
+async def generate_ai_image_target(target, *, prompt: str, size: str, quality: str, reference_images=None, user_id: str = ""):
+    """Execute image generation from an authoritative resolved target."""
+    from app.ai.contracts import Actor, ImageCommand
+    from app.ai.images import ImageGateway
 
-    # Dynamic wrappers preserve config reload and test override behavior while
-    # the legacy adapter functions are gradually moved out of this module.
-    gateway = LegacyImageGateway(
-        provider_resolver=lambda selected_id: get_api_provider(selected_id),
-        budget_authorizer=lambda provider, user_id: assert_provider_budget_available(provider, user_id),
+    runtime_provider = canonical_connection_view(target)
+
+    async def dispatch(command):
+        model = command.target.model.upstream_model if command.target.model else ""
+        return await IMAGE_ADAPTERS.dispatch(
+            select_target_image_adapter(command.target),
+            ImageGenerationRequest(
+                prompt=command.prompt,
+                size=command.size,
+                quality=command.quality,
+                model=model,
+                reference_images=list(command.references),
+                connection=runtime_provider,
+                target=command.target,
+            ),
+        )
+
+    gateway = ImageGateway(
         registry=IMAGE_ADAPTERS,
-        adapter_selector=image_adapter_key,
+        target_handler=dispatch,
     )
-    return await gateway.generate(
-        prompt=prompt,
-        size=size,
-        quality=quality,
-        model=model,
-        reference_images=reference_images,
-        provider_id=provider_id,
-        actor=Actor(user_id=current_user_id()),
+    return await gateway.generate_target(
+        ImageCommand(
+            target=target,
+            prompt=prompt,
+            size=size,
+            quality=quality,
+            references=list(reference_images or []),
+        ),
+        actor=Actor(user_id=user_id or current_user_id()),
     )
 
 
 async def assert_provider_budget_available(provider, user_id):
-    if not (is_runninghub_provider(provider) or is_omnilojo_provider(provider)):
+    if not (is_runninghub_connection(provider) or is_omnilojo_connection(provider)):
         return
     from app.services.usage import assert_runninghub_budget_available
     try:
@@ -3725,14 +2655,6 @@ def chat_split_parallel_prompts(prompt, count):
     candidates = [item.strip(" ，,、") for item in re.split(r"\s*(?:和|与|、|，|,|\+|＋)\s*", prefix) if item.strip(" ，,、")]
     return [f"{item}的{suffix}" for item in candidates[:count]] if len(candidates) >= count else [text] * count
 
-def pick_chat_image_provider(provider_id="", fallback_id=""):
-    providers = [p for p in load_api_providers() if p.get("enabled", True) and p.get("image_models")]
-    for target in (provider_id, fallback_id):
-        item = next((p for p in providers if p.get("id") == str(target or "").strip().lower()), None)
-        if item:
-            return item
-    return next((p for p in providers if p.get("primary")), None) or (providers[0] if providers else get_api_provider(provider_id or fallback_id or "comfly"))
-
 def heuristic_agent_decision(message, refs, has_previous_image):
     text = str(message or "").lower()
     has_image = any(word.lower() in text for word in AGENT_IMAGE_KEYWORDS)
@@ -3764,8 +2686,15 @@ def parse_agent_decision(raw_text, message, refs, has_previous_image):
 async def decide_chat_agent_action(payload, conversation, refs):
     previous = bool(latest_chat_image_refs(conversation, 1))
     fallback = heuristic_agent_decision(payload.message, refs, previous)
-    provider_cfg = get_api_provider(payload.provider)
-    _chat_base, _chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    from app.ai.database_repository import DatabaseAIRepository
+    if not (payload.model_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="Agent 请求必须提供 connection_id、model_id 或 resource_id")
+    try:
+        chat_target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.model_id, connection_id=payload.connection_id, model=payload.model, kind="chat")
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Agent 聊天模型或连接不存在或已禁用") from exc
+    model = chat_target.model.upstream_model
+    provider_cfg = {"id": chat_target.connection.id, "protocol": chat_target.protocol}
     messages = [{"role": "system", "content": "你是图片创作聊天 Agent 的意图路由器。只返回 JSON，不要 Markdown。action 只能是 chat、generate_image、edit_image。generate_image 用于生成新图，edit_image 用于修改上传图或上一张图。prompt 是交给图片工具的完整提示词。"}]
     for item in conversation.get("messages", [])[-10:]:
         if item.get("role") == "user" and item.get("content") == payload.message and item is conversation.get("messages", [])[-1]:
@@ -3782,17 +2711,10 @@ async def decide_chat_agent_action(payload, conversation, refs):
             current_content.append({"type": "image_url", "image_url": {"url": data_url}})
     messages.append({"role": "user", "content": current_content if len(current_content) > 1 else current_content[0]["text"]})
     try:
-        from app.ai.chat import LegacyChatGateway
-        chat_gateway = LegacyChatGateway(
-            resolver=lambda selected_provider, selected_model: resolve_chat_provider(selected_provider, selected_model),
-            authorizer=lambda selected_provider, selected_model: require_chat_model_access(selected_provider, selected_model),
-            budget_authorizer=lambda selected_provider, user_id: assert_provider_budget_available(selected_provider, user_id),
-            timeout=AI_REQUEST_TIMEOUT,
-        )
-        raw = await chat_gateway.complete(
-            provider=provider_cfg["id"], model=model, model_id=getattr(payload, "model_id", ""), connection_id=getattr(payload, "connection_id", ""), messages=messages, user_id=current_user_id(),
-        )
-        if effective_protocol(provider_cfg, model) == "omnilojo":
+        from app.ai.chat import ChatGateway
+        chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
+        raw = await chat_gateway.complete_target(target=chat_target, messages=messages, user_id=current_user_id())
+        if provider_cfg.get("protocol") == "omnilojo":
             from app.services.usage import record_omnilojo_response_usage
             usage_payload = dict(raw) if isinstance(raw, dict) else {}
             usage_payload.setdefault("id", uuid.uuid4().hex)
@@ -3806,8 +2728,15 @@ async def decide_chat_agent_action(payload, conversation, refs):
         return fallback
 
 async def build_chat_text_reply(payload, conversation):
-    chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
-    provider = get_api_provider(payload.provider)
+    from app.ai.database_repository import DatabaseAIRepository
+    if not (payload.model_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="聊天请求必须提供 connection_id、model_id 或 resource_id")
+    try:
+        chat_target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.model_id, connection_id=payload.connection_id, model=payload.model, kind="chat")
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="聊天模型或连接不存在或已禁用") from exc
+    model = chat_target.model.upstream_model
+    provider = {"id": chat_target.connection.id, "protocol": chat_target.protocol}
     messages = [{"role": "system", "content": chat_system_prompt(payload)}]
     history = conversation.get("messages", [])[-MAX_HISTORY_MESSAGES:]
     for item in history:
@@ -3825,21 +2754,16 @@ async def build_chat_text_reply(payload, conversation):
             current_content.append({"type": "image_url", "image_url": {"url": data_url}})
     messages.append({"role": "user", "content": current_content if len(current_content) > 1 else payload.message})
     try:
-        from app.ai.chat import LegacyChatGateway
-        chat_gateway = LegacyChatGateway(
-            resolver=lambda selected_provider, selected_model: resolve_chat_provider(selected_provider, selected_model),
-            authorizer=lambda selected_provider, selected_model: require_chat_model_access(selected_provider, selected_model),
-            budget_authorizer=lambda selected_provider, user_id: assert_provider_budget_available(selected_provider, user_id),
-            timeout=AI_REQUEST_TIMEOUT,
-        )
-        raw = await chat_gateway.complete(provider=provider["id"], model=model, model_id=getattr(payload, "model_id", ""), connection_id=getattr(payload, "connection_id", ""), messages=messages, user_id=current_user_id())
+        from app.ai.chat import ChatGateway
+        chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
+        raw = await chat_gateway.complete_target(target=chat_target, messages=messages, user_id=current_user_id())
     except httpx.HTTPStatusError as exc:
         body = exc.response.text or ""
-        friendly = friendly_chat_error_detail(body, model, get_api_provider(payload.provider))
+        friendly = friendly_chat_error_detail(body, model, provider)
         raise HTTPException(status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body[:300]}") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游接口失败：{exc}") from exc
-    if effective_protocol(provider, model) == "omnilojo":
+    if provider.get("protocol") == "omnilojo":
         from app.services.usage import record_omnilojo_response_usage
         usage_payload = dict(raw) if isinstance(raw, dict) else {}
         usage_payload.setdefault("id", uuid.uuid4().hex)
@@ -4048,7 +2972,7 @@ async def runninghub_app_info(webappId: str = ""):
     webapp_id = str(webappId or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
-    provider = runninghub_provider()
+    provider = runninghub_connection()
     api_key = await runninghub_api_key_async(provider)
     url = runninghub_endpoint_url(provider, f"/api/webapp/apiCallDemo?apiKey={urllib.parse.quote(api_key)}&webappId={urllib.parse.quote(webapp_id)}")
     async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0)) as client:
@@ -4072,11 +2996,14 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     from app.services.usage import record_runninghub_submission
     webapp_id = str(payload.webappId or "").strip()
     selected_resource = None
-    if payload.resource_id:
-        from app.ai.repository import ProviderRepository
+    if not payload.resource_id and not payload.connection_id:
+        raise HTTPException(status_code=400, detail="RunningHub 任务必须指定 resource_id 或 connection_id")
+    if payload.resource_id or payload.connection_id:
+        from app.ai.database_repository import DatabaseAIRepository
         try:
-            selected_resource = ProviderRepository(load_api_providers).resolve_executable(
-                resource_id=payload.resource_id, kind="runninghub_app"
+            selected_resource = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_executable,
+                resource_id=payload.resource_id, connection_id=payload.connection_id, kind="runninghub_app"
             )
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
@@ -4084,7 +3011,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
         webapp_id = webapp_id or str(settings.get("webappId") or settings.get("appId") or settings.get("id") or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
-    provider = get_api_provider_exact(selected_resource.connection.legacy_provider_id) if selected_resource else runninghub_provider()
+    provider = canonical_connection_view(selected_resource)
     await assert_provider_budget_available(provider, user_id)
     api_key = await runninghub_api_key_async(provider)
     body = {
@@ -4096,7 +3023,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     if instance_type:
         body["instanceType"] = instance_type
     url = runninghub_endpoint_url(provider, "/task/openapi/ai-app/run")
-    async with provider_operation("runninghub", "app_generation", user_id=user_id):
+    async with connection_operation(str(provider.get("connection_id") or provider.get("id") or "runninghub"), "app_generation", user_id=user_id):
         async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0)) as client:
             try:
                 response = await client.post(url, headers=runninghub_app_headers(True, api_key), json=body)
@@ -4117,18 +3044,36 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
         await asyncio.to_thread(
             record_runninghub_submission, user_id, task_id,
             operation="ai_app", model=webapp_id,
+            connection_id=selected_resource.connection.id if selected_resource else "",
+            resource_id=payload.resource_id or "",
         )
-        return {"success": True, "data": {"taskId": task_id, "raw": raw}}
+        return {"success": True, "data": {
+            "taskId": task_id,
+            "connection_id": selected_resource.connection.id if selected_resource else "",
+            "resource_id": payload.resource_id or "",
+            "raw": raw,
+        }}
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
 
 @app.get("/api/runninghub/query")
-async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
+async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connection_id: str = "", resource_id: str = ""):
     user_id = current_user_id()
     from app.services.usage import settle_runninghub_usage
     task_id = str(taskId or "").strip()
     if not task_id:
         raise HTTPException(status_code=400, detail="taskId 必填")
-    provider = runninghub_provider()
+    if not connection_id and not resource_id:
+        raise HTTPException(status_code=400, detail="RunningHub 查询必须指定 resource_id 或 connection_id")
+    provider = None
+    if connection_id or resource_id:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=resource_id, connection_id=connection_id, kind="runninghub_app")
+            provider = canonical_connection_view(target)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
+    if provider is None:
+        raise HTTPException(status_code=404, detail="RunningHub 连接不存在或已禁用")
     api_key = await runninghub_api_key_async(provider)
     url = runninghub_endpoint_url(provider, "/task/openapi/outputs")
     async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0)) as client:
@@ -4159,7 +3104,7 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True):
         status = runninghub_normalized_status(raw, code, urls)
         await asyncio.to_thread(
             settle_runninghub_usage, user_id, task_id, raw,
-            status=status, operation="ai_app",
+            status=status, operation="ai_app", connection_id=connection_id, resource_id=resource_id,
         )
         result_data = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}
         try:
@@ -4175,7 +3120,14 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     source_url = str(payload.url or "").strip()
     if not source_url:
         raise HTTPException(status_code=400, detail="url 必填")
-    provider = runninghub_provider()
+    if not payload.connection_id and not payload.resource_id:
+        raise HTTPException(status_code=400, detail="RunningHub 素材上传必须指定 connection_id 或 resource_id")
+    from app.ai.database_repository import DatabaseAIRepository
+    try:
+        target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id, connection_id=payload.connection_id, kind="runninghub_app")
+        provider = canonical_connection_view(target)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
     api_key = await runninghub_api_key_async(provider)
     filename = "asset.bin"
     content_type = "application/octet-stream"
@@ -4224,8 +3176,15 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
 
 
 @app.post("/api/runninghub/upload-asset-file")
-async def runninghub_upload_asset_file(file: UploadFile = File(...)):
-    provider = runninghub_provider()
+async def runninghub_upload_asset_file(file: UploadFile = File(...), connection_id: str = "", resource_id: str = ""):
+    if not connection_id and not resource_id:
+        raise HTTPException(status_code=400, detail="RunningHub 素材上传必须指定 connection_id 或 resource_id")
+    from app.ai.database_repository import DatabaseAIRepository
+    try:
+        target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=resource_id, connection_id=connection_id, kind="runninghub_app")
+        provider = canonical_connection_view(target)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
     api_key = await runninghub_api_key_async(provider)
     filename = os.path.basename(str(file.filename or "").strip()) or "asset.bin"
     content_type = str(file.content_type or "").strip() or "application/octet-stream"
@@ -4253,7 +3212,6 @@ async def runninghub_upload_asset_file(file: UploadFile = File(...)):
 @app.get("/api/config")
 async def ai_config():
     preferred_chat_model = next((m for m in CHAT_MODELS if m == "gpt-5.5"), CHAT_MODELS[0] if CHAT_MODELS else CHAT_MODEL)
-    providers = public_api_providers()
     return {
         "base_url": AI_BASE_URL,
         "chat_model": preferred_chat_model,
@@ -4262,7 +3220,6 @@ async def ai_config():
         "image_models": IMAGE_MODELS,
         "video_models": VIDEO_MODELS,
         "comfy_instances": COMFYUI_INSTANCES,
-        "api_providers": providers,
         "has_api_key": bool(AI_API_KEY),
     }
 
@@ -4270,25 +3227,13 @@ async def ai_config():
 async def ai_models():
     return {"chat_models": CHAT_MODELS, "image_models": IMAGE_MODELS, "video_models": VIDEO_MODELS}
 
-@app.get("/api/providers")
-async def api_providers(response: Response = None):
-    require_provider_compatibility()
-    from app.services.business_metadata import get_app_setting_with_version
-    if response is not None:
-        response.headers["Deprecation"] = "true"
-        response.headers["Sunset"] = "pending-connection-migration"
-        response.headers["Link"] = '</api/ai/connections>; rel="successor-version"'
-    _value, version = await asyncio.to_thread(get_app_setting_with_version, "api_providers", [])
-    return {"providers": public_api_providers(include_credentials=access_control.is_admin(current_user_id())), "version": version}
-
-
 @app.get("/api/ai/resources")
 async def ai_resources():
     """Expose the connection/resource projection for new clients.
 
-    ``/api/providers`` remains the writable legacy configuration API during
-    migration.  This endpoint deliberately excludes connection settings and
-    secrets, so callers select stable resource IDs without receiving keys.
+    This endpoint deliberately excludes connection settings and secrets, so
+    callers select stable resource IDs without receiving keys. The removed
+    ``/api/providers`` surface is intentionally not reintroduced here.
     """
     from app.ai.database_repository import DatabaseAIRepository
 
@@ -4298,7 +3243,6 @@ async def ai_resources():
             "connections": [
             {
                 "id": item.id,
-                "legacy_provider_id": item.legacy_provider_id,
                 "protocol": item.protocol,
                 "name": item.name,
                 "base_url": item.base_url,
@@ -4359,7 +3303,7 @@ async def save_ai_configuration(payload: Dict[str, Any]):
             raise HTTPException(status_code=400, detail="连接必须包含 id 和 protocol")
     try:
         from app.ai.database_repository import DatabaseAIRepository
-        from app.services.provider_secrets import set_connection_secret
+        from app.services.connection_secrets import set_connection_secret
         def save():
             DatabaseAIRepository().replace(connections=connections, models=models, resources=resources)
             for item in connections:
@@ -4411,44 +3355,12 @@ async def ai_gateway_status():
     }
 
 
-@app.post("/api/ai/resources/sync-legacy")
-async def ai_resources_sync_legacy():
-    """Admin-only, idempotent import from api_providers into AI resource tables."""
-    require_api_settings_access()
-    from app.services.business_metadata import sync_ai_legacy_projection
-    from app.services.business_metadata import list_comfy_workflows
-    def sync_projection():
-        # Both helpers use the synchronous PostgreSQL bridge and therefore must
-        # run together off the application event loop.
-        return sync_ai_legacy_projection(load_api_providers(), list_comfy_workflows())
-    count = await asyncio.to_thread(sync_projection)
-    return {"ok": True, "models_synced": count}
-
-
-@app.get("/api/ai/migration-status")
-async def ai_migration_status():
-    require_api_settings_access()
-    from app.services.business_metadata import metadata_connection
-    try:
-        def read_counts():
-            with metadata_connection() as conn, conn.cursor() as cur:
-                counts = {}
-                for table in ("ai_connections", "ai_models", "ai_resources", "ai_legacy_mappings"):
-                    cur.execute(f"SELECT COUNT(*) AS count FROM {table}")
-                    counts[table] = int(cur.fetchone()["count"])
-                return counts
-        counts = await asyncio.to_thread(read_counts)
-        return {"tables": counts, "legacy_write_source": "api_providers", "dual_write": os.getenv("AI_CONNECTIONS_V2", "0").lower() in {"1", "true", "yes", "on"}}
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="AI 迁移状态暂不可用") from exc
-
-
 @app.post("/api/ai/connections/{connection_id}/discover")
 async def ai_connection_discover(connection_id: str):
     require_api_settings_access()
     from app.ai.services.discovery import ConnectionDiscoveryService
     from app.ai.database_repository import DatabaseAIRepository
-    from app.services.provider_secrets import get_connection_secret
+    from app.services.connection_secrets import get_connection_secret
 
     repository = DatabaseAIRepository()
     target = next((item for item in repository.connections() if item.id == connection_id), None)
@@ -4458,7 +3370,7 @@ async def ai_connection_discover(connection_id: str):
     if not api_key:
         raise HTTPException(status_code=400, detail="该连接未配置 API Key")
     async def discover(connection):
-        async with provider_operation(connection.id, "model_discovery", user_id=current_user_id()):
+        async with connection_operation(connection.id, "model_discovery", user_id=current_user_id()):
             return await fetch_models_from_upstream(connection.base_url, api_key, connection.protocol)
     service = ConnectionDiscoveryService(
         connection_loader=lambda _id: target,
@@ -4475,7 +3387,7 @@ async def ai_connection_test(connection_id: str):
     """Test a persisted connection and return categorized upstream models."""
     require_api_settings_access()
     from app.ai.database_repository import DatabaseAIRepository
-    from app.services.provider_secrets import get_connection_secret
+    from app.services.connection_secrets import get_connection_secret
     target = next((item for item in DatabaseAIRepository().connections() if item.id == connection_id), None)
     if target is None:
         raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用")
@@ -4489,21 +3401,20 @@ async def ai_connection_test(connection_id: str):
     return {"ok": True, **result}
 
 @app.get("/api/canvas/capability-parameters")
-async def canvas_capability_parameters(capability: str, provider_id: str = "", model: str = ""):
+async def canvas_capability_parameters(capability: str, provider_id: str = "", model: str = "", connection_id: str = "", model_id: str = "", resource_id: str = ""):
     """The single field contract consumed by canvas UI and Canvas Agent tools."""
-    from app.services.provider_parameters import capability_parameters
+    if not any(str(value or "").strip() for value in (connection_id, model_id, resource_id)):
+        raise HTTPException(status_code=400, detail="参数契约必须指定 connection_id、model_id 或 resource_id")
+    from app.services.ai_parameters import capability_parameters
     try:
         return await asyncio.to_thread(
             capability_parameters,
             capability=capability,
             provider_id=provider_id,
             model=model,
-            # Do not let the shared resolver import ``main`` to find a loader.
-            # Depending on the ASGI entrypoint that can create a second module
-            # namespace with a stale Provider cache. The schema endpoint must
-            # always resolve against the same persisted configuration exposed by
-            # the Provider settings API.
-            provider_loader=refresh_api_providers_cache,
+            connection_id=connection_id,
+            model_id=model_id,
+            resource_id=resource_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4511,161 +3422,29 @@ async def canvas_capability_parameters(capability: str, provider_id: str = "", m
 @app.get("/api/canvas/parameter-schema/definitions")
 async def canvas_parameter_schema_definitions():
     """Backend-owned editable definitions and their execution contract."""
-    from app.services.provider_parameters import parameter_schema_definitions
+    from app.services.ai_parameters import parameter_schema_definitions
     return {"schemas": parameter_schema_definitions()}
 
 @app.post("/api/canvas/parameter-schema/validate")
 async def validate_canvas_parameter_schema(payload: Dict[str, Any]):
     """Validate one Provider's model-scoped parameter overrides before save."""
     require_api_settings_access()
-    from app.services.provider_parameters import normalize_parameter_schema
+    from app.services.ai_parameters import normalize_parameter_schema
     try:
         return {"parameter_schema": normalize_parameter_schema(payload.get("parameter_schema"))}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-@app.put("/api/providers")
-def save_providers(payload: List[ApiProviderPayload], if_match: Optional[str] = Header(None, alias="If-Match")):
-    require_provider_compatibility()
-    require_api_settings_access()
-    if if_match is None:
-        raise HTTPException(status_code=428, detail="保存 Provider 配置必须携带 If-Match 版本号，请刷新后重试。")
-    try:
-        expected_version = int(str(if_match or "").strip())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="If-Match 必须是 Provider 配置版本号") from exc
-    if expected_version < 0:
-        raise HTTPException(status_code=400, detail="If-Match 必须是 Provider 配置版本号")
-    providers = []
-    env_updates = {}
-    secret_updates = []
-    # 收集每个 item 的 primary 字段
-    raw_primary_flags = [bool(getattr(item, "primary", False)) for item in payload]
-    for item in payload:
-        provider = normalize_provider(item.dict(exclude={"api_key", "omnilojo_management_token"}))
-        if provider["id"] == "runninghub":
-            provider = preserve_runninghub_hidden_overrides(provider)
-        if any(existing["id"] == provider["id"] for existing in providers):
-            raise HTTPException(status_code=400, detail=f"API 平台 ID 重复：{provider['id']}")
-        providers.append(provider)
-        key_env = provider_key_env(provider["id"])
-        if item.clear_key:
-            env_updates[key_env] = ""
-            secret_updates.append((provider["id"], "api_key", ""))
-        elif item.api_key is not None and item.api_key.strip():
-            env_updates[key_env] = item.api_key.strip()
-            secret_updates.append((provider["id"], "api_key", item.api_key.strip()))
-        if provider["protocol"] == "omnilojo":
-            if item.clear_omnilojo_management_token:
-                secret_updates.append((provider["id"], "omnilojo_management_token", ""))
-                env_updates[omnilojo_management_token_env(provider["id"])] = ""
-            elif item.omnilojo_management_token is not None and item.omnilojo_management_token.strip():
-                secret_updates.append((provider["id"], "omnilojo_management_token", item.omnilojo_management_token.strip()))
-                env_updates[omnilojo_management_token_env(provider["id"])] = item.omnilojo_management_token.strip()
-        if provider["id"] == "volcengine":
-            ak_env = volcengine_access_key_env()
-            sk_env = volcengine_secret_key_env()
-            if item.clear_volcengine_access_key_id:
-                env_updates[ak_env] = ""
-                secret_updates.append(("volcengine", "access_key_id", ""))
-            elif item.volcengine_access_key_id is not None and item.volcengine_access_key_id.strip():
-                env_updates[ak_env] = item.volcengine_access_key_id.strip()
-                secret_updates.append(("volcengine", "access_key_id", item.volcengine_access_key_id.strip()))
-            if item.clear_volcengine_secret_access_key:
-                env_updates[sk_env] = ""
-                secret_updates.append(("volcengine", "secret_access_key", ""))
-            elif item.volcengine_secret_access_key is not None and item.volcengine_secret_access_key.strip():
-                env_updates[sk_env] = item.volcengine_secret_access_key.strip()
-                secret_updates.append(("volcengine", "secret_access_key", item.volcengine_secret_access_key.strip()))
-        if provider["id"] == "comfly":
-            env_updates["COMFLY_BASE_URL"] = provider["base_url"]
-            env_updates["IMAGE_MODELS"] = ",".join(provider["image_models"])
-            env_updates["CHAT_MODELS"] = ",".join(provider["chat_models"])
-            env_updates["VIDEO_MODELS"] = ",".join(provider.get("video_models") or [])
-        if provider["id"] == "runninghub":
-            provider["protocol"] = "runninghub"
-        if provider["id"] == "volcengine":
-            provider["protocol"] = "volcengine"
-    if not providers:
-        raise HTTPException(status_code=400, detail="至少保留一个 API 平台")
-    # 强制最多一个 primary（取最后被标记的；都没标记则保持原样不强制）
-    primary_indices = [i for i, flag in enumerate(raw_primary_flags) if flag]
-    if primary_indices:
-        winner = primary_indices[-1]
-        for i, p in enumerate(providers):
-            p["primary"] = (i == winner)
-    from app.services.business_metadata import set_app_setting_if_version
-    version = set_app_setting_if_version("api_providers", providers, expected_version)
-    if version is None:
-        raise HTTPException(status_code=409, detail="Provider 配置已被其他管理员修改，请刷新后再保存。")
-    global _API_PROVIDERS_CACHE
-    _API_PROVIDERS_CACHE = merge_default_api_providers([normalize_provider(item) for item in providers])
-    if GLOBAL_LOOP and GLOBAL_LOOP.is_running():
-        asyncio.run_coroutine_threadsafe(publish_provider_config_changed(), GLOBAL_LOOP)
-    if secret_updates and os.getenv("APP_SECRET_KEY"):
-        for provider_id, secret_name, secret_value in secret_updates:
-            set_provider_secret(provider_id, secret_name, secret_value)
-    if env_updates and not os.getenv("APP_SECRET_KEY"):
-        update_env_values(env_updates)
-        reload_env_globals()
-    from app.ai.features import enabled as feature_enabled
-    if feature_enabled("AI_CONNECTIONS_V2"):
-        try:
-            from app.services.business_metadata import sync_ai_legacy_projection, list_comfy_workflows
-            sync_ai_legacy_projection(providers, list_comfy_workflows())
-        except Exception as exc:
-            logger.exception("AI connection projection sync failed", extra={"event": "ai_connection_projection_sync_failed", "error": str(exc)[:300]})
-            audit_event("ai_connection_projection_sync_failed", action="update", resource_type="ai_connection_projection", resource_id="global", result="failure", error_type=type(exc).__name__)
-    audit_event(
-        "api_providers_updated",
-        action="update",
-        resource_type="api_provider_config",
-        resource_id="global",
-        after={"provider_ids": [provider["id"] for provider in providers], "key_fields_changed": len(env_updates)},
-    )
-    return {"providers": [public_provider(p, include_credentials=True) for p in providers], "version": version}
-
 # --- 在线生图 (COMFLY) ---
 
 
-def protocol_from_payload(payload):
-    provider_id = str(getattr(payload, "provider_id", "") or "").strip().lower()
-    if provider_id == "volcengine":
-        return "volcengine"
-    if provider_id == "runninghub":
-        return "runninghub"
-    protocol = str(getattr(payload, "protocol", "") or "openai").strip().lower()
-    return protocol if protocol in SUPPORTED_PROVIDER_PROTOCOLS else "openai"
-
-def api_key_from_payload(payload, protocol: str = ""):
-    explicit = str(getattr(payload, "api_key", "") or "").strip()
-    provider_id = str(getattr(payload, "provider_id", "") or "").strip().lower()
-    protocol = str(protocol or protocol_from_payload(payload) or "").strip().lower()
-    if explicit:
-        return explicit
-    if provider_id:
-        value = os.getenv(provider_key_env(provider_id), "")
-        if value:
-            return value
-    if protocol == "volcengine":
-        return volcengine_provider_api_key("")
-    return ""
-
 def upstream_models_url(base_url: str, protocol: str):
-    if protocol == "gemini":
-        return f"{base_url}/models" if base_url.endswith("/v1beta") else f"{base_url}/v1beta/models"
-    if protocol == "volcengine":
-        return f"{base_url}/models" if base_url.endswith("/api/v3") else f"{base_url}/api/v3/models"
-    if protocol == "runninghub":
-        return f"{base_url}/openapi/v2/models"
-    return f"{base_url}/models" if base_url.endswith("/v1") else f"{base_url}/v1/models"
+    from app.ai.transport import models_endpoint
+    return models_endpoint(base_url, protocol)
 
 def upstream_model_headers(api_key: str, protocol: str):
-    if protocol == "gemini":
-        return {"x-goog-api-key": api_key, "Accept": "application/json"}
-    if protocol == "runninghub":
-        return {"Authorization": strip_auth_scheme(api_key, "Bearer"), "Accept": "application/json"}
-    return {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
+    from app.ai.transport import model_headers
+    return dict(model_headers(api_key, protocol))
 
 def volcengine_empty_model_payload(status=200, message="", raw=None):
     return {"ok": True, "protocol": "volcengine", "status": status,
@@ -4744,7 +3523,7 @@ async def probe_openai_models_endpoint(client, base_url: str, api_key: str):
     if looks_like_html_response(response.text):
         return False, {"status": response.status_code, "message": "OpenAI /v1/models 返回网页 HTML，请检查请求地址是否为 API Base URL", "raw": raw}
     if response.status_code < 300:
-        grouped, ids = parse_upstream_models(raw, "openai") if isinstance(raw, dict) else ({"image": [], "chat": [], "video": []}, [])
+        grouped, ids = parse_models_payload(raw, "openai") if isinstance(raw, dict) else ({"image": [], "chat": [], "video": []}, [])
         return True, {
             "status": response.status_code,
             "message": f"OpenAI 兼容模型列表端点可用{f'，找到 {len(ids)} 个模型' if ids else ''}",
@@ -4779,162 +3558,6 @@ async def probe_volcengine_auto_detect(client, base_url: str, api_key: str):
         "message": compat_probe.get("message") or task_probe.get("message") or "未检测到方舟/Ark 兼容入口",
         "raw": {"task_probe": task_probe, "openai_compat_probe": compat_probe.get("raw")},
     }
-
-def classify_upstream_model(mid):
-    lc = str(mid or "").lower()
-    video_keys = ["veo", "sora", "wan2", "wanx", "doubao-seedance", "doubao-1", "kling", "hailuo", "video", "t2v-", "i2v-", "s2v"]
-    if any(k in lc for k in video_keys):
-        return "video"
-    image_keys = ["banana", "image", "dalle", "dall-e", "imagen", "flux", "stable", "sdxl", "midjourney", "nano-banana", "ideogram", "fal-ai", "z-image", "qwen-image", "klein", "seedream", "doubao-seedream", "text-to-image", "image-to-image"]
-    if any(k in lc for k in image_keys):
-        return "image"
-    return "chat"
-
-def parse_upstream_models(raw, protocol="openai"):
-    items = raw.get("data") if isinstance(raw, dict) else None
-    if not items and isinstance(raw, dict):
-        items = raw.get("models") or raw.get("list") or []
-    if not isinstance(items, list):
-        items = []
-    ids = []
-    for it in items:
-        if isinstance(it, str):
-            mid = it
-        elif isinstance(it, dict):
-            mid = it.get("id") or it.get("name") or it.get("model")
-        else:
-            mid = ""
-        if mid:
-            mid = str(mid)
-            if protocol == "gemini" and mid.startswith("models/"):
-                mid = mid[len("models/"):]
-            ids.append(mid)
-    ids = sorted(set(ids))
-    grouped = {"image": [], "chat": [], "video": []}
-    for mid in ids:
-        grouped[classify_upstream_model(mid)].append(mid)
-    return grouped, ids
-
-@app.post("/api/providers/test-connection")
-async def test_provider_connection(payload: TestConnectionPayload):
-    """测试请求地址是否可用：调上游 /v1/models。验证通过时同时把模型清单按类别返回，避免再调一次拉取接口。"""
-    require_api_settings_access()
-    require_provider_compatibility()
-    protocol = protocol_from_payload(payload)
-    base_url = validate_public_http_url(payload.base_url, label="请求地址")
-    api_key = api_key_from_payload(payload, protocol)
-    if not api_key:
-        key_name = "方舟 API Key" if protocol == "volcengine" else "API Key"
-        raise HTTPException(status_code=400, detail=f"请先填写或保存 {key_name}")
-    url = upstream_models_url(base_url, protocol)
-    try:
-        async with shared_http_client(timeout=15) as client:
-            resp = await client.get(url, headers=upstream_model_headers(api_key, protocol))
-            if resp.status_code in (301, 302, 303, 307, 308):
-                location = resp.headers.get("Location") or resp.headers.get("location") or ""
-                suffix = f"：{location}" if location else ""
-                endpoint_label = "/v1beta/models" if protocol == "gemini" else "/api/v3/models" if protocol == "volcengine" else "/openapi/v2/models" if protocol == "runninghub" else "/v1/models"
-                return {"ok": False, "status": resp.status_code, "message": f"上游 {endpoint_label} 发生跳转{suffix}，请填写 API Base URL，不要填写网页登录地址"}
-            if looks_like_html_response(resp.text):
-                endpoint_label = "/v1beta/models" if protocol == "gemini" else "/api/v3/models" if protocol == "volcengine" else "/openapi/v2/models" if protocol == "runninghub" else "/v1/models"
-                return {"ok": False, "status": resp.status_code, "message": f"上游 {endpoint_label} 返回网页 HTML，请检查请求地址是否为 API Base URL"}
-            if resp.status_code >= 400:
-                if protocol == "volcengine":
-                    detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
-                    if detected:
-                        return volcengine_empty_model_payload(status=probe.get("status") or resp.status_code, raw={"models_error": resp.text[:300], **(probe.get("raw") or {})})
-                elif protocol == "openai":
-                    detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
-                    if detected:
-                        return volcengine_empty_model_payload(status=probe.get("status") or resp.status_code, raw={"models_error": resp.text[:300], **(probe.get("raw") or {})})
-                return {"ok": False, "status": resp.status_code, "message": resp.text[:300]}
-            data = resp.json() if resp.text else {}
-            grouped, ids = parse_upstream_models(data, protocol)
-            if protocol == "volcengine" and not ids:
-                detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
-                if detected:
-                    return volcengine_empty_model_payload(status=resp.status_code, raw=data)
-            return {"ok": True, "status": resp.status_code, "model_count": len(ids), "image_models": grouped["image"], "chat_models": grouped["chat"], "video_models": grouped["video"], "all": ids}
-    except httpx.HTTPError as e:
-        if protocol == "volcengine":
-            try:
-                async with new_outbound_http_client(timeout=15) as client:
-                    detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
-                    if detected:
-                        return volcengine_empty_model_payload(status=probe.get("status") or 0, raw={"models_error": str(e)[:300], **(probe.get("raw") or {})})
-            except Exception:
-                pass
-        return {"ok": False, "status": 0, "message": str(e)[:300]}
-
-@app.post("/api/providers/probe-async")
-async def probe_async_endpoint(payload: TestConnectionPayload):
-    """验证异步协议：用假 task_id 请求 GET /v1/tasks/{fake_id}。
-    收到 400 Invalid task ID = 端点存在且 Key 有效；401/403 = Key 无效；404/连接失败 = 不支持异步端点。"""
-    require_api_settings_access()
-    require_provider_compatibility()
-    require_provider_compatibility()
-    base_url = validate_public_http_url(payload.base_url, label="请求地址")
-    protocol = protocol_from_payload(payload)
-    api_key = api_key_from_payload(payload, protocol)
-    if not api_key:
-        raise HTTPException(status_code=400, detail="请先填写或保存 API Key")
-    if protocol == "volcengine":
-        try:
-            async with shared_http_client(timeout=15) as client:
-                task_ok, task_probe = await probe_volcengine_task_endpoint(client, base_url, api_key)
-                if task_ok:
-                    return {
-                        "ok": True,
-                        "protocol": "volcengine",
-                        "status_code": task_probe.get("status") or 200,
-                        "message": "方舟/Ark 任务协议可用",
-                        "raw": task_probe.get("raw"),
-                    }
-                compat_ok, compat_probe = await probe_openai_compat_bearer_endpoint(client, base_url, api_key)
-                if compat_ok:
-                    return {
-                        "ok": True,
-                        "protocol": "volcengine",
-                        "status_code": compat_probe.get("status") or 200,
-                        "message": "方舟/Ark Bearer 鉴权入口可用（OpenAI 兼容透传）",
-                        "raw": {"task_probe": task_probe, "openai_compat_probe": compat_probe.get("raw")},
-                    }
-                return {
-                    "ok": False,
-                    "protocol": "volcengine",
-                    "status_code": compat_probe.get("status") or task_probe.get("status") or 0,
-                    "message": compat_probe.get("message") or task_probe.get("message") or "方舟/Ark 任务协议不可用",
-                    "raw": {"task_probe": task_probe, "openai_compat_probe": compat_probe.get("raw")},
-                }
-        except httpx.HTTPError as e:
-            raise HTTPException(status_code=502, detail=str(e)[:300])
-    try:
-        async with shared_http_client(timeout=15) as client:
-            openai_ok, openai_probe = await probe_openai_models_endpoint(client, base_url, api_key)
-            if not openai_ok and protocol == "openai":
-                detected, volc_probe = await probe_volcengine_auto_detect(client, base_url, api_key)
-                if detected:
-                    return {
-                        "ok": True,
-                        "protocol": "volcengine",
-                        "status_code": volc_probe.get("status") or openai_probe.get("status") or sc,
-                        "message": f"{volc_probe.get('message') or '检测到方舟/Ark 兼容入口'}，已自动切换为方舟/Ark 任务协议",
-                        "raw": {"openai_probe": openai_probe.get("raw"), **(volc_probe.get("raw") or {})},
-                    }
-            return {
-                "ok": openai_ok,
-                "protocol": "openai",
-                "status_code": openai_probe.get("status") or sc,
-                "message": openai_probe.get("message") or "OpenAI 兼容验证完成",
-                "raw": {"openai_probe": openai_probe.get("raw")},
-                "model_count": openai_probe.get("model_count") or 0,
-                "image_models": openai_probe.get("image_models") or [],
-                "chat_models": openai_probe.get("chat_models") or [],
-                "video_models": openai_probe.get("video_models") or [],
-                "all": openai_probe.get("all") or [],
-            }
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=str(e)[:300])
 
 async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str = "openai"):
     """从上游模型列表端点拉取模型，并按名称做轻量分类。"""
@@ -5019,7 +3642,7 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
             except Exception:
                 pass
         raise HTTPException(status_code=502, detail=f"请求上游模型列表失败：{e}")
-    grouped, ids = parse_upstream_models(raw, protocol)
+    grouped, ids = parse_models_payload(raw, protocol)
     if protocol == "volcengine" and not ids:
         payload = volcengine_empty_model_payload(raw=raw)
         return {
@@ -5033,40 +3656,26 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
         }
     return {"total": len(ids), "image_models": grouped["image"], "chat_models": grouped["chat"], "video_models": grouped["video"], "all": ids}
 
-@app.post("/api/providers/fetch-models")
-async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
-    """按页面当前表单值拉取模型，支持新增平台未保存时直接使用临时 Base URL / Key。"""
-    require_api_settings_access()
-    require_provider_compatibility()
-    protocol = protocol_from_payload(payload)
-    api_key = api_key_from_payload(payload, protocol)
-    async with provider_operation(protocol, "model_discovery", user_id=current_user_id()):
-        return await fetch_models_from_upstream(payload.base_url, api_key, protocol)
-
-@app.get("/api/providers/{provider_id}/fetch-models")
-async def fetch_upstream_models(provider_id: str):
-    """从已保存的上游 OpenAI 兼容接口拉取 /v1/models 列表，按名称智能分类为 image/chat/video。"""
-    require_api_settings_access()
-    require_provider_compatibility()
-    provider = get_api_provider_exact(provider_id)
-    api_key = os.getenv(provider_key_env(provider["id"]), "")
-    if not api_key:
-        raise HTTPException(status_code=400, detail=f"{provider_id} 未配置 API Key")
-    protocol = provider_protocol(provider)
-    async with provider_operation(protocol, "model_discovery", user_id=current_user_id()):
-        return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, protocol)
-
 async def build_online_image_result(payload: OnlineImageRequest):
-    provider = get_api_provider(payload.provider_id)
-    default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
-    model = selected_model(payload.model, default_model)
-    require_model_access(provider["id"], model)
+    from app.ai.database_repository import DatabaseAIRepository
+    try:
+        target = await asyncio.to_thread(
+            DatabaseAIRepository().resolve_model,
+            model_id=payload.model_id,
+            connection_id=payload.connection_id,
+            model=payload.model,
+            kind="image",
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
+    model = target.model.upstream_model if target.model else payload.model
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
     max_count = max(1, min(8, int(os.getenv("AI_ONLINE_IMAGE_MAX_COUNT", "4"))))
     count = max(1, min(max_count, int(payload.n or 1)))
     async def generate_one():
-        image_data, raw_item = await generate_ai_image(
-            payload.prompt, payload.size, payload.quality, model, refs, provider["id"],
+        image_data, raw_item = await generate_ai_image_target(
+            target, prompt=payload.prompt, size=payload.size, quality=payload.quality,
+            reference_images=refs, user_id=current_user_id(),
         )
         local_url = await save_ai_image_to_output(image_data, prefix="online_")
         return local_url, raw_item
@@ -5087,7 +3696,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
     local_urls = [item["url"] for item in media_items if item.get("url")]
     raw = generated[0][1] if generated else {}
     if not local_urls:
-        provider_name = provider["id"]
+        provider_name = target.connection.name or target.connection.id
         raw_text = json.dumps(raw, ensure_ascii=False)[:800] if isinstance(raw, (dict, list)) else str(raw)[:800]
         raise HTTPException(status_code=502, detail=f"{provider_name} 没有返回图片：{raw_text}")
     result = {
@@ -5097,25 +3706,31 @@ async def build_online_image_result(payload: OnlineImageRequest):
         "timestamp": time.time(),
         "type": "online",
         "model": model,
-        "provider_id": provider["id"],
-        "provider_name": provider["id"],
+        "provider_id": "",
+        "provider_name": target.connection.name or target.connection.id,
+        "connection_id": payload.connection_id or "",
+        "model_id": payload.model_id or "",
+        "resource_id": payload.resource_id or "",
         "task_id": extract_task_id(raw) if isinstance(raw, dict) else None,
         "request_id": raw.get("id") if isinstance(raw, dict) else None,
-        "params": {"provider_id": provider["id"], "model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
+        "params": {"model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
-    if is_runninghub_provider(provider):
+    runtime_provider = canonical_connection_view(target)
+    if is_runninghub_connection(runtime_provider):
         task_id = str(result.get("task_id") or "").strip()
         if task_id:
             from app.services.usage import settle_runninghub_usage
             await asyncio.to_thread(
                 settle_runninghub_usage, current_user_id(), task_id, raw,
                 status="succeeded", operation="image_generation", model=model,
+                connection_id=target.connection.id, model_id=target.model.id,
+                resource_id=target.resource.id if target.resource else "",
             )
     elif isinstance(raw, dict) and raw.get("usage"):
         from app.services.usage import record_omnilojo_response_usage
         await asyncio.gather(*(
-            asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider, model, {**raw_item, "local_request_id": f"image:{uuid.uuid4().hex}"}, operation="image_generation")
+            asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), runtime_provider, model, {**raw_item, "local_request_id": f"image:{uuid.uuid4().hex}"}, operation="image_generation")
             for _url, raw_item in generated
         ))
     await asyncio.to_thread(save_to_history, result)
@@ -5195,15 +3810,14 @@ def normalize_canvas_image_request(payload: OnlineImageRequest) -> OnlineImageRe
     settings = _canvas_settings(payload)
     if not settings:
         return payload
-    provider_id = _canvas_string(settings, "provider_id", payload.provider_id)
-    if provider_id in {"runninghub", "comfyui"}:
-        return payload
-    model = _canvas_string(settings, "model", payload.model)
+    provider_id = ""
+    model = str(payload.model or "")
     try:
-        from app.services.provider_parameters import validate_run_settings
+        from app.services.ai_parameters import validate_run_settings
         resolved = validate_run_settings(
-            kind="image", provider_id=provider_id, model=model,
-            settings=settings, provider_loader=load_api_providers,
+            kind="image", provider_id="", model=model,
+            settings=settings,
+            connection_id=payload.connection_id, model_id=payload.model_id, resource_id=payload.resource_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"画布图片参数不合法：{exc}") from exc
@@ -5227,8 +3841,9 @@ configure_canvas_runtime(
     # test/runtime overrides retain the same dynamic behavior as before.
     image_normalizer=lambda payload: normalize_canvas_image_request(payload),
     media_reference_resolver=lambda ref, max_size: reference_to_data_url(ref, max_size),
-    provider_lookup=lambda provider_id: get_api_provider(provider_id),
-    provider_budget_authorizer=lambda provider, user_id: assert_provider_budget_available(provider, user_id),
+    target_authorizer=require_target_access,
+    connection_lookup=lambda connection_id: canonical_connection_view(next(item for item in DatabaseAIRepository().connections() if item.id == connection_id)),
+    connection_budget_authorizer=lambda connection, user_id: assert_provider_budget_available(connection, user_id),
 )
 
 
@@ -5236,15 +3851,14 @@ def normalize_canvas_video_request(payload: CanvasVideoRequest) -> CanvasVideoRe
     settings = _canvas_settings(payload)
     if not settings:
         return payload
-    provider_id = _canvas_string(settings, "videoProvider", payload.provider_id)
-    if provider_id in {"runninghub", "comfyui"}:
-        return payload
-    model = _canvas_string(settings, "videoModel", payload.model)
+    provider_id = ""
+    model = str(payload.model or "")
     try:
-        from app.services.provider_parameters import validate_run_settings
+        from app.services.ai_parameters import validate_run_settings
         resolved = validate_run_settings(
-            kind="video", provider_id=provider_id, model=model,
-            settings=settings, provider_loader=load_api_providers,
+            kind="video", provider_id="", model=model,
+            settings=settings,
+            connection_id=payload.connection_id, model_id=payload.model_id, resource_id=payload.resource_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"画布视频参数不合法：{exc}") from exc
@@ -5265,11 +3879,52 @@ def normalize_canvas_video_request(payload: CanvasVideoRequest) -> CanvasVideoRe
 
 @app.post("/api/online-image")
 async def online_image(payload: OnlineImageRequest):
+    if not (payload.model_id or payload.connection_id or payload.resource_id):
+        raise HTTPException(status_code=400, detail="图片请求必须提供 connection_id、model_id 或 resource_id")
+    if payload.model_id or payload.connection_id or payload.resource_id:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            if payload.resource_id:
+                target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id)
+                payload = payload.model_copy(update={"connection_id": target.connection.id})
+            else:
+                target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.model_id, connection_id=payload.connection_id, model=payload.model, kind="image")
+                payload = payload.model_copy(update={"connection_id": target.connection.id, "model_id": target.model.id})
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="图片模型或连接不存在或已禁用") from exc
     return await build_online_image_result(normalize_canvas_image_request(payload))
 
 @app.post("/api/image-task-query")
 async def query_image_task(payload: ImageTaskQueryRequest):
-    provider = get_api_provider(payload.provider_id)
+    if not (payload.connection_id or payload.resource_id):
+        raise HTTPException(status_code=400, detail="任务查询必须提供 connection_id 或 resource_id")
+    provider = None
+    if payload.connection_id or payload.resource_id:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            target = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_executable,
+                resource_id=payload.resource_id,
+                connection_id=payload.connection_id,
+                kind="runninghub_app" if payload.resource_id else "",
+            ) if payload.resource_id else await asyncio.to_thread(DatabaseAIRepository().connections)
+            if payload.resource_id:
+                provider = canonical_connection_view(target)
+            else:
+                connection = next((item for item in target if item.id == payload.connection_id), None)
+                if connection:
+                    provider = {
+                        "id": connection.id,
+                        "connection_id": connection.id,
+                        "name": connection.name,
+                        "protocol": connection.protocol,
+                        "base_url": connection.base_url,
+                        **dict(connection.settings or {}),
+                    }
+        except (LookupError, StopIteration):
+            provider = None
+    if provider is None:
+        raise HTTPException(status_code=404, detail="图片执行连接不存在或已禁用")
     task_id = str(payload.task_id or "").strip()
     timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
     try:
@@ -5306,11 +3961,13 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "timestamp": time.time(),
             "type": "online",
             "model": "",
-            "provider_id": provider["id"],
-            "provider_name": provider["id"],
+            "connection_name": provider.get("name") or provider.get("id") or "",
+            "connection_id": payload.connection_id or "",
+            "model_id": payload.model_id or "",
+            "resource_id": payload.resource_id or "",
             "task_id": task_id,
             "request_id": raw.get("id") if isinstance(raw, dict) else "",
-            "params": {"provider_id": provider["id"]},
+            "params": {"connection_id": provider.get("connection_id") or provider.get("id") or "", "resource_id": payload.resource_id or ""},
             "raw": raw,
         }
         await asyncio.to_thread(save_to_history, result)
@@ -5321,16 +3978,16 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         return {
             "status": "failed",
             "task_id": task_id,
-            "provider_id": provider["id"],
-            "provider_name": provider["id"],
+            "connection_id": provider.get("connection_id") or provider.get("id") or "",
+            "connection_name": provider.get("name") or provider.get("id") or "",
             "error": image_task_fail_reason(raw),
             "raw": raw,
         }
     return {
         "status": "running",
         "task_id": task_id,
-        "provider_id": provider["id"],
-        "provider_name": provider["id"],
+        "connection_id": provider.get("connection_id") or provider.get("id") or "",
+        "connection_name": provider.get("name") or provider.get("id") or "",
         "message": "任务仍在生成中",
         "raw": raw,
     }
@@ -5351,7 +4008,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     started = time.perf_counter()
     task_logger.info(
         "canvas image task started",
-        extra={"event": "task_started", "provider": payload.provider_id, "operation": "image_generation", "status": "running"},
+        extra={"event": "task_started", "connection_id": payload.connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "running"},
     )
     if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
         await release_canvas_task_claim(task_id, lease_token)
@@ -5369,7 +4026,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
         await update_claimed_canvas_task(task_id, lease_token, **task_data)
         task_logger.info(
             "canvas image task completed",
-            extra={"event": "task_completed", "provider": payload.provider_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={"event": "task_completed", "connection_id": payload.connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
@@ -5398,7 +4055,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
         await update_claimed_canvas_task(task_id, lease_token, **failure)
         task_logger.exception(
             "canvas image task failed",
-            extra={"event": "task_failed", "provider": payload.provider_id, "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={"event": "task_failed", "connection_id": payload.connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
     finally:
         lease_heartbeat.cancel()
@@ -5407,13 +4064,20 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
     payload = normalize_canvas_image_request(payload)
-    # Canvas clients may send the stable connection id as provider_id while
-    # omitting model_id (older saved node settings). Resolve that shape through
-    # the authoritative connection/model tables before falling back to legacy
-    # provider resolution.
-    stable_connection_id = str(payload.connection_id or "").strip() if hasattr(payload, "connection_id") else ""
-    if not stable_connection_id and str(payload.provider_id or "").startswith("connection-"):
-        stable_connection_id = str(payload.provider_id).strip()
+    if not (payload.resource_id or payload.model_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="图片任务必须指定 model_id、connection_id 或 resource_id")
+    stable_connection_id = str(payload.connection_id or "").strip()
+    resolved_connection_id = stable_connection_id
+    if payload.resource_id:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            target_resource = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="图片执行资源不存在或已禁用") from exc
+        resolved_connection_id = target_resource.connection.id
+        payload = payload.model_copy(update={
+            "connection_id": target_resource.connection.id,
+        })
     if payload.model_id or stable_connection_id:
         from app.ai.database_repository import DatabaseAIRepository
         try:
@@ -5425,30 +4089,38 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
                 kind="image",
             )
         except LookupError as exc:
-            if payload.model_id or stable_connection_id:
-                raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
-            # A legacy provider id is not a stable connection id; preserve the
-            # compatibility path for clients that still send that identifier.
+            raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
         else:
             payload = payload.model_copy(update={
-                "provider_id": await ensure_runtime_provider_id(target.connection.id),
                 "model_id": target.model.id if target.model else payload.model_id,
                 "model": target.model.upstream_model if target.model else payload.model,
                 "connection_id": target.connection.id,
             })
-    require_model_access(payload.provider_id, payload.model)
-    await assert_provider_budget_available(get_api_provider(payload.provider_id), current_user_id())
-    from app.ai.repository import legacy_connection_id
+            resolved_connection_id = target.connection.id
+    if not resolved_connection_id:
+        raise HTTPException(status_code=400, detail="图片任务未解析到有效连接")
+    await assert_provider_budget_available(canonical_connection_view(target if 'target' in locals() else target_resource), current_user_id())
+    def canonical_request_snapshot(value: BaseModel) -> dict[str, Any]:
+        snapshot = value.model_dump(mode="json")
+        # Stable IDs are the persisted task contract. Legacy provider/model
+        # values are reconstructed in-memory by the worker for protocol adapters.
+        for key in ("provider_id", "provider", "model"):
+            snapshot.pop(key, None)
+        return snapshot
+
     resource_meta = {
-        "connection_id": legacy_connection_id(payload.provider_id),
+        "connection_id": resolved_connection_id or str(payload.connection_id or "").strip(),
         "model_id": payload.model_id or "",
+        "resource_id": payload.resource_id or "",
     }
     owner_id = current_user_id()
     count = max(1, min(8, int(payload.n or 1)))
+    if not (resource_meta.get("connection_id") or resource_meta.get("model_id") or resource_meta.get("resource_id")):
+        raise HTTPException(status_code=400, detail="图片任务必须指定有效的 connection_id 或 model_id")
     if count > 1:
         parent_task_id = f"canvas_img_batch_{uuid.uuid4().hex}"
         child_tasks = []
-        child_request = payload.model_copy(update={"n": 1}).model_dump(mode="json")
+        child_request = canonical_request_snapshot(payload.model_copy(update={"n": 1}))
         for index in range(count):
             child_task_id = f"canvas_img_{uuid.uuid4().hex}"
             child_tasks.append(child_task_id)
@@ -5460,8 +4132,6 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
                 "updated_at": time.time(),
                 "result": None,
                 "error": "",
-                "provider_id": payload.provider_id,
-                "model": payload.model,
                 **resource_meta,
                 "owner_id": owner_id,
                 "parent_task_id": parent_task_id,
@@ -5478,18 +4148,16 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             "updated_at": time.time(),
             "result": None,
             "error": "",
-            "provider_id": payload.provider_id,
-            "model": payload.model,
             **resource_meta,
             "owner_id": owner_id,
             "child_task_ids": child_tasks,
-            "request": payload.model_dump(mode="json"),
+            "request": canonical_request_snapshot(payload),
         })
         for child_task_id in child_tasks:
             await enqueue_canvas_task(child_task_id)
         task_logger.info(
             "canvas image batch submitted",
-            extra={"event": "task_batch_submitted", "task_id": parent_task_id, "provider": payload.provider_id, "operation": "image_generation", "status": "queued", "count": count},
+            extra={"event": "task_batch_submitted", "task_id": parent_task_id, "connection_id": resolved_connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "queued", "count": count},
         )
         return {"task_id": parent_task_id, "child_task_ids": child_tasks, "status": "queued", "count": count}
 
@@ -5502,15 +4170,13 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             "updated_at": time.time(),
             "result": None,
             "error": "",
-            "provider_id": payload.provider_id,
-            "model": payload.model,
             **resource_meta,
             "owner_id": owner_id,
-            "request": payload.model_dump(mode="json"),
+            "request": canonical_request_snapshot(payload),
         })
     task_logger.info(
         "canvas image task submitted",
-        extra={"event": "task_submitted", "task_id": task_id, "provider": payload.provider_id, "operation": "image_generation", "status": "queued"},
+        extra={"event": "task_submitted", "task_id": task_id, "connection_id": resolved_connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "queued"},
     )
     await enqueue_canvas_task(task_id)
     return {"task_id": task_id, "status": "queued", "count": count}
@@ -5565,13 +4231,33 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
         return
     bind_log_context(task_id=task_id)
     started = time.perf_counter()
-    task_logger.info("canvas ComfyUI task started", extra={"event": "task_started", "provider": "comfyui", "operation": "image_generation", "status": "running"})
+    task_logger.info("canvas ComfyUI task started", extra={"event": "task_started", "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "running"})
     if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
         await release_canvas_task_claim(task_id, lease_token)
         return
     lease_heartbeat = asyncio.create_task(canvas_task_lease_heartbeat(task_id, lease_token))
     try:
-        result = await asyncio.to_thread(generate, payload)
+        from app.ai.adapters.comfyui_workflow import ComfyUIWorkflowAdapter
+        from app.ai.contracts import Actor, WorkflowCommand
+        try:
+            comfy_target = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_executable,
+                resource_id=payload.resource_id,
+                connection_id=payload.connection_id,
+                kind="comfyui_workflow",
+            )
+        except LookupError as exc:
+            raise ValueError("ComfyUI 工作流资源不存在或已禁用") from exc
+
+        async def execute_workflow(_target, inputs):
+            return await asyncio.to_thread(generate, GenerateRequest.model_validate(inputs))
+
+        adapter = ComfyUIWorkflowAdapter(execute_workflow)
+        result = await adapter.execute(
+            comfy_target,
+            WorkflowCommand(comfy_target, payload.model_dump(mode="json")),
+            actor=Actor(user_id=current_user_id()),
+        )
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(str(result.get("error") or "ComfyUI 生成失败"))
         try:
@@ -5584,7 +4270,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
         await update_claimed_canvas_task(task_id, lease_token, **task_data)
         task_logger.info(
             "canvas ComfyUI task completed",
-            extra={"event": "task_completed", "provider": "comfyui", "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={"event": "task_completed", "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
@@ -5605,7 +4291,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
         await update_claimed_canvas_task(task_id, lease_token, **failure)
         task_logger.exception(
             "canvas ComfyUI task failed",
-            extra={"event": "task_failed", "provider": "comfyui", "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={"event": "task_failed", "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
     finally:
         lease_heartbeat.cancel()
@@ -5613,6 +4299,17 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
 
 @app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(payload: GenerateRequest):
+    if not (payload.resource_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="ComfyUI 任务必须指定 resource_id 或 connection_id")
+    from app.ai.database_repository import DatabaseAIRepository
+    try:
+        target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id, connection_id=payload.connection_id, kind="comfyui_workflow")
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="ComfyUI 工作流资源不存在或已禁用") from exc
+    payload = payload.model_copy(update={"connection_id": target.connection.id, "resource_id": target.resource.id})
+    request_snapshot = payload.model_dump(mode="json")
+    for key in ("provider_id", "provider", "model"):
+        request_snapshot.pop(key, None)
     task_id = f"canvas_comfy_{uuid.uuid4().hex}"
     owner_id = current_user_id()
     await create_canvas_task({
@@ -5624,12 +4321,15 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
             "result": None,
             "error": "",
             "workflow_json": payload.workflow_json,
+            "connection_id": payload.connection_id,
+            "resource_id": payload.resource_id,
+            "model_id": payload.model_id,
             "owner_id": owner_id,
-            "request": payload.model_dump(mode="json"),
+            "request": request_snapshot,
         })
     task_logger.info(
         "canvas ComfyUI task submitted",
-        extra={"event": "task_submitted", "task_id": task_id, "provider": "comfyui", "operation": "image_generation", "status": "queued"},
+        extra={"event": "task_submitted", "task_id": task_id, "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "queued"},
     )
     await enqueue_canvas_task(task_id)
     return {"task_id": task_id, "status": "queued"}
@@ -5661,6 +4361,8 @@ async def admin_retry_canvas_task_dead_letter(entry_id: str):
     task = await get_canvas_task(entry["task_id"])
     if not task or not isinstance(task.get("request"), dict):
         raise HTTPException(status_code=409, detail="原始任务已过期或缺少可重试请求")
+    if not any(str(task.get(key) or task["request"].get(key) or "").strip() for key in ("connection_id", "model_id", "resource_id")):
+        raise HTTPException(status_code=409, detail="任务缺少已迁移的 connection_id/model_id/resource_id，无法重试")
     await update_canvas_task(task["id"], status="queued", error="", retry_requested_at=time.time())
     await enqueue_canvas_task(task["id"])
     await remove_dead_letter_canvas_task(entry_id)
@@ -5725,39 +4427,38 @@ async def execute_canvas_task(task_id: str):
     if not isinstance(request, dict):
         await update_canvas_task(task_id, expected_status="queued", status="failed", error="任务执行数据缺失")
         return
-    # Prefer stable resource identifiers for queued tasks. Legacy tasks are
-    # resolved once before execution and retain their original provider/model
-    # fields for backwards-compatible workers and audit history.
+    # Worker execution is stable-ID only after the final cutover. Historical
+    # tasks without migrated IDs are failed explicitly by the migration gate.
     try:
         from app.ai.database_repository import DatabaseAIRepository
-        from app.ai.repository import ProviderRepository
         database_repository = DatabaseAIRepository()
-        legacy_repository = ProviderRepository(load_api_providers)
+        runtime_request = dict(request)
         if task.get("type") == "online-image":
             stable_model_id = str(task.get("model_id") or request.get("model_id") or "")
-            if stable_model_id:
-                resolved = await asyncio.to_thread(
-                    database_repository.resolve_model,
-                    model_id=stable_model_id,
-                    connection_id=str(task.get("connection_id") or request.get("connection_id") or ""),
-                    model=str(task.get("model") or request.get("model") or ""),
-                    kind="image",
-                )
-            else:
-                resolved = legacy_repository.resolve_model(
-                    provider_id=str(task.get("provider_id") or request.get("provider_id") or ""),
-                    model=str(task.get("model") or request.get("model") or ""),
-                    kind="image",
-                )
+            if not stable_model_id:
+                raise LookupError("历史图片任务缺少已迁移的 model_id")
+            resolved = await asyncio.to_thread(
+                database_repository.resolve_model,
+                model_id=stable_model_id,
+                connection_id=str(task.get("connection_id") or request.get("connection_id") or ""),
+                model=str(task.get("model") or request.get("model") or ""),
+                kind="image",
+            )
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
-                "provider_id": await ensure_runtime_provider_id(resolved.connection.id),
-                "model": resolved.model.upstream_model if resolved.model else task.get("model", ""),
             }
-            request = {**request, **{k: v for k, v in task_updates.items() if v}}
-            await update_canvas_task(task_id, **task_updates, request=request)
-        elif task.get("type") == "comfy" and (task.get("resource_id") or request.get("resource_id")):
+            # Keep both persisted and in-memory requests canonical. The image
+            # gateway resolves the upstream model from model_id at execution.
+            runtime_request = {**request, **{k: v for k, v in task_updates.items() if v}}
+            canonical_request = dict(request)
+            for key in ("provider_id", "provider", "model"):
+                canonical_request.pop(key, None)
+            canonical_request.update({k: v for k, v in task_updates.items() if v})
+            await update_canvas_task(task_id, **task_updates, request=canonical_request)
+        elif task.get("type") == "comfy":
+            if not (task.get("resource_id") or request.get("resource_id")):
+                raise LookupError("历史 ComfyUI 任务缺少已迁移的 resource_id")
             resolved = await asyncio.to_thread(
                 database_repository.resolve_executable,
                 resource_id=str(task.get("resource_id") or request.get("resource_id") or ""),
@@ -5772,7 +4473,7 @@ async def execute_canvas_task(task_id: str):
         timeout = max(1.0, deadline - time.time()) if deadline else CANVAS_TASK_TIMEOUT_SECONDS
         try:
             if task.get("type") == "online-image":
-                await asyncio.wait_for(run_canvas_image_task(task_id, OnlineImageRequest.model_validate(request)), timeout=timeout)
+                await asyncio.wait_for(run_canvas_image_task(task_id, OnlineImageRequest.model_validate(runtime_request)), timeout=timeout)
             elif task.get("type") == "comfy":
                 await asyncio.wait_for(run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request)), timeout=timeout)
             else:
@@ -5820,139 +4521,19 @@ async def canvas_task_worker_loop():
 
 # --- Canvas Video ---
 
-VIDEO_URL_KEYS = (
-    "url", "video_url", "videoUrl", "mp4_url", "mp4Url",
-    "output", "output_url", "outputUrl", "download_url", "downloadUrl",
-    "video", "src", "uri", "preview_url", "previewUrl", "path",
-    "last_frame_url", "lastFrameUrl",
-)
-
-def _collect_video_url(value, urls):
-    if not value:
-        return
-    if isinstance(value, str):
-        if value.startswith("http://") or value.startswith("https://") or value.startswith("/api/files/"):
-            urls.append(value)
-        return
-    if isinstance(value, list):
-        for item in value:
-            _collect_video_url(item, urls)
-        return
-    if isinstance(value, dict):
-        for key in ("videos", "outputs", "data", "result", "content"):
-            if key in value:
-                _collect_video_url(value.get(key), urls)
-        for key in VIDEO_URL_KEYS:
-            if key in value:
-                _collect_video_url(value.get(key), urls)
-
-def video_output_urls(raw):
-    urls = []
-    if not isinstance(raw, dict):
-        return urls
-    candidates = [raw]
-    data = raw.get("data")
-    content = raw.get("content")
-    if isinstance(data, dict):
-        candidates.append(data)
-    elif isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                candidates.append(item)
-    if isinstance(content, dict):
-        candidates.append(content)
-    elif isinstance(content, list):
-        for item in content:
-            if isinstance(item, dict):
-                candidates.append(item)
-    for node in list(candidates):
-        result = node.get("result") if isinstance(node, dict) else None
-        if isinstance(result, dict):
-            candidates.append(result)
-        elif isinstance(result, list):
-            for item in result:
-                if isinstance(item, dict):
-                    candidates.append(item)
-    for node in candidates:
-        if not isinstance(node, dict):
-            continue
-        for key in ("videos", "outputs", "content"):
-            value = node.get(key)
-            if value:
-                _collect_video_url(value, urls)
-        for key in VIDEO_URL_KEYS:
-            if key in node:
-                _collect_video_url(node.get(key), urls)
-    deduped = []
-    for url in urls:
-        if isinstance(url, str) and url and url not in deduped:
-            deduped.append(url)
-    return deduped
-
 def video_api_root(provider):
-    base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
-    base_url = validate_public_http_url(base_url, label="Provider Base URL")
-    if is_volcengine_provider(provider):
-        if base_url.endswith("/api/v3"):
-            base_url = base_url[: -len("/api/v3")]
-        return base_url
-    if base_url.endswith("/v1") or base_url.endswith("/v2"):
-        base_url = base_url.rsplit("/", 1)[0]
-    return base_url
+    base_url = validate_public_http_url((provider.get("base_url") or AI_BASE_URL).rstrip("/"), label="Connection Base URL")
+    return video_protocol_api_root(base_url, "volcengine" if is_volcengine_connection(provider) else "openai")
 
 def looks_like_html_response(text: str) -> bool:
     sample = str(text or "").lstrip()[:200].lower()
     return sample.startswith("<!doctype html") or sample.startswith("<html") or "<head" in sample
 
 def video_submit_url_candidates(provider, base_url):
-    if is_volcengine_provider(provider):
-        return [f"{base_url}/api/v3/contents/generations/tasks"]
-    return [f"{base_url}/v1/videos/generations", f"{base_url}/v2/videos/generations"]
+    return video_protocol_submit_urls(base_url, "volcengine" if is_volcengine_connection(provider) else "openai")
 
 def video_task_url_candidates(provider, base_url, task_id, submit_url=""):
-    if is_volcengine_provider(provider):
-        return [f"{base_url}/api/v3/contents/generations/tasks/{task_id}"]
-    v1_task = f"{base_url}/v1/videos/generations/{task_id}"
-    v1_generic_task = f"{base_url}/v1/tasks/{task_id}"
-    v2_task = f"{base_url}/v2/videos/generations/{task_id}"
-    if "/v2/videos/generations" in str(submit_url or ""):
-        return [v2_task, v1_task, v1_generic_task]
-    return [v1_task, v1_generic_task, v2_task]
-
-VIDEO_TASK_SUCCESS_STATUSES = {
-    "SUCCESS", "SUCCEED", "SUCCEEDED", "COMPLETED", "COMPLETE",
-    "DONE", "FINISHED", "FINISH", "OK", "READY",
-}
-VIDEO_TASK_FAILURE_STATUSES = {
-    "FAILURE", "FAILED", "FAIL", "ERROR", "ERRORED",
-    "CANCELED", "CANCELLED", "TIMEOUT", "TIMEDOUT", "REJECTED", "EXPIRED",
-}
-
-def humanize_video_task_failure(reason) -> str:
-    """把上游视频任务的失败原因转成对用户友好的中文提示。
-    目前主要处理 veo（Google）的内容安全过滤码。"""
-    text = str(reason or "").strip()
-    upper = text.upper()
-    # veo 知名人物/真人面孔过滤
-    if "PROMINENT_PEOPLE_FILTER" in upper or "PROMINENT_PEOPLE" in upper:
-        return (
-            "视频生成被上游内容安全策略拦截：检测到提示词或参考图里包含知名人物 / 真人面孔"
-            f"（错误码：{text}）。\n\n"
-            "这不是代码错误，而是 veo（Google）的内容审核规则——它会拒绝生成涉及真实/知名人物的视频。\n\n"
-            "建议这样处理：\n"
-            "  1. 去掉提示词里的人名、明星、公众人物等指向具体真人的描述；\n"
-            "  2. 换用非真人参考图，例如插画、AI 头像、卡通形象、商品图、场景图；\n"
-            "  3. 如果用了真人照片做参考图，先做模糊/遮挡/转成明显的二次元插画风，或干脆只用文字提示词测试。"
-        )
-    # veo 其它常见安全过滤
-    if "SAFETY" in upper or "CONTENT_FILTER" in upper or "POLICY" in upper:
-        return (
-            "视频生成被上游内容安全策略拦截"
-            f"（错误码：{text}）。\n\n"
-            "这是 veo 的内容审核规则，提示词或参考图触发了安全过滤。\n"
-            "请调整提示词/参考图后重试，避免涉及真人、暴力、敏感或受限内容。"
-        )
-    return f"视频生成任务失败：{text}"
+    return video_protocol_task_urls(base_url, "volcengine" if is_volcengine_connection(provider) else "openai", task_id, submit_url)
 
 async def wait_for_video_task(client, provider, task_id, submit_url=""):
     base_url = video_api_root(provider)
@@ -5968,7 +4549,7 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
         last_error = None
         for task_url in task_urls:
             try:
-                response = await client.get(task_url, headers=api_headers(provider=provider))
+                response = await client.get(task_url, headers=api_headers(connection=provider))
                 response.raise_for_status()
                 raw = response.json()
                 break
@@ -5999,10 +4580,14 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     base_url = video_api_root(provider)
     if not base_url:
         raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
-    api_key = os.getenv(provider_key_env(provider["id"]), "")
+    api_key = connection_api_key(provider.get("connection_id") or provider["id"])
     if not api_key:
         raise HTTPException(status_code=400, detail=f"未配置 {provider['id']} 的 API Key，请在 API 设置中填写。")
-    is_volcengine = is_volcengine_provider(provider)
+    is_volcengine = is_volcengine_connection(provider)
+    # The upstream model is resolved from model_id before dispatch. Keep it in
+    # the transient connection context so canonical task payloads do not need
+    # to persist the legacy `model` field.
+    runtime_model = str(provider.get("runtime_model") or payload.model or "").strip()
     submit_urls = video_submit_url_candidates(provider, base_url)
     submit_url = submit_urls[0]
     try:
@@ -6010,26 +4595,11 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                 # OpenAI-compatible data URL request
             if is_volcengine:
                 text = str(payload.prompt or "").strip()
-                volc_model = selected_model(payload.model, "doubao-seedance-2-0-fast-260128")
-                body = {
-                    "model": volc_model,
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": text,
-                        }
-                    ],
-                }
+                volc_model = selected_model(runtime_model, "doubao-seedance-2-0-fast-260128")
+                content = []
                 # 火山方舟视频接口（含 Seedance 2.0 图生视频）均通过 body 的 duration 字段控制时长；
                 # 之前对 seedance-2.0 + 参考图的情况省略了 duration，导致接口回退到默认 5s。
-                body["duration"] = volcengine_video_duration(payload.duration)
-                if payload.aspect_ratio:
-                    body["ratio"] = payload.aspect_ratio
                 resolution = volcengine_video_resolution(payload.resolution)
-                if resolution:
-                    body["resolution"] = resolution
-                if payload.generate_audio:
-                    body["generate_audio"] = True
                 image_like_urls = set()
                 for ref in payload.images[:9]:
                     url = await run_storage_io(volcengine_media_reference_url, ref.url, 1536)
@@ -6042,7 +4612,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     role = volcengine_content_role(ref.role, "image")
                     if role:
                         item["role"] = role
-                    body["content"].append(item)
+                    content.append(item)
                     image_like_urls.add(url)
                 for url in (payload.videos or [])[:3]:
                     text_url = str(url or "").strip()
@@ -6052,7 +4622,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     if not media_url:
                         continue
                     if media_url in image_like_urls or looks_like_image_media_url(media_url):
-                        body["content"].append({
+                        content.append({
                             "type": "image_url",
                             "image_url": {"url": media_url},
                             "role": "reference_image",
@@ -6060,20 +4630,23 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                         image_like_urls.add(media_url)
                         continue
                     video_items = await volcengine_video_reference_content_items(media_url)
-                    body["content"].extend(video_items)
+                    content.extend(video_items)
                 for url in (payload.audios or [])[:3]:
                     audio_url = await run_storage_io(volcengine_media_reference_url, url, None)
                     if not audio_url:
                         continue
-                    body["content"].append({
+                    content.append({
                         "type": "audio_url",
                         "audio_url": {"url": audio_url},
                         "role": volcengine_content_role("", "audio"),
                     })
-                if payload.seed is not None:
-                    body["seed"] = payload.seed
-                if ratio in {"16:9", "9:16"}:
-                    body["aspect_ratio"] = ratio
+                body = volcengine_generation_body(
+                    model=volc_model, prompt=text,
+                    duration=volcengine_video_duration(payload.duration),
+                    ratio=payload.aspect_ratio, resolution=resolution,
+                    content=content, seed=payload.seed,
+                    generate_audio=payload.generate_audio,
+                )
             else:
                 image_payload = []
                 for ref in payload.images[:4]:
@@ -6081,7 +4654,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                         image_payload.append(await run_storage_io(reference_to_data_url, ref.dict(), 1536))
                 body = {
                     "prompt": payload.prompt,
-                    "model": selected_model(payload.model, "veo3-fast"),
+                    "model": selected_model(runtime_model, "veo3-fast"),
                     "duration": payload.duration,
                 }
                 if payload.aspect_ratio:
@@ -6108,7 +4681,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
             last_json_error = None
             for candidate_url in submit_urls:
                 submit_url = candidate_url
-                response = await client.post(submit_url, headers=api_headers(provider=provider), json=body)
+                response = await client.post(submit_url, headers=api_headers(connection=provider), json=body)
                 last_response = response
                 response.raise_for_status()
                 try:
@@ -6147,9 +4720,9 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     except httpx.HTTPStatusError as exc:
         text = exc.response.text
         try:
-            requested_model = body.get("model", "") or payload.model or ""
+            requested_model = body.get("model", "") or runtime_model or ""
         except NameError:
-            requested_model = payload.model or ""
+            requested_model = runtime_model
         provider_name = provider['id']
         # 1) 模型名不在上游支持范围 → 从错误信息里抽取合法列表展示
         valid_models_match = re.search(r"not in\s*\[([^\]]+)\]", text)
@@ -6196,40 +4769,57 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
         raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
 
 
-AI_PROVIDER_RUNTIME = ProviderRuntime()
+AI_CAPABILITY_RUNTIME = CapabilityRuntime()
 
 
 async def _video_provider_adapter(payload: CanvasVideoRequest, provider: dict):
     return await _canvas_video_impl(payload, provider)
 
 
-AI_PROVIDER_RUNTIME.register("video_generation", "default", _video_provider_adapter)
+AI_CAPABILITY_RUNTIME.register("video_generation", "default", _video_provider_adapter)
 
 
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
     payload = normalize_canvas_video_request(payload)
-    if payload.model_id:
-        from app.ai.database_repository import DatabaseAIRepository
-        try:
-            target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.model_id, kind="video")
-        except LookupError as exc:
-            raise HTTPException(status_code=404, detail="视频模型资源不存在或已禁用") from exc
-        payload = payload.model_copy(update={
-            "provider_id": await ensure_runtime_provider_id(target.connection.id),
-            "model": target.model.upstream_model if target.model else payload.model,
-        })
-    from app.ai.videos import LegacyVideoGateway
-    gateway = LegacyVideoGateway(
-        provider_resolver=get_api_provider,
-        model_authorizer=require_model_access,
-        budget_authorizer=lambda provider, user_id: assert_provider_budget_available(provider, user_id),
-        dispatcher=lambda protocol, request_payload, provider: AI_PROVIDER_RUNTIME.dispatch(
-            "video_generation", protocol, request_payload, provider,
-        ),
-        protocol_resolver=provider_protocol,
+    from app.ai.database_repository import DatabaseAIRepository
+    from app.ai.contracts import Actor, VideoCommand
+    if not payload.model_id and not payload.connection_id:
+        raise HTTPException(status_code=400, detail="视频任务必须指定 model_id 或 connection_id")
+    try:
+        target = await asyncio.to_thread(
+            DatabaseAIRepository().resolve_model,
+            model_id=payload.model_id,
+            connection_id=payload.connection_id,
+            model=payload.model,
+            kind="video",
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="视频模型资源不存在或已禁用") from exc
+    # Resolve the upstream model once, but keep the command payload canonical.
+    # The execution handler receives the model through transient context below.
+    payload = payload.model_copy(update={"model": "", "connection_id": target.connection.id})
+    from app.ai.videos import VideoGateway
+    runtime_provider = {
+        "id": target.connection.id,
+        "connection_id": target.connection.id,
+        "name": target.connection.name,
+        "protocol": target.protocol,
+        "base_url": target.connection.base_url,
+        "runtime_model": target.model.upstream_model if target.model else "",
+        **dict(target.connection.settings or {}),
+    }
+    async def dispatch_target(command):
+        return await _canvas_video_impl(payload, runtime_provider)
+    gateway = VideoGateway(
+        target_handler=dispatch_target,
     )
-    return await gateway.generate(payload=payload, actor_user_id=current_user_id())
+    command_payload = payload.model_dump(mode="json")
+    command_payload.pop("model", None)
+    return await gateway.generate_target(
+        VideoCommand(target=target, payload=command_payload),
+        actor=Actor(user_id=current_user_id()),
+    )
 
 # --- Caption Rules (per-user) ---
 
@@ -6289,8 +4879,28 @@ def save_expand_rules(payload: dict):
 # --- Canvas LLM ---
 
 async def _canvas_llm_impl(payload: CanvasLLMRequest):
-    _llm_provider = get_api_provider(payload.provider)
-    _chat_base, _chat_hdrs, model = resolve_chat_provider(_llm_provider["id"], payload.model)
+    if not (payload.model_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="Canvas LLM 请求必须指定 model_id 或 connection_id")
+    _llm_provider = None
+    model = ""
+    chat_target = None
+    if payload.model_id or payload.connection_id:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            target = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_model,
+                model_id=payload.model_id,
+                connection_id=payload.connection_id,
+                model="",
+                kind="chat",
+            )
+            chat_target = target
+            _llm_provider = canonical_connection_view(target)
+            model = target.model.upstream_model
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="Canvas 聊天模型或连接不存在或已禁用") from exc
+    else:
+        raise HTTPException(status_code=400, detail="Canvas 聊天模型必须指定有效的稳定资源标识")
     system_prompt = (payload.system_prompt or "").strip()
     upstream_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
     for item in payload.messages[-MAX_HISTORY_MESSAGES:]:
@@ -6334,7 +4944,7 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
                     continue
                 content_parts.append({"type": "video_url", "video_url": {"url": ref_url}})
                 ok_videos += 1
-        logger.info("canvas LLM request prepared", extra={"event": "canvas_llm_request_prepared", "provider": payload.provider, "model": model, "text_length": len(payload.message), "image_count": ok_imgs, "image_requested_count": len(payload.images), "video_count": ok_videos, "video_requested_count": len(payload.videos)})
+        logger.info("canvas LLM request prepared", extra={"event": "canvas_llm_request_prepared", "connection_id": chat_target.connection.id, "model_id": chat_target.model.id if chat_target.model else "", "text_length": len(payload.message), "image_count": ok_imgs, "image_requested_count": len(payload.images), "video_count": ok_videos, "video_requested_count": len(payload.videos)})
         upstream_messages.append({"role": "user", "content": content_parts})
     else:
         upstream_messages.append({"role": "user", "content": payload.message})
@@ -6342,19 +4952,10 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     raw_usage = None
     response_id = ""
     try:
-        from app.ai.chat import LegacyChatGateway
-        chat_gateway = LegacyChatGateway(
-            resolver=lambda selected_provider, selected_model: resolve_chat_provider(selected_provider, selected_model),
-            authorizer=lambda selected_provider, selected_model: require_model_access(selected_provider, selected_model),
-            budget_authorizer=lambda selected_provider, user_id: assert_provider_budget_available(selected_provider, user_id),
-            timeout=AI_REQUEST_TIMEOUT,
-        )
-        stream_options = {"stream_options": {"include_usage": True}} if effective_protocol(_llm_provider, model) == "omnilojo" else {}
-        async for line in chat_gateway.stream_chat(
-            provider=_llm_provider["id"], model=model, messages=upstream_messages,
-            user_id=current_user_id(), extra_body=stream_options,
-            model_id=getattr(payload, "model_id", ""), connection_id=getattr(payload, "connection_id", ""),
-        ):
+        from app.ai.chat import ChatGateway
+        chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
+        stream_options = {"stream_options": {"include_usage": True}} if _llm_provider.get("protocol") == "omnilojo" else {}
+        async for line in chat_gateway.stream_target(target=chat_target, messages=upstream_messages, user_id=current_user_id(), extra_body=stream_options):
             if not line:
                 continue
             if line.startswith("data:"):
@@ -6383,7 +4984,7 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"解析上游响应失败：{exc}") from exc
     text = "".join(content_parts_acc).strip() or "接口返回了空回复。"
-    if effective_protocol(_llm_provider, model) == "omnilojo":
+    if _llm_provider.get("protocol") == "omnilojo":
         from app.services.usage import record_omnilojo_response_usage
         await asyncio.to_thread(
             record_omnilojo_response_usage, current_user_id(), _llm_provider, model,
@@ -6677,7 +5278,18 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
     target_item = find_asset_item_in_library(lib, item_id, payload.library_id)
     if not target_item:
         raise HTTPException(status_code=404, detail="资产不存在")
-    provider = get_api_provider(payload.provider_id)
+    provider = None
+    if payload.connection_id:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            connection = next(item for item in await asyncio.to_thread(DatabaseAIRepository().connections) if item.id == payload.connection_id)
+            provider = {"id": connection.id, "connection_id": connection.id, "name": connection.name, "protocol": connection.protocol, "base_url": connection.base_url, **dict(connection.settings or {})}
+        except StopIteration as exc:
+            raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用") from exc
+    else:
+        raise HTTPException(status_code=400, detail="头像认证必须指定 connection_id")
+    if not provider:
+        raise HTTPException(status_code=400, detail="AI 连接或 Provider 必填")
     platform = avatar_platform_for_provider(provider)
     if platform not in AVATAR_SUPPORTED_PLATFORMS:
         name = (provider or {}).get("name") or (provider or {}).get("id") or "该平台"
@@ -6701,7 +5313,7 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
     if not isinstance(regs, dict):
         regs = {}
     regs[platform] = {
-        "provider_id": provider["id"],
+        "connection_id": payload.connection_id or str(provider.get("connection_id") or ""),
         "project_name": project_name,
         "task_id": task_id,
         "status": "Processing",
@@ -6721,7 +5333,18 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
     if not target_item:
         raise HTTPException(status_code=404, detail="资产不存在")
     regs = target_item.get("registrations") if isinstance(target_item.get("registrations"), dict) else {}
-    provider = get_api_provider(payload.provider_id or "")
+    provider = None
+    if payload.connection_id:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            connection = next(item for item in await asyncio.to_thread(DatabaseAIRepository().connections) if item.id == payload.connection_id)
+            provider = {"id": connection.id, "connection_id": connection.id, "name": connection.name, "protocol": connection.protocol, "base_url": connection.base_url, **dict(connection.settings or {})}
+        except StopIteration as exc:
+            raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用") from exc
+    else:
+        raise HTTPException(status_code=400, detail="头像审核必须指定 connection_id")
+    if not provider:
+        raise HTTPException(status_code=400, detail="AI 连接或 Provider 必填")
     platform = avatar_platform_for_provider(provider)
     if platform not in AVATAR_SUPPORTED_PLATFORMS:
         raise HTTPException(status_code=400, detail="该平台暂不支持数字人/真人认证审核。")
@@ -6753,6 +5376,10 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
 
 @app.post("/api/chat")
 async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
+    if payload.mode != "image" and not (payload.model_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="聊天请求必须指定 model_id 或 connection_id")
+    if payload.mode == "image" and not (payload.image_resource_id or payload.image_connection_id or payload.model_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="生图请求必须指定 model_id、connection_id 或 resource_id")
     user_id = safe_user_id(x_user_id, request)
     if payload.conversation_id:
         conversation = await asyncio.to_thread(load_conversation, user_id, payload.conversation_id)
@@ -6775,13 +5402,34 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
     await asyncio.to_thread(save_conversation, user_id, conversation)
 
     if payload.mode == "image":
-        image_provider_id = payload.provider
-        provider = get_api_provider(image_provider_id)
+        provider = None
+        image_provider_id = ""
+        resolved_image_model = ""
+        image_target = None
+        if payload.image_connection_id or payload.image_resource_id or payload.model_id:
+            from app.ai.database_repository import DatabaseAIRepository
+            try:
+                if payload.image_resource_id:
+                    target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.image_resource_id)
+                    image_target = target
+                    provider = canonical_connection_view(target)
+                else:
+                    target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.image_model_id or payload.model_id, connection_id=payload.image_connection_id, model=payload.image_model or payload.model, kind="image")
+                    image_target = target
+                    provider = canonical_connection_view(target)
+                    resolved_image_model = target.model.upstream_model
+                image_provider_id = provider["id"]
+            except LookupError as exc:
+                raise HTTPException(status_code=404, detail="图片模型或连接不存在或已禁用") from exc
+        if image_target is None or provider is None:
+            raise HTTPException(status_code=400, detail="生图请求缺少有效的稳定执行目标")
         default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
-        model = selected_model(payload.image_model or payload.model, default_model)
-        require_gpt_image_access(provider["id"], model)
+        model = resolved_image_model or selected_model(payload.image_model or payload.model, default_model)
+        require_target_access(image_target, user_id)
         try:
-            image_data, raw = await generate_ai_image(payload.message, payload.size, payload.quality, model, refs, provider["id"])
+            if image_target is None:
+                raise HTTPException(status_code=400, detail="图片任务缺少稳定执行目标")
+            image_data, raw = await generate_ai_image_target(image_target, prompt=payload.message, size=payload.size, quality=payload.quality, reference_images=refs, user_id=user_id)
             local_url = await save_ai_image_to_output(image_data, prefix="chat_")
         except httpx.HTTPStatusError as exc:
             text = exc.response.text or ""
@@ -6799,12 +5447,30 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "model": model,
             "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
         }
-        if is_omnilojo_provider(provider):
+        if is_omnilojo_connection(provider):
             from app.services.usage import record_omnilojo_response_usage
             await asyncio.to_thread(record_omnilojo_response_usage, user_id, provider, model, raw, operation="image_generation")
     else:
-        _conv_provider = get_api_provider(payload.provider)
-        _chat_base, _chat_hdrs, model = resolve_chat_provider(_conv_provider["id"], payload.model)
+        _conv_provider = None
+        model = payload.model
+        chat_target = None
+        if payload.model_id or payload.connection_id:
+            from app.ai.database_repository import DatabaseAIRepository
+            try:
+                target = await asyncio.to_thread(
+                    DatabaseAIRepository().resolve_model,
+                    model_id=payload.model_id,
+                    connection_id=payload.connection_id,
+                    model=payload.model,
+                    kind="chat",
+                )
+                chat_target = target
+                _conv_provider = canonical_connection_view(target)
+                model = target.model.upstream_model
+            except LookupError as exc:
+                raise HTTPException(status_code=404, detail="聊天模型或连接不存在或已禁用") from exc
+        else:
+            raise HTTPException(status_code=400, detail="聊天请求必须指定有效的稳定资源标识")
         history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
         upstream_messages = [{"role": "system", "content": (payload.system_prompt or "").strip() or SYSTEM_PROMPT}]
         for item in history:
@@ -6822,16 +5488,9 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
                 current_content.append({"type": "image_url", "image_url": {"url": data_url}})
         upstream_messages.append({"role": "user", "content": current_content if len(current_content) > 1 else payload.message})
         try:
-            from app.ai.chat import LegacyChatGateway
-            chat_gateway = LegacyChatGateway(
-                resolver=lambda selected_provider, selected_model: resolve_chat_provider(selected_provider, selected_model),
-                authorizer=lambda selected_provider, selected_model: require_chat_model_access(selected_provider, selected_model),
-                budget_authorizer=lambda selected_provider, selected_user_id: assert_provider_budget_available(selected_provider, selected_user_id),
-                timeout=AI_REQUEST_TIMEOUT,
-            )
-            raw = await chat_gateway.complete(
-                provider=_conv_provider["id"], model=model, model_id=getattr(payload, "model_id", ""), connection_id=getattr(payload, "connection_id", ""), messages=upstream_messages, user_id=user_id,
-            )
+            from app.ai.chat import ChatGateway
+            chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
+            raw = await chat_gateway.complete_target(target=chat_target, messages=upstream_messages, user_id=user_id)
         except httpx.HTTPStatusError as exc:
             body = exc.response.text or ""
             friendly = friendly_chat_error_detail(body, model, _conv_provider)
@@ -6847,7 +5506,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "model": model,
             "raw_usage": raw_data.get("usage") if isinstance(raw_data, dict) else None,
         }
-        if effective_protocol(_conv_provider, model) == "omnilojo":
+        if _conv_provider.get("protocol") == "omnilojo":
             from app.services.usage import record_omnilojo_response_usage
             usage_payload = dict(raw_data) if isinstance(raw_data, dict) else {}
             usage_payload.setdefault("id", uuid.uuid4().hex)
@@ -6861,6 +5520,8 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
 @app.post("/api/chat/agent")
 async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     """Route Agent intent, then invoke chat or the configured image adapter."""
+    if not (payload.model_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="Agent 请求必须指定 model_id 或 connection_id")
     user_id = safe_user_id(x_user_id, request)
     conversation = (
         await asyncio.to_thread(load_conversation, user_id, payload.conversation_id)
@@ -6892,19 +5553,38 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
         action = "generate_image"
 
     if action in {"generate_image", "edit_image"}:
-        image_provider = pick_chat_image_provider(payload.image_provider or payload.provider, payload.provider)
-        default_model = (image_provider.get("image_models") or [IMAGE_MODEL])[0]
-        model = selected_model(payload.image_model or default_model, default_model)
+        if not (payload.image_resource_id or payload.image_connection_id or payload.model_id):
+            raise HTTPException(status_code=400, detail="Agent 生图请求必须指定 image_connection_id、model_id 或 image_resource_id")
+        image_provider = None
+        model = payload.image_model or payload.model
+        image_target = None
+        if payload.image_resource_id or payload.image_connection_id or payload.model_id:
+            from app.ai.database_repository import DatabaseAIRepository
+            try:
+                if payload.image_resource_id:
+                    target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.image_resource_id, kind="image")
+                    image_target = target
+                else:
+                    target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.image_model_id or payload.model_id, connection_id=payload.image_connection_id or payload.connection_id, model=model, kind="image")
+                    image_target = target
+                image_provider = canonical_connection_view(target)
+                model = target.model.upstream_model if target.model else model
+            except LookupError as exc:
+                raise HTTPException(status_code=404, detail="Agent 图片模型或连接不存在或已禁用") from exc
+        else:
+            raise HTTPException(status_code=400, detail="Agent 图片请求必须指定有效的稳定资源标识")
         prompt = decision.get("prompt") or payload.message
         image_size = chat_prompt_size_override(payload.message, payload.size) or chat_prompt_size_override(prompt, payload.size) or inherited_size or payload.size
         image_size = snap_size_to_multiple(image_size, 16)
         count = 1 if action == "edit_image" else chat_requested_image_count(payload.message)
         prompts = chat_split_parallel_prompts(prompt, count)
         local_urls, raw_items = [], []
-        require_gpt_image_access(image_provider["id"], model)
+        require_target_access(image_target, user_id)
         try:
             for item_prompt in prompts:
-                image_data, raw = await generate_ai_image(item_prompt, image_size, payload.quality, model, tool_refs, image_provider["id"])
+                if image_target is None:
+                    raise HTTPException(status_code=400, detail="Agent 图片任务缺少稳定执行目标")
+                image_data, raw = await generate_ai_image_target(image_target, prompt=item_prompt, size=image_size, quality=payload.quality, reference_images=tool_refs, user_id=user_id)
                 local_urls.append(await save_ai_image_to_output(image_data, prefix="chat_"))
                 raw_items.append(raw)
         except httpx.HTTPStatusError as exc:
@@ -6912,7 +5592,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
             raise HTTPException(status_code=exc.response.status_code, detail=friendly_image_error_detail(body, image_size, model) or body[:300]) from exc
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"请求上游生图接口失败：{exc}") from exc
-        assistant_message = {"id": uuid.uuid4().hex, "role": "assistant", "type": "image", "content": prompt, "image_url": local_urls[0] if local_urls else "", "image_urls": local_urls, "created_at": now_ms(), "model": model, "provider": image_provider["id"], "size": image_size, "image_count": len(local_urls), "prompts": prompts, "agent_action": action, "agent_reply": decision.get("reply") or "", "used_references": tool_refs, "raw_usage": raw_items[0].get("usage") if raw_items and isinstance(raw_items[0], dict) else None}
+        assistant_message = {"id": uuid.uuid4().hex, "role": "assistant", "type": "image", "content": prompt, "image_url": local_urls[0] if local_urls else "", "image_urls": local_urls, "created_at": now_ms(), "model": model, "connection_id": image_target.connection.id, "model_id": image_target.model.id if image_target.model else "", "resource_id": image_target.resource.id if image_target.resource else "", "size": image_size, "image_count": len(local_urls), "prompts": prompts, "agent_action": action, "agent_reply": decision.get("reply") or "", "used_references": tool_refs, "raw_usage": raw_items[0].get("usage") if raw_items and isinstance(raw_items[0], dict) else None}
     else:
         assistant_message = await build_chat_text_reply(payload, conversation)
         assistant_message["agent_action"] = "chat"
@@ -6926,6 +5606,8 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
 async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     if payload.mode == "image":
         raise HTTPException(status_code=400, detail="图片模式请使用 /api/chat")
+    if not (payload.model_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="流式聊天请求必须指定 model_id 或 connection_id")
 
     user_id = safe_user_id(x_user_id, request)
     if payload.conversation_id:
@@ -6948,9 +5630,28 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     conversation["updated_at"] = now_ms()
     await asyncio.to_thread(save_conversation, user_id, conversation)
 
-    provider = get_api_provider(payload.provider)
+    provider = None
     _stream_provider = provider
-    _chat_base, _chat_hdrs, model = resolve_chat_provider(provider["id"], payload.model)
+    model = payload.model
+    chat_target = None
+    if payload.model_id or payload.connection_id:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            target = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_model,
+                model_id=payload.model_id,
+                connection_id=payload.connection_id,
+                model=payload.model,
+                kind="chat",
+            )
+            chat_target = target
+            provider = canonical_connection_view(target)
+            _stream_provider = provider
+            model = target.model.upstream_model
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="聊天模型或连接不存在或已禁用") from exc
+    else:
+        raise HTTPException(status_code=400, detail="流式聊天请求必须指定有效的稳定资源标识")
     history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
     upstream_messages = [{"role": "system", "content": (payload.system_prompt or "").strip() or SYSTEM_PROMPT}]
     for item in history:
@@ -6974,23 +5675,10 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         response_id = ""
         yield sse_event({"type": "meta", "conversation": conversation})
         try:
-            from app.ai.chat import LegacyChatGateway
-            chat_gateway = LegacyChatGateway(
-                resolver=lambda selected_provider, selected_model: resolve_chat_provider(selected_provider, selected_model),
-                authorizer=lambda selected_provider, selected_model: require_chat_model_access(selected_provider, selected_model),
-                budget_authorizer=lambda selected_provider, selected_user_id: assert_provider_budget_available(selected_provider, selected_user_id),
-                timeout=AI_REQUEST_TIMEOUT,
-            )
-            stream_options = {"stream_options": {"include_usage": True}} if effective_protocol(_stream_provider, model) == "omnilojo" else {}
-            async for line in chat_gateway.stream_chat(
-                provider=provider["id"],
-                model=model,
-                model_id=getattr(payload, "model_id", ""),
-                connection_id=getattr(payload, "connection_id", ""),
-                messages=upstream_messages,
-                user_id=user_id,
-                extra_body=stream_options,
-            ):
+            from app.ai.chat import ChatGateway
+            chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
+            stream_options = {"stream_options": {"include_usage": True}} if _stream_provider.get("protocol") == "omnilojo" else {}
+            async for line in chat_gateway.stream_target(target=chat_target, messages=upstream_messages, user_id=user_id, extra_body=stream_options):
                 if not line:
                     continue
                 if line.startswith("data:"):
@@ -7027,7 +5715,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         conversation["messages"].append(assistant_message)
         conversation["updated_at"] = now_ms()
         await asyncio.to_thread(save_conversation, user_id, conversation)
-        if effective_protocol(_stream_provider, model) == "omnilojo":
+        if _stream_provider.get("protocol") == "omnilojo":
             from app.services.usage import record_omnilojo_response_usage
             await asyncio.to_thread(record_omnilojo_response_usage, user_id, _stream_provider, model, {"id": response_id or uuid.uuid4().hex, "usage": raw_usage}, operation="chat")
         yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
@@ -7043,6 +5731,11 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
 
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
+    # New workflow submissions must carry a canonical execution target.  Old
+    # history records are migrated before they reach this endpoint and are
+    # handled by the worker restore path separately.
+    if not any(str(value or "").strip() for value in (req.connection_id, req.model_id, req.resource_id)):
+        raise HTTPException(status_code=400, detail="工作流请求必须提供 connection_id、model_id 或 resource_id")
     global NEXT_TASK_ID
     target_backend = None
     with TASK_ID_LOCK:
@@ -7343,9 +6036,9 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
     if not get_comfy_workflow(name):
         raise HTTPException(status_code=404, detail="Workflow not found")
     if payload.resource_id or payload.connection_id:
-        from app.ai.repository import ProviderRepository
+        from app.ai.database_repository import DatabaseAIRepository
         try:
-            target = ProviderRepository(load_api_providers).resolve_executable(
+            target = DatabaseAIRepository().resolve_executable(
                 resource_id=payload.resource_id,
                 connection_id=payload.connection_id,
                 kind="comfyui_workflow",
@@ -7388,6 +6081,8 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
         params=params,
         type="workflow-test",
         client_id=payload.client_id or str(uuid.uuid4()),
+        connection_id=payload.connection_id,
+        resource_id=payload.resource_id,
     )
     if payload.resource_id:
         req.params.setdefault("__ai_resource", {})["resource_id"] = payload.resource_id

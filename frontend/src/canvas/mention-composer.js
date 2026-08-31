@@ -134,28 +134,35 @@ function positionPromptComposerForNode(node){
     promptComposer.style.top = `${Math.round(screenTop)}px`;
 }
 function promptComposerParamsHtml(node){
-    node.llmProvider = resolveChatProviderId(node.llmProvider || '');
-    node.llmModel = resolveChatModel(node.llmModel || '', node.llmProvider);
+    const legacyProvider = resolveChatProviderId(node.llmProvider || '');
+    const legacyModel = resolveChatModel(node.llmModel || '', legacyProvider);
     const task = node.llmTask;
     const ruleHtml = task === 'caption' || task === 'expand'
         ? `<select class="prompt-composer-control prompt-composer-rule">${smartRuleTemplateOptions(task, task === 'caption' ? node.captionTemplateId : node.expandTemplateId)}</select>`
         : '';
-    const entries = chatApiProviders().flatMap(provider => (provider.chat_models || []).map(model => ({
+    const entries = chatApiProviders().flatMap(provider => (provider.chat_models || []).map(model => {
+        const stable = (aiResourceIndex?.models || []).find(item => item.enabled !== false && item.connection_id === provider.id && item.kind === 'chat' && (item.upstream_model === model || item.alias === model));
+        return {
         providerId: provider.id,
+        connectionId: stable?.connection_id || provider.id,
+        modelId: stable?.id || '',
         model,
         label: modelDisplayName(model, provider.id),
         locked: !smartModelAllowed(provider.id, model)
-    })));
-    const current = entries.find(entry => entry.providerId === node.llmProvider && entry.model === node.llmModel);
+        };
+    }));
+    const current = entries.find(entry => entry.connectionId === node.llmConnectionId && entry.modelId === node.llmModelId)
+        || entries.find(entry => entry.providerId === legacyProvider && entry.model === legacyModel);
     const modelControl = `<div class="smart-control model-control prompt-composer-model-control">
-        <button class="smart-pill" type="button"><i data-lucide="message-square"></i><span class="sub">${escapeHtml(current?.label || node.llmModel || tr('smart.model'))}</span></button>
+        <button class="smart-pill" type="button"><i data-lucide="message-square"></i><span class="sub">${escapeHtml(current?.label || legacyModel || tr('smart.model'))}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.model'))}</div>
             <div class="model-list">
                 ${entries.map(entry => {
                     const locked = entry.locked;
-                    const active = entry.providerId === node.llmProvider && entry.model === node.llmModel;
-                    return `<button type="button" class="direct-option prompt-composer-model-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-prompt-model="${escapeAttr(entry.model)}" data-prompt-provider-id="${escapeAttr(entry.providerId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                    const active = (entry.connectionId === node.llmConnectionId && entry.modelId === node.llmModelId)
+                        || (entry.providerId === legacyProvider && entry.model === legacyModel);
+                    return `<button type="button" class="direct-option prompt-composer-model-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-prompt-model="${escapeAttr(entry.model)}" data-prompt-provider-id="${escapeAttr(entry.providerId)}" data-prompt-connection-id="${escapeAttr(entry.connectionId)}" data-prompt-model-id="${escapeAttr(entry.modelId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
                 }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noChatModel') || tr('smart.model'))}</div>`}
             </div>
         </div>
@@ -216,8 +223,8 @@ function bindPromptComposerControls(node){
                 toast(tr('smart.modelLocked'));
                 return;
             }
-            node.llmProvider = resolveChatProviderId(modelEl.dataset.promptProviderId || '');
-            node.llmModel = modelEl.dataset.promptModel || '';
+            node.llmConnectionId = modelEl.dataset.promptConnectionId || '';
+            node.llmModelId = modelEl.dataset.promptModelId || '';
             renderPromptComposer(node);
             scheduleSave();
         };

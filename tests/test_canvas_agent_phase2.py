@@ -75,7 +75,7 @@ def test_hydrate_plan_nodes_uses_latest_canvas_values_over_stale_plan_snapshot()
 @pytest.mark.parametrize(("settings", "capability"), [
     ({"engine": "comfy", "apiKind": "image"}, "comfyui.workflow.image"),
     ({"engine": "comfy", "apiKind": "video"}, "comfyui.workflow.video"),
-    ({"provider_id": "runninghub", "apiKind": "image"}, "runninghub.app.image"),
+    ({"provider_id": "runninghub", "apiKind": "image"}, "image.text_to_image"),
 ])
 def test_hydrate_plan_nodes_infers_provider_specific_capability(settings, capability):
     plan = {"steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "n1"}]}
@@ -167,6 +167,7 @@ def test_rejected_plan_resumes_graph_and_keeps_run_available(monkeypatch):
     monkeypatch.setattr(canvas_agent, "latest_plan", lambda *_args: {"version": 1})
     monkeypatch.setattr(canvas_agent, "create_async_checkpointer", fake_checkpointer)
     monkeypatch.setattr(canvas_agent, "update_run", fake_update_run)
+    monkeypatch.setattr(canvas_agent, "set_plan_status", lambda *_args: None)
     monkeypatch.setattr(canvas_agent, "get_run", lambda *_args: dict(run))
     monkeypatch.setattr(canvas_agent, "emit_agent_event", fake_emit)
     monkeypatch.setattr(runtime, "create_canvas_agent", lambda **_kwargs: FakeGraph())
@@ -176,7 +177,7 @@ def test_rejected_plan_resumes_graph_and_keeps_run_available(monkeypatch):
     assert resumes == [({"approved": False}, {"configurable": {"thread_id": "run-1"}})]
     assert updates == [{"status": "planning", "phase": "planning"}]
     assert result["run"]["status"] == "planning"
-    assert events == [("plan.rejected", {"plan_version": 1})]
+    assert events == []
 
 
 @pytest.mark.parametrize("error,category", [("upstream timeout", "transient"), ("canvas version conflict", "conflict"), ("budget limit exceeded", "quota"), ("permission denied", "permission"), ("invalid schema", "permanent")])

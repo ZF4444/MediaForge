@@ -17,15 +17,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW_DIR = os.path.join(BASE_DIR, "workflows")
 WORKFLOW_PATH = os.path.join(WORKFLOW_DIR, "Z-Image.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-STATIC_RUNNINGHUB_DIR = os.path.join(STATIC_DIR, "runninghub")
-STATIC_RUNNINGHUB_THUMBNAIL_DIR = os.path.join(STATIC_RUNNINGHUB_DIR, "thumbnails")
-STATIC_RUNNINGHUB_API_PROVIDERS_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "api_providers.json")
 API_ENV_FILE = os.path.join(BASE_DIR, "API", ".env")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 HELP_DEFAULT_PAGE = "index"
 LOCAL_IMAGE_IMPORT_MAX_BYTES = int(os.getenv("LOCAL_IMAGE_IMPORT_MAX_BYTES", str(50 * 1024 * 1024)))
 LOCAL_IMAGE_IMPORT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-RUNNINGHUB_THUMBNAIL_EXTS = (".jpg",)
 
 # --- 对象存储配置 ---
 DATABASE_URL = str(os.getenv("DATABASE_URL", "")).strip()
@@ -60,8 +56,6 @@ AGENT_EVENT_OUTBOX_POLL_SECONDS = max(0.05, float(os.getenv("AGENT_EVENT_OUTBOX_
 AGENT_EVENT_OUTBOX_BATCH_SIZE = max(1, int(os.getenv("AGENT_EVENT_OUTBOX_BATCH_SIZE", "100")))
 AGENT_COMMAND_WORKER_ENABLED = str(os.getenv("AGENT_COMMAND_WORKER_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
 AGENT_COMMAND_POLL_SECONDS = max(0.05, float(os.getenv("AGENT_COMMAND_POLL_SECONDS", "0.25")))
-REDIS_PROVIDER_CONFIG_CHANNEL = str(os.getenv("REDIS_PROVIDER_CONFIG_CHANNEL", "mediaforge:provider-config-events")).strip()
-PROVIDER_CONFIG_CACHE_REFRESH_SECONDS = max(5, int(os.getenv("PROVIDER_CONFIG_CACHE_REFRESH_SECONDS", "30")))
 REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS = max(30, int(os.getenv("REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS", "120")))
 REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS = max(1_000, int(os.getenv("REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS", "120000")))
 REDIS_CANVAS_TASK_STREAM_MAXLEN = max(1_000, int(os.getenv("REDIS_CANVAS_TASK_STREAM_MAXLEN", "10000")))

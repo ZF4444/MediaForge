@@ -494,7 +494,8 @@
         let poseUploadToken = 0;
         let selectedProvider = 'comfly';
         let selectedModel = 'gpt-image-2';
-        let apiProviders = [];
+        let aiConnections = [];
+        let aiModelsByName = new Map();
         let models = { gpt:'gpt-image-2', nano:'nano-banana-pro' };
         let transferRatio = 'square';
         let transferResolution = '1k';
@@ -566,7 +567,7 @@
             return (list || []).map(item => String(item || '').trim()).filter(item => item && !seen.has(item) && seen.add(item));
         }
         function imageProviders(){
-            const list = (apiProviders || []).filter(p => p.enabled !== false && (
+            const list = (aiConnections || []).filter(p => p.enabled !== false && (
                 (p.image_models || []).length
             )).filter(p => {
                 const proto = String(p.protocol || '').toLowerCase();
@@ -610,13 +611,15 @@
         }
         async function initModels(){
             try {
-                const cfg = await fetch('/api/config').then(r => r.json());
-                const imageModels = cfg.image_models || [];
+                const cfg = await fetch('/api/ai/configuration').then(r => r.json());
+                const imageModels = (cfg.models || []).filter(m => m.kind === 'image' && m.enabled !== false).map(m => m.upstream_model);
                 models.nano = imageModels.find(m => String(m).toLowerCase().includes('nano')) || 'nano-banana-pro';
                 models.gpt = imageModels.find(m => !String(m).toLowerCase().includes('nano')) || cfg.image_model || 'gpt-image-2';
-                apiProviders = Array.isArray(cfg.api_providers) ? cfg.api_providers : [];
+                aiConnections = (cfg.connections || []).map(c => ({...c, id:c.id, connection_id:c.id,
+                    image_models:(cfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'image' && m.enabled !== false).map(m => m.upstream_model)}));
+                aiModelsByName = new Map((cfg.models || []).filter(m => m.kind === 'image' && m.enabled !== false).map(m => [`${m.connection_id}::${m.upstream_model}`, m]));
             } catch(e) {
-                apiProviders = [];
+                aiConnections = [];
             }
             renderProviderControls();
         }
@@ -903,7 +906,8 @@
 
                 const body = {
                     prompt,
-                    provider_id:selectedProvider,
+                    connection_id:providerById(selectedProvider).connection_id || selectedProvider,
+                    model_id:aiModelsByName.get(`${providerById(selectedProvider).connection_id || selectedProvider}::${selectedModel}`)?.id || '',
                     model:selectedModel,
                     size:transferOutputSize(),
                     n:1,

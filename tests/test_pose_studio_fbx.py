@@ -353,8 +353,12 @@ def test_pose_studio_sam3d_output_filename_is_not_treated_as_input_media():
     assert required == ["uploaded.png"]
 
 
-def test_pose_studio_sam3d_workflow_info_uses_existing_workflow():
+def test_pose_studio_sam3d_workflow_info_uses_existing_workflow(monkeypatch):
     from main import _sam3d_workflow_info
+    monkeypatch.setattr("main.get_comfy_workflow", lambda _name: {"workflow": {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+        "4": {"class_type": "SAM3DBodyExportFBX", "inputs": {}},
+    }})
 
     workflow_json, image_node_id, export_node_id = _sam3d_workflow_info()
 

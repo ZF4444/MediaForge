@@ -17,6 +17,12 @@ class Cursor:
     def fetchone(self):
         return next(self._rows)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
 
 class Connection:
     def __init__(self, cursor):

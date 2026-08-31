@@ -68,7 +68,7 @@ def test_agent_task_projection_keeps_structured_media_and_clears_terminal_state(
     monkeypatch.setattr(events, "metadata_connection", lambda: Connection())
     queued = {"task_id": "task-1", "node_id": "node-1", "status": "queued", "kind": "image", "expected_count": 1}
     assert events._project_task_to_canvas("user", "run", queued) == 2
-    assert updates[-1]["pendingTasks"] == [{"taskId": "task-1", "kind": "image", "providerId": "", "model": "", "expectedCount": 1, "status": "queued"}]
+    assert updates[-1]["pendingTasks"] == [{"taskId": "task-1", "kind": "image", "connectionId": "", "modelId": "", "resourceId": "", "expectedCount": 1, "status": "queued"}]
     assert updates[-1]["queued"] is True
     assert updates[-1]["runStartedAt"] > 0
     started_at = updates[-1]["runStartedAt"]

@@ -6,7 +6,7 @@
  * 方法论——不用 ES module/import，不用 Rollup/Vite 打包，只是把单体
  * 文件物理拆分成多个文件，用 <script src> 顺序加载，靠经典脚本的
  * 共享顶层作用域语义保证跨文件函数调用/状态读写正常工作。这个方法论
- * 现在要复用到 api-settings.js / asset-manager.js 这两个页面，所以把
+ * 现在要复用到 asset-manager.js 页面，所以把
  * 构建脚本从"只认识 canvas 一个页面"泛化成"认识一份页面注册表"。
  *
  * 每个页面在 PAGES 里注册：
@@ -49,12 +49,6 @@ const PAGES = [
       'agent/agent-state.js', 'agent/agent-bridge.js', 'agent/agent-client.js',
       'agent/agent-plan.js', 'agent/agent-artifacts.js', 'agent/agent-events.js', 'agent/agent-panel.js',
     ],
-  },
-  {
-    // API 设置页（迁移中，见 frontend/README.md 的 api-settings 章节）
-    page: 'api-settings',
-    mainSrc: 'static/js/api-settings.js',
-    handwrittenFiles: ['provider-onboarding.js', 'comfy-instances.js'],
   },
   {
     // 素材库管理页（迁移中，见 frontend/README.md 的 asset-manager 章节）

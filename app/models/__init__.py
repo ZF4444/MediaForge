@@ -20,6 +20,9 @@ from app.config import (
 
 class GenerateRequest(BaseModel):
     prompt: str = ""
+    connection_id: str = ""
+    resource_id: str = ""
+    model_id: str = ""
     width: int = 1024
     height: int = 1024
     workflow_json: str = "Z-Image.json"
@@ -72,7 +75,9 @@ class AIReference(BaseModel):
 
 class OnlineImageRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
-    provider_id: str = "comfly"
+    connection_id: str = ""
+    resource_id: str = ""
+    provider_id: str = ""
     model_id: str = ""
     model: str = ""
     size: str = "1024x1024"
@@ -83,13 +88,17 @@ class OnlineImageRequest(BaseModel):
 
 
 class ImageTaskQueryRequest(BaseModel):
-    provider_id: str = "comfly"
+    connection_id: str = ""
+    resource_id: str = ""
+    provider_id: str = ""
     task_id: str = Field(min_length=1, max_length=240)
 
 
 class CanvasVideoRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
-    provider_id: str = "comfly"
+    connection_id: str = ""
+    resource_id: str = ""
+    provider_id: str = ""
     model_id: str = ""
     model: str = "veo3-fast"
     duration: int = 5
@@ -116,6 +125,7 @@ class CloudVideoUploadRequest(BaseModel):
 
 
 class RunningHubSubmitRequest(BaseModel):
+    connection_id: str = ""
     resource_id: str = ""
     webappId: str = ""
     nodeInfoList: List[Dict[str, Any]] = []
@@ -124,40 +134,8 @@ class RunningHubSubmitRequest(BaseModel):
 
 class RunningHubUploadAssetRequest(BaseModel):
     url: str = ""
-
-
-class ApiProviderPayload(BaseModel):
-    id: str = ""
-    name: str = ""
-    base_url: str = ""
-    protocol: str = "openai"
-    image_generation_endpoint: str = ""
-    image_edit_endpoint: str = ""
-    enabled: bool = True
-    primary: bool = False
-    image_models: List[str] = []
-    chat_models: List[str] = []
-    video_models: List[str] = []
-    model_enabled: Dict[str, bool] = {}
-    model_protocols: Dict[str, str] = {}
-    model_aliases: Dict[str, str] = {}
-    parameter_schema: Dict[str, Any] = {}
-    rh_apps: List[Dict[str, Any]] = []
-    volcengine_project_name: str = VOLCENGINE_DEFAULT_PROJECT_NAME
-    volcengine_region: str = VOLCENGINE_DEFAULT_REGION
-    volcengine_access_key_id: Optional[str] = None
-    volcengine_secret_access_key: Optional[str] = None
-    api_key: Optional[str] = None
-    clear_key: bool = False
-    omnilojo_management_token: Optional[str] = None
-    clear_omnilojo_management_token: bool = False
-    omnilojo_usage_scope: str = "token"
-    omnilojo_admin_user_id: str = ""
-    omnilojo_quota_per_usd: float = 500000
-    omnilojo_cny_per_usd: float = 7.2
-    omnilojo_model_prices: Dict[str, Dict[str, float]] = {}
-    clear_volcengine_access_key_id: bool = False
-    clear_volcengine_secret_access_key: bool = False
+    connection_id: str = ""
+    resource_id: str = ""
 
 
 class ChatRequest(BaseModel):
@@ -167,13 +145,16 @@ class ChatRequest(BaseModel):
     model: str = ""
     image_model: str = ""
     image_provider: str = ""
+    image_connection_id: str = ""
+    image_model_id: str = ""
+    image_resource_id: str = ""
     mode: str = "chat"
     size: str = "1024x1024"
     aspect_ratio: str = ""
     resolution: str = ""
     quality: str = "auto"
     reference_images: List[AIReference] = []
-    provider: str = "comfly"
+    provider: str = ""
     model_id: str = ""
     connection_id: str = ""
     ms_model: str = ""
@@ -183,9 +164,7 @@ class ChatRequest(BaseModel):
 class CanvasLLMRequest(BaseModel):
     message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
     system_prompt: str = ""
-    model: str = ""
     messages: List[Dict[str, Any]] = []
-    provider: str = "comfly"
     model_id: str = ""
     connection_id: str = ""
     images: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
@@ -241,6 +220,8 @@ class CanvasAgentMessageRequest(BaseModel):
     provider: str = ""
     model: str = ""
     model_id: str = ""
+    connection_id: str = ""
+    resource_id: str = ""
     client_request_id: str = Field(default="", max_length=128)
 
 class CanvasAgentAnswerRequest(BaseModel):
@@ -249,6 +230,8 @@ class CanvasAgentAnswerRequest(BaseModel):
     provider: str = ""
     model: str = ""
     model_id: str = ""
+    connection_id: str = ""
+    resource_id: str = ""
     client_request_id: str = Field(default="", max_length=128)
 
 class CanvasAgentConfirmRequest(BaseModel):
@@ -402,6 +385,7 @@ class AssetLibraryBatchCropRequest(BaseModel):
 
 class AssetAvatarRegisterRequest(BaseModel):
     library_id: str = ""
+    connection_id: str = ""
     provider_id: str = ""
     project_name: str = "default"
     group_name: str = ""
@@ -432,13 +416,6 @@ class PromptLibraryCategoryRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     username: str = ""
-
-
-class TestConnectionPayload(BaseModel):
-    base_url: str = ""
-    api_key: str = ""
-    provider_id: str = ""
-    protocol: str = "openai"
 
 
 class WorkflowField(BaseModel):

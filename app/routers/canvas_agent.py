@@ -109,7 +109,7 @@ def _hydrate_plan_nodes(plan_json: dict, canvas: dict | None) -> dict:
                 capability = "prompt.generate"
             elif engine == "comfy":
                 capability = f"comfyui.workflow.{'video' if api_kind == 'video' else 'image'}"
-            elif engine == "runninghub" or str(source_run_settings.get("provider_id") or "") == "runninghub":
+            elif engine == "runninghub" or source_run_settings.get("resource_id"):
                 capability = f"runninghub.app.{'video' if api_kind == 'video' else 'image'}"
             elif api_kind == "video":
                 capability = "video.text_to_video"
@@ -349,7 +349,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
         context["user_id"] = user_id
         context["canvas_id"] = run["canvas_id"]
         model = await asyncio.to_thread(
-            resolve_canvas_agent_model, payload.provider, payload.model, model_id=payload.model_id,
+            resolve_canvas_agent_model, model=payload.model, model_id=payload.model_id, connection_id=payload.connection_id,
         )
         async def progress(event_run_id, progress_payload):
             await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
@@ -370,7 +370,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
             await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
             return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": reply}
         plan = SemanticPlan.model_validate(latest["content_json"])
-        await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_provider": payload.provider, "model_name": payload.model, "model_id": payload.model_id})
+        await asyncio.to_thread(update_run, user_id, run_id, metadata_json={"model_thread_started": True, "model_id": payload.model_id, "model_connection_id": payload.connection_id})
         plan_json = plan.model_dump(mode="json")
         plan_json = _hydrate_plan_nodes(plan_json, await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"]))
         estimate = estimate_plan_cost(plan_json)
@@ -410,9 +410,10 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
         context["run_id"] = run_id
         context["user_id"] = user_id
         context["canvas_id"] = run["canvas_id"]
-        provider, model_name = payload.provider or metadata.get("model_provider", ""), payload.model or metadata.get("model_name", "")
+        model_name = payload.model
         model_id = payload.model_id or metadata.get("model_id", "")
-        model = await asyncio.to_thread(resolve_canvas_agent_model, provider, model_name, model_id=model_id)
+        connection_id = payload.connection_id or metadata.get("model_connection_id", "")
+        model = await asyncio.to_thread(resolve_canvas_agent_model, model=model_name, model_id=model_id, connection_id=connection_id)
         async def progress(event_run_id, progress_payload):
             await emit_agent_event(user_id, event_run_id, "progress", progress_payload)
         async def emit_skill_event(event_type, event_payload):
@@ -431,7 +432,7 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
         plan_json = _hydrate_plan_nodes(plan.model_dump(mode="json"), await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"]))
         plan = SemanticPlan.model_validate(plan_json)
         saved = await asyncio.to_thread(save_plan, user_id, run_id, plan.model_dump(mode="json"), status="awaiting_confirmation")
-        await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_provider": provider, "model_name": model_name, "model_id": model_id})
+        await asyncio.to_thread(update_run, user_id, run_id, status="awaiting_confirmation", phase="planning", base_canvas_version=context["canvas_version"], metadata_json={"model_thread_started": True, "model_name": model_name, "model_id": model_id, "model_connection_id": connection_id})
         reply = await _append_plan_reply(user_id, run_id)
         await emit_agent_event(user_id, run_id, "plan.created", {"plan_version": saved["version"], "plan": plan.model_dump(mode="json"), "resumed": True})
         return {"run": await asyncio.to_thread(get_run, user_id, run_id), "plan": saved, "reply": reply}
@@ -471,9 +472,9 @@ async def execute_confirm_command(user_id: str, run_id: str, payload: CanvasAgen
     # Resume the same graph thread. The graph deterministically emits the
     # execution tool call, records its ToolMessage, then dispatches tasks.
     metadata = run.get("metadata_json") or {}
-    provider, model_name = metadata.get("model_provider", ""), metadata.get("model_name", "")
+    model_name = ""
     model = await asyncio.to_thread(
-        resolve_canvas_agent_model, provider, model_name, model_id=metadata.get("model_id", ""),
+        resolve_canvas_agent_model, model=model_name, model_id=metadata.get("model_id", ""), connection_id=metadata.get("model_connection_id", ""),
     )
     await emit_agent_event(user_id, run_id, "progress", {"phase": "context", "message": "正在校验当前画布…"})
     context = await asyncio.to_thread(build_canvas_context, user_id, run["canvas_id"])
@@ -575,6 +576,8 @@ async def retry_agent_task(run_id: str, task_id: str, request: Request, x_user_i
         raise HTTPException(status_code=404, detail="Agent 任务不存在")
     if task.get("status") not in {"failed", "interrupted", "timed_out"}:
         raise HTTPException(status_code=409, detail="只有失败任务可以重试")
+    if not any(str(task.get(key) or (task.get("request") or {}).get(key) or "").strip() for key in ("connection_id", "model_id", "resource_id")):
+        raise HTTPException(status_code=409, detail="任务缺少已迁移的 connection_id/model_id/resource_id，无法重试")
     await release_canvas_task_dispatch(task_id)
     queued = await update_canvas_task(task_id, expected_status=task.get("status") or "failed", status="queued", error="", attempt=int(task.get("attempt", 1) or 1) + 1, deadline_at=time.time() + CANVAS_TASK_TIMEOUT_SECONDS)
     if not queued: raise HTTPException(status_code=409, detail="任务状态已变化")

@@ -6,7 +6,7 @@
   const pathValue=(value,path)=>String(path||'').split('.').filter(Boolean).reduce((item,key)=>item&&typeof item==='object'?item[key]:undefined,value);
   const setPath=(target,path,value)=>{const keys=String(path||'').split('.').filter(Boolean);let cursor=target;keys.slice(0,-1).forEach(key=>cursor=cursor[key]||={});if(keys.length)cursor[keys.at(-1)]=value;};
   const primitive=value=>['string','number','boolean'].includes(typeof value);
-  const schemaUrl=(capability,provider,model)=>`/api/canvas/capability-parameters?${new URLSearchParams({capability,provider_id:provider,model}).toString()}`;
+  const schemaUrl=(capability,settings)=>{const params=new URLSearchParams({capability,connection_id:String(settings.connection_id||''),model_id:String(settings.model_id||''),resource_id:String(settings.resource_id||'')});if(!settings.connection_id&&!settings.model_id&&!settings.resource_id){const legacyModel=String(settings.model||settings.videoModel||'');if(legacyModel)params.set('model',legacyModel);}return `/api/canvas/capability-parameters?${params.toString()}`;};
   function planValues(step){
     const node=step.node||{},params=clone(node.params);
     return {step_id:step.id,title:node.title||'',content:node.content||'',params,settings:params.runSettings||params};
@@ -79,16 +79,24 @@
     if(id==='msRatioMatched')return settings.msRatio==='source';
     return true;
   }
+  function isRunningHubTarget(settings){
+    if(settings?.resource_id){
+      const resource=(window.aiResourceIndex?.resources||[]).find(item=>item.id===settings.resource_id);
+      if(resource)return resource.kind==='runninghub_app';
+    }
+    const connection=(window.aiResourceIndex?.connections||[]).find(item=>item.id===settings?.connection_id);
+    return connection?.protocol==='runninghub';
+  }
   function fallbackFields(values,interactive){
     const fields=[];const walk=(object,prefix='')=>Object.entries(object||{}).forEach(([key,value])=>{const path=prefix?`${prefix}.${key}`:key;if(value&&typeof value==='object'&&!Array.isArray(value))walk(value,path);else if(primitive(value))fields.push({id:path,name:path,type:typeof value==='boolean'?'boolean':typeof value==='number'?'number':'text',default:value,ui:{configurable:true}});});walk(values.params);return fields.map(field=>schemaField(field,values,'',interactive));
   }
   async function populateSchema(card,step,values,interactive,request,history=false){
-    const node=step.node||{},settings=values.settings||{};const provider=String(settings.provider_id||settings.videoProvider||'');const model=String(settings.model||settings.videoModel||'');
+    const node=step.node||{},settings=values.settings||{};
     const kind=String(settings.apiKind||node.genKind).toLowerCase()==='video'?'video':'image',engine=String(settings.engine||'').toLowerCase();
-    const capability=String(node.capability||((node.semantic_type==='prompt'||node.semantic_type==='smart-prompt')?'prompt.generate':(engine==='comfy'?`comfyui.workflow.${kind}`:(engine==='runninghub'||settings.provider_id==='runninghub'?`runninghub.app.${kind}`:(kind==='video'?'video.text_to_video':'image.text_to_image')))));
+    const capability=String(node.capability||((node.semantic_type==='prompt'||node.semantic_type==='smart-prompt')?'prompt.generate':(engine==='comfy'?`comfyui.workflow.${kind}`:(engine==='runninghub'||isRunningHubTarget(settings)?`runninghub.app.${kind}`:(kind==='video'?'video.text_to_video':'image.text_to_image')))));
     if(!capability){fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));return;}
     try{
-      const response=await fetch(schemaUrl(capability,provider,model),{credentials:'same-origin'});if(!response.ok)throw new Error();const schema=await response.json();if((request!==schemaRequest&&!history)||!card.isConnected)return;
+      const response=await fetch(schemaUrl(capability,settings),{credentials:'same-origin'});if(!response.ok)throw new Error();const schema=await response.json();if((request!==schemaRequest&&!history)||!card.isConnected)return;
       const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');const renderFields=()=>{controls.innerHTML='';(schema.fields||[]).filter(field=>!['provider_id','videoProvider'].includes(String(field.id||''))).filter(field=>visible(field,pathValue(values.params,paramsPath)||{})).forEach(field=>controls.appendChild(schemaField(field,values,paramsPath,interactive,fieldId=>{if(['model','videoModel'].includes(fieldId))void populateSchema(card,step,values,interactive,request);else if(['resolution','ratio','msResolution','msRatio'].includes(fieldId))renderFields();})));window.lucide?.createIcons();};renderFields();
       if(!controls.childElementCount){fallbackFields(values,interactive).forEach(item=>controls.appendChild(item));window.lucide?.createIcons();}
     }catch(_){if((request===schemaRequest||history)&&card.isConnected)fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));}

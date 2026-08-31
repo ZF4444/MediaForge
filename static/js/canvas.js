@@ -246,7 +246,8 @@ let connectionLayerRefreshQueued = false;
 let viewportInteractionActive = false;
 let pendingMinimapRefreshAfterInteraction = false;
 let lastConnectionLayerRefreshAt = 0;
-let apiProviders = [];
+let aiConnections = [];
+let aiResourceIndex = {connections:[], models:[], resources:[]};
 let comfyWorkflows = [];
 let comfyInstanceCount = 1;
 let assetLibrary = {categories:[]};
@@ -458,8 +459,12 @@ window.__canvasPanoramaState = panoramaState;
 let settings = {
     engine:'api',
     apiKind:'image',
-    provider_id:'',
-    model:'',
+    connection_id:'',
+    model_id:'',
+    resource_id:'',
+    videoConnectionId:'',
+    videoModelId:'',
+    videoResourceId:'',
     ratio:'1:1',
     resolution:'1k',
     customRatio:'',
@@ -470,8 +475,6 @@ let settings = {
     customHeight:'',
     quality:'auto',
     count:1,
-    videoProvider:'',
-    videoModel:'',
     videoDuration:5,
     videoAspect:'16:9',
     videoResolution:'',
@@ -545,7 +548,20 @@ function normalizeStoredImageRatios(target){
     return target;
 }
 function settingsForStorage(source=settings){
-    return cloneSmartSettings(source);
+    const clean = cloneSmartSettings(source);
+    // Canonical canvas settings are identified by stable Connection/Model/
+    // Resource IDs. Legacy provider fields remain readable for unmigrated
+    // historical nodes, but must never be persisted for new targets.
+    const hasStableTarget = ['connection_id', 'model_id', 'resource_id', 'videoConnectionId', 'videoModelId', 'videoResourceId']
+        .some(key => String(clean?.[key] || '').trim());
+    if(hasStableTarget){
+        delete clean.provider_id;
+        delete clean.provider;
+        delete clean.model;
+        delete clean.videoProvider;
+        delete clean.videoModel;
+    }
+    return clean;
 }
 function isApiLikeEngine(engine){
     return ['api', 'volcengine'].includes(String(engine || '').toLowerCase());
@@ -1823,8 +1839,8 @@ function smartRunPlatformLabel(run){
 function smartRunRequestMeta(run){
     const s = run?.settings || {};
     if(s.engine === 'comfy') return {workflow_json:s.comfyWorkflow || ''};
-    if(run?.kind === 'video') return {provider_id:s.videoProvider || '', model:s.videoModel || '', duration:s.videoDuration || '', aspect_ratio:s.videoAspect || '', resolution:s.videoResolution || ''};
-    return {provider_id:s.provider_id || '', model:s.model || '', size:run?.size || '', quality:s.quality || '', n:s.count || 1};
+    if(run?.kind === 'video') return {connection_id:s.videoConnectionId || '', model_id:s.videoModelId || '', resource_id:s.videoResourceId || '', duration:s.videoDuration || '', aspect_ratio:s.videoAspect || '', resolution:s.videoResolution || ''};
+    return {connection_id:s.connection_id || '', model_id:s.model_id || '', resource_id:s.resource_id || '', size:run?.size || '', quality:s.quality || '', n:s.count || 1};
 }
 function smartRunSnapshot(node, prompt, refs=[], kind='image'){
     const settingsSnapshot = cloneSmartSettings(settings);
@@ -1945,8 +1961,6 @@ function closeCanvasShortcuts(){
     canvasShortcutModal?.classList.remove('open');
 }
 function promptNodeBodyHtml(node){
-    node.llmProvider = resolveChatProviderId(node.llmProvider || '');
-    node.llmModel = resolveChatModel(node.llmModel || '', node.llmProvider);
     node.llmTask = ['llm', 'caption', 'expand'].includes(node.llmTask) ? node.llmTask : 'llm';
     const templateActive = activePromptTemplateNodeId() === node.id;
     return `<div class="prompt-node-card">
@@ -2275,7 +2289,7 @@ function updateComposer(){
         loadPromptDraft(subject);
     }
     const schemaKind = settings.apiKind === 'video' ? 'video' : 'image';
-    const schemaProvider = schemaKind === 'video' ? settings.videoProvider : settings.provider_id;
+    const schemaProvider = schemaKind === 'video' ? settings.videoConnectionId : settings.connection_id;
     const schemaModel = schemaKind === 'video' ? settings.videoModel : settings.model;
     void refreshCanvasParameterSchema(schemaKind, schemaProvider, schemaModel);
     setPromptInputLocked(false);
@@ -3354,8 +3368,15 @@ async function runPromptLLMNode(nodeId){
     node.running = true;
     render();
     try {
-        const provider = resolveChatProviderId(node.llmProvider || '');
-        const model = resolveChatModel(node.llmModel || '', provider);
+        const legacyProvider = resolveChatProviderId(node.llmProvider || '');
+        const legacyModel = resolveChatModel(node.llmModel || '', legacyProvider);
+        const stable = node.llmConnectionId && node.llmModelId
+            ? {connection_id: node.llmConnectionId, model_id: node.llmModelId}
+            : stableCanvasTarget('chat', legacyProvider, legacyModel);
+        if(!stable.connection_id || !stable.model_id){
+            toast('提示词节点未配置有效的连接和模型');
+            return;
+        }
         const systemPrompt = task === 'caption'
             ? smartRuleTemplateContent('caption', node.captionTemplateId, '请详细描述这张图片的内容。')
             : task === 'expand'
@@ -3371,8 +3392,8 @@ async function runPromptLLMNode(nodeId){
                 messages:[],
                 images:requestImages,
                 videos:requestVideos,
-                model,
-                provider,
+                connection_id:stable.connection_id,
+                model_id:stable.model_id,
                 system_prompt:systemPrompt
             })
         }).then(async r => {
@@ -3380,8 +3401,10 @@ async function runPromptLLMNode(nodeId){
             return r.json();
         });
         node.text = (result.text || '').trim();
-        node.llmProvider = provider;
-        node.llmModel = model;
+        node.llmConnectionId = stable.connection_id;
+        node.llmModelId = stable.model_id;
+        delete node.llmProvider;
+        delete node.llmModel;
         scheduleSave();
     } catch(e) {
         if(!handleTaskLimitSignal(e)) toast((e.message || tr('smart.promptLlmFailed')).slice(0, 160));
@@ -3458,14 +3481,11 @@ function handleUsageBudgetSignal(e){
 function handleTaskLimitSignal(e){
     return handleStorageQuotaSignal(e) || handleUsageBudgetSignal(e);
 }
-function providerIdForSmartTask(node, task){
-    return task?.providerId || node?.runSettings?.provider_id || settings.provider_id || 'comfly';
-}
-async function fetchImageTaskQuery(providerId, taskId){
+async function fetchImageTaskQuery(taskId, task={}){
     return fetch('/api/image-task-query', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({provider_id:providerId || 'comfly', task_id:taskId})
+        body:JSON.stringify({connection_id:task.connectionId || task.connection_id || '', resource_id:task.resourceId || task.resource_id || '', task_id:taskId})
     }).then(async r => {
         if(!r.ok) throw new Error(await smartResponseErrorMessage(r, '查询失败'));
         return r.json();
@@ -3485,7 +3505,7 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
     task.recoverTaskId = recoverTaskId;
     render();
     try {
-        const data = await fetchImageTaskQuery(providerIdForSmartTask(node, task), recoverTaskId);
+        const data = await fetchImageTaskQuery(recoverTaskId, task);
         if(data.status === 'succeeded'){
             task.failed = false;
             task.querying = false;
@@ -3530,7 +3550,7 @@ async function pollCanvasTask(taskId){
                 const budget = budgetDataFromPayload(task);
                 if(budget) throw new UsageBudgetSignal(budget);
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '');
-                if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, providerId:task.provider_id, kind:'image', message:task.error || tr('smart.errRunFailed')});
+                if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, kind:'image', message:task.error || tr('smart.errRunFailed')});
                 throw new Error(task.error || tr('smart.errRunFailed'));
             }
         }
@@ -3631,7 +3651,6 @@ async function resumeSmartPendingNode(node){
                 task.failed = true;
                 task.querying = false;
                 task.recoverTaskId = e.recoverTaskId;
-                task.providerId = e.providerId || task.providerId || providerIdForSmartTask(node, task);
                 task.error = e.message || tr('smart.errRunFailed');
                 node.running = false;
                 node.pending = Math.max(1, smartPendingTasks(node).length);

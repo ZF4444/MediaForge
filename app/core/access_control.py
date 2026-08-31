@@ -114,26 +114,9 @@ def all_page_ids() -> List[str]:
     return [p["id"] for p in all_pages()]
 
 
-# AI model authorization is intentionally independent from page permissions.
-# The current user-type policy grants model use to every user who can reach an
-# AI surface; these hooks remain so the AI runtime does not import main.py.
-_image_models_provider = None
-_fallback_chat_models_provider = None
-
-
-def set_image_models_provider(fn) -> None:
-    global _image_models_provider
-    _image_models_provider = fn
-
-
-def set_fallback_chat_models_provider(fn) -> None:
-    global _fallback_chat_models_provider
-    _fallback_chat_models_provider = fn
-
-
-def is_model_allowed(user_id: str, provider_id: str, model: str) -> bool:
+def is_model_allowed(user_id: str, connection_id: str, model: str) -> bool:
     """User-type access control currently scopes pages, not model allowlists."""
-    return bool(str(user_id or "").strip() and str(provider_id or "").strip() and str(model or "").strip())
+    return bool(str(user_id or "").strip() and str(connection_id or "").strip() and str(model or "").strip())
 
 
 def is_admin(user_id: str) -> bool:

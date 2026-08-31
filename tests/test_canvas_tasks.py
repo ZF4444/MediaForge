@@ -187,3 +187,32 @@ def test_canvas_tasks_persist_update_claim_and_recover(monkeypatch):
         assert redis.streams[canvas_tasks._DEAD_LETTER_STREAM][0][1]["task_id"] == "task-2"
 
     asyncio.run(scenario())
+
+
+def test_canvas_task_strips_legacy_fields_for_stable_target(monkeypatch):
+    redis = Redis()
+    monkeypatch.setattr(canvas_tasks, "get_redis_client", lambda: redis)
+
+    async def scenario():
+        record = await canvas_tasks.create_canvas_task({
+            "id": "stable-task",
+            "status": "queued",
+            "type": "online-image",
+            "connection_id": "conn-1",
+            "model_id": "model-1",
+            "request": {
+                "connection_id": "conn-1",
+                "model_id": "model-1",
+                "provider_id": "legacy-provider",
+                "provider": {"id": "legacy-provider"},
+                "model": "legacy-model",
+                "prompt": "hello",
+            },
+        })
+        request = record["request"]
+        assert request["connection_id"] == "conn-1"
+        assert request["model_id"] == "model-1"
+        assert request["prompt"] == "hello"
+        assert all(key not in request for key in ("provider_id", "provider", "model"))
+
+    asyncio.run(scenario())

@@ -15,8 +15,8 @@
 //   1. 引擎/模型可用性判断：syncEngineOptionsVisibility /
 //      smartModelAllowed /
 //      providerHasAllowedImageModel / providerHasAllowedVideoModel /
-//      sortProvidersByPermission / imageProviders / volcengineProvider /
-//      runningHubProvider / runningHubEntries 等
+//      sortProvidersByPermission / imageConnections / volcengineConnection /
+//      runningHubConnection / runningHubEntries 等
 //   2. RunningHub 工作流字段解析与渲染：rhFieldKind / rhFieldRole /
 //      rhExtractFieldOptions / rhDefaultValue / rhParamValue /
 //      renderRhSettingField / renderRhConfigControl 等
@@ -52,10 +52,10 @@
 
 function syncEngineOptionsVisibility(){
     if(!engineSelect) return;
-    const has = id => (apiProviders || []).some(p => p.id === id && p.enabled !== false);
+    const has = id => (aiConnections || []).some(p => p.id === id && p.enabled !== false);
     engineSelect.querySelector('option[value="runninghub"]').hidden = !has('runninghub');
     // api 引擎：至少有一个非特殊 provider 启用且有 image_models
-    const apiHidden = !imageProviders().length;
+    const apiHidden = !imageConnections().length;
     engineSelect.querySelector('option[value="api"]').hidden = apiHidden;
     // 当前选中引擎被隐藏时，回退到第一个可见引擎
     if(engineSelect.selectedOptions[0]?.hidden){
@@ -65,9 +65,10 @@ function syncEngineOptionsVisibility(){
 }
 // 访问控制：window.__canvasAllowedModels 为 Set<"provider_id::model"> 时按白名单过滤；
 // null/未设置（未登录探测失败、admin、或用户未被限制）时视为全部放开。
-function smartModelAllowed(providerId, model){
+function smartModelAllowed(providerId, model, modelId=''){
     const allowed = window.__canvasAllowedModels;
     if(!allowed) return true;
+    if(modelId && allowed.has(`model:${modelId}`)) return true;
     return allowed.has(`${providerId}::${model}`);
 }
 function providerHasAllowedImageModel(provider){
@@ -90,11 +91,11 @@ function sortProvidersByPermission(providers, kind='image'){
         return String(a?.id || '').localeCompare(String(b?.id || ''), undefined, {numeric:true, sensitivity:'base'});
     });
 }
-function imageProviders(){
-    return sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && providerImageModels(p.id).length), 'image');
+function imageConnections(){
+    return sortProvidersByPermission((aiConnections || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && connectionImageModels(p.id).length), 'image');
 }
-function volcengineProvider(){
-    return (apiProviders || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
+function volcengineConnection(){
+    return (aiConnections || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
         id:'volcengine',
         name:'火山引擎',
         image_models:[],
@@ -102,11 +103,11 @@ function volcengineProvider(){
         enabled:true
     };
 }
-function runningHubProvider(){
-    return (apiProviders || []).find(p => p.id === 'runninghub' && p.enabled !== false) || null;
+function runningHubConnection(){
+    return (aiConnections || []).find(p => p.id === 'runninghub' && p.enabled !== false) || null;
 }
 function runningHubEntries(kind){
-    const provider = runningHubProvider();
+    const provider = runningHubConnection();
     return Array.isArray(provider?.rh_apps) ? provider.rh_apps.filter(item => item?.enabled !== false && item?.hidden !== true) : [];
 }
 function runningHubEntryId(entry, kind){
@@ -159,7 +160,7 @@ function sortRunningHubFields(fields){
     });
 }
 function chatApiProviders(){
-    return (apiProviders || []).filter(p => p.enabled !== false && (p.chat_models || []).length);
+    return (aiConnections || []).filter(p => p.enabled !== false && (p.chat_models || []).length);
 }
 function resolveChatProviderId(providerId=''){
     const providers = chatApiProviders();
@@ -175,18 +176,18 @@ function resolveChatModel(model='', providerId=''){
     return models.includes(model) ? model : (models[0] || model || 'gpt-4o-mini');
 }
 function modelDisplayName(model, providerId){
-    const p = providerId ? (apiProviders || []).find(pp => pp.id === providerId) : null;
+    const p = providerId ? (aiConnections || []).find(pp => pp.id === providerId) : null;
     if(p?.model_aliases?.[model]) return p.model_aliases[model];
     return model;
 }
-function apiProviderById(providerId){
-    if(providerId === 'volcengine') return volcengineProvider();
-    return (apiProviders || []).find(p => p.id === providerId) || imageProviders()[0] || null;
+function connectionById(providerId){
+    if(providerId === 'volcengine') return volcengineConnection();
+    return (aiConnections || []).find(p => p.id === providerId) || imageConnections()[0] || null;
 }
-function providerImageModels(providerId){
-    if(providerId === 'volcengine') return volcengineProvider().image_models || [];
+function connectionImageModels(providerId){
+    if(providerId === 'volcengine') return volcengineConnection().image_models || [];
     if(providerId === 'runninghub') return [];
-    const provider = (apiProviders || []).find(p => p.id === providerId);
+    const provider = (aiConnections || []).find(p => p.id === providerId);
     return (provider?.image_models || []).filter(model => provider?.model_enabled?.[String(model || '').trim()] !== false);
 }
 let _rhLastAttachedKindsKey = null;
@@ -201,6 +202,21 @@ function syncRhConfigForRefs(){
 }
 function sanitizeSmartApiSelection(target=settings){
     if(!target || typeof target !== 'object') return target;
+    const modelResources = Array.isArray(aiResourceIndex?.models) ? aiResourceIndex.models : [];
+    if(!target.provider_id && (target.connection_id || target.model_id)){
+        const selected = modelResources.find(item => item.enabled !== false && item.kind === 'image' && (item.id === target.model_id || item.connection_id === target.connection_id));
+        if(selected){
+            target.provider_id = selected.connection_id;
+            target.model = selected.upstream_model || selected.alias || target.model || '';
+        }
+    }
+    if(!target.videoProvider && (target.videoConnectionId || target.videoModelId)){
+        const selected = modelResources.find(item => item.enabled !== false && item.kind === 'video' && (item.id === target.videoModelId || item.connection_id === target.videoConnectionId));
+        if(selected){
+            target.videoProvider = selected.connection_id;
+            target.videoModel = selected.upstream_model || selected.alias || target.videoModel || '';
+        }
+    }
     if(target.engine === 'volcengine'){
         if(target.apiKind === 'video'){
             target.videoProvider = 'volcengine';
@@ -208,32 +224,32 @@ function sanitizeSmartApiSelection(target=settings){
             if(!models.includes(target.videoModel)) target.videoModel = models[0] || '';
         } else {
             target.provider_id = 'volcengine';
-            const models = providerImageModels('volcengine');
+            const models = connectionImageModels('volcengine');
             if(!models.includes(target.model)) target.model = models[0] || '';
         }
         target.engine = 'api';
     }
     if(target.provider_id){
-        const models = providerImageModels(target.provider_id);
+        const models = connectionImageModels(target.provider_id);
         if(models.length && !models.includes(target.model)) target.model = models[0] || '';
     }
     if(target.videoProvider){
-        const models = providerVideoModels(target.videoProvider);
+        const models = connectionVideoModels(target.videoProvider);
         if(models.length && !models.includes(target.videoModel)) target.videoModel = models[0] || '';
     }
     return target;
 }
-function videoApiProviders(){
-    const fromConfig = sortProvidersByPermission((apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && providerVideoModels(p.id).length), 'video');
+function videoConnections(){
+    const fromConfig = sortProvidersByPermission((aiConnections || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && connectionVideoModels(p.id).length), 'video');
     return fromConfig;
 }
 function videoProviderById(providerId){
-    if(providerId === 'volcengine') return volcengineProvider();
-    return videoApiProviders().find(p => p.id === providerId) || videoApiProviders()[0] || null;
+    if(providerId === 'volcengine') return volcengineConnection();
+    return videoConnections().find(p => p.id === providerId) || videoConnections()[0] || null;
 }
-function providerVideoModels(providerId){
+function connectionVideoModels(providerId){
     if(providerId === 'volcengine') return volcengineVideoModels();
-    const provider = videoApiProviders().find(p => p.id === providerId);
+    const provider = videoConnections().find(p => p.id === providerId);
     return [...new Set((provider?.video_models || []).filter(model => provider?.model_enabled?.[String(model || '').trim()] !== false))];
 }
 // Normalize the mutually-exclusive video input modes used by the API payload
@@ -244,8 +260,15 @@ function videoGenerationMode(source=settings){
     if(value.videoMultimodal) return 'multimodal';
     return 'text';
 }
+
+function ratioLabel(prefix=''){
+    const source = prefix ? `${prefix}Ratio` : 'ratio';
+    const value = String(settings?.[source] || (prefix ? '1:1' : '1:1'));
+    if(value === 'custom') return String(settings?.customRatio || settings?.[`${prefix}CustomRatio`] || 'custom');
+    return value;
+}
 function volcengineVideoModels(){
-    const provider = (apiProviders || []).find(p => p.id === 'volcengine');
+    const provider = (aiConnections || []).find(p => p.id === 'volcengine');
     return [...new Set(provider?.video_models || [])];
 }
 function renderVideoModelSelector(providers, models, restricted){
@@ -253,7 +276,7 @@ function renderVideoModelSelector(providers, models, restricted){
     const modelLabel = settings.videoModel ? modelDisplayName(settings.videoModel, settings.videoProvider) : tr('smart.model');
     const entries = (models || []).map(model => ({
         model,
-        locked: restricted && !smartModelAllowed(settings.videoProvider, model)
+        locked: restricted && !smartModelAllowed(settings.videoProvider, model, settings.videoModelId)
     }));
     return `<div class="smart-control video-model-control">
         <button class="smart-pill video-model-summary" type="button" title="${escapeAttr(`${currentProvider?.name || settings.videoProvider || ''} · ${modelLabel}`)}">
@@ -395,8 +418,14 @@ function applyCanvasSchemaDefaults(kind, schema){
     }
 }
 async function refreshCanvasParameterSchema(kind, providerId, model){
-    if(!providerId) return;
-    const key = `${kind}:${providerId}:${model || ''}`;
+    const canonical = kind === 'video'
+        ? {connection_id: settings.videoConnectionId || '', model_id: settings.videoModelId || '', resource_id: settings.videoResourceId || ''}
+        : {connection_id: settings.connection_id || '', model_id: settings.model_id || '', resource_id: settings.resource_id || ''};
+    const target = (canonical.connection_id || canonical.model_id || canonical.resource_id)
+        ? canonical
+        : stableCanvasTarget(kind, providerId, model);
+    if(!target.connection_id && !target.model_id && !target.resource_id) return;
+    const key = `${kind}:${target.connection_id}:${target.model_id}:${target.resource_id}`;
     canvasParameterSchemaTarget[kind] = key;
     const activate = schema => {
         // Schema requests are asynchronous while selection changes are not.
@@ -411,7 +440,7 @@ async function refreshCanvasParameterSchema(kind, providerId, model){
         return;
     }
     try {
-        const query = new URLSearchParams({capability:kind === 'video' ? 'video.text_to_video' : 'image.text_to_image', provider_id:providerId, model:model || ''});
+        const query = new URLSearchParams({capability:kind === 'video' ? 'video.text_to_video' : 'image.text_to_image', connection_id:target.connection_id || '', model_id:target.model_id || '', resource_id:target.resource_id || '', model:model || ''});
         const response = await fetch(`/api/canvas/capability-parameters?${query.toString()}`, {credentials:'same-origin'});
         if(!response.ok) return;
         const schema = await response.json();
@@ -553,11 +582,13 @@ function renderDynamicParams(){
 }
 function renderApiParams(){
     const entries = apiImageModelEntries();
-    const selected = entries.find(entry => entry.providerId === settings.provider_id && entry.model === settings.model && !entry.locked)
+    const selected = entries.find(entry => entry.connectionId === settings.connection_id && entry.modelId === settings.model_id && !entry.locked)
+        || entries.find(entry => entry.providerId === settings.provider_id && entry.model === settings.model && !entry.locked)
         || entries.find(entry => !entry.locked)
         || entries[0];
     settings.provider_id = selected?.providerId || '';
     settings.model = selected?.model || '';
+    Object.assign(settings, stableCanvasTarget('image', settings.provider_id, settings.model));
     normalizeApiSizeSettings('');
     const outpaintLocked = settings.outpaintResolutionLocked === true;
     dynamicParams.innerHTML = `
@@ -570,20 +601,25 @@ function renderApiParams(){
 }
 function renderApiVideoParams(){
     const entries = apiVideoModelEntries();
-    const selected = entries.find(entry => entry.providerId === settings.videoProvider && entry.model === settings.videoModel && !entry.locked)
+    const selected = entries.find(entry => entry.connectionId === settings.videoConnectionId && entry.modelId === settings.videoModelId && !entry.locked)
+        || entries.find(entry => entry.providerId === settings.videoProvider && entry.model === settings.videoModel && !entry.locked)
         || entries.find(entry => !entry.locked)
         || entries[0];
     settings.videoProvider = selected?.providerId || '';
     settings.videoModel = selected?.model || '';
+    const videoTarget = stableCanvasTarget('video', settings.videoProvider, settings.videoModel);
+    settings.videoConnectionId = videoTarget.connection_id;
+    settings.videoModelId = videoTarget.model_id;
+    settings.videoResourceId = videoTarget.resource_id;
     dynamicParams.innerHTML = `
         ${renderApiVideoModelControl(entries, true)}
         ${renderVideoGenerationConfig()}
     `;
 }
 function renderVolcengineParams(){
-    const provider = volcengineProvider();
+    const provider = volcengineConnection();
     const providers = [provider];
-    const models = providerImageModels('volcengine');
+    const models = connectionImageModels('volcengine');
     settings.provider_id = 'volcengine';
     if(!settings.model || !models.includes(settings.model)) settings.model = models[0] || '';
     normalizeApiSizeSettings('');
@@ -600,7 +636,7 @@ function renderVolcengineParams(){
     `;
 }
 function renderVolcengineVideoParams(){
-    const provider = volcengineProvider();
+    const provider = volcengineConnection();
     const providers = [provider];
     const models = volcengineVideoModels();
     settings.videoProvider = 'volcengine';
@@ -871,7 +907,7 @@ function videoAspectIconClass(value){
     return '';
 }
 function renderProviderControl(providers, restricted){
-    const current = (providers || []).find(p => p.id === settings.provider_id) || apiProviderById(settings.provider_id);
+    const current = (providers || []).find(p => p.id === settings.provider_id) || connectionById(settings.provider_id);
     return `<div class="smart-control provider-control">
         <button class="smart-pill" type="button"><i data-lucide="plug-zap"></i><span class="sub">${escapeHtml(settings.provider_id || tr('smart.platform'))}</span></button>
         <div class="smart-popover compact-popover">
@@ -892,7 +928,8 @@ function renderModelControl(models, restricted){
             <div class="smart-popover-title">${escapeHtml(tr('smart.imageModel'))}</div>
             <div class="model-list">
                 ${models.map(m => {
-                    const locked = restricted && !smartModelAllowed(settings.provider_id, m);
+                    const modelRef = (aiResourceIndex?.models || []).find(item => item.enabled !== false && item.kind === 'image' && item.connection_id === settings.connection_id && (item.upstream_model === m || item.alias === m));
+                    const locked = restricted && !smartModelAllowed(settings.provider_id, m, modelRef?.id);
                     return `<button type="button" class="direct-option ${m === settings.model ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="model" data-smart-value="${escapeHtml(m)}" ${locked ? `title="${escapeHtml(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(modelDisplayName(m, settings.provider_id))}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
                 }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noImageModel'))}</div>`}
             </div>
@@ -1002,23 +1039,34 @@ function renderCountControl(){
     return `<select data-param="count">${[1,2,3,4].map(n => optionHtml(n, `${n} 张`, Number(settings.count || 1))).join('')}</select>`;
 }
 function apiImageModelEntries(){
-    return imageProviders().flatMap(provider => providerImageModels(provider.id).map(model => ({
+    return imageConnections().flatMap(provider => connectionImageModels(provider.id).map(model => {
+        const stable = (aiResourceIndex?.models || []).find(item => item.enabled !== false && item.connection_id === provider.id && item.kind === 'image' && (item.upstream_model === model || item.alias === model));
+        return {
         providerId: provider.id,
+        connectionId: stable?.connection_id || provider.id,
+        modelId: stable?.id || '',
         model,
         label: modelDisplayName(model, provider.id),
-        locked: !smartModelAllowed(provider.id, model)
-    })));
+        locked: !smartModelAllowed(provider.id, model, stable?.id)
+        };
+    }));
 }
 function apiVideoModelEntries(){
-    return videoApiProviders().flatMap(provider => providerVideoModels(provider.id).map(model => ({
+    return videoConnections().flatMap(provider => connectionVideoModels(provider.id).map(model => {
+        const stable = (aiResourceIndex?.models || []).find(item => item.enabled !== false && item.connection_id === provider.id && item.kind === 'video' && (item.upstream_model === model || item.alias === model));
+        return {
         providerId: provider.id,
+        connectionId: stable?.connection_id || provider.id,
+        modelId: stable?.id || '',
         model,
         label: modelDisplayName(model, provider.id),
-        locked: !smartModelAllowed(provider.id, model)
-    })));
+        locked: !smartModelAllowed(provider.id, model, stable?.id)
+        };
+    }));
 }
 function renderApiImageModelControl(entries, restricted){
-    const current = entries.find(entry => entry.providerId === settings.provider_id && entry.model === settings.model);
+    const current = entries.find(entry => entry.connectionId === settings.connection_id && entry.modelId === settings.model_id)
+        || entries.find(entry => entry.providerId === settings.provider_id && entry.model === settings.model);
     return `<div class="smart-control model-control">
         <button class="smart-pill" type="button"><i data-lucide="sparkles"></i><span class="sub">${escapeHtml(current?.label || tr('smart.model'))}</span></button>
         <div class="smart-popover compact-popover">
@@ -1026,15 +1074,17 @@ function renderApiImageModelControl(entries, restricted){
             <div class="model-list">
                 ${entries.map(entry => {
                     const locked = restricted && entry.locked;
-                    const active = entry.providerId === settings.provider_id && entry.model === settings.model;
-                    return `<button type="button" class="direct-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="model" data-smart-value="${escapeAttr(entry.model)}" data-smart-provider-id="${escapeAttr(entry.providerId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                    const active = (entry.connectionId === settings.connection_id && entry.modelId === settings.model_id)
+                        || (entry.providerId === settings.provider_id && entry.model === settings.model);
+                    return `<button type="button" class="direct-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="model" data-smart-value="${escapeAttr(entry.model)}" data-smart-provider-id="${escapeAttr(entry.providerId)}" data-smart-connection-id="${escapeAttr(entry.connectionId)}" data-smart-model-id="${escapeAttr(entry.modelId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
                 }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noImageModel'))}</div>`}
             </div>
         </div>
     </div>`;
 }
 function renderApiVideoModelControl(entries, restricted){
-    const current = entries.find(entry => entry.providerId === settings.videoProvider && entry.model === settings.videoModel);
+    const current = entries.find(entry => entry.connectionId === settings.videoConnectionId && entry.modelId === settings.videoModelId)
+        || entries.find(entry => entry.providerId === settings.videoProvider && entry.model === settings.videoModel);
     return `<div class="smart-control model-control video-model-control">
         <button class="smart-pill" type="button"><i data-lucide="sparkles"></i><span class="sub">${escapeHtml(current?.label || tr('smart.model'))}</span></button>
         <div class="smart-popover compact-popover">
@@ -1042,8 +1092,9 @@ function renderApiVideoModelControl(entries, restricted){
             <div class="model-list">
                 ${entries.map(entry => {
                     const locked = restricted && entry.locked;
-                    const active = entry.providerId === settings.videoProvider && entry.model === settings.videoModel;
-                    return `<button type="button" class="direct-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoModel" data-smart-value="${escapeAttr(entry.model)}" data-smart-provider-id="${escapeAttr(entry.providerId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
+                    const active = (entry.connectionId === settings.videoConnectionId && entry.modelId === settings.videoModelId)
+                        || (entry.providerId === settings.videoProvider && entry.model === settings.videoModel);
+                    return `<button type="button" class="direct-option ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" data-smart-param="videoModel" data-smart-value="${escapeAttr(entry.model)}" data-smart-provider-id="${escapeAttr(entry.providerId)}" data-smart-connection-id="${escapeAttr(entry.connectionId)}" data-smart-model-id="${escapeAttr(entry.modelId)}" ${locked ? `title="${escapeAttr(tr('smart.modelLocked'))}"` : ''}><span>${escapeHtml(entry.label)}</span>${locked ? '<i data-lucide="lock" class="lock-icon"></i>' : ''}</button>`;
                 }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
             </div>
         </div>
@@ -1294,7 +1345,7 @@ async function rhUploadValueIfNeeded(value, sourceSettings=settings){
     const res = await fetch('/api/runninghub/upload-asset', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({url:text})
+        body:JSON.stringify({url:text, connection_id:sourceSettings.connection_id || '', resource_id:sourceSettings.resource_id || ''})
     });
     const data = await res.json();
     if(!res.ok || data.success === false) throw new Error(data.detail || data.error || tr('smart.rhUploadFailed'));
@@ -1391,13 +1442,22 @@ function smartComfyRandomValue(field){
     }
     return Math.floor(value);
 }
-function setDynamicSetting(key, value, providerId=''){
+function setDynamicSetting(key, value, providerId='', connectionId='', modelId=''){
     const numericKeys = new Set(['count','videoDuration','customRatioWidth','customRatioHeight','customWidth','customHeight','msCustomRatioWidth','msCustomRatioHeight','msCustomWidth','msCustomHeight']);
     const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','workflowSource','comfyWorkflow','quality','count','rhConfigKey','rhInstanceType']);
     if(key === 'model' && providerId) settings.provider_id = providerId;
+    if(key === 'model' && connectionId) { settings.connection_id = connectionId; settings.model_id = modelId || ''; }
     if(key === 'videoModel' && providerId) settings.videoProvider = providerId;
+    if(key === 'videoModel' && connectionId) { settings.videoConnectionId = connectionId; settings.videoModelId = modelId || ''; }
     settings[key] = numericKeys.has(key) && value !== '' ? Number(value) : value;
     if(key === 'provider_id') settings.model = '';
+    if(key === 'provider_id' || key === 'model') Object.assign(settings, stableCanvasTarget('image', settings.provider_id, settings.model));
+    if(key === 'videoProvider' || key === 'videoModel') {
+        const target = stableCanvasTarget('video', settings.videoProvider, settings.videoModel);
+        settings.videoConnectionId = target.connection_id;
+        settings.videoModelId = target.model_id;
+        settings.videoResourceId = target.resource_id;
+    }
     if(key === 'videoProvider') settings.videoModel = '';
     if(key === 'provider_id' || key === 'model') void refreshCanvasParameterSchema('image', settings.provider_id, settings.model);
     if(key === 'videoProvider' || key === 'videoModel') void refreshCanvasParameterSchema('video', settings.videoProvider, settings.videoModel);
@@ -1437,11 +1497,18 @@ function setDynamicSetting(key, value, providerId=''){
     }
     if(key === 'comfyWorkflow') {
         settings.comfyParams = {};
+        const target = stableCanvasTarget('comfyui_workflow', 'comfyui', settings.comfyWorkflow);
+        settings.connection_id = target.connection_id;
+        settings.resource_id = target.resource_id;
         ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
     }
     if(key === 'rhConfigKey'){
         settings.rhParams = {};
         settings.rhRandomActive = {};
+        const ref = selectedRunningHubRef(settings);
+        const target = stableCanvasTarget('runninghub_app', settings.connection_id || settings.provider_id || 'runninghub', ref?.id || '');
+        settings.connection_id = target.connection_id;
+        settings.resource_id = target.resource_id;
     }
     persistActiveSmartSettings();
     rememberRecentSmartSettings(settings, activeSettingsSubject());
@@ -1477,7 +1544,7 @@ function bindDynamicParams(){
             }
             if(btn.closest('.video-model-control')) reopenVideoControlAfterRender = 'model';
             else if(btn.closest('.video-generation-control')) reopenVideoControlAfterRender = 'config';
-            setDynamicSetting(btn.dataset.smartParam, btn.dataset.smartValue, btn.dataset.smartProviderId || '');
+            setDynamicSetting(btn.dataset.smartParam, btn.dataset.smartValue, btn.dataset.smartProviderId || '', btn.dataset.smartConnectionId || '', btn.dataset.smartModelId || '');
             if(btn.dataset.smartParam === 'videoDuration') renderDynamicParams();
         };
     });
@@ -1649,11 +1716,16 @@ function bindDynamicParams(){
 }
 async function loadConfig({invalidateParameterSchemas=false}={}){
     try {
-        const cfg = await fetch('/api/config').then(r => r.json());
-        apiProviders = Array.isArray(cfg.api_providers) ? cfg.api_providers : [];
+        const stableCfg = await fetch('/api/ai/configuration').then(r => r.ok ? r.json() : ({connections:[], models:[], resources:[]})).catch(() => ({connections:[], models:[], resources:[]}));
+        const cfg = {comfy_instances:[]};
+        aiResourceIndex = stableCfg || {connections:[], models:[], resources:[]};
+        aiConnections = (stableCfg.connections || []).map(c => ({...c, id:c.id, connection_id:c.id,
+            image_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'image' && m.enabled !== false).map(m => m.upstream_model),
+            chat_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'chat' && m.enabled !== false).map(m => m.upstream_model),
+            video_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'video' && m.enabled !== false).map(m => m.upstream_model)}));
         if(invalidateParameterSchemas) canvasParameterSchemaCache.clear();
-        const imageProvider = imageProviders().find(provider => provider.id === settings.provider_id) || imageProviders()[0];
-        const videoProvider = videoApiProviders().find(provider => provider.id === settings.videoProvider) || videoApiProviders()[0];
+        const imageProvider = imageConnections().find(provider => provider.id === settings.provider_id) || imageConnections()[0];
+        const videoProvider = videoConnections().find(provider => provider.id === settings.videoProvider) || videoConnections()[0];
         await Promise.all([
             refreshCanvasParameterSchema('image', imageProvider?.id || '', settings.model || imageProvider?.image_models?.[0] || ''),
             refreshCanvasParameterSchema('video', videoProvider?.id || '', settings.videoModel || videoProvider?.video_models?.[0] || ''),
@@ -1683,6 +1755,22 @@ async function loadConfig({invalidateParameterSchemas=false}={}){
     } catch(e) {
         toast(tr('smart.toastApiSettingsFail'));
     }
+}
+
+function stableCanvasTarget(kind, providerId, model, resourceName=''){
+    const connections = Array.isArray(aiResourceIndex?.connections) ? aiResourceIndex.connections : [];
+    const models = Array.isArray(aiResourceIndex?.models) ? aiResourceIndex.models : [];
+    const resources = Array.isArray(aiResourceIndex?.resources) ? aiResourceIndex.resources : [];
+    const connection = connections.find(item => item.enabled !== false && (item.id === providerId || item.runtime_id === providerId || item.settings?.runtime_id === providerId));
+    const targetModel = models.find(item => item.enabled !== false && item.kind === kind && (!connection || item.connection_id === connection.id) && (item.upstream_model === model || item.alias === model));
+    const targetResource = resourceName ? resources.find(item => {
+        if(item.enabled === false || (connection && item.connection_id !== connection.id)) return false;
+        const settings = item.settings && typeof item.settings === 'object' ? item.settings : {};
+        return item.id === resourceName || item.name === resourceName
+            || settings.webappId === resourceName || settings.appId === resourceName
+            || settings.workflow_name === resourceName || settings.workflowName === resourceName;
+    }) : null;
+    return {connection_id: targetModel?.connection_id || targetResource?.connection_id || connection?.id || '', model_id: targetModel?.id || '', resource_id: targetResource?.id || ''};
 }
 async function refreshSmartConfigFromSettings({invalidateParameterSchemas=false}={}){
     await loadConfig({invalidateParameterSchemas});

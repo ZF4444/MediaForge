@@ -73,8 +73,8 @@ def test_user_usage_dashboard_is_scoped_to_the_requested_user(monkeypatch):
 
 
 def test_budget_exhaustion_returns_structured_error_for_task_clients(monkeypatch):
-    monkeypatch.setattr(main, "is_runninghub_provider", lambda _provider: True)
-    monkeypatch.setattr(main, "is_omnilojo_provider", lambda _provider: False)
+    monkeypatch.setattr(main, "is_runninghub_connection", lambda _provider: True)
+    monkeypatch.setattr(main, "is_omnilojo_connection", lambda _provider: False)
     monkeypatch.setattr(usage, "assert_runninghub_budget_available", lambda _user_id: (_ for _ in ()).throw(ValueError("个人本月 USD 预算已用尽，无法继续提交任务。")))
 
     try:

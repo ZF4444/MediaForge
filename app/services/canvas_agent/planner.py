@@ -7,14 +7,9 @@ from langgraph.types import Command
 from langchain.agents.structured_output import ProviderStrategy
 from app.models.canvas_agent import IntentDecision, SemanticPlan, SemanticNode, SemanticStep
 from . import runtime
-from .capabilities import from_provider_configuration
+from .capabilities import from_repository
 from .tools import build_canvas_tools
 
-
-def _load_canvas_parameter_providers() -> list[dict[str, Any]]:
-    """Read the Provider cache safely from the Agent command worker."""
-    from app.ai.runtime import load_legacy_providers
-    return load_legacy_providers()
 
 async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *, checkpointer: Any = None,
                            emit_progress=None, tools=None, execute_patch=None, dispatch_tasks=None, **legacy_kwargs) -> dict[str, Any]:
@@ -26,16 +21,15 @@ async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *,
     canvas_id = str(context.get("canvas_id") or "")
     # Build the registry from the active provider configuration once per graph
     # invocation. The model only sees its public capability metadata.
-    registry = await asyncio.to_thread(from_provider_configuration, provider_loader=_load_canvas_parameter_providers)
+    registry = await asyncio.to_thread(from_repository)
     tools = build_canvas_tools(user_id=user_id, run_id=run_id, canvas_id=canvas_id,
                                get_canvas=context.get("get_canvas"),
-                               registry=registry, provider_loader=_load_canvas_parameter_providers,
+                               registry=registry,
                                emit_skill_event=context.get("emit_skill_event"))
     graph = runtime.create_canvas_agent(model=model, user_id=user_id, run_id=run_id,
                                 canvas_id=canvas_id, checkpointer=checkpointer,
                                 emit_progress=emit_progress, get_canvas=context.get("get_canvas"),
                                 execute_patch=execute_patch, dispatch_tasks=dispatch_tasks, tools=tools,
-                                provider_loader=_load_canvas_parameter_providers,
                                 emit_skill_event=context.get("emit_skill_event"))
     references = list(context.get("media_references") or [])
     if references:

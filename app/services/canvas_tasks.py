@@ -112,6 +112,24 @@ async def create_canvas_task(task: dict[str, Any]) -> dict[str, Any]:
     task_id = str(task["id"])
     now = time.time()
     record = {**task, "created_at": task.get("created_at", now), "updated_at": task.get("updated_at", now), "version": int(task.get("version") or 1)}
+    # Stable IDs are the persistence contract.  Runtime adapters may still
+    # need a provider/model name, but those values must never be written into
+    # newly-created task requests once a canonical target is present.
+    request = record.get("request")
+    if isinstance(request, dict):
+        has_stable_target = any(str(record.get(key) or request.get(key) or "").strip() for key in ("connection_id", "model_id", "resource_id"))
+        has_legacy_target = any(str(record.get(key) or request.get(key) or "").strip() for key in ("provider_id", "provider", "model"))
+        if has_legacy_target and not has_stable_target:
+            raise ValueError("Canvas task requests must include connection_id, model_id, or resource_id")
+    if isinstance(request, dict) and any(str(record.get(key) or request.get(key) or "").strip() for key in ("connection_id", "model_id", "resource_id")):
+        request = dict(request)
+        for key in ("provider_id", "provider", "model"):
+            request.pop(key, None)
+        for key in ("connection_id", "model_id", "resource_id"):
+            value = record.get(key) or request.get(key)
+            if value:
+                request[key] = value
+        record["request"] = request
     client = get_redis_client()
     try:
         pipeline = client.pipeline(transaction=False)

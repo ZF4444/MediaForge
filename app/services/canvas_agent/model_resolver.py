@@ -1,4 +1,4 @@
-"""LangChain ChatModel adapter over MediaForge's existing provider resolver."""
+"""LangChain ChatModel adapter over canonical AI connection targets."""
 from __future__ import annotations
 import asyncio
 import json
@@ -15,7 +15,7 @@ _RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523
 
 
 class CanvasAgentUpstreamError(RuntimeError):
-    """The configured model provider was unavailable after bounded retries."""
+    """The configured model connection was unavailable after bounded retries."""
 
 class GatewayChatModel(BaseChatModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -25,7 +25,7 @@ class GatewayChatModel(BaseChatModel):
     request_timeout: float = 180.0
 
     @property
-    def _llm_type(self) -> str: return "mediaforge-provider"
+    def _llm_type(self) -> str: return "mediaforge-connection"
     @property
     def _identifying_params(self) -> dict[str, Any]: return {"endpoint": self.endpoint, "model": self.model_name}
 
@@ -41,7 +41,7 @@ class GatewayChatModel(BaseChatModel):
 
     @staticmethod
     def _tool_calls(raw_calls: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Keep malformed provider arguments visible as invalid_tool_calls.
+        """Keep malformed model arguments visible as invalid_tool_calls.
 
         Silently converting malformed JSON to ``{}`` makes LangChain believe a
         tool call is valid and can bypass the planner's rejection boundary.
@@ -79,7 +79,7 @@ class GatewayChatModel(BaseChatModel):
         response_format = kwargs.get("response_format")
         if response_format is not None:
             if not isinstance(response_format, dict):
-                raise TypeError("response_format must be a provider request dictionary")
+                raise TypeError("response_format must be a model request dictionary")
             body["response_format"] = response_format
         tools = kwargs.get("_bound_tools")
         if tools:
@@ -102,11 +102,17 @@ class GatewayChatModel(BaseChatModel):
 MediaForgeChatModel = GatewayChatModel
 
 
-def resolve_canvas_agent_model(
-    provider: str = "", model: str = "", *, model_id: str = "", connection_id: str = "",
-) -> GatewayChatModel:
-    from app.ai.runtime import resolve_chat_model
-    endpoint, headers, resolved_model = resolve_chat_model(
-        provider, model, model_id=model_id, connection_id=connection_id,
+def resolve_canvas_agent_model(*, model: str = "", model_id: str = "", connection_id: str = "") -> GatewayChatModel:
+    if not (model_id or connection_id):
+        raise ValueError("Canvas Agent requires model_id or connection_id")
+    from app.ai.database_repository import DatabaseAIRepository
+    from app.ai.transport import endpoint_for_target, headers_for_target
+    try:
+        target = DatabaseAIRepository().resolve_model(model_id=model_id, connection_id=connection_id, model=model, kind="chat")
+    except LookupError as exc:
+        raise ValueError("指定的 Canvas Agent 聊天模型不存在或已禁用") from exc
+    return GatewayChatModel(
+        endpoint=f"{endpoint_for_target(target, 'chat')}/chat/completions",
+        headers=dict(headers_for_target(target)),
+        model_name=target.model.upstream_model,
     )
-    return GatewayChatModel(endpoint=f"{endpoint}/chat/completions", headers=dict(headers), model_name=resolved_model)

@@ -113,7 +113,16 @@ def assert_runninghub_budget_available(user_id: str, month: str | None = None) -
                 raise ValueError("个人本月 USD 预算已用尽，无法继续提交任务。")
 
 
-def record_runninghub_submission(user_id: str, upstream_task_id: str, *, operation: str, model: str = "") -> None:
+def record_runninghub_submission(
+    user_id: str,
+    upstream_task_id: str,
+    *,
+    operation: str,
+    model: str = "",
+    connection_id: str = "",
+    model_id: str = "",
+    resource_id: str = "",
+) -> None:
     task_id = str(upstream_task_id or "").strip()
     if not task_id:
         return
@@ -121,14 +130,14 @@ def record_runninghub_submission(user_id: str, upstream_task_id: str, *, operati
     with metadata_connection() as conn, conn.cursor() as cur:
         org_id = _org_for_user(cur, user_id)
         cur.execute(
-            """INSERT INTO runninghub_usage_records(id,upstream_task_id,user_id,org_id,operation,model,status,submitted_at,created_at,updated_at)
-               VALUES(%s,%s,%s,%s,%s,%s,'submitted',%s,%s,%s)
+            """INSERT INTO runninghub_usage_records(id,upstream_task_id,connection_id,model_id,resource_id,user_id,org_id,operation,model,status,submitted_at,created_at,updated_at)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'submitted',%s,%s,%s)
                ON CONFLICT(upstream_task_id) DO NOTHING""",
-            (new_id(), task_id, user_id, org_id, str(operation or ""), str(model or ""), now, now, now),
+            (new_id(), task_id, str(connection_id or ""), str(model_id or ""), str(resource_id or ""), user_id, org_id, str(operation or ""), str(model or ""), now, now, now),
         )
 
 
-def settle_runninghub_usage(user_id: str, upstream_task_id: str, raw: Any, *, status: str, operation: str = "", model: str = "") -> None:
+def settle_runninghub_usage(user_id: str, upstream_task_id: str, raw: Any, *, status: str, operation: str = "", model: str = "", connection_id: str = "", model_id: str = "", resource_id: str = "") -> None:
     task_id = str(upstream_task_id or "").strip()
     if not task_id:
         return
@@ -145,15 +154,18 @@ def settle_runninghub_usage(user_id: str, upstream_task_id: str, raw: Any, *, st
         org_id = _org_for_user(cur, user_id)
         cur.execute(
             """INSERT INTO runninghub_usage_records(
-                    id,upstream_task_id,user_id,org_id,operation,model,status,submitted_at,completed_at,
+                    id,upstream_task_id,connection_id,model_id,resource_id,user_id,org_id,operation,model,status,submitted_at,completed_at,
                     consume_money_cny,third_party_money_cny,total_money_cny,consume_coins,task_cost_seconds,raw_usage,created_at,updated_at)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT(upstream_task_id) DO UPDATE SET
+                    connection_id=COALESCE(NULLIF(EXCLUDED.connection_id,''),runninghub_usage_records.connection_id),
+                    model_id=COALESCE(NULLIF(EXCLUDED.model_id,''),runninghub_usage_records.model_id),
+                    resource_id=COALESCE(NULLIF(EXCLUDED.resource_id,''),runninghub_usage_records.resource_id),
                     status=EXCLUDED.status, completed_at=EXCLUDED.completed_at,
                     consume_money_cny=EXCLUDED.consume_money_cny, third_party_money_cny=EXCLUDED.third_party_money_cny,
                     total_money_cny=EXCLUDED.total_money_cny, consume_coins=EXCLUDED.consume_coins,
                     task_cost_seconds=EXCLUDED.task_cost_seconds, raw_usage=EXCLUDED.raw_usage, updated_at=EXCLUDED.updated_at""",
-            (new_id(), task_id, user_id, org_id, str(operation or ""), str(model or ""), normalized_status, now,
+            (new_id(), task_id, str(connection_id or ""), str(model_id or ""), str(resource_id or ""), user_id, org_id, str(operation or ""), str(model or ""), normalized_status, now,
              now if normalized_status in {"succeeded", "failed"} else None, values["consume_money_cny"], values["third_party_money_cny"],
              values["total_money_cny"], values["consume_coins"], values["task_cost_seconds"], json_value(_usage_object(raw)), now, now),
         )
@@ -280,14 +292,27 @@ def user_usage_dashboard(user_id: str, month: str | None = None, limit: int = 20
         omnilojo = cur.fetchone() or {}
         cur.execute(
             """SELECT * FROM (
-                   SELECT 'RunningHub' AS source,upstream_task_id AS reference,operation,model,status,
-                          total_money_cny AS cost_usd,consume_coins AS units,completed_at AS timestamp
-                   FROM runninghub_usage_records WHERE user_id=%s AND submitted_at>=%s AND submitted_at<%s
+                   SELECT 'RunningHub' AS source,r.upstream_task_id AS reference,r.operation,r.model,r.status,
+                          total_money_cny AS cost_usd,consume_coins AS units,completed_at AS timestamp,
+                          COALESCE(c.name,r.connection_id,'RunningHub') AS connection_name,
+                          COALESCE(m.alias,m.upstream_model,r.model) AS model_name,
+                          r.model_id, NULL::text AS resource_name, r.resource_id
+                   FROM runninghub_usage_records r
+                   LEFT JOIN ai_connections c ON c.id=r.connection_id
+                   LEFT JOIN ai_models m ON m.id=r.model_id
+                   WHERE r.user_id=%s AND r.submitted_at>=%s AND r.submitted_at<%s
                    UNION ALL
-                   SELECT 'Omnilojo' AS source,COALESCE(NULLIF(request_id,''),NULLIF(upstream_request_id,''),upstream_log_id) AS reference,
-                          '' AS operation,model,status,cost_usd,
-                          prompt_tokens + completion_tokens AS units,created_at AS timestamp
-                   FROM omnilojo_usage_records WHERE user_id=%s AND created_at>=%s AND created_at<%s
+                   SELECT 'Omnilojo' AS source,COALESCE(NULLIF(x.request_id,''),NULLIF(x.upstream_request_id,''),x.upstream_log_id) AS reference,
+                          '' AS operation,x.model,x.status,x.cost_usd,
+                          x.prompt_tokens + x.completion_tokens AS units,x.created_at AS timestamp,
+                          COALESCE(c.name, x.connection_id, 'Omnilojo') AS connection_name,
+                          COALESCE(m.alias, m.upstream_model, x.model) AS model_name,
+                          x.model_id, r.name AS resource_name, r.id AS resource_id
+                   FROM omnilojo_usage_records x
+                   LEFT JOIN ai_connections c ON c.id=x.connection_id
+                   LEFT JOIN ai_models m ON m.id=x.model_id
+                   LEFT JOIN ai_resources r ON r.id=x.resource_id
+                   WHERE x.user_id=%s AND x.created_at>=%s AND x.created_at<%s
                ) activity ORDER BY timestamp DESC NULLS LAST LIMIT %s""",
             (user_id, start, end, user_id, start, end, limit),
         )
@@ -448,12 +473,18 @@ def record_omnilojo_response_usage(user_id: str, provider: dict[str, Any], model
     }
     with metadata_connection() as conn, conn.cursor() as cur:
         org_id = _org_for_user(cur, user_id)
+        connection_id = str(provider.get("connection_id") or provider.get("id") or "")
+        model_id = ""
+        if connection_id:
+            cur.execute("SELECT id FROM ai_models WHERE connection_id=%s AND upstream_model=%s LIMIT 1", (connection_id, str(model or "")))
+            model_row = cur.fetchone()
+            model_id = str(model_row["id"] if model_row else "")
         cur.execute(
-            """INSERT INTO omnilojo_usage_records(id,provider_id,upstream_log_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,status,created_at,raw_log,inserted_at,updated_at)
-               VALUES(%s,%s,%s,%s,'',%s,%s,'','',%s,0,%s,%s,%s,%s,'succeeded',%s,%s,%s,%s)
-               ON CONFLICT(provider_id,upstream_log_id) DO NOTHING
+            """INSERT INTO omnilojo_usage_records(id,connection_id,upstream_log_id,model_id,resource_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,status,created_at,raw_log,inserted_at,updated_at)
+               VALUES(%s,%s,%s,%s,'',%s,'',%s,%s,'','',%s,0,%s,%s,%s,%s,'succeeded',%s,%s,%s,%s)
+               ON CONFLICT(connection_id,upstream_log_id) DO NOTHING
                RETURNING id""",
-            (new_id(), str(provider.get("id") or ""), request_id, request_id, str(user_id or ""), org_id,
+            (new_id(), connection_id, request_id, model_id, request_id, str(user_id or ""), org_id,
              str(model or ""), str(values["cost_usd"]), "0", values["prompt_tokens"], values["completion_tokens"], now,
              json_value(raw_usage), now, now),
         )
@@ -522,11 +553,15 @@ def _store_omnilojo_usage_records(provider: dict[str, Any], items: list[dict[str
             if created_at <= 0:
                 created_at = now
             request_id, upstream_request_id = _omnilojo_request_ids(item)
+            connection_id = str(provider.get("connection_id") or provider.get("id") or "")
+            cur.execute("SELECT id FROM ai_models WHERE connection_id=%s AND upstream_model=%s LIMIT 1", (connection_id, str(item.get("model_name") or "")))
+            model_row = cur.fetchone()
+            model_id = str(model_row["id"] if model_row else "")
             cur.execute(
-                """INSERT INTO omnilojo_usage_records(id,provider_id,upstream_log_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,status,created_at,raw_log,inserted_at,updated_at)
-                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'succeeded',%s,%s,%s,%s)
-                   ON CONFLICT(provider_id,upstream_log_id) DO UPDATE SET request_id=EXCLUDED.request_id,upstream_request_id=EXCLUDED.upstream_request_id,quota=EXCLUDED.quota,cost_usd=EXCLUDED.cost_usd,total_money_cny=EXCLUDED.total_money_cny,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at""",
-                (new_id(), provider["id"], log_id, request_id, upstream_request_id, user["id"] if user else "", user["org_id"] if user else None, external_username,
+                """INSERT INTO omnilojo_usage_records(id,connection_id,upstream_log_id,model_id,resource_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,status,created_at,raw_log,inserted_at,updated_at)
+                   VALUES(%s,%s,%s,%s,'',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'succeeded',%s,%s,%s,%s)
+                   ON CONFLICT(connection_id,upstream_log_id) DO UPDATE SET request_id=EXCLUDED.request_id,upstream_request_id=EXCLUDED.upstream_request_id,quota=EXCLUDED.quota,cost_usd=EXCLUDED.cost_usd,total_money_cny=EXCLUDED.total_money_cny,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at""",
+                (new_id(), connection_id, log_id, model_id, request_id, upstream_request_id, user["id"] if user else "", user["org_id"] if user else None, external_username,
                  str(item.get("token_name") or ""), str(item.get("model_name") or ""), str(quota), str(cost_usd), str(cost_cny),
                  int(_omnilojo_number(item.get("prompt_tokens"))), int(_omnilojo_number(item.get("completion_tokens"))), created_at, json_value(item), now, now),
             )
@@ -539,7 +574,19 @@ def omnilojo_usage_dashboard(month: str | None = None, limit: int = 100) -> dict
     start, end = _month_range(month)
     limit = max(1, min(500, int(limit)))
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT x.upstream_log_id,x.request_id,x.upstream_request_id,x.provider_id,x.user_id,COALESCE(u.username,x.external_username,'未分配') AS username,x.org_id,COALESCE(o.name,'未分配') AS organization_name,x.token_name,x.model,x.quota,x.cost_usd,x.total_money_cny,x.prompt_tokens,x.completion_tokens,x.created_at FROM omnilojo_usage_records x LEFT JOIN users u ON u.id=x.user_id LEFT JOIN organizations o ON o.id=x.org_id WHERE x.created_at>=%s AND x.created_at<%s ORDER BY x.created_at DESC LIMIT %s""", (start, end, limit))
+        cur.execute("""SELECT x.upstream_log_id,x.request_id,x.upstream_request_id,x.connection_id,x.user_id,
+                              COALESCE(u.username,x.external_username,'未分配') AS username,x.org_id,
+                              COALESCE(o.name,'未分配') AS organization_name,x.token_name,x.model,
+                              COALESCE(c.name,x.connection_id,'未指定连接') AS connection_name,
+                              COALESCE(m.alias,m.upstream_model,x.model) AS model_name,x.model_id,
+                              r.name AS resource_name,r.id AS resource_id,
+                              x.quota,x.cost_usd,x.total_money_cny,x.prompt_tokens,x.completion_tokens,x.created_at
+                       FROM omnilojo_usage_records x
+                       LEFT JOIN users u ON u.id=x.user_id LEFT JOIN organizations o ON o.id=x.org_id
+                       LEFT JOIN ai_connections c ON c.id=x.connection_id
+                       LEFT JOIN ai_models m ON m.id=x.model_id
+                       LEFT JOIN ai_resources r ON r.id=x.resource_id
+                       WHERE x.created_at>=%s AND x.created_at<%s ORDER BY x.created_at DESC LIMIT %s""", (start, end, limit))
         records = [dict(row) for row in cur.fetchall()]
     for record in records:
         for key in ("quota", "cost_usd", "total_money_cny"):

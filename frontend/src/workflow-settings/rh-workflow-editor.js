@@ -1,4 +1,4 @@
-// api-settings 页面 —— RunningHub 工作流编辑器子系统（拆分自 static/js/api-settings.js）。
+// 工作流设置页的 RunningHub 工作流编辑器子系统。
 //
 // 范围：RunningHub AI 应用配置的整套编辑体验——粘贴 /run/ai-app/... 链接创建
 // 卡片、卡片缩略图上传、工作流字段拉取与归一化（normalizeRhWorkflowField /
@@ -21,7 +21,7 @@
 // 本模块的函数直接读写这个共享变量——跟画布 M1-M22 建立的模式一致：
 // classic script 顶层 let 声明处于所有 <script> 标签共享的顶层作用域，
 // 跨文件读写不需要改成 getter/setter。同样留在 main.js 的还有：
-// provider()/providers/selectedId（供应商核心状态）、saveProviders()
+// runningHubState()/runningHubApps/selectedId（资源编辑状态）、saveRunningHubResources()
 // （保存整个供应商列表到后端）、escapeHtml/escapeAttr/refreshIcons/
 // setStatus/broadcastStudioApiChange（通用工具函数，被几乎所有模块共用）。
 //
@@ -216,7 +216,7 @@ function handleRhPasteInput(value){
     if(parsed) setStatus('已识别 RunningHub 路径，点击右侧创建卡片');
 }
 function createRhEntryFromPaste(){
-    const item = provider();
+    const item = runningHubState();
     if(!item || item.id !== 'runninghub') return;
     const parsed = parseRunningHubRunRef(rhPasteInput?.value || '');
     if(!parsed){ setStatus('请粘贴 /run/ai-app/...'); return; }
@@ -237,7 +237,7 @@ function createRhEntryFromPaste(){
     setStatus(exists ? '这个 RunningHub 项目已经存在' : '已创建 RunningHub 卡片');
 }
 function updateRhEntry(kind, index, prop, value){
-    const item = provider();
+    const item = runningHubState();
     if(!item || item.id !== 'runninghub') return;
     ensureRunningHubLists(item);
     if(!item.rh_apps[index]) return;
@@ -246,7 +246,7 @@ function updateRhEntry(kind, index, prop, value){
     if(prop === 'note') setStatus('备注已修改，点保存生效');
 }
 function removeRhEntry(kind, index){
-    const item = provider();
+    const item = runningHubState();
     if(!item || item.id !== 'runninghub') return;
     ensureRunningHubLists(item);
     item.rh_apps.splice(index, 1);
@@ -307,7 +307,7 @@ function pickRhThumbnail(kind, index){
     input.click();
 }
 async function openRhAppEditor(index){
-    const item = provider();
+    const item = runningHubState();
     if(!item || item.id !== 'runninghub') return;
     ensureRunningHubLists(item);
     const entry = item.rh_apps[index];
@@ -498,7 +498,7 @@ async function saveRhWorkflowEditor(){
     config.title = rhWorkflowEditName?.value.trim() || config.title || config.appId;
     config.description = rhWorkflowEditNote?.value.trim() || config.description || '';
     try {
-        const item = provider();
+        const item = runningHubState();
         if(item?.id === 'runninghub' && item.rh_apps?.[state.index]){
             const entry = item.rh_apps[state.index];
             entry.title = config.title || entry.title;
@@ -506,12 +506,12 @@ async function saveRhWorkflowEditor(){
             entry.fields = (config.fields || []).map(normalizeRhWorkflowField);
             entry.raw = config.raw || {};
             renderRunningHubCards();
-            await saveProviders();
+            await saveRunningHubResources();
         }
         setStatus('应用参数配置已保存');
         setRhWorkflowSaveButtonState('saved', '已保存');
         setTimeout(() => setRhWorkflowSaveButtonState('idle', '保存'), 1600);
-        broadcastStudioApiChange('providers-changed');
+            broadcastStudioApiChange('resources-changed');
         renderRhWorkflowEditor();
         return true;
     } catch(err) {
@@ -708,7 +708,7 @@ async function rhPreviewUploadValueIfNeeded(value){
     const res = await fetch('/api/runninghub/upload-asset', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({url:text})
+        body:JSON.stringify({url:text, connection_id:rhWorkflowEditorState.connectionId || '', resource_id:rhWorkflowEditorState.resourceId || ''})
     });
     const data = await res.json();
     if(!res.ok || data.success === false) throw new Error(data.detail || data.error || 'RunningHub 素材上传失败');
@@ -899,7 +899,7 @@ function openRhAppFieldPopover(key, anchorEl){
     refreshIcons();
 }
 function renderRunningHubCards(){
-    const item = provider();
+    const item = runningHubState();
     if(!item || item.id !== 'runninghub'){
         if(rhAppsList) rhAppsList.innerHTML = '';
         return;

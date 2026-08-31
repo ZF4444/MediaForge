@@ -18,13 +18,13 @@ def _json(value: Any, fallback: Any) -> Any:
 
 
 class DatabaseAIRepository:
-    """The final configuration source. It never reads legacy Provider records."""
+    """The final configuration source. It never reads legacy configuration records."""
 
     def connections(self, *, include_disabled: bool = False) -> list[Connection]:
         query = "SELECT * FROM ai_connections" + ("" if include_disabled else " WHERE enabled=TRUE") + " ORDER BY name,id"
         with database_connection_sync() as conn, conn.cursor() as cur:
             cur.execute(query); rows = cur.fetchall()
-        return [Connection(id=row["id"], legacy_provider_id="", protocol=row["protocol"], name=row["name"], base_url=row["base_url"], enabled=bool(row["enabled"]), primary=bool(row["primary_connection"]), settings=_json(row["settings_json"], {})) for row in rows]
+        return [Connection(id=row["id"], protocol=row["protocol"], name=row["name"], base_url=row["base_url"], enabled=bool(row["enabled"]), primary=bool(row["primary_connection"]), settings=_json(row["settings_json"], {})) for row in rows]
 
     def models(self, *, include_disabled: bool = False) -> list[ModelResource]:
         query = "SELECT * FROM ai_models" + ("" if include_disabled else " WHERE enabled=TRUE") + " ORDER BY alias,upstream_model,id"
@@ -60,7 +60,7 @@ class DatabaseAIRepository:
                 "enabled": connection.enabled,
                 "primary": connection.primary,
                 "chat_models": [], "image_models": [], "video_models": [],
-                "model_aliases": {}, "model_protocols": {}, "model_enabled": {}, "rh_apps": [], "comfy_workflows": [],
+                "model_aliases": {}, "model_enabled": {}, "rh_apps": [], "comfy_workflows": [],
                 "omnilojo_model_prices": {},
             }
         for model in self.models(include_disabled=True):
@@ -69,7 +69,6 @@ class DatabaseAIRepository:
             key = f"{model.kind}_models"
             config[key].append(model.upstream_model)
             config["model_aliases"][model.upstream_model] = model.alias
-            config["model_protocols"][model.upstream_model] = model.protocol
             config["model_enabled"][model.upstream_model] = model.enabled
             if model.settings.get("text_input_per_million") is not None or model.settings.get("input_per_million") is not None:
                 config["omnilojo_model_prices"][model.upstream_model] = {

@@ -33,8 +33,9 @@ def _task_projection(node: dict[str, Any], payload: dict[str, Any], status: str)
         tasks.append({
             "taskId": task_id,
             "kind": str(payload.get("kind") or previous.get("kind") or "image"),
-            "providerId": str(payload.get("provider_id") or previous.get("providerId") or ""),
-            "model": str(payload.get("model") or previous.get("model") or ""),
+            "connectionId": str(payload.get("connection_id") or previous.get("connectionId") or ""),
+            "modelId": str(payload.get("model_id") or previous.get("modelId") or ""),
+            "resourceId": str(payload.get("resource_id") or previous.get("resourceId") or ""),
             "expectedCount": expected_count,
             "status": status,
         })

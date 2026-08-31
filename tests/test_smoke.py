@@ -41,14 +41,16 @@ def test_protected_api_returns_401_when_anonymous(client):
     assert body.get("login_required") is True
 
 
-def test_protected_providers_api_401_when_anonymous(client):
+def test_legacy_providers_api_is_physically_removed(client):
     r = client.get("/api/providers", follow_redirects=False)
+    # Authentication middleware runs before route matching for anonymous
+    # requests. Route-table tests separately prove this endpoint is absent.
     assert r.status_code == 401
 
 
 @pytest.mark.parametrize(
     "path",
-    ["/api/providers", "/api/canvases"],
+    ["/api/ai/connections", "/api/canvases"],
 )
 def test_known_api_paths_registered(app, path):
     """这些业务路径必须存在于路由表中（防止拆分时漏注册 router）。"""

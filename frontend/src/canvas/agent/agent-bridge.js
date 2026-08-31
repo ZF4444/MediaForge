@@ -61,12 +61,12 @@
   function taskRecord(task) {
     const nodeId=String(task?.node_id || task?.nodeId || ''); const taskId=String(task?.task_id || task?.taskId || '');
     if(!nodeId || !taskId) return null;
-    return {nodeId, taskId, kind:task.kind || 'image', providerId:task.provider_id || task.providerId || '', model:task.model || '', expectedCount:Math.max(1,Number(task.expected_count || task.expectedCount || 1) || 1)};
+    return {nodeId, taskId, kind:task.kind || 'image', connectionId:task.connection_id || task.connectionId || '', modelId:task.model_id || task.modelId || '', resourceId:task.resource_id || task.resourceId || '', expectedCount:Math.max(1,Number(task.expected_count || task.expectedCount || 1) || 1)};
   }
   function attachTask(node, task) {
     if(!node) return false;
     const pending=Array.isArray(node.pendingTasks) ? node.pendingTasks : [];
-    if(!pending.some(item=>item?.taskId===task.taskId)) pending.push({taskId:task.taskId,kind:task.kind,providerId:task.providerId,model:task.model});
+    if(!pending.some(item=>item?.taskId===task.taskId)) pending.push({taskId:task.taskId,kind:task.kind,connectionId:task.connectionId,modelId:task.modelId,resourceId:task.resourceId});
     node.pendingTasks=pending;
     node.pending=Math.max(pending.length,Number(node.pending || 0) || task.expectedCount);
     node.pendingCandidatePool=pending.some(item=>(item.kind || 'image')==='image');

@@ -10,7 +10,7 @@
 //
 // 经典 <script>，非 ES module，原因同 storage-manager.js。
 //
-// 依赖 main.js 保留的核心状态和函数：apiProviders（可用 API 供应商
+// 依赖 main.js 保留的核心状态和函数：aiConnections（可用 AI 连接
 // 列表）、avatarRegisterProvider/avatarBusyId（头像注册子系统的可变
 // 状态）、escapeHtml/escapeAttr/apiJson/setStatus/refreshIcons（通用
 // 工具）、render（主渲染入口）。
@@ -32,7 +32,7 @@ function avatarPlatformLabel(platform){
 // 列出 API 设置里所有启用的 provider 作为认证候选（以 API 设置为中心，由用户自己选平台）；
 // 不支持的平台也列出，在下拉里标注「待接入」，避免用户以为漏了。
 function avatarCandidateProviders(){
-    return (apiProviders || []).filter(p => p && p.enabled !== false);
+    return (aiConnections || []).filter(p => p && p.enabled !== false);
 }
 function activeAvatarProvider(){
     const list = avatarCandidateProviders();
@@ -128,7 +128,7 @@ function renderAvatarSection(item){
 async function registerAssetAvatar(id, providerId=''){
     const item = findAssetItem(id);
     if(!item) return;
-    const provider = (providerId && (apiProviders || []).find(p => p.id === providerId)) || activeAvatarProvider();
+    const provider = (providerId && (aiConnections || []).find(p => p.id === providerId)) || activeAvatarProvider();
     if(!provider){ setStatus('请先在 API 平台管理中添加并启用 API 平台'); return; }
     if(!providerAvatarSupported(provider)){ setStatus(`「${avatarPlatformLabel(providerAvatarPlatform(provider))}」的资产认证 API 尚未接入`); return; }
     if(avatarBusyId) return;
@@ -140,7 +140,7 @@ async function registerAssetAvatar(id, providerId=''){
         const data = await apiJson(`/api/asset-library/items/${encodeURIComponent(id)}/register-avatar`, {
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({library_id:activeAssetLibraryId, provider_id:provider.id})
+            body:JSON.stringify({library_id:activeAssetLibraryId, connection_id:provider.connection_id || provider.id})
         });
         assetLibrary = data.library || assetLibrary;
         setStatus(`已提交审核，正在等待 ${avatarPlatformLabel(providerAvatarPlatform(provider))} 通过…`);
@@ -159,7 +159,7 @@ function avatarRegistrationOf(item, platform){
 async function checkAssetAvatarStatus(id, silent=false, providerId=''){
     const item = findAssetItem(id);
     if(!item) return;
-    const provider = (providerId && (apiProviders || []).find(p => p.id === providerId)) || activeAvatarProvider();
+    const provider = (providerId && (aiConnections || []).find(p => p.id === providerId)) || activeAvatarProvider();
     if(!provider) return;
     const platform = providerAvatarPlatform(provider);
     const reg = avatarRegistrationOf(item, platform);
@@ -169,7 +169,7 @@ async function checkAssetAvatarStatus(id, silent=false, providerId=''){
         const data = await apiJson(`/api/asset-library/items/${encodeURIComponent(id)}/avatar-status`, {
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({library_id:activeAssetLibraryId, provider_id:provider.id})
+            body:JSON.stringify({library_id:activeAssetLibraryId, connection_id:provider.connection_id || provider.id})
         });
         assetLibrary = data.library || assetLibrary;
         const newReg = (data.item?.registrations && data.item.registrations[platform]) || {};
@@ -187,7 +187,7 @@ async function checkAssetAvatarStatus(id, silent=false, providerId=''){
 function scheduleAvatarPoll(id, providerId){
     setTimeout(() => {
         const item = findAssetItem(id);
-        const provider = (apiProviders || []).find(p => p.id === providerId);
+        const provider = (aiConnections || []).find(p => p.id === providerId);
         if(!item || !provider) return;
         const reg = avatarRegistrationOf(item, providerAvatarPlatform(provider));
         if(reg && reg.task_id && reg.status === 'Processing'){

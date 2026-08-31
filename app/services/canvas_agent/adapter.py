@@ -39,12 +39,11 @@ def _canonical_node_data(node: Any, node_type: str) -> dict[str, Any]:
     node_data = _deep_merge(defaults, params)
 
     # Keep generation settings under the same runSettings object as manually
-    # created nodes. Accept flat settings as a compatibility fallback because
-    # older plans sometimes put provider/model fields directly in params.
+    # created nodes. Accept flat settings only when reading older plans.
     if node_type == "smart-image":
         run_settings = dict(node_data.get("runSettings") or {})
         setting_keys = {
-            "engine", "apiKind", "provider_id", "provider", "model", "ratio",
+            "engine", "apiKind", "connection_id", "model_id", "resource_id", "model", "ratio",
             "resolution", "quality", "count", "duration", "fps", "aspect_ratio",
             "size", "seed", "comfyWorkflow", "comfyParams", "runninghubWorkflow",
             "workflow_id", "workflowId",

@@ -1,11 +1,13 @@
 import main
+from app.ai.domain import Connection, ResolvedTarget
+from app.ai import transport
 
 
 def test_runninghub_app_headers_do_not_override_request_host(monkeypatch):
-    monkeypatch.setattr(main, "runninghub_provider", lambda: {"id": "runninghub"})
-    monkeypatch.setenv("RUNNINGHUB_API_KEY", "test-key")
+    target = ResolvedTarget(connection=Connection(id="runninghub-connection", protocol="runninghub", name="RunningHub", base_url="https://www.runninghub.cn", enabled=True))
+    monkeypatch.setattr(transport, "get_connection_secret", lambda *_: "test-key")
 
-    headers = main.runninghub_app_headers(True)
+    headers = transport.headers_for_target(target)
 
     assert "Host" not in headers
     assert headers["Authorization"] == "Bearer test-key"

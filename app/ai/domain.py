@@ -1,8 +1,8 @@
 """Stable AI connection and resource domain types.
 
 These types deliberately do not know about FastAPI, environment variables, or
-the legacy ``api_providers`` storage shape.  The compatibility layer projects
-the latter into this domain while callers migrate to connection/model IDs.
+historical configuration formats. Migration tooling may translate archived
+records into this domain, but runtime callers use connection/model IDs only.
 """
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ ModelKind = Literal["chat", "image", "video"]
 @dataclass(frozen=True)
 class Connection:
     id: str
-    legacy_provider_id: str
     protocol: str
     name: str
     base_url: str
