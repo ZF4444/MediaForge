@@ -390,8 +390,8 @@ def _omnilojo_request_ids(item: dict[str, Any]) -> tuple[str, str]:
 
 def omnilojo_response_usage_values(provider: dict[str, Any], model: str, usage: dict[str, Any]) -> dict[str, Any]:
     """Calculate a priced token usage snapshot from one completion response."""
-    prompt_tokens = int(_omnilojo_number(usage.get("prompt_tokens")))
-    completion_tokens = int(_omnilojo_number(usage.get("completion_tokens")))
+    prompt_tokens = int(_omnilojo_number(usage.get("prompt_tokens", usage.get("input_tokens"))))
+    completion_tokens = int(_omnilojo_number(usage.get("completion_tokens", usage.get("output_tokens"))))
     prices = provider.get("omnilojo_model_prices") or {}
     configured_price = prices.get(str(model or ""), {}) if isinstance(prices, dict) else {}
     text_input_per_million = _omnilojo_number(configured_price.get("text_input_per_million", configured_price.get("input_per_million"))) if isinstance(configured_price, dict) else Decimal("0")

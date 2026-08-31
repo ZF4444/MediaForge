@@ -5112,7 +5112,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
                 settle_runninghub_usage, current_user_id(), task_id, raw,
                 status="succeeded", operation="image_generation", model=model,
             )
-    elif is_omnilojo_provider(provider):
+    elif isinstance(raw, dict) and raw.get("usage"):
         from app.services.usage import record_omnilojo_response_usage
         await asyncio.gather(*(
             asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider, model, raw_item, operation="image_generation")
