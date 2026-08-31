@@ -2844,17 +2844,9 @@ async def runninghub_app_info(webappId: str = ""):
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = runninghub_connection()
     api_key = await runninghub_api_key_async(provider)
-    url = runninghub_endpoint_url(provider, f"/api/webapp/apiCallDemo?apiKey={urllib.parse.quote(api_key)}&webappId={urllib.parse.quote(webapp_id)}")
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0)) as client:
-        try:
-            response = await client.get(url, headers=runninghub_app_headers(False, api_key))
-            raw = response.json()
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text[:500]) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"请求 RunningHub 应用信息失败：{exc}") from exc
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:500])
+    from app.ai.adapters.runninghub_transport import RunningHubTransport
+    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0))
+    raw = await transport.app_info(provider, api_key, webapp_id)
     if isinstance(raw, dict) and raw.get("code") not in (0, "0", None):
         raise HTTPException(status_code=400, detail=raw.get("msg") or f"RunningHub 查询失败 code={raw.get('code')}")
     data = raw.get("data") if isinstance(raw, dict) else {}
@@ -2892,16 +2884,10 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     instance_type = str(payload.instanceType or "").strip()
     if instance_type:
         body["instanceType"] = instance_type
-    url = runninghub_endpoint_url(provider, "/task/openapi/ai-app/run")
     async with connection_operation(str(provider.get("connection_id") or provider.get("id") or "runninghub"), "app_generation", user_id=user_id):
-        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0)) as client:
-            try:
-                response = await client.post(url, headers=runninghub_app_headers(True, api_key), json=body)
-                raw = response.json()
-            except Exception as exc:
-                raise HTTPException(status_code=502, detail=f"提交 RunningHub 任务失败：{exc}") from exc
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
+        from app.ai.adapters.runninghub_transport import RunningHubTransport
+        transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0))
+        raw = await transport.submit(provider, api_key, body)
     if isinstance(raw, dict) and raw.get("code") in (804, "804"):
         raise HTTPException(
             status_code=409,
@@ -2945,45 +2931,40 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connec
     if provider is None:
         raise HTTPException(status_code=404, detail="RunningHub 连接不存在或已禁用")
     api_key = await runninghub_api_key_async(provider)
-    url = runninghub_endpoint_url(provider, "/task/openapi/outputs")
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0)) as client:
+    from app.ai.adapters.runninghub_transport import RunningHubTransport
+    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0))
+    raw = await transport.query(provider, api_key, task_id)
+    code = raw.get("code") if isinstance(raw, dict) else None
+    urls = []
+    media_items = []
+    for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw):
+        ext = runninghub_output_ext(remote)
+        kind = runninghub_output_kind(ext)
+        if not persistOutputs:
+            urls.append(remote)
+            media_items.append(await run_storage_io(media_response_item, remote, "", kind))
+            continue
         try:
-            response = await client.post(url, headers=runninghub_app_headers(True, api_key), json={"apiKey": api_key, "taskId": task_id})
-            raw = response.json()
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"查询 RunningHub 任务失败：{exc}") from exc
-        if response.status_code >= 400:
-            raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
-        code = raw.get("code") if isinstance(raw, dict) else None
-        urls = []
-        media_items = []
-        for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw):
-            ext = runninghub_output_ext(remote)
-            kind = runninghub_output_kind(ext)
-            if not persistOutputs:
-                urls.append(remote)
-                media_items.append(await run_storage_io(media_response_item, remote, "", kind))
-                continue
-            try:
+            async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0)) as client:
                 local_url = await runninghub_store_remote_output(client, remote)
-            except Exception as exc:
-                logger.exception("failed to persist RunningHub output")
-                raise HTTPException(status_code=502, detail=f"RunningHub 输出写入 MinIO 失败：{exc}") from exc
-            urls.append(local_url)
-            media_items.append(await run_storage_io(media_response_item, local_url, "", kind))
-        status = runninghub_normalized_status(raw, code, urls)
-        await asyncio.to_thread(
-            settle_runninghub_usage, user_id, task_id, raw,
-            status=status, operation="ai_app", connection_id=connection_id, resource_id=resource_id,
-        )
-        result_data = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}
-        try:
-            quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
-            if quota_warning:
-                result_data["quota_warning"] = quota_warning
-        except Exception:
-            pass
-        return {"success": True, "data": result_data}
+        except Exception as exc:
+            logger.exception("failed to persist RunningHub output")
+            raise HTTPException(status_code=502, detail=f"RunningHub 输出写入 MinIO 失败：{exc}") from exc
+        urls.append(local_url)
+        media_items.append(await run_storage_io(media_response_item, local_url, "", kind))
+    status = runninghub_normalized_status(raw, code, urls)
+    await asyncio.to_thread(
+        settle_runninghub_usage, user_id, task_id, raw,
+        status=status, operation="ai_app", connection_id=connection_id, resource_id=resource_id,
+    )
+    result_data = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}
+    try:
+        quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
+        if quota_warning:
+            result_data["quota_warning"] = quota_warning
+    except Exception:
+        pass
+    return {"success": True, "data": result_data}
 
 @app.post("/api/runninghub/upload-asset")
 async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
@@ -3064,17 +3045,9 @@ async def runninghub_upload_asset_file(file: UploadFile = File(...), connection_
         raise HTTPException(status_code=400, detail=f"读取上传素材失败：{exc}") from exc
     if not content:
         raise HTTPException(status_code=400, detail="素材为空，无法上传到 RunningHub")
-    async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0)) as client:
-        upload_url = runninghub_endpoint_url(provider, "/task/openapi/upload")
-        files = {"file": (filename, content, content_type)}
-        data = {"apiKey": api_key, "fileType": "input"}
-        try:
-            response = await client.post(upload_url, headers=runninghub_app_headers(False, api_key), data=data, files=files)
-            raw = response.json()
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"上传素材到 RunningHub 失败：{exc}") from exc
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=json.dumps(raw, ensure_ascii=False)[:800])
+    from app.ai.adapters.runninghub_transport import RunningHubTransport
+    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0))
+    raw = await transport.upload(provider, api_key, filename, content, content_type)
     if isinstance(raw, dict) and raw.get("code") in (0, "0") and isinstance(raw.get("data"), dict) and raw["data"].get("fileName"):
         return {"success": True, "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type}}
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}")
