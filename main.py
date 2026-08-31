@@ -2242,15 +2242,10 @@ def runninghub_app_headers(json_body=True, api_key=None):
 
 
 async def wait_for_runninghub_image_task(client, provider, task_id):
-    deadline = time.monotonic() + IMAGE_TASK_TIMEOUT
-    while time.monotonic() < deadline:
-        response = await client.post(runninghub_endpoint_url(provider, "/openapi/v2/query"), headers=runninghub_api_headers(provider), json={"taskId": task_id})
-        response.raise_for_status(); raw = response.json()
-        status = runninghub_normalized_status(raw, raw.get("code") if isinstance(raw, dict) else None, runninghub_extract_outputs(raw))
-        if status == "SUCCESS": return raw
-        if status == "FAILED": raise HTTPException(status_code=502, detail=runninghub_fail_reason(raw))
-        await asyncio.sleep(min(IMAGE_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
-    raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{task_id}")
+    from app.ai.adapters.runninghub_transport import RunningHubTransport
+    key = await runninghub_api_key_async(provider)
+    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda api_key, body: runninghub_protocol_headers(api_key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0))
+    return await transport.poll(client, provider, key, task_id, timeout=IMAGE_TASK_TIMEOUT, interval=IMAGE_POLL_INTERVAL, status=runninghub_normalized_status, outputs=runninghub_extract_outputs, failure=runninghub_fail_reason)
 
 def runninghub_local_asset_path(source_url):
     return output_file_from_url(source_url)

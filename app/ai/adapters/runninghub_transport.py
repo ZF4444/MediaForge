@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 from fastapi import HTTPException
+import asyncio
+import time
 
 
 class RunningHubTransport:
@@ -35,6 +37,19 @@ class RunningHubTransport:
         async with self._client_factory(timeout=self._timeout) as client:
             response = await client.post(self._endpoint(connection, "/task/openapi/upload"), headers=dict(self._headers(api_key, False)), data={"apiKey": api_key, "fileType": "input"}, files={"file": (filename, content, content_type)})
             return self._json(response, "上传素材到 RunningHub 失败")
+
+    async def poll(self, client: Any, connection: Mapping[str, Any], api_key: str, task_id: str, *, timeout: float, interval: float, status: Callable[[Any, Any, list[str]], str], outputs: Callable[[Any], list[str]], failure: Callable[[Any], str]) -> Mapping[str, Any]:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            response = await client.post(self._endpoint(connection, "/openapi/v2/query"), headers=dict(self._headers(api_key, True)), json={"taskId": task_id})
+            raw = self._json(response, "查询 RunningHub 图片任务失败")
+            normalized = status(raw, raw.get("code") if isinstance(raw, Mapping) else None, outputs(raw))
+            if normalized == "SUCCESS":
+                return raw
+            if normalized == "FAILED":
+                raise HTTPException(status_code=502, detail=failure(raw))
+            await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+        raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{task_id}")
 
     @staticmethod
     def _json(response: Any, message: str) -> Mapping[str, Any]:
