@@ -3107,6 +3107,10 @@ async def ai_resources():
                 "kind": item.kind,
                 "name": item.name,
                 "title": (dict(item.settings).get("title") or dict(item.settings).get("name") or item.name),
+                # Resource settings contain the workflow-owned RH field
+                # definitions. Connection secrets are stored separately and
+                # are never included here.
+                "settings": dict(item.settings),
             }
             for item in repository.executable_resources()
             ],
