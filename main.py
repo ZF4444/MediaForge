@@ -23,6 +23,7 @@ import tempfile
 import math
 import shlex
 import functools
+from types import SimpleNamespace
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows uses the process lock only.
@@ -2324,6 +2325,27 @@ async def generate_omnilojo_image(prompt, size, model, reference_images=None, pr
     ))
 
 async def generate_openai_image(prompt, size, quality, model, reference_images=None, provider=None):
+    from app.ai.adapters.openai_images import OpenAIImagesExecutor
+    connection = provider or {}
+    executor = OpenAIImagesExecutor(
+        endpoint=lambda value, setting, fallback: connection_endpoint_url(value, setting, fallback),
+        headers=api_headers,
+        api_key=lambda connection_id: asyncio.to_thread(connection_api_key, connection_id),
+        resolve_file=lambda value: run_storage_io(output_file_from_url, value),
+        to_data_url=lambda value: run_storage_io(reference_to_data_url, value, 1536),
+        content_type=content_type_for_path,
+        is_cloudwise=is_cloudwise_connection,
+        unsupported=images_api_unsupported,
+        wait_task=lambda client, task_id, target: wait_for_image_task(client, task_id, target),
+        client_factory=shared_http_client,
+        timeout=AI_REQUEST_TIMEOUT,
+        long_timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
+    )
+    target = SimpleNamespace(connection=SimpleNamespace(id=connection.get("connection_id") or connection.get("id") or "", base_url=connection.get("base_url") or "", settings=connection), model=SimpleNamespace(id="", upstream_model=model), resource=None)
+    return await executor.generate(ImageGenerationRequest(prompt=prompt, size=size, quality=quality, model=model, reference_images=list(reference_images or []), connection=connection, target=target))
+
+    # Kept below only as a temporary source reference while downstream callers
+    # migrate; the canonical path above is the sole runtime implementation.
     is_gpt2 = is_gpt_image_2_model(model)
     quality = str(quality or "").strip().lower()
     if quality not in {"low", "medium", "high"}:
