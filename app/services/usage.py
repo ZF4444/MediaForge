@@ -394,13 +394,23 @@ def omnilojo_response_usage_values(provider: dict[str, Any], model: str, usage: 
     completion_tokens = int(_omnilojo_number(usage.get("completion_tokens")))
     prices = provider.get("omnilojo_model_prices") or {}
     configured_price = prices.get(str(model or ""), {}) if isinstance(prices, dict) else {}
-    input_per_million = _omnilojo_number(configured_price.get("input_per_million")) if isinstance(configured_price, dict) else Decimal("0")
+    text_input_per_million = _omnilojo_number(configured_price.get("text_input_per_million", configured_price.get("input_per_million"))) if isinstance(configured_price, dict) else Decimal("0")
+    image_input_per_million = _omnilojo_number(configured_price.get("image_input_per_million")) if isinstance(configured_price, dict) else Decimal("0")
     output_per_million = _omnilojo_number(configured_price.get("output_per_million")) if isinstance(configured_price, dict) else Decimal("0")
-    cost_usd = (Decimal(prompt_tokens) * input_per_million + Decimal(completion_tokens) * output_per_million) / Decimal("1000000")
+    details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
+    text_tokens = int(_omnilojo_number(details.get("text_tokens")))
+    image_tokens = int(_omnilojo_number(details.get("image_tokens")))
+    if text_tokens + image_tokens <= 0:
+        text_tokens, image_tokens = prompt_tokens, 0
+    cost_usd = (Decimal(text_tokens) * text_input_per_million + Decimal(image_tokens) * image_input_per_million + Decimal(completion_tokens) * output_per_million) / Decimal("1000000")
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
-        "input_per_million": input_per_million,
+        "text_input_tokens": text_tokens,
+        "image_input_tokens": image_tokens,
+        "text_input_per_million": text_input_per_million,
+        "image_input_per_million": image_input_per_million,
+        "input_per_million": text_input_per_million,
         "output_per_million": output_per_million,
         "cost_usd": cost_usd,
         "configured": bool(isinstance(configured_price, dict) and str(model or "") in prices),

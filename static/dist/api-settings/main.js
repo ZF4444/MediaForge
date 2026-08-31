@@ -55,6 +55,7 @@ const selectedModelProtocol = document.getElementById('selectedModelProtocol');
 const selectedModelProtocolField = document.getElementById('selectedModelProtocolField');
 const selectedModelPriceFields = document.getElementById('selectedModelPriceFields');
 const selectedModelInputPrice = document.getElementById('selectedModelInputPrice');
+const selectedModelImageInputPrice = document.getElementById('selectedModelImageInputPrice');
 const selectedModelOutputPrice = document.getElementById('selectedModelOutputPrice');
 const parameterSchemaBlock = document.getElementById('parameterSchemaBlock');
 const parameterSchemaEditor = document.getElementById('parameterSchemaEditor');
@@ -589,7 +590,8 @@ function renderSelectedModelConfig(item, ref){
     if(selectedModelProtocol) selectedModelProtocol.value = modelProtocol(item, model);
     // 价格是模型维度的成本配置，不依赖请求协议；切换协议后仍应可编辑。
     selectedModelPriceFields.hidden = false;
-    selectedModelInputPrice.value = price.input_per_million ?? '';
+    selectedModelInputPrice.value = price.text_input_per_million ?? price.input_per_million ?? '';
+    if(selectedModelImageInputPrice) selectedModelImageInputPrice.value = price.image_input_per_million ?? '';
     selectedModelOutputPrice.value = price.output_per_million ?? '';
 }
 function selectModel(providerId, kind, index){
@@ -1043,7 +1045,7 @@ function renderModels(kind){
             <input class="model-alias-input" value="${escapeAttr(alias)}" onclick="event.stopPropagation()" oninput="updateModelAlias('${kind}', ${index}, this.value)" placeholder="别名（选填）" title="画布中显示的名称">
             <label class="model-enabled-toggle" title="${modelEnabled(item, model) ? '已启用' : '已停用'}" onclick="event.stopPropagation()"><input type="checkbox" ${modelEnabled(item, model) ? 'checked' : ''} onchange="toggleModelEnabled('${kind}', ${index}, this.checked)"><span>启用</span></label>
             ${modelProtocolSelectHtml(kind, index, model, item)}
-            ${showPrices(model) ? `<div class="model-price-fields"><label>入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.input_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'input_per_million', this.value)" title="输入 USD / 100 万 token"></label><label>出 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.output_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'output_per_million', this.value)" title="输出 USD / 100 万 token"></label></div>` : ''}
+            ${showPrices(model) ? `<div class="model-price-fields"><label>文本输入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.text_input_per_million ?? price.input_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'text_input_per_million', this.value)" title="文本输入 USD / 100 万 token"></label><label>图片输入 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.image_input_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'image_input_per_million', this.value)" title="图片输入 USD / 100 万 token"></label><label>输出 <input type="number" min="0" step="0.0001" value="${escapeAttr(price.output_per_million ?? '')}" onclick="event.stopPropagation()" oninput="updateOmnilojoModelPrice('${kind}', ${index}, 'output_per_million', this.value)" title="输出 USD / 100 万 token"></label></div>` : ''}
             <button class="icon-btn" type="button" onclick="event.stopPropagation();removeModel('${kind}', ${index})" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
         </div>
     `;}).join('');
@@ -1418,6 +1420,7 @@ window.onload = () => {
     });
     selectedModelAliasInput?.addEventListener('input', event => updateSelectedModelAlias(event.target.value));
     selectedModelProtocol?.addEventListener('change', event => updateSelectedModelProtocol(event.target.value));
-    selectedModelInputPrice?.addEventListener('input', event => updateSelectedModelPrice('input_per_million', event.target.value));
+    selectedModelInputPrice?.addEventListener('input', event => updateSelectedModelPrice('text_input_per_million', event.target.value));
+    selectedModelImageInputPrice?.addEventListener('input', event => updateSelectedModelPrice('image_input_per_million', event.target.value));
     selectedModelOutputPrice?.addEventListener('input', event => updateSelectedModelPrice('output_per_million', event.target.value));
 };

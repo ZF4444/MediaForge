@@ -1217,7 +1217,8 @@ def normalize_provider(item):
             if not model_name or not isinstance(raw_price, dict):
                 continue
             omnilojo_model_prices[model_name] = {
-                "input_per_million": normalize_nonnegative_number(raw_price.get("input_per_million"), 0, "Omnilojo 输入单价"),
+                "text_input_per_million": normalize_nonnegative_number(raw_price.get("text_input_per_million", raw_price.get("input_per_million")), 0, "文本输入单价"),
+                "image_input_per_million": normalize_nonnegative_number(raw_price.get("image_input_per_million"), 0, "图片输入单价"),
                 "output_per_million": normalize_nonnegative_number(raw_price.get("output_per_million"), 0, "Omnilojo 输出单价"),
             }
     rh_apps = normalize_runninghub_entries(item.get("rh_apps") or [], "app")
@@ -1245,7 +1246,7 @@ def normalize_provider(item):
         if effective_protocol({"id": provider_id, "protocol": protocol, "model_protocols": model_protocols}, model_name) == "omnilojo"
     }
     if configured_models:
-        missing_prices = [model for model in configured_models if not omnilojo_model_prices.get(model) or omnilojo_model_prices[model]["input_per_million"] <= 0 or omnilojo_model_prices[model]["output_per_million"] <= 0]
+        missing_prices = [model for model in configured_models if not omnilojo_model_prices.get(model) or omnilojo_model_prices[model]["text_input_per_million"] <= 0 or omnilojo_model_prices[model]["output_per_million"] <= 0]
         if missing_prices:
             raise HTTPException(status_code=400, detail=f"Omnilojo 模型必须配置输入和输出单价：{', '.join(sorted(missing_prices)[:3])}")
     return {
