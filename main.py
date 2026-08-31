@@ -868,13 +868,9 @@ from app.models import (
 
 def check_images_exist(backend_addr, images):
     if not images: return True
+    from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
     for img in images:
-        try:
-            url = comfyui_url(backend_addr, f"/view?filename={urllib.parse.quote(img)}&type=input")
-            r = requests.get(url, stream=True, timeout=0.5)
-            r.close()
-            if r.status_code != 200: return False
-        except: return False
+        if not ComfyUIAssetTransport.input_exists(comfyui_url, backend_addr, img): return False
     return True
 
 MEDIA_INPUT_KEYS = ("image", "video", "audio", "mask", "filename", "file")
@@ -908,14 +904,13 @@ def get_best_backend(required_images: List[str] = None):
 
     for addr in COMFYUI_INSTANCES:
         try:
-            with urllib.request.urlopen(comfyui_url(addr, "/queue"), timeout=1) as response:
-                data = json.loads(response.read())
-                remote_load = len(data.get('queue_running', [])) + len(data.get('queue_pending', []))
-                with LOAD_LOCK:
-                    local_load = BACKEND_LOCAL_LOAD.get(addr, 0)
-                effective_load = max(remote_load, local_load)
-                has_images = check_images_exist(addr, required_images)
-                backend_stats[addr] = {"load": effective_load, "has_images": has_images}
+            from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+            remote_load = ComfyUIAssetTransport.queue_load(comfyui_url, addr)
+            with LOAD_LOCK:
+                local_load = BACKEND_LOCAL_LOAD.get(addr, 0)
+            effective_load = max(remote_load, local_load)
+            has_images = check_images_exist(addr, required_images)
+            backend_stats[addr] = {"load": effective_load, "has_images": has_images}
         except Exception:
             logger.warning("ComfyUI backend unreachable", exc_info=True, extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr})
             continue
@@ -935,11 +930,10 @@ def reserve_best_backend(required_images: List[str] = None):
     backend_stats = {}
     for addr in COMFYUI_INSTANCES:
         try:
-            with urllib.request.urlopen(comfyui_url(addr, "/queue"), timeout=1) as response:
-                data = json.loads(response.read())
-                remote_load = len(data.get('queue_running', [])) + len(data.get('queue_pending', []))
-                has_images = check_images_exist(addr, required_images)
-                backend_stats[addr] = {"remote_load": remote_load, "has_images": has_images}
+            from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+            remote_load = ComfyUIAssetTransport.queue_load(comfyui_url, addr)
+            has_images = check_images_exist(addr, required_images)
+            backend_stats[addr] = {"remote_load": remote_load, "has_images": has_images}
         except Exception:
             logger.warning("ComfyUI backend unreachable", exc_info=True, extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr})
             continue
@@ -5646,8 +5640,8 @@ def generate(req: GenerateRequest):
 
                 if image_content:
                     try:
-                        files = {'image': (image_name, image_content, image_type)}
-                        requests.post(comfyui_url(target_backend, "/upload/image"), files=files, timeout=10)
+                        from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+                        ComfyUIAssetTransport.upload_sync(comfyui_url, target_backend, image_name, image_content, image_type)
                     except Exception:
                         logger.exception("ComfyUI sync upload failed", extra={"event": "upload_failed", "provider": "comfyui", "operation": "sync_upload", "endpoint": target_backend})
 
