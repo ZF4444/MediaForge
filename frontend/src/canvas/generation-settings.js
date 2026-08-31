@@ -53,10 +53,12 @@
 function syncEngineOptionsVisibility(){
     if(!engineSelect) return;
     const has = id => (aiConnections || []).some(p => p.id === id && p.enabled !== false);
-    engineSelect.querySelector('option[value="runninghub"]').hidden = !has('runninghub');
+    const runningHubOption = engineSelect.querySelector('option[value="runninghub"]');
+    if(runningHubOption) runningHubOption.hidden = !has('runninghub');
     // api 引擎：至少有一个非特殊 provider 启用且有 image_models
     const apiHidden = !imageConnections().length;
-    engineSelect.querySelector('option[value="api"]').hidden = apiHidden;
+    const apiOption = engineSelect.querySelector('option[value="api"]');
+    if(apiOption) apiOption.hidden = apiHidden;
     // 当前选中引擎被隐藏时，回退到第一个可见引擎
     if(engineSelect.selectedOptions[0]?.hidden){
         const visible = engineSelect.querySelector('option:not([hidden])');
@@ -1748,7 +1750,8 @@ async function loadConfig({invalidateParameterSchemas=false}={}){
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
     } catch(e) {
-        toast(tr('smart.toastApiSettingsFail'));
+        console.error('[canvas] API settings refresh failed', e);
+        toast(`${tr('smart.toastApiSettingsFail')}：${e?.message || '页面组件尚未准备完成'}`);
     }
 }
 
