@@ -60,7 +60,7 @@
             canvas: ['无限画布', '就绪'],
             'gpt-chat': ['GPT 对话', '准备开始对话'],
             'asset-manager': ['素材库', '浏览与整理素材'],
-            'api-settings': ['连接', '管理模型与服务连接'],
+            'api-settings': ['API 设置', '管理 Connections 与 Models'],
             'comfyui-settings': ['工作流设置', '配置工作流节点'],
             'my-account': ['我的账户', '账户设置'],
             'user-management': ['用户管理', '管理团队成员'],

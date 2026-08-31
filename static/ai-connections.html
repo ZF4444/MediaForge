@@ -3,17 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>AI 连接与资源</title>
+  <title>API 设置</title>
+  <script src="/static/vendor/js/lucide.js"></script>
   <script src="/static/js/theme.js"></script>
   <link rel="stylesheet" href="/static/css/api-settings.css">
   <link rel="stylesheet" href="/static/css/theme.css">
   <link rel="stylesheet" href="/static/css/macos-dark.css">
-  <style>
-    body{margin:0;background:#f4f6f8;color:#20242b;font:14px system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:1280px;margin:0 auto;padding:28px 24px}h1{margin:0;font-size:24px}.toolbar{display:flex;gap:10px;align-items:center;margin:14px 0 20px}button{border:1px solid #cbd1da;background:#fff;border-radius:6px;padding:8px 13px;cursor:pointer}button.primary{background:#1f6feb;color:#fff;border-color:#1f6feb}.status{color:#697386;margin-left:auto}.status.error{color:#b42318}.workspace{display:grid;grid-template-columns:300px minmax(0,1fr);gap:18px}.sidebar,.editor-panel{background:#fff;border:1px solid #e1e5eb;border-radius:8px}.sidebar{padding:14px}.sidebar h2{font-size:12px;color:#697386;text-transform:uppercase;letter-spacing:.04em;margin:14px 8px 6px}.nav-item{width:100%;display:flex;gap:10px;align-items:center;text-align:left;border:0;border-radius:6px;padding:9px 8px}.nav-item:hover,.nav-item.active{background:#eef4ff}.nav-item b,.nav-item small{display:block}.nav-item small{color:#697386;margin-top:2px}.dot,.kind{width:9px;height:9px;border-radius:50%;background:#2da44e;flex:none}.dot.off{background:#9aa3af}.kind{display:grid;place-items:center;width:24px;height:24px;border-radius:5px;background:#e8f0ff;color:#1f6feb;font-size:11px}.kind.resource{background:#edf7f0;color:#16803c}.empty{color:#8a94a3;padding:8px}.editor-panel{padding:22px;min-height:560px}.editor-title{display:flex;justify-content:space-between;align-items:center;font-weight:650;font-size:17px;margin-bottom:20px}.editor-panel label{display:grid;gap:6px;margin:0 0 14px;color:#4b5563;font-size:12px}.editor-panel input,.editor-panel select,.editor-panel textarea{box-sizing:border-box;width:100%;border:1px solid #cbd1da;border-radius:5px;padding:9px;background:#fff;color:#20242b;font:inherit}.editor-panel textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;resize:vertical}.check{display:flex!important;align-items:center;gap:8px}.check input{width:auto}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.actions{display:flex;gap:10px;margin-top:18px}.danger{color:#b42318;border-color:#f2c2c0}.empty-state{display:grid;place-items:center;height:520px;color:#8a94a3}@media(max-width:800px){main{padding:18px 12px}.workspace{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr;gap:4px}.sidebar h2{grid-column:1/-1}.split{grid-template-columns:1fr}}
-  </style>
 </head>
-<body><main>
-  <h1>AI 连接与资源</h1>
-  <div class="toolbar"><button class="primary" id="save">保存配置</button><button id="refresh">重新加载</button><span class="status" id="status"></span></div>
-  <div class="workspace"><aside class="sidebar"><h2>Connections <button id="add-connection">+</button></h2><div id="connections"></div><h2>Models <button id="add-model">+</button></h2><div id="models"></div><h2>Resources <button id="add-resource">+</button></h2><div id="resources"></div></aside><section class="editor-panel" id="editor"></section></div>
-</main><script src="/static/js/ai-connections.js"></script></body></html>
+<body>
+  <main class="api-page">
+    <header class="api-header">
+      <div>
+        <p class="api-eyebrow">API 设置</p>
+        <h1>Connections <span aria-hidden="true">·</span> Models</h1>
+        <p class="api-subtitle">管理服务连接与可用模型，已有配置会被安全保留。</p>
+      </div>
+      <div class="api-header-actions">
+        <span id="status" class="api-status" role="status" aria-live="polite"></span>
+        <button id="refresh" class="api-button" type="button" aria-label="重新加载"><i data-lucide="refresh-cw"></i><span>重新加载</span></button>
+        <button id="save" class="api-button api-button-primary" type="button" aria-label="保存配置"><i data-lucide="check"></i><span>保存配置</span></button>
+      </div>
+    </header>
+    <nav class="api-tabs" aria-label="API 设置视图" role="tablist">
+      <button class="api-tab active" id="tab-connections" data-tab="connections" role="tab" aria-selected="true" aria-controls="connections"><i data-lucide="plug-zap"></i><span>Connections</span><small id="connections-count">0</small></button>
+      <button class="api-tab" id="tab-models" data-tab="models" role="tab" aria-selected="false" aria-controls="models"><i data-lucide="box"></i><span>Models</span><small id="models-count">0</small></button>
+    </nav>
+    <section class="api-workspace">
+      <aside class="api-list-panel">
+        <div class="api-list-head"><div><h2 id="list-title">Connections</h2><p id="list-subtitle">服务连接</p></div><button id="add-connection" class="api-icon-button" type="button" title="新增连接"><i data-lucide="plus"></i></button><button id="add-model" class="api-icon-button" type="button" title="新增模型" hidden><i data-lucide="plus"></i></button></div>
+        <div id="connections" class="api-list" data-panel-list="connections"></div>
+        <div id="models" class="api-list" data-panel-list="models" hidden></div>
+      </aside>
+      <section class="api-editor-panel" id="editor" aria-live="polite"></section>
+    </section>
+  </main>
+  <script src="/static/js/ai-connections.js"></script>
+</body>
+</html>
