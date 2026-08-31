@@ -195,7 +195,7 @@ def capability_parameters(*, capability: str, provider_id: str = "", model: str 
         else:
             target = repo.resolve_model(model_id=model_id, connection_id=connection_id, model=model)
             provider_id, connection_id, model = target.connection.id, target.connection.id, target.model.upstream_model
-            selected = {"id": target.connection.id, "name": target.connection.name, "protocol": target.connection.protocol, "enabled": target.connection.enabled, f"{target.model.kind}_models": [model], "model_aliases": {model: target.model.alias}}
+            selected = {"id": target.connection.id, "name": target.connection.name, "protocol": target.connection.protocol, "enabled": target.connection.enabled, f"{target.model.kind}_models": [model], "model_aliases": {model: target.model.alias}, "parameter_schema": deepcopy(dict(target.model.settings).get("parameter_schema") or {})}
         providers = [selected]
     else:
         # Provider-shaped input is retained solely for reading historical
@@ -228,11 +228,9 @@ def capability_parameters(*, capability: str, provider_id: str = "", model: str 
     provider_field.update(default=provider_id, options=[item.get("id") for item in providers if item.get(f"{kind}_models")])
     models = list((selected or {}).get(f"{kind}_models") or [])
     aliases = (selected or {}).get("model_aliases") or {}
-    model_field.update(
-        default=model,
-        options=models,
-        option_labels=[str(aliases.get(item) or item) for item in models],
-    )
+    model_field.update(default=model, options=models)
+    if not model_field.get("option_labels"):
+        model_field["option_labels"] = [str(aliases.get(item) or item) for item in models]
     return {"capability": capability, "connection_id": connection_id, "model_id": model_id, "resource_id": resource_id, "provider_id": provider_id, "model": model, "params_path": "runSettings", "fields": fields, "source": sources}
 
 

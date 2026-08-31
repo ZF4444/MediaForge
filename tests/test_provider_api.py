@@ -59,6 +59,30 @@ def test_parameter_schema_only_applies_model_overrides():
     assert resolved["source"] == ["system.default", "provider.parameter_schema.models"]
 
 
+def test_parameter_schema_is_loaded_from_persisted_model_settings(monkeypatch):
+    from app.ai.domain import Connection, ModelResource, ResolvedTarget
+    from app.services.ai_parameters import capability_parameters
+
+    target = ResolvedTarget(
+        connection=Connection(id="conn", protocol="openai", name="Connection", base_url="", enabled=True),
+        model=ModelResource(
+            id="model-id", connection_id="conn", upstream_model="image-model", kind="image", protocol="openai",
+            settings={"parameter_schema": {"image": {"fields": [{"id": "quality", "name": "画质等级", "options": ["low", "high"], "option_labels": ["省钱", "旗舰"], "default": "high"}]}}},
+        ),
+    )
+
+    class FakeRepository:
+        def resolve_model(self, **kwargs):
+            return target
+
+    monkeypatch.setattr("app.ai.database_repository.DatabaseAIRepository", FakeRepository)
+    fields = capability_parameters(capability="image.text_to_image", model_id="model-id")["fields"]
+    quality = next(field for field in fields if field["id"] == "quality")
+    assert quality["name"] == "画质等级"
+    assert quality["option_labels"] == ["省钱", "旗舰"]
+    assert quality["default"] == "high"
+
+
 def test_image_ratio_schema_uses_readable_values(monkeypatch):
     from app.services.ai_parameters import capability_parameters, validate_run_settings
 
