@@ -3426,10 +3426,10 @@ function smartPendingTasks(node){
 }
 function isRunningHubPendingTask(task){
     const provider = String(task?.providerId || task?.provider || task?.engine || '').toLowerCase();
-    if(provider !== 'runninghub') return false;
     // RunningHub 标准模型 API（如 GPT-Image2）走通用 /api/canvas-image-tasks 流程，
     // 只有 AI 应用引擎提交的任务才带 mode 标记，需要走 /api/runninghub/query 轮询。
-    return task?.mode === 'app';
+    // Old canvas records omitted providerId, so mode is the durable discriminator.
+    return task?.mode === 'app' && (!provider || provider === 'runninghub');
 }
 function isComfyPendingTask(task){
     return task?.taskType === 'comfy'
@@ -3594,7 +3594,7 @@ async function pollCanvasComfyTask(taskId){
     }
 }
 async function pollSmartPendingTask(task){
-    if(isRunningHubPendingTask(task)) return pollRunningHubTask(task.taskId);
+    if(isRunningHubPendingTask(task)) return pollRunningHubTask(task.taskId, task);
     if(isComfyPendingTask(task)) return pollCanvasComfyTask(task.taskId);
     return pollCanvasTask(task.taskId);
 }

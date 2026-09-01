@@ -1055,7 +1055,7 @@ async function runGeneration(){
             const taskResult = await submitRunningHubGeneration(prompt, refs);
             const taskIds = [taskResult.taskId].filter(Boolean);
             if(!taskIds.length) throw new Error(tr('smart.rhNoTaskId'));
-            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', connectionId:taskResult.connectionId, resourceId:taskResult.resourceId, mode:taskResult.mode}));
+            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:'runninghub', connectionId:taskResult.connectionId, resourceId:taskResult.resourceId, mode:taskResult.mode}));
             pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
             pendingNode.pendingCandidatePool = true;
             pendingNode.runStartedAt = nowMs();
