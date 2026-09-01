@@ -1162,7 +1162,11 @@ def display_title(text):
 
 def api_headers(json_body=True, connection=None, model="", api_key=""):
     if connection:
-        api_key = str(api_key or connection_api_key(connection.get("connection_id") or connection.get("id")) or "").strip()
+        # Async gateways preload the canonical secret into the transient
+        # connection view on a worker thread. Never read it again here: this
+        # function runs on the event loop, where the synchronous database
+        # bridge is rejected and would mask a missing key with a RuntimeError.
+        api_key = str(api_key or connection.get("api_key") or "").strip()
         connection_name = connection.get("name") or connection.get("id") or "connection"
         if not api_key:
             raise HTTPException(status_code=400, detail=f"未配置 {connection_name} 的 API Key，请在 API 平台管理中填写。")
@@ -1784,8 +1788,9 @@ def volcengine_sign_v4_headers(ak: str, sk: str, action: str, body_str: str,
 
 async def volcengine_ark_asset_call(client, action: str, body: Dict[str, Any]) -> Dict[str, Any]:
     """调用一次火山 Ark Assets OpenAPI，返回 Result 内容；出错抛 HTTPException。"""
-    ak = volcengine_access_key_value()
-    sk = volcengine_secret_key_value()
+    # Secret storage is a synchronous bridge that rejects event-loop calls.
+    ak = await asyncio.to_thread(volcengine_access_key_value)
+    sk = await asyncio.to_thread(volcengine_secret_key_value)
     if not ak or not sk:
         raise HTTPException(status_code=400, detail="未配置火山引擎 AK/SK，请在 API 设置中填写 Access Key ID / Secret Access Key。")
     body_str = json.dumps(body, ensure_ascii=False)
@@ -2224,7 +2229,10 @@ def runninghub_connection():
     return canonical_connection_view(target)
 
 def runninghub_api_key(provider):
-    key = connection_api_key((provider or {}).get("connection_id") or (provider or {}).get("id"))
+    # Async generation preloads the canonical secret into the transient
+    # provider view. Reuse it so adapters never cross the sync DB bridge from
+    # an event-loop task.
+    key = str((provider or {}).get("api_key") or "").strip() or connection_api_key((provider or {}).get("connection_id") or (provider or {}).get("id"))
     if not key:
         raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     return key
@@ -2238,15 +2246,6 @@ async def runninghub_api_key_async(provider):
     if not key:
         raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     return key
-
-def runninghub_api_headers(provider, api_key=None):
-    key = api_key if api_key is not None else runninghub_api_key(provider)
-    return runninghub_protocol_headers(key, json_body=True)
-
-def runninghub_app_headers(json_body=True, api_key=None):
-    key = api_key if api_key is not None else runninghub_api_key(runninghub_connection())
-    return runninghub_protocol_headers(key, json_body=json_body)
-
 
 async def wait_for_runninghub_image_task(client, provider, task_id):
     from app.ai.adapters.runninghub_transport import RunningHubTransport
@@ -2343,12 +2342,18 @@ async def _image_adapter_runninghub(request: ImageGenerationRequest):
         return runninghub_extract_task_id(payload)
 
     async def poll(client, connection, task_id):
-        return await wait_for_runninghub_image_task(client, connection, task_id)
+        return await wait_for_runninghub_image_task(client, {**connection, "api_key": preloaded_key}, task_id)
 
+    # The gateway preloads the canonical secret on a worker thread. Adapters run
+    # on the event loop, where the synchronous secret bridge is rejected, so the
+    # key must be threaded through instead of re-read per request.
+    preloaded_key = str((request.connection or {}).get("api_key") or "").strip()
+    if not preloaded_key:
+        raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     adapter = RunningHubImageAdapter(
         submit_url=lambda value: runninghub_endpoint_url(value, "/task/openapi/ai-app/run"),
-        headers=lambda value: runninghub_app_headers(True, runninghub_api_key(value)),
-        api_key=lambda value: runninghub_api_key(value),
+        headers=lambda value: runninghub_protocol_headers(preloaded_key, json_body=True),
+        api_key=lambda value: preloaded_key,
         client_factory=shared_http_client,
         extract_task_id=extract_task,
         poll=poll,
@@ -2413,6 +2418,9 @@ async def generate_ai_image_target(target, *, prompt: str, size: str, quality: s
     from app.ai.images import ImageGateway
 
     runtime_provider = canonical_connection_view(target)
+    # Secret storage is synchronous for legacy compatibility. Load it once on
+    # a worker thread and pass the value through the async adapter pipeline.
+    runtime_provider["api_key"] = await asyncio.to_thread(connection_api_key, target.connection.id)
 
     async def dispatch(command):
         model = command.target.model.upstream_model if command.target.model else ""
@@ -2844,7 +2852,7 @@ async def runninghub_app_info(webappId: str = ""):
     webapp_id = str(webappId or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
-    provider = runninghub_connection()
+    provider = await asyncio.to_thread(runninghub_connection)
     api_key = await runninghub_api_key_async(provider)
     from app.ai.adapters.runninghub_transport import RunningHubTransport
     transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0))
@@ -3206,10 +3214,14 @@ async def ai_connection_discover(connection_id: str):
     from app.services.connection_secrets import get_connection_secret
 
     repository = DatabaseAIRepository()
-    target = next((item for item in repository.connections() if item.id == connection_id), None)
+    # The repository and secret store both use the synchronous database bridge,
+    # which rejects event-loop calls. Read them together on a worker thread.
+    def load():
+        connection = next((item for item in repository.connections() if item.id == connection_id), None)
+        return connection, get_connection_secret(connection_id, "api_key") if connection else ""
+    target, api_key = await asyncio.to_thread(load)
     if target is None:
         raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用")
-    api_key = get_connection_secret(connection_id, "api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="该连接未配置 API Key")
     async def discover(connection):
@@ -3231,10 +3243,14 @@ async def ai_connection_test(connection_id: str):
     require_api_settings_access()
     from app.ai.database_repository import DatabaseAIRepository
     from app.services.connection_secrets import get_connection_secret
-    target = next((item for item in DatabaseAIRepository().connections() if item.id == connection_id), None)
+    # Both lookups cross the synchronous database bridge, which rejects
+    # event-loop calls. Resolve them on a worker thread.
+    def load():
+        connection = next((item for item in DatabaseAIRepository().connections() if item.id == connection_id), None)
+        return connection, get_connection_secret(connection_id, "api_key") if connection else ""
+    target, api_key = await asyncio.to_thread(load)
     if target is None:
         raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用")
-    api_key = get_connection_secret(connection_id, "api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="该连接未配置 API Key")
     try:
@@ -3406,7 +3422,7 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
     """从上游模型列表端点拉取模型，并按名称做轻量分类。"""
     protocol = protocol if protocol in SUPPORTED_PROVIDER_PROTOCOLS else "openai"
     base_url = validate_public_http_url(base_url, label="请求地址")
-    api_key = volcengine_provider_api_key(api_key) if protocol == "volcengine" else (api_key or "").strip()
+    api_key = await asyncio.to_thread(volcengine_provider_api_key, api_key) if protocol == "volcengine" else (api_key or "").strip()
     if not api_key:
         key_name = "方舟 API Key" if protocol == "volcengine" else "API Key"
         raise HTTPException(status_code=400, detail=f"请先填写或保存 {key_name}")
@@ -4424,7 +4440,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     base_url = video_api_root(provider)
     if not base_url:
         raise HTTPException(status_code=400, detail=f"{provider['id']} 未配置 Base URL")
-    api_key = connection_api_key(provider.get("connection_id") or provider["id"])
+    api_key = await asyncio.to_thread(connection_api_key, provider.get("connection_id") or provider["id"])
     if not api_key:
         raise HTTPException(status_code=400, detail=f"未配置 {provider['id']} 的 API Key，请在 API 设置中填写。")
     is_volcengine = is_volcengine_connection(provider)

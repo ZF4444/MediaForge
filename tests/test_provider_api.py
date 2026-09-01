@@ -6,6 +6,44 @@ import pytest
 from app.services import business_metadata
 
 
+def test_api_headers_use_preloaded_connection_secret(monkeypatch):
+    monkeypatch.setattr(main, "connection_api_key", lambda _connection_id: (_ for _ in ()).throw(AssertionError("sync secret lookup")))
+
+    headers = main.api_headers(connection={"id": "banana", "protocol": "openai", "api_key": "secret"})
+
+    assert headers["Authorization"] == "Bearer secret"
+
+
+def test_api_headers_reject_missing_key_without_sync_secret_lookup(monkeypatch):
+    """A connection without a preloaded key must not cross the sync DB bridge.
+
+    ``api_headers`` runs on the event loop, where ``database_connection_sync``
+    raises RuntimeError. Reading the secret there turned "API Key 未配置" into an
+    opaque event-loop error for canvas image tasks.
+    """
+    monkeypatch.setattr(main, "connection_api_key", lambda _connection_id: (_ for _ in ()).throw(AssertionError("sync secret lookup")))
+
+    with pytest.raises(main.HTTPException) as excinfo:
+        main.api_headers(connection={"id": "legacy:custom-api-2", "connection_id": "legacy:custom-api-2", "name": "Omnilojo", "protocol": "omnilojo"})
+
+    assert excinfo.value.status_code == 400
+    assert "API Key" in str(excinfo.value.detail)
+
+
+def test_runninghub_image_adapter_uses_preloaded_key(monkeypatch):
+    """The RunningHub image adapter must reuse the gateway-preloaded secret."""
+    from app.ai.registry import ImageGenerationRequest
+
+    monkeypatch.setattr(main, "connection_api_key", lambda _connection_id: (_ for _ in ()).throw(AssertionError("sync secret lookup")))
+    request = ImageGenerationRequest(prompt="hi", size="1024x1024", quality="", model="app-1", reference_images=[], connection={"connection_id": "legacy:runninghub"})
+
+    with pytest.raises(main.HTTPException) as excinfo:
+        asyncio.run(main._image_adapter_runninghub(request))
+
+    assert excinfo.value.status_code == 400
+    assert "RunningHub API Key" in str(excinfo.value.detail)
+
+
 def test_cloudwise_openai_image_endpoints_accept_host_only_base_url():
     provider = {"id": "cloudwise", "base_url": "https://api.cloudwise.ai"}
     assert main.connection_endpoint_url(provider, "image_generation_endpoint", "/v1/images/generations") == "https://api.cloudwise.ai/api/v1/images/generations"

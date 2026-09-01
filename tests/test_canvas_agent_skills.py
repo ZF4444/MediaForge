@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
@@ -10,6 +11,33 @@ from app.services.canvas_agent.runtime import create_canvas_agent
 
 from app.services.canvas_agent import skills
 from app.services.canvas_agent.tools import build_canvas_tools
+
+
+def test_capability_parameters_display_lookup_runs_off_event_loop(monkeypatch):
+    from app.ai.domain import Connection, ModelResource
+    from app.services.canvas_agent import tools as canvas_tools
+
+    event_loop_thread = threading.get_ident()
+
+    class Repository:
+        def connections(self):
+            assert threading.get_ident() != event_loop_thread
+            return [Connection("conn-banana", "openai", "Banana", "https://example.test/v1", True)]
+
+        def models(self):
+            assert threading.get_ident() != event_loop_thread
+            return [ModelResource("banana2", "conn-banana", "banan2", "image", "openai", alias="Banan 2")]
+
+    monkeypatch.setattr("app.ai.database_repository.DatabaseAIRepository", Repository)
+    monkeypatch.setattr(canvas_tools, "capability_parameters", lambda **_kwargs: {
+        "fields": [{"id": "quality", "options": ["standard"], "default": "standard"}],
+    })
+    tool = next(item for item in build_canvas_tools(user_id="user", run_id="run", canvas_id="canvas") if item.name == "read_capability_parameters")
+
+    result = asyncio.run(tool.ainvoke({"capability": "image.text_to_image", "connection_id": "conn-banana", "model": "banan2"}))
+
+    assert result["display_connection"] == "Banana"
+    assert result["display_model"] == "Banan 2"
 
 
 def test_execution_tool_records_a_tool_message_and_execution_result():

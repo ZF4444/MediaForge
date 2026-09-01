@@ -76,7 +76,9 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
             resource_id=resource_id,
             model=model,
         )
-        return agent_display_schema(schema, connection_id, model)
+        # The display labels are stored alongside the canonical AI resources.
+        # Keep this legacy synchronous repository lookup off the ASGI loop.
+        return await asyncio.to_thread(agent_display_schema, schema, connection_id, model)
 
     @tool
     async def read_artifact(artifact_type: str = "") -> dict[str, Any] | None:
