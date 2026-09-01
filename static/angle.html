@@ -744,16 +744,12 @@
     <script>
         lucide.createIcons();
         function tr(key){ return window.StudioI18n ? StudioI18n.t(key) : key; }
-        function applyLanguage(lang){
-            if(lang && window.StudioI18n) StudioI18n.set(lang);
+        function applyLanguage(){
             document.title = tr('nav.angle');
             const btnText = document.getElementById('btnText');
             if(btnText && !document.getElementById('genBtn')?.disabled) btnText.textContent = tr('studio.generateAngle');
         }
-        window.addEventListener('message', event => {
-            if(event.data?.type === 'studio-lang') applyLanguage(event.data.lang);
-        });
-        window.addEventListener('studio-lang-change', () => { document.title = tr('nav.angle'); });
+        applyLanguage();
         
         // --- RunningHub Qwen-Edit-2511 Multiple-Angles LoRA ---
         const RH_WEBAPP_ID = '2062489144189865985';

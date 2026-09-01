@@ -292,9 +292,9 @@ function inputThumbType(item){
 }
 function inputThumbLabel(item, index){
     const n = index + 1;
-    if(isVideoMediaItem(item)) return window.StudioI18n?.lang?.() === 'en' ? `Video ${n}` : `视频${n}`;
-    if(isAudioMediaItem(item)) return window.StudioI18n?.lang?.() === 'en' ? `Audio ${n}` : `音频${n}`;
-    return window.StudioI18n?.lang?.() === 'en' ? `Image ${n}` : `图${n}`;
+    if(isVideoMediaItem(item)) return `视频${n}`;
+    if(isAudioMediaItem(item)) return `音频${n}`;
+    return `图${n}`;
 }
 function renderRunningHubInputThumbsRow(node){
     const fields = rhActiveFields().filter(field => ['image','video','audio'].includes(rhFieldKind(field)));

@@ -77,11 +77,11 @@ describe('promptTemplateName / promptTemplateScene', () => {
         expect(sandbox.promptTemplateScene(template)).toBe('场景');
     });
 
-    it('英文模式下优先返回 name_en/scene_en', () => {
+    it('始终使用中文字段，即使模板包含英文备用字段', () => {
         const sandbox = createPromptTemplatesSandbox({ studioI18n: { lang: () => 'en' } });
         const template = { name: '中文名', name_en: 'English Name', scene: '场景', scene_en: 'Scene' };
-        expect(sandbox.promptTemplateName(template)).toBe('English Name');
-        expect(sandbox.promptTemplateScene(template)).toBe('Scene');
+        expect(sandbox.promptTemplateName(template)).toBe('中文名');
+        expect(sandbox.promptTemplateScene(template)).toBe('场景');
     });
 
     it('英文模式下缺少 _en 字段时回退到中文字段', () => {

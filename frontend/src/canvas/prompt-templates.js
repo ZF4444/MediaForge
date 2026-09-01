@@ -211,11 +211,9 @@ function promptTemplateText(template, mode='positive'){
     return [positive, negative ? `Negative prompt:\n${negative}` : '', params ? `Params:\n${params}` : ''].filter(Boolean).join('\n\n');
 }
 function promptTemplateName(template){
-    if(window.StudioI18n?.lang?.() === 'en' && template?.name_en) return template.name_en;
     return template?.name || '';
 }
 function promptTemplateScene(template){
-    if(window.StudioI18n?.lang?.() === 'en' && template?.scene_en) return template.scene_en;
     return template?.scene || '';
 }
 function promptTemplateSearchText(template){

@@ -1904,13 +1904,13 @@ function renderCanvasLog(){
             const kind = outputUrlLooksVideo(url) ? 'video' : 'image';
             return kind === 'video' ? videoPosterHtml({url, kind}) : `<img src="${safe}" data-url="${safe}" data-kind="image" alt="output">`;
         }).join('');
-        const date = new Date(log.createdAt || Date.now()).toLocaleString(window.StudioI18n?.lang() === 'en' ? 'en-US' : 'zh-CN');
+    const date = new Date(log.createdAt || Date.now()).toLocaleString('zh-CN');
         const req = log.request || {};
         const taskId = req.task_id || req.taskId || req.prompt_id || req.promptId || '';
         const backend = req.workflow_json || req.workflow || req.provider_id || req.providerId || req.backend || '';
         const subParts = [
             date,
-            `${window.StudioI18n?.lang() === 'en' ? 'outputs' : '输出'} ${(log.outputs || []).length}`,
+            `输出 ${(log.outputs || []).length}`,
             taskId ? `ID ${taskId}` : '',
             backend
         ].filter(Boolean);
@@ -5225,9 +5225,6 @@ function windowMessageHandler(event){
     if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed') refreshSmartConfigFromSettings({invalidateParameterSchemas:event.data?.type === 'providers-changed'});
     if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
     if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
-    if(event.data?.type === 'studio-lang' && window.StudioI18n) {
-        window.StudioI18n.set(event.data.lang || 'zh');
-    }
 }
 window.addEventListener('message', windowMessageHandler);
 function windowStudioLangChangeHandler(){
@@ -5240,7 +5237,6 @@ function windowStudioLangChangeHandler(){
     if(promptTemplatePanel?.classList?.contains('open')) renderPromptTemplatePanel();
     render();
 }
-window.addEventListener('studio-lang-change', windowStudioLangChangeHandler);
 async function windowLoadHandler(){
     showBootLoadingOverlay();
     applyTheme(localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'dark');
@@ -5250,7 +5246,6 @@ async function windowLoadHandler(){
     loadPromptTemplateGroups();
     loadPromptTemplateOverrides();
     const promptTemplatesPromise = loadPromptTemplates();
-    if(window.StudioI18n) window.StudioI18n.apply();
     if(window.lucide) lucide.createIcons();
     connectAssetLibrarySyncSocket();
     const canvasLoaded = await loadCanvas({renderCanvas:false});

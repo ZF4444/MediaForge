@@ -87,7 +87,7 @@ function editDrawCanvas(){ return document.getElementById('editDrawCanvas'); }
 function editTextCanvas(){ return document.getElementById('editTextCanvas'); }
 function editTextContext(){ return editTextCanvas()?.getContext('2d') || null; }
 function selectedEditTextItem(){ return editTextItems.find(item => item.id === editTextSelectedId) || null; }
-function defaultEditTextText(){ return window.StudioI18n?.lang?.() === 'en' ? 'Double-click to edit' : '双击编辑'; }
+function defaultEditTextText(){ return '双击编辑'; }
 function editTextSizeFromBrush(){ return Math.max(14, Math.min(120, Math.round(editBrushSize() * 2))); }
 function createEditTextItem(text, point, preset={}){
     const size = Math.max(10, Math.min(120, Number(preset.size) || editTextSizeFromBrush()));

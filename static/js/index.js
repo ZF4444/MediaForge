@@ -226,7 +226,6 @@
             if(!options.skipRemember) localStorage.setItem(ACTIVE_PAGE_KEY, id);
             // sync theme to newly activated iframe
             syncThemeToFrame(target);
-            syncLanguageToFrame(target);
             if(LOCAL_PAGE_IDS.includes(id)) {
                 setLocalNavCollapsed(false, { skipRemember:true });
             } else {

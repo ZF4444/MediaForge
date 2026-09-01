@@ -213,9 +213,6 @@
         }
         deleteBtn.addEventListener('click', doDelete);
 
-        /* 语言切换时刷新文案 */
-        window.addEventListener('studio-lang-change', refreshLabels);
-
         refreshLabels();
 
         const api = { enter, exit, refresh: refreshLabels, isSelecting: () => selecting };

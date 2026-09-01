@@ -34,6 +34,7 @@
         "chat.ready": { zh: "就绪", en: "READY" },
         "chat.generated": { zh: "生成完成", en: "Done" },
         "chat.generatingImage": { zh: "正在生成图片...", en: "Generating image..." },
+        "chat.agentWorking": { zh: "正在处理...", en: "Working..." },
         "chat.requestFailed": { zh: "请求失败", en: "Request failed" },
         "chat.chatMode": { zh: "聊天", en: "Chat" },
         "chat.imageMode": { zh: "生图", en: "Image" },

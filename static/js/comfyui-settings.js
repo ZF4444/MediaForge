@@ -35,10 +35,9 @@ const isEmbeddedMode = comfySettingsQuery.get('embedded') === '1' || (() => {
     catch { return false; }
 })();
 if(isSingleWorkflowMode) document.body.classList.add('single-workflow-mode');
-function currentLang(){ return window.StudioI18n?.lang?.() === 'en' ? 'en' : 'zh'; }
 function typeLabel(type){
     const item = TYPES.find(t => t.v === type);
-    return item ? item[currentLang()] : type;
+    return item ? item.zh : type;
 }
 
 // ComfyUI 节点类型 → 中文 + 图标 + 颜色分类
@@ -164,9 +163,7 @@ function fieldKind(f){
 }
 function isMediaField(f){ return ['image','video','audio'].includes(fieldKind(f)); }
 function mediaFieldLabel(kind, count){
-    const labels = currentLang() === 'en'
-        ? {image:'Images', video:'Videos', audio:'Audio'}
-        : {image:'图片', video:'视频', audio:'音频'};
+    const labels = {image:'图片', video:'视频', audio:'音频'};
     return `${labels[kind] || kind} ${count}`;
 }
 function mediaAccept(kind){
@@ -536,13 +533,10 @@ async function onDelete(){
 
 window.addEventListener('message', event => {
     if(event.data?.type === 'studio-theme' && window.StudioTheme) window.StudioTheme.set(event.data.theme);
-    if(event.data?.type === 'studio-lang' && window.StudioI18n) window.StudioI18n.set(event.data.lang);
     if(event.data?.type === 'workflow-media' && currentConfig) currentConfig.media = event.data.media === 'video' ? 'video' : 'image';
 });
-window.addEventListener('studio-lang-change', refreshLanguageView);
 
 document.addEventListener('DOMContentLoaded', () => {
     refreshIcons();
-    if(window.StudioI18n) StudioI18n.apply();
     loadList();
 });

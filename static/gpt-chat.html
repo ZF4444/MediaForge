@@ -622,20 +622,18 @@
         function setChatTitle(title){
             document.getElementById('chatTitle').textContent = title || defaultTitle();
         }
-        function applyLanguage(lang){
-            if(lang && window.StudioI18n) StudioI18n.set(lang);
+        function applyLanguage(){
             document.title = tr('chat.title');
             if(!currentConversation?.title || currentConversation.title === '新对话' || currentConversation.title === 'New Chat') setChatTitle('');
             renderThreads();
         }
-        window.addEventListener('message', event => {
-            if(event.data?.type === 'studio-lang') applyLanguage(event.data.lang);
-        });
-        window.addEventListener('studio-lang-change', () => {
+        applyLanguage();
+        /* Refresh text after local data is rendered. */
+        function refreshChatLanguageView(){
             document.title = tr('chat.title');
             if(!currentConversation?.title || currentConversation.title === '新对话' || currentConversation.title === 'New Chat') setChatTitle('');
             renderThreads();
-        });
+        }
         window.addEventListener('resize', () => {
             if(document.getElementById('modelPicker')?.classList.contains('open')) positionModelPicker();
             if(document.getElementById('resolutionPicker')?.classList.contains('open')) positionResolutionPicker();
