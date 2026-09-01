@@ -46,7 +46,7 @@
         }
 
         function toggleTheme() {
-            const current = window.StudioTheme ? window.StudioTheme.get() : 'light';
+            const current = window.StudioTheme ? window.StudioTheme.get() : 'dark';
             broadcastTheme(current === 'dark' ? 'light' : 'dark');
         }
 
