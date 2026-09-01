@@ -54,7 +54,7 @@ function syncEngineOptionsVisibility(){
     if(!engineSelect) return;
     const has = id => (aiConnections || []).some(p => p.id === id && p.enabled !== false);
     const runningHubOption = engineSelect.querySelector('option[value="runninghub"]');
-    if(runningHubOption) runningHubOption.hidden = !has('runninghub');
+    if(runningHubOption) runningHubOption.hidden = !runningHubConnection();
     // api 引擎：至少有一个非特殊 provider 启用且有 image_models
     const apiHidden = !imageConnections().length;
     const apiOption = engineSelect.querySelector('option[value="api"]');
@@ -106,7 +106,7 @@ function volcengineConnection(){
     };
 }
 function runningHubConnection(){
-    return (aiConnections || []).find(p => p.id === 'runninghub' && p.enabled !== false) || null;
+    return (aiConnections || []).find(p => p.enabled !== false && (p.id === 'runninghub' || p.protocol === 'runninghub')) || null;
 }
 function runningHubEntries(kind){
     const provider = runningHubConnection();
@@ -145,6 +145,24 @@ function selectedRunningHubRef(sourceSettings=settings){
     if(!ref && all.length) ref = all[0];
     if(ref && sourceSettings === settings) settings.rhConfigKey = runningHubEntryKey(ref.kind, ref.id);
     return ref || null;
+}
+function runningHubTarget(ref=selectedRunningHubRef(), sourceSettings=settings){
+    const resources = Array.isArray(aiResourceIndex?.resources) ? aiResourceIndex.resources : [];
+    const appId = String(ref?.id || '').trim();
+    const resourceId = String(sourceSettings?.resource_id || '').trim();
+    const isMatchingApp = item => {
+        if(item?.kind !== 'runninghub_app' || item?.enabled === false) return false;
+        const resourceSettings = item.settings && typeof item.settings === 'object' ? item.settings : {};
+        return item.id === appId || item.name === appId
+            || resourceSettings.id === appId || resourceSettings.appId === appId || resourceSettings.webappId === appId;
+    };
+    // Resolve from the selected app first. A prior API model can leave its
+    // connection_id on the settings object, which must never steer RH runs.
+    const resource = resources.find(isMatchingApp)
+        || resources.find(item => item?.kind === 'runninghub_app' && item?.enabled !== false && item.id === resourceId)
+        || null;
+    const connectionId = resource?.connection_id || runningHubConnection()?.id || '';
+    return stableCanvasTarget('runninghub_app', connectionId, '', resource?.id || appId);
 }
 function rhEntryFields(entry){
     return Array.isArray(entry?.fields) ? entry.fields : [];
@@ -1520,7 +1538,7 @@ function setDynamicSetting(key, value, providerId='', connectionId='', modelId='
         settings.rhParams = {};
         settings.rhRandomActive = {};
         const ref = selectedRunningHubRef(settings);
-        const target = stableCanvasTarget('runninghub_app', settings.connection_id || settings.provider_id || 'runninghub', ref?.id || '');
+        const target = runningHubTarget(ref, settings);
         settings.connection_id = target.connection_id;
         settings.resource_id = target.resource_id;
     }

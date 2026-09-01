@@ -177,7 +177,7 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const randomValues = {};
     const media = rhMediaForRun(prompt, refs);
     const nodeInfoList = await rhBuildNodeInfoList(media, runSettings, randomValues);
-        const stable = stableCanvasTarget('runninghub_app', runSettings.connection_id || runSettings.provider_id || 'runninghub', ref.id);
+    const stable = runningHubTarget(ref, runSettings);
     const body = {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || '', connection_id:stable.connection_id, resource_id:stable.resource_id};
     const submit = await fetch('/api/runninghub/submit', {
         method:'POST',
