@@ -515,6 +515,11 @@ video.node-img { object-fit:contain; background:#0f172a; }
 .preview-compare-handle::before { content:""; position:absolute; left:50%; top:0; bottom:0; width:2px; margin-left:-1px; background:rgba(255,255,255,.92); box-shadow:0 0 0 1px rgba(15,23,42,.22), 0 0 18px rgba(15,23,42,.18); }
 .preview-compare-handle::after { content:""; position:absolute; left:50%; top:50%; width:30px; height:30px; border-radius:999px; transform:translate(-50%, -50%); background:rgba(15,23,42,.72); border:1px solid rgba(255,255,255,.75); box-shadow:0 8px 24px rgba(15,23,42,.24); }
 .preview-stage.compare-on .preview-compare-handle { display:block; }
+.preview-compare-label { position:absolute; top:12px; z-index:7; display:none; height:24px; padding:0 9px; align-items:center; border:1px solid rgba(255,255,255,.72); border-radius:7px; color:#fff; font-size:11px; font-weight:800; line-height:1; letter-spacing:0; text-shadow:0 1px 3px rgba(0,0,0,.3); box-shadow:0 5px 16px rgba(15,23,42,.2); pointer-events:none; }
+.preview-compare-label-input { left:12px; background:rgba(180,83,9,.88); }
+.preview-compare-label-output { right:12px; background:rgba(37,99,235,.88); }
+.preview-stage.compare-on .preview-compare-label { display:inline-flex; }
+.theme-dark .preview-compare-label { border-color:rgba(255,255,255,.58); }
 .preview-download-overlay { position:absolute; right:14px; top:14px; z-index:9; pointer-events:auto; display:flex; align-items:center; gap:8px; }
 .preview-tools-overlay { position:absolute; right:14px; bottom:14px; z-index:8; display:flex; flex-direction:column; align-items:flex-end; gap:8px; pointer-events:auto; }
 .preview-action-row { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
