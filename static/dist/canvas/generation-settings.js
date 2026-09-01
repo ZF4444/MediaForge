@@ -1753,10 +1753,13 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
     try {
         const cfg = {comfy_instances:[]};
         aiResourceIndex = stableCfg || {connections:[], models:[], resources:[]};
-        aiConnections = (stableCfg.connections || []).map(c => ({...c, id:c.id, connection_id:c.id,
-            image_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'image' && m.enabled !== false).map(m => m.upstream_model),
-            chat_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'chat' && m.enabled !== false).map(m => m.upstream_model),
-            video_models:(stableCfg.models || []).filter(m => m.connection_id === c.id && m.kind === 'video' && m.enabled !== false).map(m => m.upstream_model),
+        aiConnections = (stableCfg.connections || []).map(c => {
+            const connectionModels = (stableCfg.models || []).filter(m => m.connection_id === c.id && m.enabled !== false);
+            return {...c, id:c.id, connection_id:c.id,
+            image_models:connectionModels.filter(m => m.kind === 'image').map(m => m.upstream_model),
+            chat_models:connectionModels.filter(m => m.kind === 'chat').map(m => m.upstream_model),
+            video_models:connectionModels.filter(m => m.kind === 'video').map(m => m.upstream_model),
+            model_aliases:Object.fromEntries(connectionModels.map(m => [m.upstream_model, m.alias || m.upstream_model])),
             // Executable workflows/apps live in `resources` in the authoritative
             // configuration. Attach them to their connection for the legacy
             // provider-shaped canvas selectors.
@@ -1772,7 +1775,7 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
                 name: r.settings?.name || r.name,
                 enabled: r.enabled !== false,
             }))
-        }));
+        }});
         if(invalidateParameterSchemas) canvasParameterSchemaCache.clear();
         const imageProvider = imageConnections().find(provider => provider.id === settings.provider_id) || imageConnections()[0];
         const videoProvider = videoConnections().find(provider => provider.id === settings.videoProvider) || videoConnections()[0];
