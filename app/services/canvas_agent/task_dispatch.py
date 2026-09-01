@@ -57,8 +57,7 @@ def _image_request_for_node(node: dict[str, Any], fallback_capability: Any, fall
     # Agent tasks enter the Redis queue directly, whereas manual canvas runs
     # pass through this normalizer in the HTTP endpoint. Reuse it here so
     # both paths use identical ratio/size and target-field conversion.
-    from app.models import OnlineImageRequest
-    return normalize_canvas_image_payload(OnlineImageRequest.model_validate(request)).model_dump(mode="json")
+    return request
 
 
 async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, requests: list[dict[str, Any]], *, prompt: str, prompts_by_node: dict[str, str] | None = None) -> list[dict[str, Any]]:
@@ -84,6 +83,11 @@ async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, request
             raise ValueError("当前没有可用的生图模型")
         task_id = f"canvas_agent_img_{uuid.uuid4().hex}"
         request = _image_request_for_node(node, capability, prompt, prompts_by_node)
+        from app.models import OnlineImageRequest
+        request = (await asyncio.to_thread(
+            normalize_canvas_image_payload,
+            OnlineImageRequest.model_validate(request),
+        )).model_dump(mode="json")
         try:
             from app.ai.database_repository import DatabaseAIRepository
             repo = DatabaseAIRepository()

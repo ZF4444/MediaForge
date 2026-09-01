@@ -3735,7 +3735,8 @@ async def online_image(payload: OnlineImageRequest):
                 payload = payload.model_copy(update={"connection_id": target.connection.id, "model_id": target.model.id})
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="图片模型或连接不存在或已禁用") from exc
-    return await build_online_image_result(normalize_canvas_image_request(payload))
+    payload = await asyncio.to_thread(normalize_canvas_image_request, payload)
+    return await build_online_image_result(payload)
 
 @app.post("/api/image-task-query")
 async def query_image_task(payload: ImageTaskQueryRequest):
@@ -3906,7 +3907,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
-    payload = normalize_canvas_image_request(payload)
+    payload = await asyncio.to_thread(normalize_canvas_image_request, payload)
     if not (payload.resource_id or payload.model_id or payload.connection_id):
         raise HTTPException(status_code=400, detail="图片任务必须指定 model_id、connection_id 或 resource_id")
     stable_connection_id = str(payload.connection_id or "").strip()
@@ -4598,7 +4599,7 @@ AI_CAPABILITY_RUNTIME.register("video_generation", "default", _video_provider_ad
 
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
-    payload = normalize_canvas_video_request(payload)
+    payload = await asyncio.to_thread(normalize_canvas_video_request, payload)
     from app.ai.database_repository import DatabaseAIRepository
     from app.ai.contracts import Actor, VideoCommand
     if not payload.model_id and not payload.connection_id:
