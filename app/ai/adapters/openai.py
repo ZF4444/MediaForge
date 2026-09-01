@@ -39,11 +39,17 @@ class OpenAIChatAdapter:
 
     @staticmethod
     def _endpoint(command: ChatCommand) -> str:
-        connection = command.target.connection
-        base = str(connection.base_url or "").rstrip("/")
-        if not base:
-            raise ValueError("AI connection has no Base URL")
-        return base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+        # Protocol-specific URL selection belongs to the transport resolver, which
+        # applies the connection's version prefix (/v1, /v1beta, /api/v3) and any
+        # chat_endpoint override. Recomputing it here dropped that prefix, so
+        # requests went to a path the upstream answered without chat content.
+        from app.ai.transport import endpoint_for_target
+
+        base = str(command.target.connection.base_url or "").rstrip("/")
+        if base.endswith("/chat/completions"):
+            return base
+        resolved = endpoint_for_target(command.target, "chat")
+        return resolved if resolved.endswith("/chat/completions") else f"{resolved}/chat/completions"
 
 
 class OpenAIImageAdapter:
