@@ -1374,10 +1374,13 @@ async function rhUploadValueIfNeeded(value, sourceSettings=settings){
         && !text.startsWith('/output/')
         && !text.startsWith('/assets/')
         && !text.startsWith('/api/files/')) return text;
+    // Uploads precede submitRunningHubGeneration(). Resolve here as well so
+    // persisted API settings from an earlier engine cannot reach the RH API.
+    const target = runningHubTarget(selectedRunningHubRef(sourceSettings), sourceSettings);
     const res = await fetch('/api/runninghub/upload-asset', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({url:text, connection_id:sourceSettings.connection_id || '', resource_id:sourceSettings.resource_id || ''})
+        body:JSON.stringify({url:text, connection_id:target.connection_id, resource_id:target.resource_id})
     });
     const data = await res.json();
     if(!res.ok || data.success === false) throw new Error(data.detail || data.error || tr('smart.rhUploadFailed'));
