@@ -498,13 +498,22 @@ function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endInde
     // 素材节点（装当前轮输入图，可能是多图分组）在克隆链路之前算好，因为它的高度
     // 会随批次大小(imageBatchSize)变化，且可能比链路里任何节点都高。
     const roundRefs = refsForDirectLoopRound(loopNode, loopIndex, endIndex).filter(ref => ref?.url);
-    const materialImageCount = roundRefs.length;
-    const materialWidth = materialImageCount
-        ? Math.round(imageLayout(new Array(materialImageCount).fill({}), materialImageCount > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE).width || 0)
-        : 0;
-    const materialHeight = materialImageCount
-        ? Math.round(imageLayout(new Array(materialImageCount).fill({}), materialImageCount > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE).height || 0)
-        : 0;
+    // 保留尺寸元数据，避免新建的循环素材节点在图片加载前退回 260x180。
+    // 这也使预布局与最终节点使用同一批实际素材，避免非 4:3 输入图导致链路错位。
+    const materialImages = roundRefs.map((ref, i) => stripImageGenerationMeta({
+        file_id:ref.file_id || '',
+        url:ref.url,
+        name:ref.name || trf('canvas.loopImageLabel', {n:loopIndex + i}),
+        kind:ref.kind || (isVideoMediaItem(ref) ? 'video' : 'image'),
+        natural_w:Number(ref.natural_w || ref.width || ref.w || 0),
+        natural_h:Number(ref.natural_h || ref.height || ref.h || 0)
+    })).filter(img => img.url);
+    const materialImageCount = materialImages.length;
+    const materialLayout = materialImageCount
+        ? imageLayout(materialImages, materialImageCount > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE, {type:'smart-image', images:materialImages})
+        : null;
+    const materialWidth = Math.round(materialLayout?.width || 0);
+    const materialHeight = Math.round(materialLayout?.height || 0);
     // 行高取整条链路中最高的节点、以及本轮素材节点两者的最大值（而不是只看根节点），
     // 避免链路内存在比根节点更高的节点（如多图组、循环节点等），或素材节点因批次
     // 图片数量变化而变高时，各轮克隆在 Y 轴上互相重叠。
@@ -564,22 +573,16 @@ function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endInde
     // 素材节点：装当前轮的输入图，直接连到克隆根节点。
     let materialNode = null;
     if(roundRefs.length && clonedRoot){
-        const images = roundRefs.map((ref, i) => stripImageGenerationMeta({
-            file_id:ref.file_id || '',
-            url:ref.url,
-            name:ref.name || trf('canvas.loopImageLabel', {n:loopIndex + i}),
-            kind:ref.kind || (isVideoMediaItem(ref) ? 'video' : 'image')
-        })).filter(img => img.url);
         const matRect = nodeRect(rootNode);
         materialNode = {
             id:uid('smart'),
             type:'smart-image',
             x:(Number(clonedRoot.x) || 0) - Math.max(300, (Number(matRect.width) || 260) + 80),
             y:(Number(clonedRoot.y) || 0),
-            title:images.length > 1 ? 'Group' : 'Image',
-            images,
-            scale:images.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE,
-            outputKind:mediaKindForUrls(images, images.some(isVideoMediaItem) ? 'video' : 'image'),
+            title:materialImages.length > 1 ? 'Group' : 'Image',
+            images:materialImages,
+            scale:materialImages.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE,
+            outputKind:mediaKindForUrls(materialImages, materialImages.some(isVideoMediaItem) ? 'video' : 'image'),
             created_at:Date.now()
         };
         nodes.push(materialNode);

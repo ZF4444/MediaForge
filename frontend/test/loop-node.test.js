@@ -207,6 +207,28 @@ describe('cloneLoopChainForRound 布局快照测试（防止 Y 轴重叠回归�
         expect(result.clonedRoot.loopCloneRound).toBe(1);
         expect(result.clonedRoot.loopCloneSourceId).toBe('loop');
     });
+
+    it('循环素材节点保留原图尺寸，并以实际比例参与预布局', () => {
+        const rootNode = { id: 'root', x: 0, y: 0, w: 260, h: 180 };
+        const childNode = { id: 'child', x: 400, y: 0, w: 260, h: 180 };
+        const loopNode = { id: 'loop', imageInput: true };
+        const layoutInputs = [];
+        const sandbox = createLoopNodeSandbox({
+            nodes: [rootNode, childNode, loopNode],
+            fns: {
+                refsForDirectLoopRound: () => [{ url: 'portrait.png', natural_w: 900, natural_h: 1600 }],
+                imageLayout: images => {
+                    layoutInputs.push(images);
+                    return { width: images[0]?.natural_w || 260, height: images[0]?.natural_h || 180 };
+                },
+            },
+        });
+
+        const result = sandbox.cloneLoopChainForRound(buildSubgraph(rootNode, childNode), rootNode, loopNode, 1, 1, 0, 1);
+
+        expect(result.materialNode.images[0]).toMatchObject({ natural_w: 900, natural_h: 1600 });
+        expect(layoutInputs[0][0]).toMatchObject({ natural_w: 900, natural_h: 1600 });
+    });
 });
 
 describe('createLoopNode', () => {
