@@ -1214,6 +1214,12 @@ function arrangeSmartGroupMembers(group, options={}){
 // （经典 <script>，非 ES module，原因同 M1/M2）。
 function applyViewport(){
     world.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
+    // Ports live inside the scaled world, so compensate their size and edge
+    // offset to keep them visually stable in screen space while zooming.
+    const portScale = 1 / Math.max(0.01, viewport.scale);
+    world.style.setProperty('--node-port-scale', String(portScale));
+    world.style.setProperty('--node-port-hover-scale', String(1.22 * portScale));
+    world.style.setProperty('--node-port-edge-offset', `${-16 * portScale}px`);
     shell.style.backgroundSize = '24px 24px';
     shell.style.backgroundPosition = '0 0';
     const active = selectedNode();
