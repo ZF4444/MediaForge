@@ -263,7 +263,7 @@ ALTER TABLE runninghub_usage_records ADD COLUMN IF NOT EXISTS resource_id TEXT N
 CREATE INDEX IF NOT EXISTS idx_runninghub_usage_org_submitted ON runninghub_usage_records(org_id, submitted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runninghub_usage_user_submitted ON runninghub_usage_records(user_id, submitted_at DESC);
 CREATE TABLE IF NOT EXISTS omnilojo_usage_records (
-    id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, upstream_log_id TEXT NOT NULL,
+    id TEXT PRIMARY KEY, upstream_log_id TEXT NOT NULL,
     connection_id TEXT NOT NULL DEFAULT '', model_id TEXT NOT NULL DEFAULT '', resource_id TEXT NOT NULL DEFAULT '',
     request_id TEXT NOT NULL DEFAULT '', upstream_request_id TEXT NOT NULL DEFAULT '',
     user_id TEXT NOT NULL DEFAULT '', org_id TEXT, external_username TEXT NOT NULL DEFAULT '', token_name TEXT NOT NULL DEFAULT '',
@@ -275,8 +275,38 @@ CREATE TABLE IF NOT EXISTS omnilojo_usage_records (
 );
 ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS request_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS upstream_request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS connection_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE omnilojo_usage_records ADD COLUMN IF NOT EXISTS resource_id TEXT NOT NULL DEFAULT '';
+-- Databases created before the canonical-connection cutover keyed usage on
+-- provider_id. Backfill connection_id, relax the now-unwritten legacy column
+-- and move the dedupe constraint onto connection_id, so an unmigrated
+-- deployment does not fail on every usage insert. The legacy column itself is
+-- archived and dropped by scripts/drop_ai_legacy_schema.py.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid='omnilojo_usage_records'::regclass
+               AND attname='provider_id' AND attnum > 0 AND NOT attisdropped) THEN
+    UPDATE omnilojo_usage_records SET connection_id=provider_id WHERE connection_id='' AND provider_id<>'';
+    ALTER TABLE omnilojo_usage_records ALTER COLUMN provider_id DROP NOT NULL;
+    ALTER TABLE omnilojo_usage_records ALTER COLUMN provider_id SET DEFAULT '';
+  END IF;
+  -- The legacy (provider_id, upstream_log_id) key would collide once every new
+  -- row leaves provider_id empty, so replace it with the canonical key.
+  IF EXISTS (SELECT 1 FROM pg_constraint
+             WHERE conrelid='omnilojo_usage_records'::regclass AND contype='u'
+               AND pg_get_constraintdef(oid) LIKE '%(provider_id, upstream_log_id)%') THEN
+    EXECUTE (SELECT format('ALTER TABLE omnilojo_usage_records DROP CONSTRAINT %I', conname)
+             FROM pg_constraint WHERE conrelid='omnilojo_usage_records'::regclass AND contype='u'
+               AND pg_get_constraintdef(oid) LIKE '%(provider_id, upstream_log_id)%' LIMIT 1);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conrelid='omnilojo_usage_records'::regclass AND contype='u'
+                   AND pg_get_constraintdef(oid) LIKE '%(connection_id, upstream_log_id)%') THEN
+    ALTER TABLE omnilojo_usage_records ADD CONSTRAINT omnilojo_usage_connection_log_key UNIQUE(connection_id, upstream_log_id);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_org_created ON omnilojo_usage_records(org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_created ON omnilojo_usage_records(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_user_created ON omnilojo_usage_records(user_id, created_at DESC);
