@@ -1558,6 +1558,18 @@ html:not(.theme-dark):not(.studio-theme-dark) .composer-card .smart-pill,
 html:not(.theme-dark):not(.studio-theme-dark) .composer-card .param-row select,
 html:not(.theme-dark):not(.studio-theme-dark) .composer-card .dynamic-params input,
 html:not(.theme-dark):not(.studio-theme-dark) .composer-card .dynamic-params textarea { color:var(--text); }
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .dynamic-params .smart-pill,
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .composer-head-params .smart-pill {
+    background:rgba(242,242,247,.88);
+    border-color:rgba(60,60,67,.16);
+}
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .dynamic-params .smart-control:hover .smart-pill,
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .dynamic-params .smart-control.pinned .smart-pill,
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .composer-head-params .smart-control:hover .smart-pill,
+html:not(.theme-dark):not(.studio-theme-dark) .composer-card .composer-head-params .smart-control.pinned .smart-pill {
+    background:rgba(255,255,255,.96);
+    border-color:#0a84ff;
+}
 html:not(.theme-dark):not(.studio-theme-dark) .smart-control:hover .smart-pill { background:rgba(255,255,255,.78); border-color:rgba(60,60,67,.16); }
 html:not(.theme-dark):not(.studio-theme-dark) .smart-control.pinned .smart-pill { border-color:#0a84ff; }
 html:not(.theme-dark):not(.studio-theme-dark) .smart-popover { background:rgba(255,255,255,.9); border-color:rgba(60,60,67,.16); color:var(--text); box-shadow:0 18px 46px rgba(60,60,67,.18), inset 0 1px rgba(255,255,255,.8); }
