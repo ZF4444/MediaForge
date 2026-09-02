@@ -446,9 +446,21 @@ async function loadRhAppEditorConfig(entry){
     const hasConflictingRawId = Boolean((rawId || sourceAppId) && requestedId && (rawId || sourceAppId) !== requestedId);
     if(!config.fields.length || hasConflictingRawId) await fetchRhAppEditor(false);
     else {
+        const platformTitle = await fetchRhAppTitle(config.appId);
+        if(platformTitle){
+            config.title = platformTitle;
+            entry.title = platformTitle;
+            window.parent !== window && window.parent.postMessage({type:'workflow-title', title:platformTitle}, location.origin);
+        }
         renderRhWorkflowEditor();
     }
     return rhWorkflowEditorState.config;
+}
+async function fetchRhAppTitle(appId){
+    const res = await fetch(`/api/runninghub/app-info?webappId=${encodeURIComponent(appId)}`);
+    const data = await res.json();
+    if(!res.ok || data.success === false) return '';
+    return String(data.data?.webappName || data.data?.name || data.data?.title || data.webappName || data.name || data.title || '').trim();
 }
 async function fetchRhAppEditor(force=false){
     const state = rhWorkflowEditorState;
@@ -461,17 +473,20 @@ async function fetchRhAppEditor(force=false){
     if(!res.ok || data.success === false) throw new Error(data.detail || '拉取应用参数失败');
     const fields = rhAppFieldSourceList(data).map(normalizeFetchedRhAppField);
     const platformTitle = String(data.data?.webappName || data.data?.name || data.data?.title || data.webappName || data.name || data.title || '').trim();
+    const fallbackTitle = `AI 应用 ${appId.slice(-6)}`;
     state.config = {
         appId,
         // A name edited in the workflow settings is authoritative. The
         // platform title is only a fallback for newly added apps; otherwise a
         // refresh would silently replace the user's custom name.
-        title:rhWorkflowEditName?.value.trim() || entry.title || platformTitle || `AI 应用 ${appId.slice(-6)}`,
+        title:platformTitle || fallbackTitle,
         description:rhWorkflowEditNote?.value.trim() || entry.note || '',
         fields,
         raw:data.data || data,
         sourceAppId:appId
     };
+    entry.title = state.config.title;
+    window.parent !== window && window.parent.postMessage({type:'workflow-title', title:state.config.title}, location.origin);
     state.graph = { k:1, x:0, y:0, w:0, h:0 };
     renderRhWorkflowEditor();
     return state.config;

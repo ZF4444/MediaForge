@@ -160,7 +160,7 @@ coverInput.onchange = async event => {
 removeCoverBtn.onclick = () => { current.cover = {}; renderCover(); persist(); hint.textContent = '封面已移除，点击保存设置后发布。'; };
 
 window.addEventListener('message', event => {
-    if(event.data?.type !== 'workflow-title' || current.source !== 'comfyui') return;
+    if(event.data?.type !== 'workflow-title') return;
     current.title = String(event.data.title || '');
     title.textContent = current.title || current.id || '工作流';
 });
