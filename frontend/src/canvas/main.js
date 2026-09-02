@@ -1946,21 +1946,26 @@ function renderCanvasLog(){
             const item = typeof output === 'string' ? {url:output} : (output || {});
             const url = String(item.url || '');
             if(!url) return '';
+            // Older log entries store outputs as bare /api/files/<id>/preview
+            // strings. Recover their file id so they follow the same thumbnail
+            // path as the canvas nodes.
+            const fileId = String(item.file_id || fileIdFromUrl(url) || '').trim();
+            const mediaItem = fileId && fileId !== item.file_id ? {...item, file_id:fileId} : item;
             const kind = item.kind === 'video' || outputUrlLooksVideo(url) ? 'video' : 'image';
-            const dataAttrs = ` data-node-id="${escapeAttr(log.nodeId || '')}" data-file-id="${escapeAttr(item.file_id || '')}" data-poster="${escapeAttr(item.poster_url || item.thumbnail_url || '')}"`;
+            const dataAttrs = ` data-node-id="${escapeAttr(log.nodeId || '')}" data-file-id="${escapeAttr(fileId)}" data-poster="${escapeAttr(item.poster_url || item.thumbnail_url || '')}"`;
             if(kind === 'video'){
                 // Reuse the backend FFmpeg poster frame (/api/files/<id>/thumb)
                 // as the thumbnail. Only fall back to loading the video for a
                 // first frame when no file_id/poster is available.
-                const poster = item.poster_url || item.thumbnail_url || (item.file_id ? fileThumbnailUrl(item) : '');
+                const poster = item.poster_url || item.thumbnail_url || (fileId ? fileThumbnailUrl(mediaItem) : '');
                 if(poster){
                     return `<div class="log-video-thumb"><img src="${escapeAttr(poster)}" data-url="${escapeAttr(url)}" data-kind="video"${dataAttrs} alt="video"><span class="log-video-badge"><i data-lucide="play"></i></span></div>`;
                 }
                 const videoSrc = escapeAttr(filePreviewUrl(item) || url);
                 return `<div class="log-video-thumb"><video muted playsinline preload="metadata" src="${videoSrc}" data-url="${escapeAttr(url)}" data-kind="video"${dataAttrs}></video><span class="log-video-badge"><i data-lucide="play"></i></span></div>`;
             }
-            const previewSrc = escapeAttr(filePreviewUrl(item));
-            return `<img src="${previewSrc}" data-url="${escapeAttr(url)}" data-kind="image"${dataAttrs} alt="output">`;
+            const thumbSrc = escapeAttr(thumbMediaUrl(mediaItem));
+            return `<img src="${thumbSrc}" data-url="${escapeAttr(url)}" data-kind="image"${dataAttrs} alt="output">`;
         }).join('');
     const date = new Date(log.createdAt || Date.now()).toLocaleString('zh-CN');
         const req = log.request || {};
