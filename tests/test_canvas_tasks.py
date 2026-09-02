@@ -1,5 +1,6 @@
 import asyncio
 
+from app.core.log_context import reset_log_context, set_log_context
 from app.services import canvas_tasks
 
 
@@ -216,3 +217,29 @@ def test_canvas_task_strips_legacy_fields_for_stable_target(monkeypatch):
         assert all(key not in request for key in ("provider_id", "provider", "model"))
 
     asyncio.run(scenario())
+
+
+def test_canvas_task_persists_submitter_log_context(monkeypatch):
+    redis = Redis()
+    monkeypatch.setattr(canvas_tasks, "get_redis_client", lambda: redis)
+    token = set_log_context(
+        request_id="req_canvas123",
+        trace_id="trc_canvas123",
+        username="飞帆",
+        run_id="run_canvas123",
+        operation_id="operation_canvas123",
+    )
+    try:
+        record = asyncio.run(canvas_tasks.create_canvas_task({
+            "id": "canvas-task-123",
+            "status": "queued",
+            "type": "online-image",
+        }))
+    finally:
+        reset_log_context(token)
+
+    assert record["request_id"] == "req_canvas123"
+    assert record["trace_id"] == "trc_canvas123"
+    assert record["username"] == "飞帆"
+    assert record["run_id"] == "run_canvas123"
+    assert record["operation_id"] == "operation_canvas123"

@@ -63,7 +63,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.log_context import bind_log_context
+from app.core.log_context import bind_log_context, reset_log_context, set_log_context
 from app.core.retry import retry_operation_id
 from app.core.logging import audit_event, configure_logging, get_logger, get_task_logger
 from app.middleware.request_logging import RequestLoggingMiddleware
@@ -4625,7 +4625,18 @@ async def execute_canvas_task(task_id: str):
     except LookupError as exc:
         await update_canvas_task(task_id, expected_status="queued", status="failed", error=f"任务资源解析失败：{exc}")
         return
-    context_token = current_user_var.set(str(task.get("owner_id") or ""))
+    owner_id = str(task.get("owner_id") or "")
+    username = str(task.get("username") or (USERS.get(owner_id) or {}).get("username") or owner_id)
+    context_token = current_user_var.set(owner_id)
+    log_token = set_log_context(
+        request_id=task.get("request_id"),
+        trace_id=task.get("trace_id"),
+        user_id=owner_id or None,
+        username=username or None,
+        task_id=task_id,
+        run_id=task.get("run_id") or task.get("agent_run_id") or None,
+        operation_id=task.get("operation_id") or task_id,
+    )
     try:
         timeout = max(1.0, deadline - time.time()) if deadline else CANVAS_TASK_TIMEOUT_SECONDS
         # RunningHub app tasks poll the upstream inside the worker for up to
@@ -4645,6 +4656,7 @@ async def execute_canvas_task(task_id: str):
         except asyncio.TimeoutError:
             await update_canvas_task(task_id, expected_status="running", status="timed_out", error="任务超过执行时限")
     finally:
+        reset_log_context(log_token)
         current_user_var.reset(context_token)
 
 
@@ -4984,6 +4996,7 @@ async def canvas_video(payload: CanvasVideoRequest):
         "owner_id": owner_id,
         "request": request_snapshot,
     })
+    bind_log_context(task_id=local_task_id, operation_id=local_task_id)
     started = time.perf_counter()
     task_logger.info(
         "canvas video task started",

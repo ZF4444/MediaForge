@@ -43,6 +43,16 @@ def test_json_formatter_adds_context_and_redacts_secrets():
     }
 
 
+def test_json_formatter_omits_unbound_context_fields():
+    record = logging.LogRecord("aistudio.app.test", logging.INFO, __file__, 1, "background work", (), None)
+    payload = json.loads(JsonFormatter().format(record))
+
+    assert "request_id" not in payload
+    assert "trace_id" not in payload
+    assert "user_id" not in payload
+    assert "task_id" not in payload
+
+
 def test_redact_handles_nested_credentials_and_absolute_paths():
     value = redact({"Authorization": "Bearer abcdefghijklmnop", "file_path": "/srv/private/image.png"})
     assert value["Authorization"] == "Bear***mnop"

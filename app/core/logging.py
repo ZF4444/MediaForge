@@ -99,7 +99,10 @@ class JsonFormatter(logging.Formatter):
         payload.update(extras)
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(redact(payload), ensure_ascii=False, separators=(",", ":"))
+        # Context dimensions only exist for the request/task types that own
+        # them. Omit absent values instead of emitting a misleading wall of
+        # nulls on unrelated system and background-worker records.
+        return json.dumps(redact({key: value for key, value in payload.items() if value is not None}), ensure_ascii=False, separators=(",", ":"))
 
 
 class _DomainFilter(logging.Filter):

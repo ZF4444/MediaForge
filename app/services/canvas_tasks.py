@@ -21,6 +21,7 @@ from app.config import (
     REDIS_CANVAS_TASK_TTL_SECONDS,
 )
 from app.core.redis_client import RedisUnavailableError, get_redis_client
+from app.core.log_context import get_log_context
 
 
 _INDEX_KEY = f"{REDIS_CANVAS_TASK_PREFIX}active"
@@ -112,6 +113,15 @@ async def create_canvas_task(task: dict[str, Any]) -> dict[str, Any]:
     task_id = str(task["id"])
     now = time.time()
     record = {**task, "created_at": task.get("created_at", now), "updated_at": task.get("updated_at", now), "version": int(task.get("version") or 1)}
+    # A durable task crosses request and worker boundaries. Preserve its
+    # correlation fields here so downstream provider and storage logs retain
+    # the request that submitted the generation.
+    context = get_log_context()
+    for key in ("request_id", "trace_id", "username", "run_id", "operation_id"):
+        if context.get(key) and not record.get(key):
+            record[key] = context[key]
+    record.setdefault("run_id", record.get("agent_run_id") or None)
+    record.setdefault("operation_id", task_id)
     # Stable IDs are the persistence contract.  Runtime adapters may still
     # need a provider/model name, but those values must never be written into
     # newly-created task requests once a canonical target is present.
