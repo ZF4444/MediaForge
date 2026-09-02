@@ -136,7 +136,7 @@ frame.addEventListener('load', () => syncFrame());
 document.getElementById('openRhUrlBtn').onclick = () => {
     const appId = rhAppId.value.trim();
     if(!/^[\w-]{6,}$/.test(appId)) return alert('请输入有效的 RH应用ID');
-    current = {source:'runninghub', id:appId, resourceId:'', title:'', media:current.media, cover:current.cover, enabled:true};
+    current = {source:'runninghub', id:appId, resourceId:`legacy:runninghub:runninghub_app:${encodeURIComponent(appId)}`, title:'', media:current.media, cover:current.cover, enabled:true};
     setEnabled(true); persist(); load();
 };
 fileInput.onchange = async event => {
