@@ -387,6 +387,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             if(!e.target.closest('video')) return;
             const node = nodes.find(n => n.id === id);
             if(!node) return;
+            const timerHidden = hideRunTimerForNode(node);
             // Preserve an existing multi-selection (e.g. after a box-select) so dragging
             // still moves the whole group; only collapse to single-select otherwise.
             if(!selectedIds.includes(id)){
@@ -398,6 +399,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 syncSelectionUi();
             }
             updateComposer();
+            if(timerHidden) render();
         }, true);
         el.onclick = e => {
             e.stopPropagation();
