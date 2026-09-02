@@ -28,14 +28,9 @@ from app.core.utils import now_ms
 
 router = APIRouter()
 
-BUILTIN_WORKFLOWS = {"Z-Image.json", "Z-Image-Enhance.json", "2511.json", "klein-enhance.json", "Flux2-Klein.json", "upscale.json"}
 CUSTOM_WORKFLOW_FOLDER = "custom"
 LEGACY_CUSTOM_WORKFLOW_FOLDER = "自定义"
 WORKFLOW_NAME_RE = re.compile(rf"^(?:(?:{CUSTOM_WORKFLOW_FOLDER}|{LEGACY_CUSTOM_WORKFLOW_FOLDER})/)?[a-zA-Z0-9_一-龥\.\-]+\.json$")
-
-
-def is_builtin_workflow(name: str) -> bool:
-    return "/" not in name and os.path.basename(name) in BUILTIN_WORKFLOWS
 
 
 @router.get("/api/workflows")
@@ -68,8 +63,8 @@ def upload_workflow(payload: WorkflowUploadRequest):
         raise HTTPException(status_code=400, detail="不是有效的 ComfyUI API 工作流 JSON（需包含 class_type）")
     stored_name = f"{CUSTOM_WORKFLOW_FOLDER}/{name}"
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("""INSERT INTO comfy_workflows(name,workflow_json,config_json,builtin,created_at,updated_at)
-            VALUES(%s,%s,%s,FALSE,%s,%s) ON CONFLICT(name) DO UPDATE SET workflow_json=EXCLUDED.workflow_json,updated_at=EXCLUDED.updated_at""", (stored_name, json_value(payload.workflow), json_value({'title': name.replace('.json',''), 'fields': [], 'media': 'image'}), now_ms(), now_ms()))
+        cur.execute("""INSERT INTO comfy_workflows(name,workflow_json,config_json,created_at,updated_at)
+            VALUES(%s,%s,%s,%s,%s) ON CONFLICT(name) DO UPDATE SET workflow_json=EXCLUDED.workflow_json,updated_at=EXCLUDED.updated_at""", (stored_name, json_value(payload.workflow), json_value({'title': name.replace('.json',''), 'fields': [], 'media': 'image'}), now_ms(), now_ms()))
     return {"name": stored_name}
 
 
@@ -87,10 +82,8 @@ def save_workflow_config(name: str, payload: WorkflowConfig):
 def delete_workflow(name: str):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
-    if is_builtin_workflow(name):
-        raise HTTPException(status_code=400, detail="内置工作流不可删除")
     if not get_comfy_workflow(name):
         raise HTTPException(status_code=404, detail="Workflow not found")
     if not delete_comfy_workflow(name):
-        raise HTTPException(status_code=400, detail="内置工作流不可删除")
+        raise HTTPException(status_code=404, detail="Workflow not found")
     return {"ok": True}

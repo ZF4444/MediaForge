@@ -6,9 +6,10 @@ const savedMeta = () => { try { return JSON.parse(localStorage.getItem('workflow
 const mediaFor = (source, id, persisted) => persisted === 'video' || persisted === 'image'
     ? persisted : (savedMeta()[`${source}:${id}`]?.media || 'image');
 
-function openConfig(source='comfyui', id=''){
+function openConfig(source='comfyui', id='', title=''){
     const query = new URLSearchParams({source});
     if(id) query.set('id', id);
+    if(title) query.set('title', title);
     window.location.href = `/static/workflow-config.html?${query}`;
 }
 async function loadWorkflows(){
@@ -18,14 +19,39 @@ async function loadWorkflows(){
         const comfy = comfyRes.ok ? await comfyRes.json() : {workflows:[]};
         const configuration = configurationRes.ok ? await configurationRes.json() : {resources:[]};
         const comfyItems = (comfy.workflows || []).map(item => ({source:'comfyui', id:item.name, title:item.title || item.name, description:'本地 ComfyUI 工作流', media:mediaFor('comfyui', item.name, item.media), enabled:item.enabled !== false}));
-        const rhItems = (configuration.resources || []).filter(item => item.kind === 'runninghub_app').map(item => ({source:'runninghub', id:item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id, title:item.settings?.title || item.name || `RH 应用 ${String(item.id || '').slice(-6)}`, description:item.settings?.note || 'RunningHub AI 应用', media:mediaFor('runninghub', item.settings?.id || item.id, item.settings?.media), enabled:item.enabled !== false}));
+        const rhItems = (configuration.resources || []).filter(item => item.kind === 'runninghub_app').map(item => ({source:'runninghub', id:item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id, resourceId:item.id, title:item.settings?.title || item.name || `RH 应用 ${String(item.id || '').slice(-6)}`, description:item.settings?.note || 'RunningHub AI 应用', media:mediaFor('runninghub', item.settings?.id || item.id, item.settings?.media), enabled:item.enabled !== false}));
         workflowItems = [...comfyItems, ...rhItems].filter(item => item.id);
         workflowCount.textContent = `${workflowItems.length} 个`;
-        workflowList.innerHTML = workflowItems.map(item => `<article class="workflow-row ${item.enabled ? '' : 'is-disabled'}" data-source="${esc(item.source)}" data-id="${esc(item.id)}"><button class="workflow-row-main" type="button"><span class="workflow-row-icon ${item.source}">${item.source === 'comfyui' ? 'C' : 'RH'}</span><span class="workflow-row-copy"><strong>${esc(item.title)}</strong><small>${esc(item.description)}</small></span><span class="workflow-row-tags"><em>${item.source === 'comfyui' ? 'ComfyUI' : 'RH 应用'}</em><em>${item.media === 'video' ? '视频' : '图片'}</em></span><span class="row-arrow">›</span></button><div class="workflow-row-control"><span class="workflow-status">${item.enabled ? '已启用' : '已停用'}</span><button class="workflow-switch" type="button" role="switch" aria-checked="${item.enabled ? 'true' : 'false'}" aria-label="${esc(item.enabled ? '停用' : '启用')} ${esc(item.title)}"><span></span></button></div></article>`).join('');
-        workflowList.querySelectorAll('.workflow-row-main').forEach(row => row.addEventListener('click', () => { const item=row.closest('.workflow-row'); openConfig(item.dataset.source, item.dataset.id); }));
+        workflowList.innerHTML = workflowItems.map(item => `<article class="workflow-row ${item.enabled ? '' : 'is-disabled'}" data-source="${esc(item.source)}" data-id="${esc(item.id)}" data-resource-id="${esc(item.resourceId || '')}"><button class="workflow-row-main" type="button"><span class="workflow-row-icon ${item.source}">${item.source === 'comfyui' ? 'C' : 'RH'}</span><span class="workflow-row-copy"><strong>${esc(item.title)}</strong><small>${esc(item.description)}</small></span><span class="workflow-row-tags"><em>${item.source === 'comfyui' ? 'ComfyUI' : 'RH 应用'}</em><em>${item.media === 'video' ? '视频' : '图片'}</em></span><span class="row-arrow">›</span></button><div class="workflow-row-control"><span class="workflow-status">${item.enabled ? '已启用' : '已停用'}</span><button class="workflow-switch" type="button" role="switch" aria-checked="${item.enabled ? 'true' : 'false'}" aria-label="${esc(item.enabled ? '停用' : '启用')} ${esc(item.title)}"><span></span></button><button class="workflow-delete" type="button" title="删除工作流" aria-label="删除 ${esc(item.title)}"><i data-lucide="trash-2"></i></button></div></article>`).join('');
+        workflowList.querySelectorAll('.workflow-row-main').forEach(row => row.addEventListener('click', () => { const item=row.closest('.workflow-row'); const data=workflowItems.find(value => value.source===item.dataset.source && String(value.id)===String(item.dataset.id)); openConfig(item.dataset.source, item.dataset.id, data?.title || ''); }));
         workflowList.querySelectorAll('.workflow-switch').forEach(toggle => toggle.addEventListener('click', async event => { event.stopPropagation(); const row=toggle.closest('.workflow-row'); const item=workflowItems.find(value => value.source===row.dataset.source && value.id===row.dataset.id); if(item) await toggleWorkflow(item, toggle); }));
+        workflowList.querySelectorAll('.workflow-delete').forEach(button => button.addEventListener('click', async event => { event.stopPropagation(); const row=button.closest('.workflow-row'); const item=workflowItems.find(value => value.source===row.dataset.source && value.id===row.dataset.id && (!value.resourceId || value.resourceId===row.dataset.resourceId)); if(item) await deleteWorkflow(item, button); }));
         window.lucide?.createIcons();
     } catch { workflowList.innerHTML = '<div class="error-state">工作流读取失败，请稍后重试。</div>'; }
+}
+async function deleteWorkflow(item, button){
+    if(!window.confirm(`确认删除“${item.title}”吗？此操作不可恢复。`)) return;
+    button.disabled = true;
+    try {
+        if(item.source === 'comfyui'){
+            const response = await fetch(`/api/workflows/${encodeURIComponent(item.id)}`, {method:'DELETE'});
+            if(!response.ok){ const data=await response.json().catch(() => ({})); throw new Error(data.detail || '删除工作流失败'); }
+        } else {
+            const response = await fetch('/api/ai/configuration');
+            const config = await response.json();
+            if(!response.ok) throw new Error(config.detail || '读取资源失败');
+            const resources = (config.resources || []).filter(resource => resource.id !== item.resourceId);
+            const saved = await fetch('/api/ai/configuration', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...config, resources})});
+            if(!saved.ok){ const data=await saved.json().catch(() => ({})); throw new Error(data.detail || '删除 RH 应用失败'); }
+        }
+        const meta = savedMeta();
+        delete meta[`${item.source}:${item.id}`];
+        localStorage.setItem('workflow_settings_meta', JSON.stringify(meta));
+        await loadWorkflows();
+    } catch(error) {
+        button.disabled = false;
+        alert(error.message || '删除工作流失败');
+    }
 }
 async function toggleWorkflow(item, toggle){
     const next = !item.enabled;

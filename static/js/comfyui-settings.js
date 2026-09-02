@@ -131,7 +131,6 @@ let workflows = [];
 let selectedName = '';
 let currentWorkflow = null;     // 原始 JSON
 let currentConfig = null;       // { title, fields:[...] }
-let isBuiltin = false;
 let previewValues = {};         // field_id -> 发给后端的值（图片：comfy 文件名）
 let previewRandomActive = {};   // field_id -> 筛子运行时是否激活；未设置时默认激活
 let previewImageUrls = {};      // field_id -> 浏览器可显示的本地 URL（仅图片字段）
@@ -223,12 +222,11 @@ function renderList(){
     if(isSingleWorkflowMode){ listEl.innerHTML = ''; return; }
     listEl.innerHTML = workflows.map(w => `
         <button class="workflow-card ${w.name===selectedName?'active':''}" type="button" onclick="selectWorkflow('${escapeHtml(w.name)}')">
-            <span class="workflow-icon"><i data-lucide="${w.builtin?'package':'file-json-2'}" class="w-3.5 h-3.5"></i></span>
+            <span class="workflow-icon"><i data-lucide="file-json-2" class="w-3.5 h-3.5"></i></span>
             <span class="min-w-0" style="flex:1">
                 <div class="workflow-name">${escapeHtml(w.title)}</div>
                 <div class="workflow-meta">${tf('comfy.fieldCount', {count:w.field_count})}</div>
             </span>
-            ${w.builtin?`<span class="builtin-badge">${tr('comfy.builtin')}</span>`:''}
         </button>
     `).join('');
     refreshIcons();
@@ -249,7 +247,6 @@ async function selectWorkflow(name){
         });
         currentConfig.media = currentConfig.media === 'video' ? 'video' : 'image';
         if(!currentConfig.mini_cards) currentConfig.mini_cards = {};
-        isBuiltin = !!data.builtin;
         miniCards = {...defaultMiniCards(), ...currentConfig.mini_cards};
         currentConfig.mini_cards = miniCards;
         // 释放上一次的图片 blob URL
@@ -302,8 +299,8 @@ function renderEditor(){
     }
     document.getElementById('nodesToggle').style.display = workspaceMode === 'graph' ? 'flex' : 'none';
     workflowTitleInput.value = currentConfig.title || selectedName.replace('.json','');
-    subEl.textContent = tf('comfy.nodeStats', {nodes:Object.keys(currentWorkflow).length, fields:currentConfig.fields.length}) + (isBuiltin ? ` · ${tr('comfy.builtin')}` : '');
-    if(deleteBtn) deleteBtn.style.display = isBuiltin ? 'none' : 'inline-flex';
+    subEl.textContent = tf('comfy.nodeStats', {nodes:Object.keys(currentWorkflow).length, fields:currentConfig.fields.length});
+    if(deleteBtn) deleteBtn.style.display = 'inline-flex';
     saveBtn.style.display = isEmbeddedMode ? 'none' : 'inline-flex';
 
     renderGraph();
@@ -515,7 +512,7 @@ async function onSave(){
 }
 
 async function onDelete(){
-    if(!selectedName || isBuiltin) return;
+    if(!selectedName) return;
     if(!confirm(tf('comfy.deleteConfirm', {name: currentConfig.title || selectedName}))) return;
     try {
         const res = await fetch(`/api/workflows/${encodeURIComponent(selectedName)}`, { method:'DELETE' });

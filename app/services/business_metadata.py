@@ -204,8 +204,9 @@ CREATE TABLE IF NOT EXISTS ai_resources (
 CREATE INDEX IF NOT EXISTS idx_ai_resources_connection_kind ON ai_resources(connection_id, kind, enabled);
 CREATE TABLE IF NOT EXISTS comfy_workflows (
     name TEXT PRIMARY KEY, workflow_json JSONB NOT NULL, config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-    builtin BOOLEAN NOT NULL DEFAULT FALSE, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
 );
+ALTER TABLE comfy_workflows DROP COLUMN IF EXISTS builtin;
 CREATE INDEX IF NOT EXISTS idx_comfy_workflows_updated ON comfy_workflows(updated_at DESC);
 CREATE TABLE IF NOT EXISTS ai_task_archive (
     task_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT '',
@@ -449,15 +450,15 @@ def migrate_local_workflows() -> int:
                 if os.path.exists(cfg_path):
                     with open(cfg_path, encoding='utf-8') as f:
                         config = json.load(f) or {}
-                rows.append((rel, json_value(workflow), json_value(config), rel in {'Z-Image.json','Z-Image-Enhance.json','2511.json','klein-enhance.json','Flux2-Klein.json','upscale.json'}, now, now))
+                rows.append((rel, json_value(workflow), json_value(config), now, now))
             except (OSError, ValueError, TypeError):
                 continue
     if not rows:
         return 0
     with metadata_connection() as conn, conn.cursor() as cur:
         for row in rows:
-            cur.execute("""INSERT INTO comfy_workflows(name,workflow_json,config_json,builtin,created_at,updated_at)
-                VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(name) DO NOTHING RETURNING name""", row)
+            cur.execute("""INSERT INTO comfy_workflows(name,workflow_json,config_json,created_at,updated_at)
+                VALUES(%s,%s,%s,%s,%s) ON CONFLICT(name) DO NOTHING RETURNING name""", row)
             if cur.fetchone():
                 imported += 1
     return imported
@@ -465,21 +466,18 @@ def migrate_local_workflows() -> int:
 
 def list_comfy_workflows() -> list[dict[str, Any]]:
     with metadata_connection() as conn, conn.cursor() as cur:
-        # Built-in workflows are valid canvas sources too. They remain
-        # undeletable at the router layer, but must be visible alongside
-        # custom workflows in the unified workflow selector.
-        cur.execute("SELECT name,config_json,builtin FROM comfy_workflows")
+        cur.execute("SELECT name,config_json FROM comfy_workflows")
         rows = cur.fetchall()
     result = []
     for row in rows:
         config = row['config_json'] or {}
-        result.append({'name': row['name'], 'title': config.get('title') or row['name'].replace('.json', ''), 'builtin': bool(row['builtin']), 'field_count': len(config.get('fields') or []), 'media': config.get('media') if config.get('media') in {'image','video'} else 'image', 'enabled': config.get('enabled', True) is not False})
+        result.append({'name': row['name'], 'title': config.get('title') or row['name'].replace('.json', ''), 'field_count': len(config.get('fields') or []), 'media': config.get('media') if config.get('media') in {'image','video'} else 'image', 'enabled': config.get('enabled', True) is not False})
     return sorted(result, key=lambda item: (0 if item['name'].startswith('custom/') else 1, item['title']))
 
 
 def get_comfy_workflow(name: str) -> dict[str, Any] | None:
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT name,workflow_json,config_json,builtin FROM comfy_workflows WHERE name=%s", (name,))
+        cur.execute("SELECT name,workflow_json,config_json FROM comfy_workflows WHERE name=%s", (name,))
         row = cur.fetchone()
     if not row:
         return None
@@ -488,7 +486,7 @@ def get_comfy_workflow(name: str) -> dict[str, Any] | None:
     config.setdefault('fields', [])
     config['media'] = config.get('media') if config.get('media') in {'image','video'} else 'image'
     config['enabled'] = config.get('enabled', True) is not False
-    return {'name': row['name'], 'workflow': row['workflow_json'], 'config': config, 'builtin': bool(row['builtin'])}
+    return {'name': row['name'], 'workflow': row['workflow_json'], 'config': config}
 
 
 def save_comfy_workflow_config(name: str, config: dict[str, Any]) -> dict[str, Any] | None:
@@ -503,8 +501,8 @@ def save_comfy_workflow_config(name: str, config: dict[str, Any]) -> dict[str, A
 
 def delete_comfy_workflow(name: str) -> bool:
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM comfy_workflows WHERE name=%s AND builtin=FALSE", (name,))
-        return cur.rowcount > 0
+        cur.execute("DELETE FROM comfy_workflows WHERE name=%s RETURNING name", (name,))
+        return cur.fetchone() is not None
 
 
 def _file_refs(value: Any, field_name: str = ""):
