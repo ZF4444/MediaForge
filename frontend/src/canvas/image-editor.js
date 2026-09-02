@@ -545,7 +545,10 @@ async function ensurePanoramaRenderer(){
     const canvas = document.getElementById('panoramaCanvas');
     if(!canvas) return false;
     if(!panoramaState.three){
-        panoramaState.threeLoadPromise = panoramaState.threeLoadPromise || import('/static/vendor/js/three-0.160.0.module.js?v=2026.05.30');
+        const script = Array.from(document.scripts).find(item => item.src.includes('/static/dist/canvas/image-editor.js'));
+        const version = script?.src.match(/[?&]v=([^&]+)/)?.[1] || '';
+        const suffix = version ? `?v=${encodeURIComponent(version)}` : '';
+        panoramaState.threeLoadPromise = panoramaState.threeLoadPromise || import(`/static/vendor/js/three-0.160.0.module.js${suffix}`);
         panoramaState.three = await panoramaState.threeLoadPromise;
     }
     const THREE = panoramaState.three;
