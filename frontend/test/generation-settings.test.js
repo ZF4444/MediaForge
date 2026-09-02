@@ -35,6 +35,79 @@ describe('gcdInt', () => {
     });
 });
 
+describe('workflow media filtering', () => {
+    it('图片和视频节点只匹配各自类型，通用工作流节点不筛选', () => {
+        const { workflowMatchesNode } = createGenerationSettingsSandbox();
+        const imageWorkflow = { name: 'image.json', media: 'image' };
+        const videoWorkflow = { name: 'video.json', media: 'video' };
+
+        expect(workflowMatchesNode(imageWorkflow, { genKind: 'image' })).toBe(true);
+        expect(workflowMatchesNode(videoWorkflow, { genKind: 'image' })).toBe(false);
+        expect(workflowMatchesNode(videoWorkflow, { genKind: 'video' })).toBe(true);
+        expect(workflowMatchesNode(imageWorkflow, { genKind: 'video' })).toBe(false);
+        expect(workflowMatchesNode(videoWorkflow, { genKind: 'workflow' })).toBe(true);
+    });
+
+    it('未标注 media 的旧工作流按图片兼容', () => {
+        const { workflowMediaType, workflowMatchesNode } = createGenerationSettingsSandbox();
+        const legacyWorkflow = { name: 'legacy.json' };
+
+        expect(workflowMediaType(legacyWorkflow)).toBe('image');
+        expect(workflowMatchesNode(legacyWorkflow, { genKind: 'image' })).toBe(true);
+        expect(workflowMatchesNode(legacyWorkflow, { genKind: 'video' })).toBe(false);
+    });
+
+    it('没有 media 的 RunningHub 视频工作流可从字段和标签识别', () => {
+        const { workflowMediaType } = createGenerationSettingsSandbox();
+
+        expect(workflowMediaType({ fields: [{ fieldType: 'VIDEO' }] })).toBe('video');
+        expect(workflowMediaType({ raw: { tags: [{ name: '视频生视频' }] } })).toBe('video');
+        expect(workflowMediaType({ raw: { tags: [{ nameEn: 'Video-to-Video' }] } })).toBe('video');
+    });
+
+    it('已保存的错误类型工作流会回退到当前节点类型的首项', () => {
+        const imageSandbox = createGenerationSettingsSandbox({
+            settings: { engine: 'comfy', comfyWorkflow: 'video.json' },
+            comfyWorkflows: [
+                { name: 'image.json', media: 'image' },
+                { name: 'video.json', media: 'video' },
+            ],
+        });
+        imageSandbox.normalizeWorkflowSourceForNode({ genKind: 'image' });
+        expect(imageSandbox.__state.settings.comfyWorkflow).toBe('image.json');
+
+        const videoSandbox = createGenerationSettingsSandbox({
+            settings: { engine: 'comfy', comfyWorkflow: 'image.json' },
+            comfyWorkflows: [
+                { name: 'image.json', media: 'image' },
+                { name: 'video.json', media: 'video' },
+            ],
+        });
+        videoSandbox.normalizeWorkflowSourceForNode({ genKind: 'video' });
+        expect(videoSandbox.__state.settings.comfyWorkflow).toBe('video.json');
+    });
+
+    it('RunningHub 旧连接条目从资源配置补齐媒体类型', () => {
+        const { runningHubEntries } = createGenerationSettingsSandbox({
+            aiConnections: [{
+                id: 'runninghub',
+                enabled: true,
+                rh_apps: [{ id: 'video-app', title: 'Video app' }],
+            }],
+            aiResourceIndex: {
+                resources: [{
+                    id: 'resource-video-app',
+                    kind: 'runninghub_app',
+                    enabled: true,
+                    settings: { id: 'video-app', media: 'video' },
+                }],
+            },
+        });
+
+        expect(runningHubEntries('app')).toMatchObject([{ id: 'video-app', media: 'video' }]);
+    });
+});
+
 describe('imageSizeForRatio', () => {
     it('兼容 natural_w/natural_h 字段', () => {
         const { imageSizeForRatio } = createGenerationSettingsSandbox();

@@ -119,7 +119,15 @@ function runningHubEntries(kind){
             const id = item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id;
             return {...(item.settings || {}), id, appId:id, webappId:id, title:item.title || item.settings?.title, name:item.name, enabled:item.enabled !== false};
         });
-    const apps = providerApps.length ? providerApps : resourceApps;
+    const resourceAppsById = new Map(resourceApps.map(entry => [runningHubEntryId(entry, 'app'), entry]));
+    // Legacy connection records keep a complete `rh_apps` list but do not
+    // carry the media type. Enrich them from resources, which are the
+    // authoritative store for the workflow's image/video classification.
+    const apps = providerApps.length ? providerApps.map(entry => {
+        const resourceEntry = resourceAppsById.get(runningHubEntryId(entry, 'app'));
+        const media = entry?.media === 'image' || entry?.media === 'video' ? entry.media : resourceEntry?.media;
+        return media ? {...entry, media} : entry;
+    }) : resourceApps;
     return apps.filter(item => item?.enabled !== false && item?.hidden !== true);
 }
 function runningHubEntryId(entry, kind){
@@ -139,6 +147,45 @@ function parseRunningHubEntryKey(value){
 }
 function runningHubAllEntries(){
     return runningHubEntries('app').map(entry => ({kind:'app', id:runningHubEntryId(entry, 'app'), entry})).filter(x => x.id);
+}
+function workflowMediaType(workflow){
+    if(workflow?.media === 'image' || workflow?.media === 'video') return workflow.media;
+    // Legacy RunningHub apps do not persist `media`. Their parameter fields
+    // and tags still identify video workflows, so infer before falling back
+    // to the historical image default.
+    const fields = [...(workflow?.fields || []), ...(workflow?.raw?.nodeInfoList || [])];
+    if(fields.some(field => String(field?.fieldType || field?.type || '').toUpperCase() === 'VIDEO')) return 'video';
+    const tags = Array.isArray(workflow?.raw?.tags) ? workflow.raw.tags : [];
+    const labels = [workflow?.title, workflow?.name, workflow?.raw?.webappName, ...tags.flatMap(tag => [tag?.name, tag?.nameEn])];
+    return labels.some(label => /video|视频/i.test(String(label || ''))) ? 'video' : 'image';
+}
+function workflowMediaForNode(node){
+    return node?.genKind === 'image' || node?.genKind === 'video' ? node.genKind : '';
+}
+function workflowMatchesNode(workflow, node){
+    const media = workflowMediaForNode(node);
+    return !media || workflowMediaType(workflow) === media;
+}
+function comfyWorkflowsForNode(node=activeSettingsSubject()){
+    return (Array.isArray(comfyWorkflows) ? comfyWorkflows : []).filter(workflow => workflowMatchesNode(workflow, node));
+}
+function runningHubWorkflowEntriesForNode(node=activeSettingsSubject()){
+    return runningHubAllEntries().filter(ref => workflowMatchesNode(ref.entry, node));
+}
+function normalizeWorkflowSourceForNode(node=activeSettingsSubject()){
+    const media = workflowMediaForNode(node);
+    if(!media) return;
+    const comfy = comfyWorkflowsForNode(node);
+    const runningHub = runningHubWorkflowEntriesForNode(node);
+    if(settings.engine === 'comfy'){
+        if(!comfy.some(workflow => workflow.name === settings.comfyWorkflow)) settings.comfyWorkflow = comfy[0]?.name || '';
+        if(!comfy.length && runningHub.length) settings.engine = 'runninghub';
+    } else if(settings.engine === 'runninghub'){
+        const selected = parseRunningHubEntryKey(settings.rhConfigKey || '');
+        const hasSelected = selected && runningHub.some(ref => ref.kind === selected.kind && ref.id === selected.id);
+        if(!hasSelected) settings.rhConfigKey = runningHub[0] ? runningHubEntryKey(runningHub[0].kind, runningHub[0].id) : '';
+        if(!runningHub.length && comfy.length) settings.engine = 'comfy';
+    }
 }
 function selectedRunningHubRef(sourceSettings=settings){
     const all = runningHubAllEntries();
@@ -548,6 +595,7 @@ function clearComposerHeadParams(){
 function renderDynamicParams(){
     if(!dynamicParams) return;
     const node = activeSettingsSubject();
+    normalizeWorkflowSourceForNode(node);
     const allowedEngines = allowedEnginesForNode(node);
     const unifiedWorkflowNode = ['image','video','workflow'].includes(node?.genKind);
     if(settings.engine === 'volcengine') settings.engine = 'api';
@@ -720,7 +768,8 @@ function rhAttachedRefKinds(){
 }
 function renderRhConfigControl(ref){
     const attachedKinds = rhAttachedRefKinds();
-    const apps = runningHubEntries('app').filter(entry => rhEntrySupportsAttachedRefs(entry, 'app', attachedKinds));
+    const apps = runningHubWorkflowEntriesForNode().map(ref => ref.entry)
+        .filter(entry => rhEntrySupportsAttachedRefs(entry, 'app', attachedKinds));
     const selected = ref ? runningHubEntryKey(ref.kind, ref.id) : '';
     const groupHtml = (kind, entries, label) => entries.length ? `
         <div class="model-list-label rh-list-label">${escapeHtml(label)}<span class="count">${entries.length}</span></div>
@@ -754,7 +803,8 @@ function renderRhMachineControl(){
     </div>`;
 }
 function renderComfyParams(){
-    if(!settings.comfyWorkflow || !comfyWorkflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
+    const workflows = comfyWorkflowsForNode();
+    if(!settings.comfyWorkflow || !workflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = workflows[0]?.name || '';
     if(settings.comfyWorkflow && !comfyWorkflowCache[settings.comfyWorkflow]) ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
     const wf = comfyWorkflowCache[settings.comfyWorkflow];
     const fields = (wf?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
@@ -768,15 +818,17 @@ function renderWorkflowNodeParams(){
     // settings. If that source is no longer configured, prefer the other
     // available workflow source instead of showing the RH-only "add workflow"
     // hint for a perfectly valid ComfyUI workflow.
-    const hasComfy = Array.isArray(comfyWorkflows) && comfyWorkflows.length > 0;
-    const hasRunningHub = runningHubAllEntries().length > 0;
+    const workflows = comfyWorkflowsForNode();
+    const runningHubWorkflows = runningHubWorkflowEntriesForNode();
+    const hasComfy = workflows.length > 0;
+    const hasRunningHub = runningHubWorkflows.length > 0;
     if(settings.engine === 'runninghub' && !hasRunningHub && hasComfy) settings.engine = 'comfy';
     else if(settings.engine === 'comfy' && !hasComfy && hasRunningHub) settings.engine = 'runninghub';
     const isComfy = settings.engine === 'comfy';
     let fields = [];
     let body = '';
     if(isComfy){
-        if(!settings.comfyWorkflow || !comfyWorkflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
+        if(!settings.comfyWorkflow || !workflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = workflows[0]?.name || '';
         if(settings.comfyWorkflow && !comfyWorkflowCache[settings.comfyWorkflow]) ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
         fields = (comfyWorkflowCache[settings.comfyWorkflow]?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
         body = fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`);
@@ -793,12 +845,13 @@ function renderWorkflowNodeParams(){
     dynamicParams.innerHTML = `${renderWorkflowSourceControl()}${body}`;
 }
 function renderWorkflowSourceControl(){
-    const comfyItems = comfyWorkflows.map(workflow => ({
+    const node = activeSettingsSubject();
+    const comfyItems = comfyWorkflowsForNode(node).map(workflow => ({
         value:`comfy:${workflow.name}`,
         label:workflow.title || workflow.name.replace('.json', ''),
         active:settings.engine === 'comfy' && workflow.name === settings.comfyWorkflow
     }));
-    const rhItems = runningHubAllEntries().map(ref => ({
+    const rhItems = runningHubWorkflowEntriesForNode(node).map(ref => ({
         value:`runninghub:${runningHubEntryKey(ref.kind, ref.id)}`,
         label:runningHubEntryLabel(ref.entry, ref.kind),
         active:settings.engine === 'runninghub' && settings.rhConfigKey === runningHubEntryKey(ref.kind, ref.id)
@@ -821,15 +874,16 @@ function renderWorkflowSourceControl(){
     </div>`;
 }
 function renderComfyWorkflowControl(){
-    if(!comfyWorkflows.length) return `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`;
-    const current = comfyWorkflows.find(w => w.name === settings.comfyWorkflow) || comfyWorkflows[0];
+    const workflows = comfyWorkflowsForNode();
+    if(!workflows.length) return `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`;
+    const current = workflows.find(w => w.name === settings.comfyWorkflow) || workflows[0];
     const label = current?.title || (current?.name || '').replace('.json','') || tr('smart.workflow');
     return `<div class="smart-control workflow-control">
         <button class="smart-pill" type="button"><i data-lucide="layers"></i><span class="sub">${escapeHtml(label)}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.workflow'))}</div>
             <div class="model-list">
-                ${comfyWorkflows.map(w => `<button type="button" class="direct-option ${w.name === settings.comfyWorkflow ? 'active' : ''}" data-smart-param="comfyWorkflow" data-smart-value="${escapeHtml(w.name)}"><span>${escapeHtml(w.title || w.name.replace('.json',''))}</span></button>`).join('')}
+                ${workflows.map(w => `<button type="button" class="direct-option ${w.name === settings.comfyWorkflow ? 'active' : ''}" data-smart-param="comfyWorkflow" data-smart-value="${escapeHtml(w.name)}"><span>${escapeHtml(w.title || w.name.replace('.json',''))}</span></button>`).join('')}
             </div>
         </div>
     </div>`;

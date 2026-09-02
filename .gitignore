@@ -1,6 +1,11 @@
 .venv/
 .agents/
+.kiro/
+.codex/
 .vscode/
+.uv-cache/
+.venv-local/
+.pytest_cache/
 skills-lock.json
 __pycache__/
 

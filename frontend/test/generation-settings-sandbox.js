@@ -40,6 +40,9 @@ export function createGenerationSettingsSandbox(overrides = {}) {
         set settings(v) { state.settings = v; },
 
         tr: overrides.fns?.tr || ((key) => key),
+        comfyWorkflows: overrides.comfyWorkflows ?? [],
+        aiConnections: overrides.aiConnections ?? [],
+        aiResourceIndex: overrides.aiResourceIndex ?? { resources: [] },
 
         // 模型元数据表），本文件的 msModelLabel 会读取它。sandbox 里用一个
         // 最小的默认值代替，测试用例可通过 overrides.msGenModels 自定义。
