@@ -470,6 +470,10 @@ IMAGE_POLL_INTERVAL = float(os.getenv("IMAGE_POLL_INTERVAL", "2"))
 IMAGE_TASK_TIMEOUT = float(os.getenv("IMAGE_TASK_TIMEOUT", str(AI_REQUEST_TIMEOUT)))
 COMFYUI_HISTORY_TIMEOUT = int(float(os.getenv("COMFYUI_HISTORY_TIMEOUT", "1800")))
 VIDEO_POLL_TIMEOUT = float(os.getenv("VIDEO_POLL_TIMEOUT", "1800"))
+# Worker-side polling for canvas RunningHub app tasks. Mirrors the previous
+# client-side loop (360 attempts x 5s = 30 minutes).
+CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS = float(os.getenv("CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS", "5"))
+CANVAS_RUNNINGHUB_POLL_TIMEOUT_SECONDS = float(os.getenv("CANVAS_RUNNINGHUB_POLL_TIMEOUT_SECONDS", "1800"))
 ONLINE_IMAGE_PROMPT_MAX_LENGTH = int(os.getenv("ONLINE_IMAGE_PROMPT_MAX_LENGTH", "20000"))
 VIDEO_PROMPT_MAX_LENGTH = int(os.getenv("VIDEO_PROMPT_MAX_LENGTH", "4000"))
 from app.config import ONLINE_IMAGE_PROMPT_MAX_LENGTH, VIDEO_PROMPT_MAX_LENGTH
@@ -4268,6 +4272,215 @@ async def get_canvas_comfy_task(task_id: str):
     return task
 
 
+class CanvasRunningHubKeyBusy(RuntimeError):
+    """Raised when RunningHub returns code 804 (API key already running a task)."""
+
+
+async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequest):
+    """Execute a canvas RunningHub app task inside the worker.
+
+    Mirrors run_canvas_comfy_task: the worker submits to the upstream and then
+    polls until terminal. The upstream taskId is persisted as soon as it is
+    known so a crash-recovered run can resume polling (query) instead of
+    resubmitting (which would double-charge). A code 804 (API key busy) is a
+    terminal failure surfaced to the client via a toast.
+    """
+    lease_token = await claim_canvas_task(task_id, CLIENT_ID)
+    if not lease_token:
+        return
+    bind_log_context(task_id=task_id)
+    started = time.perf_counter()
+    task = await get_canvas_task(task_id)
+    existing_upstream_task_id = str((task or {}).get("upstream_task_id") or "").strip()
+    user_id = str((task or {}).get("owner_id") or current_user_id())
+    connection_id = str(payload.connection_id or "")
+    resource_id = str(payload.resource_id or "")
+    task_logger.info(
+        "canvas RunningHub task started",
+        extra={"event": "task_started", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "running", "upstream_task_id": existing_upstream_task_id},
+    )
+    if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
+        await release_canvas_task_claim(task_id, lease_token)
+        return
+    lease_heartbeat = asyncio.create_task(canvas_task_lease_heartbeat(task_id, lease_token))
+    try:
+        from app.ai.database_repository import DatabaseAIRepository
+        from app.ai.adapters.runninghub_transport import RunningHubTransport
+        from app.services.usage import record_runninghub_submission, settle_runninghub_usage
+        try:
+            selected_resource = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_executable,
+                resource_id=resource_id, connection_id=connection_id, kind="runninghub_app",
+            )
+        except LookupError as exc:
+            raise ValueError("RunningHub 资源不存在或已禁用") from exc
+        provider = canonical_connection_view(selected_resource)
+        settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
+        webapp_id = str(payload.webappId or settings.get("id") or settings.get("appId") or settings.get("webappId") or "").strip()
+        api_key = await runninghub_api_key_async(provider)
+        transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=120.0, pool=20.0))
+
+        upstream_task_id = existing_upstream_task_id
+        # Only submit when this run has no upstream task yet. A recovered run
+        # already carries the upstream id and resumes at the polling stage.
+        if not upstream_task_id:
+            body = {"apiKey": api_key, "webappId": webapp_id, "nodeInfoList": payload.nodeInfoList or []}
+            instance_type = str(payload.instanceType or "").strip()
+            if instance_type:
+                body["instanceType"] = instance_type
+            async with connection_operation(str(provider.get("connection_id") or provider.get("id") or "runninghub"), "app_generation", user_id=user_id):
+                raw = await transport.submit(provider, api_key, body)
+            if isinstance(raw, dict) and raw.get("code") in (804, "804"):
+                raise CanvasRunningHubKeyBusy("RunningHub 正在执行当前 API Key 的其他任务，请稍后重试。")
+            if not (isinstance(raw, dict) and raw.get("code") in (0, "0")):
+                raise RuntimeError((raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
+            upstream_task_id = raw.get("data", {}).get("taskId") if isinstance(raw.get("data"), dict) else ""
+            if not upstream_task_id:
+                raise RuntimeError(f"RunningHub 未返回 taskId：{raw}")
+            # Persist the upstream id immediately so recovery can resume polling.
+            await update_claimed_canvas_task(task_id, lease_token, upstream_task_id=str(upstream_task_id))
+            await asyncio.to_thread(
+                record_runninghub_submission, user_id, str(upstream_task_id),
+                operation="ai_app", model=webapp_id,
+                connection_id=selected_resource.connection.id if selected_resource else "",
+                resource_id=resource_id,
+            )
+
+        # Poll the upstream inside the worker until terminal or timeout.
+        deadline = time.monotonic() + CANVAS_RUNNINGHUB_POLL_TIMEOUT_SECONDS
+        raw = None
+        status = "RUNNING"
+        urls: list[str] = []
+        media_items: list[dict] = []
+        while time.monotonic() < deadline:
+            if not await refresh_canvas_task_lease(task_id, lease_token):
+                # Lost the lease; a recovered worker owns this task now.
+                return
+            raw = await transport.query(provider, api_key, str(upstream_task_id))
+            code = raw.get("code") if isinstance(raw, dict) else None
+            urls = []
+            media_items = []
+            for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw):
+                ext = runninghub_output_ext(remote)
+                kind = runninghub_output_kind(ext)
+                async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0)) as client:
+                    local_url = await runninghub_store_remote_output(client, remote)
+                urls.append(local_url)
+                media_items.append(await run_storage_io(media_response_item, local_url, "", kind))
+            status = runninghub_normalized_status(raw, code, urls)
+            if status in {"SUCCESS", "FAILED"}:
+                break
+            await asyncio.sleep(min(CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic())))
+
+        await asyncio.to_thread(
+            settle_runninghub_usage, user_id, str(upstream_task_id), raw,
+            status=status, operation="ai_app", connection_id=connection_id, resource_id=resource_id,
+        )
+        if status == "SUCCESS":
+            try:
+                quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
+            except Exception:
+                quota_warning = None
+            result = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "code": raw.get("code") if isinstance(raw, dict) else None}
+            task_data = {"status": "succeeded", "result": result, "error": "", "upstream_task_id": str(upstream_task_id)}
+            if quota_warning:
+                task_data["quota_warning"] = quota_warning
+            await update_claimed_canvas_task(task_id, lease_token, **task_data)
+            task_logger.info(
+                "canvas RunningHub task completed",
+                extra={"event": "task_completed", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "succeeded", "upstream_task_id": str(upstream_task_id), "output_count": len(urls), "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            )
+        elif status == "FAILED":
+            raise RuntimeError(str(runninghub_fail_reason(raw) or "RunningHub 任务失败"))
+        else:
+            raise TimeoutError(f"RunningHub 任务超时：{upstream_task_id}")
+    except CanvasRunningHubKeyBusy as exc:
+        await update_claimed_canvas_task(
+            task_id, lease_token, status="failed", error=str(exc),
+            error_code="runninghub_key_busy", status_code=409,
+            upstream_task_id=existing_upstream_task_id, updated_at=time.time(),
+        )
+        task_logger.warning(
+            "canvas RunningHub task failed (key busy)",
+            extra={"event": "task_failed", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "failed", "error_code": "runninghub_key_busy", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        status_code = getattr(exc, "status_code", 500)
+        await update_claimed_canvas_task(
+            task_id, lease_token, status="failed", error=str(detail),
+            status_code=status_code, upstream_task_id=str(existing_upstream_task_id or ""), updated_at=time.time(),
+        )
+        task_logger.exception(
+            "canvas RunningHub task failed",
+            extra={"event": "task_failed", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
+    finally:
+        lease_heartbeat.cancel()
+        await release_canvas_task_claim(task_id, lease_token)
+
+
+@app.post("/api/canvas-runninghub-tasks")
+async def create_canvas_runninghub_task(payload: RunningHubSubmitRequest):
+    if not (payload.resource_id or payload.connection_id):
+        raise HTTPException(status_code=400, detail="RunningHub 任务必须指定 resource_id 或 connection_id")
+    from app.ai.database_repository import DatabaseAIRepository
+    try:
+        selected_resource = await asyncio.to_thread(
+            DatabaseAIRepository().resolve_executable,
+            resource_id=payload.resource_id, connection_id=payload.connection_id, kind="runninghub_app",
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
+    settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
+    webapp_id = str(payload.webappId or settings.get("id") or settings.get("appId") or settings.get("webappId") or "").strip()
+    if not webapp_id:
+        raise HTTPException(status_code=400, detail="webappId 必填")
+    provider = canonical_connection_view(selected_resource)
+    await assert_provider_budget_available(provider, current_user_id())
+    connection_id = selected_resource.connection.id
+    resource_id = payload.resource_id or ""
+    request_snapshot = {
+        "webappId": webapp_id,
+        "nodeInfoList": payload.nodeInfoList or [],
+        "instanceType": str(payload.instanceType or "").strip(),
+        "connection_id": connection_id,
+        "resource_id": resource_id,
+    }
+    task_id = f"canvas_rh_{uuid.uuid4().hex}"
+    owner_id = current_user_id()
+    await create_canvas_task({
+        "id": task_id,
+        "type": "online-runninghub",
+        "status": "queued",
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "result": None,
+        "error": "",
+        "connection_id": connection_id,
+        "resource_id": resource_id,
+        "owner_id": owner_id,
+        "request": request_snapshot,
+    })
+    task_logger.info(
+        "canvas RunningHub task submitted",
+        extra={"event": "task_submitted", "task_id": task_id, "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "queued"},
+    )
+    await enqueue_canvas_task(task_id)
+    return {"task_id": task_id, "status": "queued"}
+
+
+@app.get("/api/canvas-runninghub-tasks/{task_id}")
+async def get_canvas_runninghub_task(task_id: str):
+    task = await get_canvas_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="RunningHub 任务不存在，可能服务已重启或任务已过期")
+    if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
+        raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
+    task.pop("request", None)
+    return task
+
+
 @app.get("/api/admin/canvas-task-dead-letters")
 async def admin_list_canvas_task_dead_letters(limit: int = 100):
     require_user_management_access()
@@ -4312,6 +4525,17 @@ async def recover_canvas_tasks_once():
     for task in await list_recoverable_canvas_tasks():
         if task.get("status") == "running":
             if not await has_canvas_task_claim(task["id"]):
+                # RunningHub app tasks can be safely resumed: the upstream query
+                # is idempotent, so a run that already submitted (has an upstream
+                # task id) re-polls instead of resubmitting (no double charge).
+                if task.get("type") == "online-runninghub" and str(task.get("upstream_task_id") or "").strip() and isinstance(task.get("request"), dict):
+                    requeued = await update_canvas_task(task["id"], expected_status="running", status="queued")
+                    if requeued:
+                        try:
+                            await enqueue_canvas_task(task["id"])
+                        except Exception:
+                            logger.exception("canvas task recovery failed", extra={"event": "task_recovery_failed", "task_id": task.get("id")})
+                    continue
                 await update_canvas_task(
                     task["id"], expected_status="running", status="interrupted",
                     error="执行 worker 已失联；为避免重复提交上游任务，未自动重试。",
@@ -4388,17 +4612,34 @@ async def execute_canvas_task(task_id: str):
                 kind="comfyui_workflow",
             )
             await update_canvas_task(task_id, connection_id=resolved.connection.id, resource_id=resolved.resource.id if resolved.resource else "")
+        elif task.get("type") == "online-runninghub":
+            if not (task.get("resource_id") or request.get("resource_id") or task.get("connection_id") or request.get("connection_id")):
+                raise LookupError("RunningHub 任务缺少 resource_id 或 connection_id")
+            resolved = await asyncio.to_thread(
+                database_repository.resolve_executable,
+                resource_id=str(task.get("resource_id") or request.get("resource_id") or ""),
+                connection_id=str(task.get("connection_id") or request.get("connection_id") or ""),
+                kind="runninghub_app",
+            )
+            await update_canvas_task(task_id, connection_id=resolved.connection.id, resource_id=resolved.resource.id if resolved.resource else "")
     except LookupError as exc:
         await update_canvas_task(task_id, expected_status="queued", status="failed", error=f"任务资源解析失败：{exc}")
         return
     context_token = current_user_var.set(str(task.get("owner_id") or ""))
     try:
         timeout = max(1.0, deadline - time.time()) if deadline else CANVAS_TASK_TIMEOUT_SECONDS
+        # RunningHub app tasks poll the upstream inside the worker for up to
+        # CANVAS_RUNNINGHUB_POLL_TIMEOUT_SECONDS, so the wrapper must not kill
+        # them earlier than that.
+        if task.get("type") == "online-runninghub":
+            timeout = max(timeout, CANVAS_RUNNINGHUB_POLL_TIMEOUT_SECONDS + 60)
         try:
             if task.get("type") == "online-image":
                 await asyncio.wait_for(run_canvas_image_task(task_id, OnlineImageRequest.model_validate(runtime_request)), timeout=timeout)
             elif task.get("type") == "comfy":
                 await asyncio.wait_for(run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request)), timeout=timeout)
+            elif task.get("type") == "online-runninghub":
+                await asyncio.wait_for(run_canvas_runninghub_task(task_id, RunningHubSubmitRequest.model_validate(request)), timeout=timeout)
             else:
                 await update_canvas_task(task_id, expected_status="queued", status="failed", error="不支持的画布任务类型")
         except asyncio.TimeoutError:

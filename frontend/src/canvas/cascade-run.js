@@ -194,7 +194,9 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const nodeInfoList = await rhBuildNodeInfoList(media, runSettings, randomValues);
     const stable = runningHubTarget(ref, runSettings);
     const body = {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || '', connection_id:stable.connection_id, resource_id:stable.resource_id};
-    const submit = await fetch('/api/runninghub/submit', {
+    // Canvas RunningHub apps run as canvas tasks (worker submits + polls the
+    // upstream). We only receive the local task_id here and poll it locally.
+    const submit = await fetch('/api/canvas-runninghub-tasks', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(body)
@@ -204,13 +206,11 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
         if(data.success === false) throw new Error(data.detail || data.error || tr('smart.rhFailed'));
         return data.data || data;
     });
-    const taskId = submit.upstream_task_id;
+    const taskId = submit.task_id;
     if(!taskId) throw new Error(tr('smart.rhNoTaskId'));
     return {
         ...submit,
         taskId,
-        localTaskId:submit.task_id || '',
-        upstreamTaskId:submit.upstream_task_id || '',
         connectionId:stable.connection_id,
         resourceId:stable.resource_id,
         mode:'app'
@@ -220,28 +220,26 @@ async function pollRunningHubTask(taskId, target={}){
     if(!taskId) throw new Error(tr('smart.rhNoTaskId'));
     if(activeRunningHubTaskPolls.has(taskId)) return activeRunningHubTaskPolls.get(taskId);
     const promise = (async () => {
-        let sawSuccessWithoutOutputs = false;
-        for(let i = 0; i < 360; i++){
+        for(let i = 0; i < 720; i++){
             await sleep(5000);
-            const query = new URLSearchParams({taskId, connection_id:target.connectionId || target.connection_id || '', resource_id:target.resourceId || target.resource_id || ''});
-            const localTaskId = target.localTaskId || target.local_task_id || '';
-            if(localTaskId) query.set('local_task_id', localTaskId);
-            const data = await fetch(`/api/runninghub/query?${query}`).then(async r => {
-                const json = await r.json();
-                if(!r.ok || json.success === false){
-                    throw new Error(json.detail || json.error || tr('smart.rhFailed'));
-                }
-                return json.data || json;
+            const task = await fetch(`/api/canvas-runninghub-tasks/${encodeURIComponent(taskId)}`).then(async r => {
+                if(!r.ok) throw await smartResponseError(r, tr('smart.rhFailed'));
+                return r.json();
             });
-            if(data.status === 'SUCCESS'){
-                const outputs = data.media_items || data.image_items || data.urls || [];
-                if(outputs.length){ checkQuotaWarningFromResult(data); return outputs; }
-                sawSuccessWithoutOutputs = true;
-                continue;
+            if(task.status === 'succeeded'){
+                const result = task.result || {};
+                const outputs = result.media_items || result.image_items || result.urls || [];
+                checkQuotaWarningFromResult(result);
+                return outputs;
             }
-            if(data.status === 'FAILED') throw new Error(data.failReason || tr('smart.rhFailed'));
+            if(task.status === 'failed' || task.status === 'interrupted' || task.status === 'timed_out'){
+                if(task.error_code === 'runninghub_key_busy'){
+                    toast('RunningHub 正忙：当前 API Key 有任务在执行，请稍后重试。');
+                }
+                throw new Error(task.error || tr('smart.rhFailed'));
+            }
         }
-        throw new Error(sawSuccessWithoutOutputs ? tr('smart.rhOutputsEmpty') : tr('smart.rhTimeout'));
+        throw new Error(tr('smart.rhTimeout'));
     })();
     activeRunningHubTaskPolls.set(taskId, promise);
     try {
@@ -1085,7 +1083,7 @@ async function runGeneration(){
             const taskResult = await submitRunningHubGeneration(prompt, refs);
             const taskIds = [taskResult.taskId].filter(Boolean);
             if(!taskIds.length) throw new Error(tr('smart.rhNoTaskId'));
-            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:'runninghub', connectionId:taskResult.connectionId, resourceId:taskResult.resourceId, mode:taskResult.mode, localTaskId:taskResult.localTaskId || '', upstreamTaskId:taskResult.upstreamTaskId || taskId}));
+            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:'runninghub', connectionId:taskResult.connectionId, resourceId:taskResult.resourceId, mode:taskResult.mode}));
             pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
             pendingNode.pendingCandidatePool = true;
             pendingNode.runStartedAt = nowMs();
