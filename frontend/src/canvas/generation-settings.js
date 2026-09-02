@@ -115,12 +115,15 @@ function runningHubEntries(kind){
     // authoritative list as a fallback when the connection uses a custom ID.
     const resourceApps = (Array.isArray(aiResourceIndex?.resources) ? aiResourceIndex.resources : [])
         .filter(item => item?.kind === 'runninghub_app')
-        .map(item => ({...(item.settings || {}), id:item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id, title:item.title || item.settings?.title, name:item.name, enabled:item.enabled !== false}));
+        .map(item => {
+            const id = item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id;
+            return {...(item.settings || {}), id, appId:id, webappId:id, title:item.title || item.settings?.title, name:item.name, enabled:item.enabled !== false};
+        });
     const apps = providerApps.length ? providerApps : resourceApps;
     return apps.filter(item => item?.enabled !== false && item?.hidden !== true);
 }
 function runningHubEntryId(entry, kind){
-    return String(entry?.appId || entry?.webappId || entry?.id || '').trim();
+    return String(entry?.id || entry?.appId || entry?.webappId || '').trim();
 }
 function runningHubEntryLabel(entry, kind){
     const id = runningHubEntryId(entry, kind);
@@ -1784,13 +1787,10 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
             // Executable workflows/apps live in `resources` in the authoritative
             // configuration. Attach them to their connection for the legacy
             // provider-shaped canvas selectors.
-            rh_apps:(stableCfg.resources || []).filter(r => r.connection_id === c.id && r.kind === 'runninghub_app').map(r => ({
-                ...(r.settings || {}),
-                id: r.settings?.id || r.settings?.appId || r.settings?.webappId || r.id,
-                title: r.title || r.settings?.title || r.name,
-                name: r.name,
-                enabled: r.enabled !== false,
-            })),
+            rh_apps:(stableCfg.resources || []).filter(r => r.connection_id === c.id && r.kind === 'runninghub_app').map(r => {
+                const id = r.settings?.id || r.settings?.appId || r.settings?.webappId || r.id;
+                return {...(r.settings || {}), id, appId:id, webappId:id, title:r.title || r.settings?.title || r.name, name:r.name, enabled:r.enabled !== false};
+            }),
             comfy_workflows:(stableCfg.resources || []).filter(r => r.connection_id === c.id && r.kind === 'comfyui_workflow').map(r => ({
                 ...(r.settings || {}),
                 name: r.settings?.name || r.name,
@@ -1814,26 +1814,11 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
         if(workflowResponse.ok){
             const wf = await workflowResponse.json();
             const legacyWorkflows = Array.isArray(wf.workflows) ? wf.workflows : [];
-            // ComfyUI workflows created through API settings are persisted as
-            // executable resources, while older uploads use the comfy_workflows
-            // table. Merge both sources for the canvas selector.
-            const resourceWorkflows = (stableCfg.resources || [])
-                .filter(item => item?.kind === 'comfyui_workflow')
-                .map(item => {
-                    const s = item.settings || {};
-                    return {
-                        ...s,
-                        name: s.workflow_name || s.workflowName || s.name || item.name,
-                        title: s.title || item.name,
-                        enabled: item.enabled !== false,
-                    };
-                })
-                .filter(item => item.name);
-            const workflowByName = new Map();
-            [...legacyWorkflows, ...resourceWorkflows].forEach(item => {
-                if(item?.name && !workflowByName.has(item.name)) workflowByName.set(item.name, item);
-            });
-            comfyWorkflows = [...workflowByName.values()].filter(item => item?.enabled !== false);
+            // /api/workflows is the authoritative list shown by Workflow Settings.
+            // Do not merge legacy comfyui_workflow resources from AI configuration:
+            // those records can survive migration without an actual workflow and
+            // would make the canvas show entries that cannot be opened or deleted.
+            comfyWorkflows = legacyWorkflows.filter(item => item?.enabled !== false);
         } else {
             console.warn('[canvas] workflow refresh skipped', workflowResponse.status);
         }
