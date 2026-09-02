@@ -107,4 +107,4 @@ def find_app(resource_settings: Mapping[str, Any] | None, model: str) -> Mapping
     settings = resource_settings or {}
     apps = settings.get("rh_apps") if isinstance(settings, Mapping) else None
     key = str(model or "").strip()
-    return next((entry for entry in apps or [] if isinstance(entry, Mapping) and key in {str(entry.get("id") or ""), str(entry.get("appId") or ""), str(entry.get("webappId") or "")}), None)
+    return next((entry for entry in apps or [] if isinstance(entry, Mapping) and str(entry.get("app_id") or "").strip() == key), None)

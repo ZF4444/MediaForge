@@ -79,7 +79,7 @@ class DatabaseAIRepository:
         for resource in self.executable_resources(include_disabled=True):
             config = by_id.get(resource.connection_id)
             if config is None: continue
-            item = {**dict(resource.settings), "id": dict(resource.settings).get("id") or resource.name, "name": resource.name, "enabled": resource.enabled}
+            item = {**dict(resource.settings), "name": resource.name, "enabled": resource.enabled}
             config["rh_apps" if resource.kind == "runninghub_app" else "comfy_workflows"].append(item)
         return list(by_id.values())
 

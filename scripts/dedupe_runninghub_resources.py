@@ -23,7 +23,7 @@ async def main() -> None:
         # the event-loop thread while the async pool is active.
         await asyncio.to_thread(initialize_business_metadata)
         removed = await asyncio.to_thread(dedupe_runninghub_resources)
-        print(json.dumps({"status": "ok", "removed_duplicates": removed}, ensure_ascii=False))
+        print(json.dumps({"status": "ok", "removed_duplicates": removed, "format": "runninghub_app.v2", "identity": "settings.app_id"}, ensure_ascii=False))
     finally:
         await close_database_pool()
 

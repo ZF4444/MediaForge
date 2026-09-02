@@ -81,13 +81,14 @@ function findRhAppFieldCard(key){
 function normalizeRhEntries(values, kind){
     const seen = new Set();
     return (Array.isArray(values) ? values : []).map(raw => {
-        const parsed = parseRunningHubRunRef(raw?.id || raw?.appId || raw?.webappId || '');
-        const id = String(parsed?.id || raw?.id || raw?.appId || raw?.webappId || '').trim();
+        const parsed = parseRunningHubRunRef(raw?.app_id || raw?.webappId || raw?.appId || raw?.id || '');
+        const id = String(parsed?.id || raw?.app_id || raw?.webappId || raw?.appId || raw?.id || '').trim();
         if(!id || seen.has(id)) return null;
         seen.add(id);
         const fallback = `AI 应用 ${id.slice(-6)}`;
         const entry = {
             id,
+            app_id:id,
             title:String(raw?.title || raw?.name || fallback).trim(),
             note:String(raw?.note || raw?.description || '').trim(),
             thumbnail:String(raw?.thumbnail || '').trim(),
@@ -322,7 +323,7 @@ async function openRhAppEditor(index){
     if(!entry) return;
     if(!entry._resource_id){
         const appId = String(entry.id || entry.appId || entry.webappId || '');
-        const resource = (aiConfiguration.resources || []).find(r => r.kind === 'runninghub_app' && String(r.settings?.id || r.settings?.appId || r.settings?.webappId || '') === appId);
+        const resource = (aiConfiguration.resources || []).find(r => r.kind === 'runninghub_app' && String(r.settings?.app_id || '') === appId);
         if(resource) entry = {...entry, _resource_id:resource.id};
         item.rh_apps[index] = entry;
     }

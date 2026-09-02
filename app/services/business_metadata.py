@@ -521,7 +521,8 @@ def dedupe_runninghub_resources() -> int:
         groups: dict[str, list[Any]] = {}
         for row in rows:
             settings = dict(row['settings_json'] or {})
-            app_id = str(settings.get('id') or settings.get('appId') or settings.get('webappId') or '').strip()
+            raw = settings.get('raw') if isinstance(settings.get('raw'), dict) else {}
+            app_id = str(raw.get('webappId') or raw.get('appId') or settings.get('webappId') or settings.get('appId') or settings.get('id') or '').strip()
             if not app_id:
                 continue
             groups.setdefault(app_id, []).append((row, settings))
@@ -531,7 +532,9 @@ def dedupe_runninghub_resources() -> int:
             merged = {}
             for row, settings in reversed(entries):
                 merged.update(settings)
-            merged.update({'id': app_id, 'appId': app_id, 'webappId': app_id})
+            merged['app_id'] = app_id
+            for key in ('id', 'appId', 'webappId'):
+                merged.pop(key, None)
             name = str(primary['name'] or merged.get('title') or app_id)
             cur.execute("UPDATE ai_resources SET name=%s,settings_json=%s,updated_at=%s WHERE id=%s", (name, json_value(merged), now_ms(), primary['id']))
             for duplicate, _ in entries[1:]:

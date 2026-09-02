@@ -2884,7 +2884,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
         settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
-        webapp_id = webapp_id or str(settings.get("id") or settings.get("appId") or settings.get("webappId") or "").strip()
+        webapp_id = webapp_id or str(settings.get("app_id") or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = canonical_connection_view(selected_resource)
@@ -3165,22 +3165,14 @@ async def ai_resources():
 
 
 def _canonical_runninghub_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
-    """Return RH settings with one authoritative external application ID.
-
-    Older editors persisted all of ``id``, ``appId`` and ``webappId`` and could
-    leave them pointing at different applications. ``id`` is the identifier
-    displayed and selected by the workflow settings UI, so retain it as the
-    canonical value and mirror it to the legacy aliases.
-    """
+    """Return the canonical RH resource settings shape."""
     normalized = dict(settings or {})
-    app_id = str(
-        normalized.get("id")
-        or normalized.get("appId")
-        or normalized.get("webappId")
-        or ""
-    ).strip()
+    raw = normalized.get("raw") if isinstance(normalized.get("raw"), dict) else {}
+    app_id = str(normalized.get("app_id") or raw.get("webappId") or normalized.get("webappId") or normalized.get("appId") or normalized.get("id") or "").strip()
     if app_id:
-        normalized.update({"id": app_id, "appId": app_id, "webappId": app_id})
+        normalized["app_id"] = app_id
+        for key in ("id", "appId", "webappId"):
+            normalized.pop(key, None)
     return normalized
 
 
@@ -4316,7 +4308,7 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
             raise ValueError("RunningHub 资源不存在或已禁用") from exc
         provider = canonical_connection_view(selected_resource)
         settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
-        webapp_id = str(payload.webappId or settings.get("id") or settings.get("appId") or settings.get("webappId") or "").strip()
+        webapp_id = str(payload.webappId or settings.get("app_id") or "").strip()
         api_key = await runninghub_api_key_async(provider)
         transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=120.0, pool=20.0))
 
@@ -4433,7 +4425,7 @@ async def create_canvas_runninghub_task(payload: RunningHubSubmitRequest):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
     settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
-    webapp_id = str(payload.webappId or settings.get("id") or settings.get("appId") or settings.get("webappId") or "").strip()
+    webapp_id = str(payload.webappId or settings.get("app_id") or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = canonical_connection_view(selected_resource)
