@@ -28,7 +28,7 @@ try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows uses the process lock only.
     fcntl = None
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Mapping
 from threading import Lock, Thread
 
 
@@ -2880,7 +2880,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
         settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
-        webapp_id = webapp_id or str(settings.get("webappId") or settings.get("appId") or settings.get("id") or "").strip()
+        webapp_id = webapp_id or str(settings.get("id") or settings.get("appId") or settings.get("webappId") or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = canonical_connection_view(selected_resource)
@@ -3126,11 +3126,35 @@ async def ai_resources():
     return await asyncio.to_thread(read_resources)
 
 
+def _canonical_runninghub_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Return RH settings with one authoritative external application ID.
+
+    Older editors persisted all of ``id``, ``appId`` and ``webappId`` and could
+    leave them pointing at different applications. ``id`` is the identifier
+    displayed and selected by the workflow settings UI, so retain it as the
+    canonical value and mirror it to the legacy aliases.
+    """
+    normalized = dict(settings or {})
+    app_id = str(
+        normalized.get("id")
+        or normalized.get("appId")
+        or normalized.get("webappId")
+        or ""
+    ).strip()
+    if app_id:
+        normalized.update({"id": app_id, "appId": app_id, "webappId": app_id})
+    return normalized
+
+
 def _ai_configuration_payload(repository):
     return {
         "connections": [{"id": item.id, "protocol": item.protocol, "name": item.name, "base_url": item.base_url, "enabled": item.enabled, "primary": item.primary, "settings": dict(item.settings)} for item in repository.connections(include_disabled=True)],
         "models": [{"id": item.id, "connection_id": item.connection_id, "kind": item.kind, "upstream_model": item.upstream_model, "protocol": item.protocol, "alias": item.alias, "enabled": item.enabled, "capabilities": sorted(item.capabilities), "settings": dict(item.settings)} for item in repository.models(include_disabled=True)],
-        "resources": [{"id": item.id, "connection_id": item.connection_id, "kind": item.kind, "name": item.name, "enabled": item.enabled, "settings": dict(item.settings)} for item in repository.executable_resources(include_disabled=True)],
+        "resources": [
+            {"id": item.id, "connection_id": item.connection_id, "kind": item.kind, "name": item.name, "enabled": item.enabled,
+             "settings": _canonical_runninghub_settings(item.settings) if item.kind == "runninghub_app" else dict(item.settings)}
+            for item in repository.executable_resources(include_disabled=True)
+        ],
     }
 
 
@@ -3149,6 +3173,9 @@ async def save_ai_configuration(payload: Dict[str, Any]):
     connections = payload.get("connections") if isinstance(payload.get("connections"), list) else []
     models = payload.get("models") if isinstance(payload.get("models"), list) else []
     resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
+    for resource in resources:
+        if isinstance(resource, dict) and resource.get("kind") == "runninghub_app":
+            resource["settings"] = _canonical_runninghub_settings(resource.get("settings") or {})
     for item in connections:
         if not isinstance(item, dict) or not str(item.get("id") or "").strip() or not str(item.get("protocol") or "").strip():
             raise HTTPException(status_code=400, detail="连接必须包含 id 和 protocol")

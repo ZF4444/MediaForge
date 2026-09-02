@@ -49,7 +49,7 @@ class RunningHubImageAdapter:
 
     async def generate(self, target: ResolvedTarget, *, prompt: str, model: str = "", references: list[dict[str, Any]] | None = None) -> Any:
         settings = dict(target.resource.settings if target.resource else {})
-        webapp_id = str(settings.get("webappId") or settings.get("appId") or settings.get("id") or model)
+        webapp_id = str(settings.get("id") or settings.get("appId") or settings.get("webappId") or model)
         fields = settings.get("fields") or []
         node_info = [{"nodeId": str(field.get("nodeId") or ""), "fieldName": str(field.get("fieldName") or ""), "fieldValue": prompt} for field in fields if str(field.get("fieldName") or "").lower() in {"prompt", "text"}]
         body = {"apiKey": self._api_key({**dict(target.connection.settings or {}), "connection_id": target.connection.id}), "webappId": webapp_id, "nodeInfoList": node_info}
