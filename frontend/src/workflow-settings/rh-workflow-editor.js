@@ -94,6 +94,12 @@ function normalizeRhEntries(values, kind){
             thumbnail:String(raw?.thumbnail || '').trim(),
             enabled:raw?.enabled !== false
         };
+        // Keep the database resource identity while normalizing the editable
+        // entry; the embedded editor uses it to update/create the right row.
+        if(raw?._resource_id) entry._resource_id = String(raw._resource_id);
+        if(raw?.cover && typeof raw.cover === 'object') entry.cover = {...raw.cover};
+        if(raw?.media === 'video') entry.media = 'video';
+        if(raw?.sourceAppId) entry.sourceAppId = String(raw.sourceAppId);
         if(raw?.hidden === true) entry.hidden = true;
         if(Array.isArray(raw?.fields)) entry.fields = raw.fields.map(normalizeRhWorkflowField);
         if(raw?.raw && typeof raw.raw === 'object') entry.raw = raw.raw;
