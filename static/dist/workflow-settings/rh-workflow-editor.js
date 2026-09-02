@@ -445,22 +445,8 @@ async function loadRhAppEditorConfig(entry){
     const sourceAppId = String(entry?.sourceAppId || entry?.raw?.sourceAppId || '').trim();
     const hasConflictingRawId = Boolean((rawId || sourceAppId) && requestedId && (rawId || sourceAppId) !== requestedId);
     if(!config.fields.length || hasConflictingRawId) await fetchRhAppEditor(false);
-    else {
-        const platformTitle = await fetchRhAppTitle(config.appId);
-        if(platformTitle){
-            config.title = platformTitle;
-            entry.title = platformTitle;
-            window.parent !== window && window.parent.postMessage({type:'workflow-title', title:platformTitle}, location.origin);
-        }
-        renderRhWorkflowEditor();
-    }
+    else renderRhWorkflowEditor();
     return rhWorkflowEditorState.config;
-}
-async function fetchRhAppTitle(appId){
-    const res = await fetch(`/api/runninghub/app-info?webappId=${encodeURIComponent(appId)}`);
-    const data = await res.json();
-    if(!res.ok || data.success === false) return '';
-    return String(data.data?.webappName || data.data?.name || data.data?.title || data.webappName || data.name || data.title || '').trim();
 }
 async function fetchRhAppEditor(force=false){
     const state = rhWorkflowEditorState;
@@ -476,9 +462,7 @@ async function fetchRhAppEditor(force=false){
     const fallbackTitle = `AI 应用 ${appId.slice(-6)}`;
     state.config = {
         appId,
-        // A name edited in the workflow settings is authoritative. The
-        // platform title is only a fallback for newly added apps; otherwise a
-        // refresh would silently replace the user's custom name.
+        // Explicit open/re-fetch actions use the current upstream platform title.
         title:platformTitle || fallbackTitle,
         description:rhWorkflowEditNote?.value.trim() || entry.note || '',
         fields,
