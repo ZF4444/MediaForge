@@ -471,7 +471,7 @@ def list_comfy_workflows() -> list[dict[str, Any]]:
     result = []
     for row in rows:
         config = row['config_json'] or {}
-        result.append({'name': row['name'], 'title': config.get('title') or row['name'].replace('.json', ''), 'field_count': len(config.get('fields') or []), 'media': config.get('media') if config.get('media') in {'image','video'} else 'image', 'enabled': config.get('enabled', True) is not False})
+        result.append({'name': row['name'], 'title': config.get('title') or row['name'].replace('.json', ''), 'field_count': len(config.get('fields') or []), 'media': config.get('media') if config.get('media') in {'image','video'} else 'image', 'cover': config.get('cover') if isinstance(config.get('cover'), dict) else {}, 'enabled': config.get('enabled', True) is not False})
     return sorted(result, key=lambda item: (0 if item['name'].startswith('custom/') else 1, item['title']))
 
 

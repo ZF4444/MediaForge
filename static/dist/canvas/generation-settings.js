@@ -126,7 +126,8 @@ function runningHubEntries(kind){
     const apps = providerApps.length ? providerApps.map(entry => {
         const resourceEntry = resourceAppsById.get(runningHubEntryId(entry, 'app'));
         const media = entry?.media === 'image' || entry?.media === 'video' ? entry.media : resourceEntry?.media;
-        return media ? {...entry, media} : entry;
+        const cover = entry?.cover && typeof entry.cover === 'object' ? entry.cover : resourceEntry?.cover;
+        return {...entry, ...(media ? {media} : {}), ...(cover ? {cover} : {})};
     }) : resourceApps;
     return apps.filter(item => item?.enabled !== false && item?.hidden !== true);
 }
@@ -594,6 +595,7 @@ function clearComposerHeadParams(){
 }
 function renderDynamicParams(){
     if(!dynamicParams) return;
+    clearWorkflowCoverFlyout();
     const node = activeSettingsSubject();
     normalizeWorkflowSourceForNode(node);
     const allowedEngines = allowedEnginesForNode(node);
@@ -849,18 +851,20 @@ function renderWorkflowSourceControl(){
     const comfyItems = comfyWorkflowsForNode(node).map(workflow => ({
         value:`comfy:${workflow.name}`,
         label:workflow.title || workflow.name.replace('.json', ''),
+        cover:workflow.cover,
         active:settings.engine === 'comfy' && workflow.name === settings.comfyWorkflow
     }));
     const rhItems = runningHubWorkflowEntriesForNode(node).map(ref => ({
         value:`runninghub:${runningHubEntryKey(ref.kind, ref.id)}`,
         label:runningHubEntryLabel(ref.entry, ref.kind),
+        cover:ref.entry?.cover,
         active:settings.engine === 'runninghub' && settings.rhConfigKey === runningHubEntryKey(ref.kind, ref.id)
     }));
     const active = comfyItems.find(item => item.active) || rhItems.find(item => item.active);
     const label = active?.label || tr('smart.workflow');
     const group = (title, icon, items) => items.length ? `
         <div class="model-list-label rh-list-label">${escapeHtml(title)}<span class="count">${items.length}</span></div>
-        ${items.map(item => `<button type="button" class="direct-option ${item.active ? 'active' : ''}" data-smart-param="workflowSource" data-smart-value="${escapeHtml(item.value)}"><i data-lucide="${icon}"></i><span>${escapeHtml(item.label)}</span></button>`).join('')}
+        ${items.map(item => `<button type="button" class="direct-option workflow-source-option ${item.active ? 'active' : ''}" data-smart-param="workflowSource" data-smart-value="${escapeHtml(item.value)}"${workflowCoverDataAttr(item.cover, item.label)}><i data-lucide="${icon}"></i><span>${escapeHtml(item.label)}</span></button>`).join('')}
     ` : '';
     return `<div class="smart-control workflow-control">
         <button class="smart-pill" type="button"><i data-lucide="layers"></i><span class="sub">${escapeHtml(label)}</span><i data-lucide="chevron-down" class="pill-caret"></i></button>
@@ -872,6 +876,55 @@ function renderWorkflowSourceControl(){
             </div>
         </div>
     </div>`;
+}
+function workflowCoverDataAttr(cover, label=''){
+    const item = cover && typeof cover === 'object' ? cover : {};
+    const url = String(item.url || (item.file_id ? `/api/files/${encodeURIComponent(item.file_id)}/preview` : '') || '').trim();
+    return url ? ` data-workflow-cover="${escapeAttr(url)}" data-workflow-cover-label="${escapeAttr(label)}"` : '';
+}
+let workflowCoverFlyout = null;
+let workflowCoverFlyoutHideTimer = null;
+function clearWorkflowCoverFlyout(){
+    if(workflowCoverFlyoutHideTimer) clearTimeout(workflowCoverFlyoutHideTimer);
+    workflowCoverFlyoutHideTimer = null;
+    workflowCoverFlyout?.remove();
+    workflowCoverFlyout = null;
+}
+function showWorkflowCoverFlyout(option){
+    const url = option?.dataset?.workflowCover;
+    if(!url) return clearWorkflowCoverFlyout();
+    clearWorkflowCoverFlyout();
+    const flyout = document.createElement('aside');
+    flyout.className = 'workflow-cover-flyout';
+    flyout.setAttribute('aria-hidden', 'true');
+    const image = document.createElement('img');
+    image.src = url;
+    image.alt = option.dataset.workflowCoverLabel || '';
+    const label = document.createElement('span');
+    label.textContent = tr('smart.workflow');
+    flyout.append(image, label);
+    document.body.appendChild(flyout);
+    const optionRect = option.getBoundingClientRect();
+    const flyoutWidth = 180;
+    const flyoutHeight = 240;
+    const inset = 12;
+    const left = Math.max(inset, Math.min(optionRect.right + 14, window.innerWidth - flyoutWidth - inset));
+    const top = Math.max(inset, Math.min(optionRect.top + optionRect.height / 2 - flyoutHeight / 2, window.innerHeight - flyoutHeight - inset));
+    flyout.style.left = `${left}px`;
+    flyout.style.top = `${top}px`;
+    workflowCoverFlyout = flyout;
+}
+function scheduleWorkflowCoverFlyoutHide(){
+    if(workflowCoverFlyoutHideTimer) clearTimeout(workflowCoverFlyoutHideTimer);
+    workflowCoverFlyoutHideTimer = setTimeout(clearWorkflowCoverFlyout, 80);
+}
+function bindWorkflowCoverFlyouts(){
+    smartParamRoots().flatMap(root => Array.from(root.querySelectorAll('.workflow-source-option[data-workflow-cover]'))).forEach(option => {
+        option.onpointerenter = () => showWorkflowCoverFlyout(option);
+        option.onpointerleave = scheduleWorkflowCoverFlyoutHide;
+        option.onfocus = () => showWorkflowCoverFlyout(option);
+        option.onblur = scheduleWorkflowCoverFlyoutHide;
+    });
 }
 function renderComfyWorkflowControl(){
     const workflows = comfyWorkflowsForNode();
@@ -1615,6 +1668,7 @@ function smartParamRoots(){
 }
 function bindDynamicParams(){
     const queryAll = selector => smartParamRoots().flatMap(root => Array.from(root.querySelectorAll(selector)));
+    bindWorkflowCoverFlyouts();
     queryAll('.smart-control > .smart-pill').forEach(pill => {
         pill.onclick = event => {
             event.preventDefault();
