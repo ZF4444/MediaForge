@@ -32,9 +32,11 @@ describe('normalizeGeneratedCandidateImage', () => {
         expect(normalizeGeneratedCandidateImage(null)).toBe(null);
     });
 
-    it('非图片类型（视频/音频）不进入候选池，返回 null', () => {
+    it('视频类型也可作为候选素材', () => {
         const { normalizeGeneratedCandidateImage } = createCandidatePoolSandbox();
-        expect(normalizeGeneratedCandidateImage({ url: 'https://x.com/a.mp4' })).toBe(null);
+        expect(normalizeGeneratedCandidateImage({ url: 'https://x.com/a.mp4' })).toMatchObject({
+            url: 'https://x.com/a.mp4', kind: 'video', generatedResult: true,
+        });
     });
 
     it('会清除 runInputRefs 字段', () => {
@@ -145,10 +147,10 @@ describe('shouldUseCandidatePoolForImages', () => {
         expect(shouldUseCandidatePoolForImages(node)).toBe(false);
     });
 
-    it('混合媒体类型（含视频）时不使用候选池', () => {
+    it('工作流的混合媒体生成结果也使用候选池', () => {
         const { shouldUseCandidatePoolForImages } = createCandidatePoolSandbox();
         const node = { images: [{ url: 'a.png', generatedResult: true }, { url: 'b.mp4' }] };
-        expect(shouldUseCandidatePoolForImages(node)).toBe(false);
+        expect(shouldUseCandidatePoolForImages(node)).toBe(true);
     });
 });
 
@@ -165,9 +167,20 @@ describe('nodeCandidateImages / candidateCountForNode', () => {
         expect(sandbox.candidateCountForNode(node)).toBe(2);
     });
 
-    it('非图片节点返回空数组', () => {
+    it('非生成节点返回空数组', () => {
         const { nodeCandidateImages } = createCandidatePoolSandbox();
         expect(nodeCandidateImages({ type: 'smart-prompt' })).toEqual([]);
+    });
+
+    it('视频生成节点读取视频候选素材', () => {
+        const { nodeCandidateImages } = createCandidatePoolSandbox();
+        const node = {
+            type: 'smart-image',
+            genKind: 'video',
+            candidateImages: [{ url: 'https://x.com/a.mp4', kind: 'video' }],
+            images: [{ url: 'https://x.com/b.mp4', kind: 'video', generatedResult: true }],
+        };
+        expect(nodeCandidateImages(node).map(item => item.url)).toEqual(['https://x.com/a.mp4', 'https://x.com/b.mp4']);
     });
 });
 

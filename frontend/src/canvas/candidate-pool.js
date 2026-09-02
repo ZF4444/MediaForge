@@ -1,4 +1,4 @@
-// 从 static/js/canvas.js 剪切出的候选图池逻辑（M12 拆分批次）。
+// 从 static/js/canvas.js 剪切出的候选素材池逻辑（M12 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M11 同一个原因）：
@@ -8,10 +8,10 @@
 // <script src="candidate-pool.js"> 排在 media-display.js 之后、
 // canvas-render.js 之前加载。
 //
-// 本文件覆盖"候选图池"功能的全部逻辑（原文件 867-1126 行区间，约260行）
-// ——同一个图片节点一次生成多张候选结果时，用户可以在候选池里切换/
-// 展开查看/设为主图：
-//   1. 候选图片的归一化/合并：normalizeGeneratedCandidateImage /
+// 本文件覆盖"候选素材池"功能的全部逻辑（原文件 867-1126 行区间，约260行）
+// ——生成节点一次返回多条媒体结果时，用户可以在候选池里切换/
+// 展开查看/设为主素材：
+//   1. 候选素材的归一化/合并：normalizeGeneratedCandidateImage /
 //      candidateImageKey / candidateImageHasRunMeta /
 //      generatedImageWithRunMeta / imageRunMetaForNodeFallback /
 //      generatedImageWithNodeFallback / applyRunMetaFromImageToNode /
@@ -41,7 +41,6 @@
 function normalizeGeneratedCandidateImage(img){
     if(!img?.url) return null;
     const kind = img.kind || mediaKindForItem(img) || 'image';
-    if(kind !== 'image') return null;
     const clean = {...img, generatedResult:true, kind};
     delete clean.runInputRefs;
     return clean;
@@ -156,8 +155,7 @@ function shouldUseCandidatePoolForImages(node, images=node?.images || []){
     if(!isSmartImageNode(node) || isHistoryGroupNode(node)) return false;
     const valid = (images || []).filter(img => img?.url && !isMaskImageItem(img));
     if(valid.length <= 1) return false;
-    return valid.every(img => mediaKindForItem(img) === 'image')
-        && valid.some(img => img.generatedResult || img.runPrompt || img.runModelPrompt || img.runSettings || img.sourceNodeId || img.runAt || node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt);
+    return valid.some(img => img.generatedResult || img.runPrompt || img.runModelPrompt || img.runSettings || img.sourceNodeId || img.runAt || node.runPrompt || node.runModelPrompt || node.sourceNodeId || node.runAt);
 }
 function isMaskImageItem(img){
     return Boolean(img && (String(img.role || '').toLowerCase() === 'mask' || /_mask\.png$/i.test(String(img.name || ''))));
@@ -268,7 +266,7 @@ function candidateControlHtml(node){
     if(count <= 1 || isHistoryGroupNode(node) || node.pending || node.queued) return '';
     const open = candidatePanelNodeId === node.id;
     const expanded = expandedCandidateNodeIds.has(node.id);
-    return `<button class="candidate-expand ${expanded ? 'open' : ''}" type="button" data-candidate-expand="${escapeAttr(node.id)}" title="展开全部候选图"><i data-lucide="${expanded ? 'grid-2x2-x' : 'grid-2x2'}"></i></button><button class="candidate-toggle ${open ? 'open' : ''}" type="button" data-candidate-toggle="${escapeAttr(node.id)}" title="候选图"><span class="candidate-count">${count}</span><i data-lucide="chevron-down"></i></button>`;
+    return `<button class="candidate-expand ${expanded ? 'open' : ''}" type="button" data-candidate-expand="${escapeAttr(node.id)}" title="展开全部候选素材"><i data-lucide="${expanded ? 'grid-2x2-x' : 'grid-2x2'}"></i></button><button class="candidate-toggle ${open ? 'open' : ''}" type="button" data-candidate-toggle="${escapeAttr(node.id)}" title="候选素材"><span class="candidate-count">${count}</span><i data-lucide="chevron-down"></i></button>`;
 }
 function candidatePreviewIndexForNode(node, count){
     if(candidatePanelNodeId !== node?.id) return Math.max(0, Math.min(count - 1, Number(node?.candidateIndex) || 0));
@@ -289,7 +287,7 @@ function candidateOverlayHtml(node, layout){
         ${imageResolutionBadgeHtml(preview)}
         <button class="candidate-nav candidate-prev" type="button" data-candidate-prev="${escapeAttr(node.id)}" title="上一张"><i data-lucide="chevron-left"></i></button>
         <button class="candidate-nav candidate-next" type="button" data-candidate-next="${escapeAttr(node.id)}" title="下一张"><i data-lucide="chevron-right"></i></button>
-        <button class="candidate-main-btn" type="button" data-candidate-set-main="${escapeAttr(node.id)}" ${index === current ? 'disabled' : ''}>设为主图</button>
+        <button class="candidate-main-btn" type="button" data-candidate-set-main="${escapeAttr(node.id)}" ${index === current ? 'disabled' : ''}>设为主素材</button>
         <div class="candidate-index">${escapeHtml(indexText)}</div>
         <div class="candidate-dots">${dots}</div>
     </div>`;
@@ -299,5 +297,5 @@ function expandedCandidateGridHtml(node){
     const pool = nodeCandidateImages(node);
     if(pool.length <= 1) return '';
     const current = Math.max(0, Math.min(pool.length - 1, Number(node.candidateIndex) || 0));
-    return `<div class="candidate-grid" data-candidate-grid="${escapeAttr(node.id)}">${pool.map((img, i) => `<div class="candidate-grid-item ${i === current ? 'is-main' : ''}" data-candidate-grid-item="${i}"><img src="${escapeAttr(img?.url || '')}" alt=""><span class="candidate-grid-idx">${i + 1}</span></div>`).join('')}</div>`;
+    return `<div class="candidate-grid" data-candidate-grid="${escapeAttr(node.id)}">${pool.map((img, i) => `<div class="candidate-grid-item ${i === current ? 'is-main' : ''}" data-candidate-grid-item="${i}">${thumbMediaHtml(img)}<span class="candidate-grid-idx">${i + 1}</span></div>`).join('')}</div>`;
 }

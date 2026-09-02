@@ -1540,7 +1540,7 @@ async function loadCanvas({renderCanvas=true}={}){
             const pendingTasks = smartPendingTasks(n);
             if(pendingTasks.length){
                 n.pending = Math.max(pendingTasks.length, Number(n.pending || 0) || pendingTasks.length);
-                n.pendingCandidatePool = pendingTasks.some(task => (task.kind || 'image') === 'image');
+                n.pendingCandidatePool = true;
                 n.running = false;
             } else if(n.pending){
                 n.pending = 0;
@@ -2794,26 +2794,21 @@ function finalizePendingNode(pendingNode, urls, meta, kind='image'){
     if(!Number(pendingNode.pending || 0) && pendingNode.runFinishedAt) return;
     const imgs = normalizeOutputMediaItems(urls, kind, meta);
     const actualKind = mediaKindForUrls(imgs, kind);
-    if(actualKind === 'image') addGeneratedCandidatesToNode(pendingNode, imgs, {main:'firstNew'});
-    else {
-        pendingNode.images = imgs;
-        delete pendingNode.candidateImages;
-        delete pendingNode.candidateIndex;
-    }
+    addGeneratedCandidatesToNode(pendingNode, imgs, {main:'firstNew'});
     pendingNode.pending = 0;
     delete pendingNode.pendingCandidatePool;
     pendingNode.runFinishedAt = nowMs();
     if(!pendingNode.runStartedAt) pendingNode.runStartedAt = meta?.createdAt || pendingNode.runFinishedAt;
     pendingNode.runElapsedMs = Math.max(0, pendingNode.runFinishedAt - Number(pendingNode.runStartedAt || pendingNode.runFinishedAt));
     pendingNode.runTimerHidden = false;
-    pendingNode.outputKind = actualKind;
-    pendingNode.title = cascadeOutputTitle(actualKind, pendingNode.images.length);
+    const displayedKind = mediaKindForItem(pendingNode.images[0]) || actualKind;
+    pendingNode.outputKind = displayedKind;
+    pendingNode.title = cascadeOutputTitle(displayedKind, pendingNode.images.length);
     pendingNode.scale = mediaNodeDefaultScale(pendingNode);
     delete pendingNode.w;
     delete pendingNode.h;
     const metaTarget = pendingNode._runMetaTargetId ? nodes.find(n => n.id === pendingNode._runMetaTargetId) : pendingNode;
     if(metaTarget) attachRunMeta(metaTarget, meta);
-    if(actualKind !== 'image') pendingNode.images = (pendingNode.images || []).map(img => stripImageGenerationMeta(img));
     // Do not steal focus from a node the user opened while this task ran.
     // A freshly branched output remains selected only when it is still active.
     const completionTargetId = pendingNode._selectAfterRunId || pendingNode.id;
@@ -3281,28 +3276,12 @@ function ensureHistoryGroupForNode(node){
 function replaceOutputsToNodeWithHistory(node, additions, kind='image', meta=null, options={}){
     if(!node || !additions?.length) return [];
     const beforeRight = (Number(node.x) || 0) + nodeRect(node).width;
-    const existing = kind === 'image' ? uniqueGeneratedImages(node.images || []) : cleanHistoryImages(node.images || []);
-    const next = (kind === 'image' ? uniqueGeneratedImages(additions) : cleanHistoryImages(additions))
-        .map(img => kind === 'image' && meta ? generatedImageWithRunMeta(img, meta) : img);
+    const existing = uniqueGeneratedImages(node.images || []);
+    const next = uniqueGeneratedImages(additions)
+        .map(img => meta ? generatedImageWithRunMeta(img, meta) : img);
     if(!next.length) return [];
-    if(kind === 'image'){
-        if(existing.length) addGeneratedCandidatesToNode(node, existing, {main:'preserve'});
-        addGeneratedCandidatesToNode(node, next, {main:'firstNew'});
-    } else {
-        const history = existing.length ? ensureHistoryGroupForNode(node) : historyGroupForNode(node);
-        if(history){
-            const archived = cleanHistoryImages([...existing, ...(history.images || [])]);
-            history.images = archived;
-            history.title = '历史分组';
-            history.outputKind = kind;
-            history.scale = MEDIA_GROUP_DEFAULT_SCALE;
-            delete history.w;
-            delete history.h;
-        }
-        node.images = next;
-        delete node.candidateImages;
-        delete node.candidateIndex;
-    }
+    if(existing.length) addGeneratedCandidatesToNode(node, existing, {main:'preserve'});
+    addGeneratedCandidatesToNode(node, next, {main:'firstNew'});
     node.pending = 0;
     node.running = false;
     delete node.pendingCandidatePool;
@@ -3311,9 +3290,10 @@ function replaceOutputsToNodeWithHistory(node, additions, kind='image', meta=nul
     if(!node.runStartedAt) node.runStartedAt = meta?.createdAt || node.runFinishedAt;
     node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
     node.runTimerHidden = false;
-    node.outputKind = kind;
-    node.title = cascadeOutputTitle(kind, node.images.length);
-    node.scale = kind === 'image' ? mediaNodeDefaultScale(node) : (node.images.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE);
+    const displayedKind = mediaKindForItem(node.images[0]) || kind;
+    node.outputKind = displayedKind;
+    node.title = cascadeOutputTitle(displayedKind, node.images.length);
+    node.scale = mediaNodeDefaultScale(node);
     delete node.w;
     delete node.h;
     if(meta) attachRunMeta(node, meta);
@@ -3710,15 +3690,8 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     node.pending = Math.max(0, Number(node.pending || 0) - 1);
     const additions = normalizeOutputMediaItems(images, kind, imageRunMetaForNodeFallback(node));
     const actualKind = mediaKindForUrls(additions, kind);
-    if(actualKind === 'image') {
-        if(additions.length) addGeneratedCandidatesToNode(node, additions, {main:'firstNew'});
-    }
-    else {
-        node.images = [...(node.images || []).map(img => stripImageGenerationMeta(img)), ...additions];
-        delete node.candidateImages;
-        delete node.candidateIndex;
-    }
-    if(additions.length) node.outputKind = kind;
+    if(additions.length) addGeneratedCandidatesToNode(node, additions, {main:'firstNew'});
+    if(additions.length) node.outputKind = mediaKindForItem(node.images[0]) || actualKind;
     if(!node.pending && smartPendingTasks(node).length === 0){
         delete node.pendingTasks;
         delete node.pendingCandidatePool;
@@ -3727,7 +3700,7 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image'){
         node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
         node.runTimerHidden = false;
         node.running = false;
-        node.title = cascadeOutputTitle(actualKind, node.images.length);
+        node.title = cascadeOutputTitle(mediaKindForItem(node.images[0]) || actualKind, node.images.length);
         node.scale = mediaNodeDefaultScale(node);
         delete node.w;
         delete node.h;
@@ -3739,7 +3712,7 @@ async function resumeSmartPendingNode(node){
     const tasks = smartPendingTasks(node);
     if(!node || !tasks.length) return [];
     node.pending = Math.max(tasks.length, Number(node.pending || 0) || tasks.length);
-    node.pendingCandidatePool = tasks.some(task => (task.kind || 'image') === 'image');
+    node.pendingCandidatePool = true;
     node.running = false;
     render();
     const failures = [];
@@ -3769,7 +3742,7 @@ async function resumeSmartPendingNode(node){
                 task.error = e.message || tr('smart.errRunFailed');
                 node.running = false;
                 node.pending = Math.max(1, smartPendingTasks(node).length);
-                node.pendingCandidatePool = smartPendingTasks(node).some(item => (item.kind || 'image') === 'image');
+                node.pendingCandidatePool = true;
                 toast('任务未丢失，可稍后手动查询结果');
                 render();
                 scheduleSave();

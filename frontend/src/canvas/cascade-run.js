@@ -553,7 +553,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         outputSlot.queued = false;
         outputSlot.running = true;
         outputSlot.pending = expectedCount;
-        outputSlot.pendingCandidatePool = logKind === 'image';
+        outputSlot.pendingCandidatePool = true;
         outputSlot.runStartedAt = nowMs();
         delete outputSlot.runFinishedAt;
         delete outputSlot.runElapsedMs;
@@ -1032,7 +1032,7 @@ async function runGeneration(){
     let branchNode = null;
     const pendingMeta = shouldBranchFromImage ? stripRunInputMeta(meta) : meta;
     undoSuppressed = true;
-    if(shouldBranchFromImage) branchNode = createPendingOutputFromSource(node, expectedCount, pendingMeta, {connectSource:false, selectOutput:true, refs, candidatePool:logKind === 'image'});
+    if(shouldBranchFromImage) branchNode = createPendingOutputFromSource(node, expectedCount, pendingMeta, {connectSource:false, selectOutput:true, refs, candidatePool:true});
     undoSuppressed = false;
     const pendingNode = branchNode || node;
     if(extracted) pendingNode._runMetaTargetId = extracted.id;
@@ -1046,7 +1046,7 @@ async function runGeneration(){
             candidatePanelIndex = 0;
         }
         pendingNode.pending = Math.max(1, Number(expectedCount) || 1);
-        pendingNode.pendingCandidatePool = logKind === 'image';
+        pendingNode.pendingCandidatePool = true;
         pendingNode.runStartedAt = nowMs();
         delete pendingNode.runFinishedAt;
         delete pendingNode.runElapsedMs;
