@@ -15,6 +15,8 @@ const coverFor = (source, id, persisted) => {
 function openConfig(source='comfyui', id='', title=''){
     const query = new URLSearchParams({source});
     if(id) query.set('id', id);
+    const item = workflowItems.find(value => value.source === source && String(value.id) === String(id));
+    if(item?.resourceId) query.set('resourceId', item.resourceId);
     if(title) query.set('title', title);
     window.location.href = `/static/workflow-config.html?${query}`;
 }

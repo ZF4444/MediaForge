@@ -275,6 +275,9 @@ async function selectWorkflow(name){
 function updateWorkflowTitle(value){
     if(!currentConfig) return;
     currentConfig.title = value;
+    // Keep the embedding workflow-config page in sync so its metadata save
+    // cannot overwrite a freshly edited title with the original one.
+    if(isEmbeddedMode) window.parent?.postMessage({type:'workflow-title', title:value}, location.origin);
     const item = workflows.find(w => w.name === selectedName);
     if(item) item.title = value || selectedName.replace('.json','');
     if(!isSingleWorkflowMode) renderList();

@@ -14,6 +14,7 @@ const removeCoverBtn = document.getElementById('removeWorkflowCoverBtn');
 let current = {
     source: query.get('source') === 'runninghub' ? 'runninghub' : 'comfyui',
     id: query.get('id') || '',
+    resourceId: query.get('resourceId') || '',
     title: query.get('title') || '',
     media: 'image',
     cover: {},
@@ -41,6 +42,7 @@ function setEnabled(value){
 }
 function syncFrame(persistValue=false){
     frame.contentWindow?.postMessage({type:'workflow-media', media:current.media, persist:persistValue}, location.origin);
+    frame.contentWindow?.postMessage({type:'workflow-cover', cover:current.cover || {}}, location.origin);
 }
 function renderCover(){
     const url = coverUrl();
@@ -57,7 +59,7 @@ async function persistBackend(){
         const data = await res.json();
         const saved = await fetch(`/api/workflows/${encodeURIComponent(current.id)}/config`, {
             method:'PUT', headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({...data.config, media:current.media, cover:current.cover, enabled:current.enabled})
+            body:JSON.stringify({...data.config, title:current.title || data.config?.title || '', media:current.media, cover:current.cover, enabled:current.enabled})
         });
         if(!saved.ok) throw Error('保存工作流配置失败');
         return;
@@ -66,9 +68,10 @@ async function persistBackend(){
     const config = await response.json();
     if(!response.ok) throw Error(config.detail || '读取资源失败');
     const resources = (config.resources || []).map(resource => {
-        const id = resource.settings?.id || resource.settings?.appId || resource.settings?.webappId || resource.id;
-        if(resource.kind !== 'runninghub_app' || String(id) !== String(current.id)) return resource;
-        return {...resource, enabled:current.enabled, settings:{...(resource.settings || {}), media:current.media, cover:current.cover}};
+        if(resource.kind !== 'runninghub_app' || resource.id !== current.resourceId) return resource;
+        const existingCover = validCover(resource.settings?.cover);
+        const nextCover = Object.keys(validCover(current.cover)).length ? current.cover : existingCover;
+        return {...resource, enabled:current.enabled, settings:{...(resource.settings || {}), media:current.media, cover:nextCover}};
     });
     const saved = await fetch('/api/ai/configuration', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...config, resources})});
     if(!saved.ok) throw Error('保存工作流配置失败');
@@ -97,7 +100,7 @@ function load(){
     renderCover();
     const suffix = current.source === 'comfyui'
         ? `?embedded=1&workflow=${encodeURIComponent(current.id)}`
-        : (current.id ? `?embedded=1&appId=${encodeURIComponent(current.id)}&title=${encodeURIComponent(current.title || '')}` : '?embedded=1');
+        : (current.id ? `?embedded=1&appId=${encodeURIComponent(current.id)}&resourceId=${encodeURIComponent(current.resourceId || '')}&title=${encodeURIComponent(current.title || '')}` : '?embedded=1');
     frame.src = `/static/${current.source === 'comfyui' ? 'comfyui-settings.html' : 'rh-workflow-settings.html'}${suffix}`;
 }
 async function uploadCover(file){
@@ -121,7 +124,7 @@ async function uploadCover(file){
     }
 }
 
-sourceSelect.onchange = () => { current = {source:sourceSelect.value, id:'', title:'', media:'image', cover:{}, enabled:true}; setEnabled(true); load(); };
+sourceSelect.onchange = () => { current = {source:sourceSelect.value, id:'', resourceId:'', title:'', media:'image', cover:{}, enabled:true}; setEnabled(true); load(); };
 document.querySelectorAll('[data-media]').forEach(button => button.onclick = () => setMedia(button.dataset.media));
 document.getElementById('backToListBtn').onclick = () => location.href = '/static/workflow-settings.html';
 document.getElementById('saveMetaBtn').onclick = async () => {
@@ -133,7 +136,7 @@ frame.addEventListener('load', () => syncFrame());
 document.getElementById('openRhUrlBtn').onclick = () => {
     const appId = rhAppId.value.trim();
     if(!/^[\w-]{6,}$/.test(appId)) return alert('请输入有效的 RH应用ID');
-    current = {source:'runninghub', id:appId, title:'', media:current.media, cover:current.cover, enabled:true};
+    current = {source:'runninghub', id:appId, resourceId:'', title:'', media:current.media, cover:current.cover, enabled:true};
     setEnabled(true); persist(); load();
 };
 fileInput.onchange = async event => {
@@ -145,7 +148,7 @@ fileInput.onchange = async event => {
         const res = await fetch('/api/workflows', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, workflow})});
         const data = await res.json();
         if(!res.ok) throw Error(data.detail || '工作流上传失败');
-        current = {source:'comfyui', id:data.name || `${name}.json`, title:'', media:current.media, cover:current.cover, enabled:true};
+        current = {source:'comfyui', id:data.name || `${name}.json`, resourceId:'', title:'', media:current.media, cover:current.cover, enabled:true};
         setEnabled(true); persist(); load(); hint.textContent = '工作流已上传，请继续配置节点字段和封面。';
     } catch(error) { alert(error.message); }
     event.target.value = '';
@@ -155,6 +158,12 @@ coverInput.onchange = async event => {
     catch(error) { hint.textContent = error.message || '封面上传失败'; }
 };
 removeCoverBtn.onclick = () => { current.cover = {}; renderCover(); persist(); hint.textContent = '封面已移除，点击保存设置后发布。'; };
+
+window.addEventListener('message', event => {
+    if(event.data?.type !== 'workflow-title' || current.source !== 'comfyui') return;
+    current.title = String(event.data.title || '');
+    title.textContent = current.title || current.id || '工作流';
+});
 
 (async () => {
     try {
@@ -167,9 +176,10 @@ removeCoverBtn.onclick = () => { current.cover = {}; renderCover(); persist(); h
             setEnabled(data.config?.enabled !== false);
         } else {
             const data = await fetch('/api/ai/configuration').then(response => response.json());
-            const app = (data.resources || []).find(item => item.kind === 'runninghub_app' && String(item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id) === current.id);
+            const app = (data.resources || []).find(item => item.kind === 'runninghub_app' && item.id === current.resourceId);
             setMedia(app?.settings?.media);
             current.cover = validCover(app?.settings?.cover);
+            if(!Object.keys(current.cover).length) current.cover = validCover(metas()[`${current.source}:${current.id}`]?.cover);
             setEnabled(app?.enabled !== false);
         }
     } catch {

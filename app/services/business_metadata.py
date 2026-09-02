@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterable, Optional
 
 from app.config import DATABASE_URL
 from app.core.database import database_connection_sync
+from app.core.utils import now_ms
 
 
 BUSINESS_METADATA_SQL = """
@@ -503,6 +504,40 @@ def delete_comfy_workflow(name: str) -> bool:
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM comfy_workflows WHERE name=%s RETURNING name", (name,))
         return cur.fetchone() is not None
+
+
+def dedupe_runninghub_resources() -> int:
+    """Collapse duplicate RH resources into one canonical row per app ID.
+
+    Older projections could create several ``ai_resources`` rows for the same
+    RunningHub application.  Runtime selection is keyed by the external app
+    ID, so retain the newest row and merge useful settings before deleting
+    duplicates.  The resulting resource uses the canonical ``id/appId/
+    webappId`` aliases required by the new format.
+    """
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id,connection_id,name,settings_json,enabled,updated_at FROM ai_resources WHERE kind='runninghub_app' ORDER BY updated_at DESC,id DESC")
+        rows = cur.fetchall()
+        groups: dict[str, list[Any]] = {}
+        for row in rows:
+            settings = dict(row['settings_json'] or {})
+            app_id = str(settings.get('id') or settings.get('appId') or settings.get('webappId') or '').strip()
+            if not app_id:
+                continue
+            groups.setdefault(app_id, []).append((row, settings))
+        removed = 0
+        for app_id, entries in groups.items():
+            primary, primary_settings = entries[0]
+            merged = {}
+            for row, settings in reversed(entries):
+                merged.update(settings)
+            merged.update({'id': app_id, 'appId': app_id, 'webappId': app_id})
+            name = str(primary['name'] or merged.get('title') or app_id)
+            cur.execute("UPDATE ai_resources SET name=%s,settings_json=%s,updated_at=%s WHERE id=%s", (name, json_value(merged), now_ms(), primary['id']))
+            for duplicate, _ in entries[1:]:
+                cur.execute("DELETE FROM ai_resources WHERE id=%s", (duplicate['id'],))
+                removed += 1
+        return removed
 
 
 def _file_refs(value: Any, field_name: str = ""):

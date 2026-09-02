@@ -320,16 +320,13 @@ async function openRhAppEditor(index){
     ensureRunningHubLists(item);
     let entry = item.rh_apps[index];
     if(!entry) return;
-    // In embedded workflow-config pages the URL is the user's explicit
-    // selection. It must win over any legacy resource entry whose aliases
-    // (id/appId/webappId) still refer to a different application.
-    const requestedAppId = String(new URLSearchParams(location.search).get('appId') || '').trim();
-    if(requestedAppId){
-        const requestedTitle = String(new URLSearchParams(location.search).get('title') || '').trim();
-        entry = {...entry, id:requestedAppId, appId:requestedAppId, webappId:requestedAppId, ...(requestedTitle ? {title:requestedTitle} : {})};
+    if(!entry._resource_id){
+        const appId = String(entry.id || entry.appId || entry.webappId || '');
+        const resource = (aiConfiguration.resources || []).find(r => r.kind === 'runninghub_app' && String(r.settings?.id || r.settings?.appId || r.settings?.webappId || '') === appId);
+        if(resource) entry = {...entry, _resource_id:resource.id};
         item.rh_apps[index] = entry;
     }
-    rhWorkflowEditorState = { open:true, index, entry, config:null, expanded:{}, activeNodeId:'app', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
+    rhWorkflowEditorState = { open:true, index, resourceId:entry._resource_id || '', entry, config:null, expanded:{}, activeNodeId:'app', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
     if(rhWorkflowEditorOverlay) rhWorkflowEditorOverlay.classList.add('open');
     renderRhWorkflowEditorLoading('正在加载应用参数...');
     refreshIcons();
@@ -459,7 +456,10 @@ async function fetchRhAppEditor(force=false){
     const platformTitle = String(data.data?.webappName || data.data?.name || data.data?.title || data.webappName || data.name || data.title || '').trim();
     state.config = {
         appId,
-        title:platformTitle || rhWorkflowEditName?.value.trim() || entry.title || `AI 应用 ${appId.slice(-6)}`,
+        // A name edited in the workflow settings is authoritative. The
+        // platform title is only a fallback for newly added apps; otherwise a
+        // refresh would silently replace the user's custom name.
+        title:rhWorkflowEditName?.value.trim() || entry.title || platformTitle || `AI 应用 ${appId.slice(-6)}`,
         description:rhWorkflowEditNote?.value.trim() || entry.note || '',
         fields,
         raw:data.data || data,
@@ -527,8 +527,9 @@ async function saveRhWorkflowEditor(){
     config.description = rhWorkflowEditNote?.value.trim() || config.description || '';
     try {
         const item = runningHubState();
-        if(item?.id === 'runninghub' && item.rh_apps?.[state.index]){
-            const entry = item.rh_apps[state.index];
+        if(item?.id === 'runninghub'){
+            const entry = item.rh_apps?.find(app => app._resource_id === state.resourceId);
+            if(!entry) throw new Error('工作流资源已变更，请重新打开');
             entry.title = config.title || entry.title;
             entry.note = config.description || '';
             entry.fields = (config.fields || []).map(normalizeRhWorkflowField);
