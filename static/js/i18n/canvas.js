@@ -174,6 +174,8 @@
         "canvas.gridWillOutput": { zh: "将输出 {n} 张", en: "Will output {n} images" },
         "canvas.copyPrompt": { zh: "复制提示词", en: "Copy Prompt" },
         "canvas.copied": { zh: "已复制", en: "Copied" },
+        "canvas.logExpand": { zh: "展开", en: "Expand" },
+        "canvas.logCollapse": { zh: "收起", en: "Collapse" },
         "canvas.rerun": { zh: "再次运行", en: "Run Again" },
         "canvas.noPromptMeta": { zh: "没有记录提示词", en: "No prompt recorded" },
         "canvas.reset": { zh: "重置", en: "Reset" },

@@ -1860,58 +1860,118 @@ function smartRunSnapshot(node, prompt, refs=[], kind='image'){
         size: kind === 'image' && isApiLikeEngine(settingsSnapshot.engine) ? sizeForRun(settingsSnapshot) : ''
     };
 }
-function addSmartGenerationLog({run, outputs=[], runMs=0, error=''}) {
-    if(!canvas) return;
-    canvas.logs = canvas.logs || [];
-    const entry = {
+function buildSmartLogEntry(run, {outputs=[], runMs=0, error='', taskId='', upstreamTaskId=''}={}){
+    const request = smartRunRequestMeta(run);
+    if(taskId) request.task_id = taskId;
+    if(upstreamTaskId) request.upstream_task_id = upstreamTaskId;
+    return {
         id:uid('log'),
         createdAt:Date.now(),
         status:error ? 'failed' : 'success',
         platform:smartRunPlatformLabel(run),
         nodeType:run?.nodeType || 'smart-image',
+        nodeId:run?.nodeId || '',
         model:smartRunTaskLabel(run),
-        request:smartRunRequestMeta(run),
+        request,
         prompt:run?.prompt || '',
         outputs:(outputs || []).filter(Boolean),
         refs:run?.refs || [],
         runMs:Number(runMs || 0),
         error:error ? String(error) : ''
     };
-    canvas.logs = [entry, ...canvas.logs].slice(0, 500);
+}
+// A single canvas run may fan out into several backend tasks (one per image,
+// per ComfyUI prompt, or per RunningHub app submit). Passing a `tasks` array
+// records one log entry per task_id so each can be cross-referenced against the
+// backend task.log. Video/sync paths omit `tasks` and keep a single entry.
+function addSmartGenerationLog({run, outputs=[], runMs=0, error='', taskId='', upstreamTaskId='', tasks=null}) {
+    if(!canvas) return;
+    canvas.logs = canvas.logs || [];
+    const entries = Array.isArray(tasks) && tasks.length
+        ? tasks.map(task => buildSmartLogEntry(run, {
+            outputs:task.outputs || [],
+            runMs:task.runMs != null ? task.runMs : runMs,
+            error:task.error || '',
+            taskId:task.taskId || '',
+            upstreamTaskId:task.upstreamTaskId || task.upstream_task_id || ''
+        }))
+        : [buildSmartLogEntry(run, {outputs, runMs, error, taskId, upstreamTaskId})];
+    canvas.logs = [...entries, ...canvas.logs].slice(0, 500);
     scheduleSave();
 }
-function canvasLogPreviewNode(url, kind='image'){
-    if(kind === 'video' || outputUrlLooksVideo(url)){
-        window.open(url, '_blank');
+// Jump from a log thumbnail to the canvas node that holds that output, mirroring
+// the Canvas Agent's click-to-focus behaviour (select + center viewport). We
+// locate the node by the output URL so it works even when nodes were rearranged;
+// the log's stored nodeId is a fallback. If no matching node exists anymore, a
+// new node containing the asset is created at the current viewport center.
+function jumpToCanvasLogOutput(output){
+    const item = typeof output === 'string' ? {url:output} : (output || {});
+    const target = String(item.url || '');
+    const hasUrl = (list) => Array.isArray(list) && list.some(img => String(img?.url || '') === target);
+    let node = target ? nodes.find(n => hasUrl(n?.images) || hasUrl(n?.candidateImages)) : null;
+    if(!node && item.nodeId) node = nodes.find(n => String(n?.id || '') === String(item.nodeId));
+    // Always close the log first so the canvas is visible.
+    if(typeof closeCanvasLog === 'function') closeCanvasLog();
+    if(!node && target){
+        // The original node is gone: recreate a node holding this asset.
+        const kind = item.kind === 'video' || outputUrlLooksVideo(target) ? 'video' : (item.kind || 'image');
+        const mediaItem = {
+            url:target,
+            file_id:item.file_id || fileIdFromUrl(target),
+            kind,
+            name:item.name || (kind === 'video' ? 'video' : 'image'),
+            generatedResult:true
+        };
+        if(item.poster_url) mediaItem.poster_url = item.poster_url;
+        const center = viewportCenter();
+        node = createNode(center.x, center.y, [mediaItem]);
+        toast('原节点已不存在，已在画布新建素材节点');
+    }
+    if(!node || !focusCanvasNode(node.id)){
+        toast('无法跳转到画布素材');
         return;
     }
-    const node = {id:'__smart_log_preview__', type:'smart-image', images:[{url, name:'log-preview', kind}], title:kind === 'video' ? 'Video' : 'Image'};
-    const prevSelectedId = selectedId;
-    const prevSelectedImage = {...selectedImage};
-    nodes.push(node);
-    try { openImageEditor(node.id, 0); }
-    finally {
-        nodes = nodes.filter(n => n.id !== node.id);
-        selectedId = prevSelectedId;
-        selectedImage = prevSelectedImage;
+    // If the clicked output maps to a specific image within the node, select it.
+    const index = (node.images || []).findIndex(img => String(img?.url || '') === target);
+    if(index >= 0){
+        selectedImage = {nodeId:node.id, index};
+        render();
+        syncSelectionUi();
     }
 }
 function renderCanvasLog(){
     const logs = canvas?.logs || [];
     canvasLogList.innerHTML = logs.length ? logs.map(log => {
-        const thumbs = (log.outputs || []).slice(0, 8).map(url => {
-            const safe = escapeAttr(url);
-            const kind = outputUrlLooksVideo(url) ? 'video' : 'image';
-            return kind === 'video' ? videoPosterHtml({url, kind}) : `<img src="${safe}" data-url="${safe}" data-kind="image" alt="output">`;
+        const thumbs = (log.outputs || []).slice(0, 8).map(output => {
+            const item = typeof output === 'string' ? {url:output} : (output || {});
+            const url = String(item.url || '');
+            if(!url) return '';
+            const kind = item.kind === 'video' || outputUrlLooksVideo(url) ? 'video' : 'image';
+            const dataAttrs = ` data-node-id="${escapeAttr(log.nodeId || '')}" data-file-id="${escapeAttr(item.file_id || '')}" data-poster="${escapeAttr(item.poster_url || item.thumbnail_url || '')}"`;
+            if(kind === 'video'){
+                // Reuse the backend FFmpeg poster frame (/api/files/<id>/thumb)
+                // as the thumbnail. Only fall back to loading the video for a
+                // first frame when no file_id/poster is available.
+                const poster = item.poster_url || item.thumbnail_url || (item.file_id ? fileThumbnailUrl(item) : '');
+                if(poster){
+                    return `<div class="log-video-thumb"><img src="${escapeAttr(poster)}" data-url="${escapeAttr(url)}" data-kind="video"${dataAttrs} alt="video"><span class="log-video-badge"><i data-lucide="play"></i></span></div>`;
+                }
+                const videoSrc = escapeAttr(filePreviewUrl(item) || url);
+                return `<div class="log-video-thumb"><video muted playsinline preload="metadata" src="${videoSrc}" data-url="${escapeAttr(url)}" data-kind="video"${dataAttrs}></video><span class="log-video-badge"><i data-lucide="play"></i></span></div>`;
+            }
+            const previewSrc = escapeAttr(filePreviewUrl(item));
+            return `<img src="${previewSrc}" data-url="${escapeAttr(url)}" data-kind="image"${dataAttrs} alt="output">`;
         }).join('');
     const date = new Date(log.createdAt || Date.now()).toLocaleString('zh-CN');
         const req = log.request || {};
         const taskId = req.task_id || req.taskId || req.prompt_id || req.promptId || '';
+        const upstreamId = req.upstream_task_id || req.upstreamTaskId || '';
         const backend = req.workflow_json || req.workflow || req.provider_id || req.providerId || req.backend || '';
         const subParts = [
             date,
             `输出 ${(log.outputs || []).length}`,
             taskId ? `ID ${taskId}` : '',
+            upstreamId && upstreamId !== taskId ? `上游 ${upstreamId}` : '',
             backend
         ].filter(Boolean);
         return `<div class="log-item ${log.status === 'failed' ? 'failed' : ''}">
@@ -1926,13 +1986,22 @@ function renderCanvasLog(){
                 ${log.error ? `<div class="log-error" title="${escapeAttr(log.error)}">${escapeHtml(log.error)}</div>` : ''}
                 <div class="log-prompt" title="${escapeAttr(log.prompt || tr('canvas.noPromptMeta'))}" data-prompt="${escapeAttr(log.prompt || '')}">${escapeHtml(log.prompt || tr('canvas.noPromptMeta'))}</div>
             </div>
-            <div class="log-thumbs">${thumbs}</div>
+            <div class="log-side">
+                <div class="log-thumbs">${thumbs}</div>
+                <button type="button" class="log-expand" data-log-expand aria-expanded="false"><i data-lucide="chevron-down"></i><span>${escapeHtml(tr('canvas.logExpand'))}</span></button>
+            </div>
         </div>`;
     }).join('') : `<div class="log-empty">${escapeHtml(tr('canvas.noLogs'))}</div>`;
     canvasLogList.querySelectorAll('[data-url]').forEach(el => {
         el.onclick = e => {
             e.stopPropagation();
-            canvasLogPreviewNode(el.dataset.url, el.dataset.kind || 'image');
+            jumpToCanvasLogOutput({
+                url:el.dataset.url,
+                nodeId:el.dataset.nodeId || '',
+                file_id:el.dataset.fileId || '',
+                kind:el.dataset.kind || 'image',
+                poster_url:el.dataset.poster || ''
+            });
         };
     });
     canvasLogList.querySelectorAll('[data-prompt]').forEach(el => {
@@ -1947,6 +2016,22 @@ function renderCanvasLog(){
                 el.textContent = oldText;
                 el.classList.remove('copied');
             }, 900);
+        };
+    });
+    canvasLogList.querySelectorAll('[data-log-expand]').forEach(btn => {
+        btn.onclick = e => {
+            e.stopPropagation();
+            const item = btn.closest('.log-item');
+            if(!item) return;
+            const expanded = item.classList.toggle('expanded');
+            btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            const label = btn.querySelector('span');
+            if(label) label.textContent = expanded ? tr('canvas.logCollapse') : tr('canvas.logExpand');
+            const icon = btn.querySelector('i');
+            if(icon){
+                icon.setAttribute('data-lucide', expanded ? 'chevron-up' : 'chevron-down');
+                refreshIcons();
+            }
         };
     });
     refreshIcons();
@@ -3297,15 +3382,21 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
     const activeSettings = runSettings || settings;
     if(activeSettings.engine === 'comfy') return generateComfyUrlsWithSettings(activeSettings, prompt, refs);
     if(isApiLikeEngine(activeSettings.engine) && activeSettings.apiKind === 'video'){
-        return {urls:await runApiVideoGeneration(prompt, refs, activeSettings), kind:'video'};
+        const videoResult = await runApiVideoGeneration(prompt, refs, activeSettings);
+        return {urls:videoResult.urls || videoResult, kind:'video', tasks:videoResult.taskId ? [{taskId:videoResult.taskId, upstreamTaskId:videoResult.upstreamTaskId || '', outputs:(videoResult.urls || [])}] : null};
     }
     if(isApiLikeEngine(activeSettings.engine)){
         const taskResult = await runApiGeneration(prompt, refs, activeSettings);
         const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
         if(taskIds.length){
             const settled = await Promise.all(taskIds.map(taskId => pollCanvasTask(taskId)));
-            const urls = settled.flatMap(result => resultMediaUrls(result?.images || result)).filter(Boolean);
-            return {urls, kind:mediaKindForUrls(urls, 'image')};
+            const tasks = taskIds.map((taskId, i) => {
+                const result = settled[i];
+                const urls = resultMediaUrls(result?.images || result).filter(Boolean);
+                return {taskId, upstreamTaskId:(result && (result.task_id || result.upstream_task_id)) || '', outputs:urls};
+            });
+            const urls = tasks.flatMap(task => task.outputs).filter(Boolean);
+            return {urls, kind:mediaKindForUrls(urls, 'image'), tasks};
         }
         const urls = resultMediaUrls(taskResult);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
@@ -3347,7 +3438,8 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
     const urls = resultMediaUrls(result);
     const fallbackKind = result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image';
-    return {urls, kind:mediaKindForUrls(urls, fallbackKind)};
+    const comfyTaskId = (result && (result.task_id || result.prompt_id)) || '';
+    return {urls, kind:mediaKindForUrls(urls, fallbackKind), tasks:comfyTaskId ? [{taskId:comfyTaskId, upstreamTaskId:(result && result.prompt_id) || '', outputs:urls}] : null};
 }
 // M5 拆分（第3批）：runCascadeStepIntoNode / runLoopRoundIntoSlot /
 // runClonedLoopChain / appendCascadeRefsToReceiver / cascadeRefsFromOutputs /
@@ -3605,9 +3697,9 @@ async function pollSmartPendingTask(task){
     return pollCanvasTask(task.taskId);
 }
 function finalizeSmartPendingTask(node, taskId, images, kind='image'){
-    if(!node || !taskId) return;
+    if(!node || !taskId) return [];
     const pendingTasks = smartPendingTasks(node);
-    if(!pendingTasks.some(task => task.taskId === taskId)) return;
+    if(!pendingTasks.some(task => task.taskId === taskId)) return [];
     delete node.queued;
     node.pendingTasks = pendingTasks.filter(task => task.taskId !== taskId);
     node.pending = Math.max(0, Number(node.pending || 0) - 1);
@@ -3636,20 +3728,32 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image'){
         delete node.h;
         delete node._rerunPreviousImages;
     }
+    return additions;
 }
 async function resumeSmartPendingNode(node){
     const tasks = smartPendingTasks(node);
-    if(!node || !tasks.length) return;
+    if(!node || !tasks.length) return [];
     node.pending = Math.max(tasks.length, Number(node.pending || 0) || tasks.length);
     node.pendingCandidatePool = tasks.some(task => (task.kind || 'image') === 'image');
     node.running = false;
     render();
     const failures = [];
+    const settlements = [];
     await Promise.all(tasks.map(async task => {
-        if(task.failed && task.recoverTaskId) return;
+        // `taskId` is the local canvas task_id for API/ComfyUI tasks; for
+        // RunningHub app tasks it is the upstream id, and the local id (if any)
+        // rides on `task.localTaskId`. Prefer the local id as the log key.
+        const localTaskId = task.localTaskId || task.taskId || '';
+        if(task.failed && task.recoverTaskId){
+            settlements.push({taskId:localTaskId, upstreamTaskId:task.upstreamTaskId || (task.localTaskId ? task.taskId : ''), outputs:[], error:task.error || tr('smart.errRunFailed')});
+            return;
+        }
         try {
             const result = await pollSmartPendingTask(task);
-            finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(result?.images?.length ? result.images : result), task.kind || 'image');
+            const upstreamFromResult = (result && typeof result === 'object' && (result.task_id || result.upstream_task_id)) || '';
+            const upstreamTaskId = task.upstreamTaskId || (task.localTaskId ? task.taskId : '') || upstreamFromResult || '';
+            const additions = finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(result?.images?.length ? result.images : result), task.kind || 'image');
+            settlements.push({taskId:localTaskId, upstreamTaskId, outputs:(additions || []).filter(img => img && img.url).map(img => ({url:img.url, file_id:img.file_id || '', kind:img.kind || '', poster_url:img.poster_url || '', thumbnail_url:img.thumbnail_url || ''}))});
             render();
             scheduleSave();
         } catch(e) {
@@ -3664,6 +3768,7 @@ async function resumeSmartPendingNode(node){
                 toast('任务未丢失，可稍后手动查询结果');
                 render();
                 scheduleSave();
+                settlements.push({taskId:localTaskId, upstreamTaskId:task.upstreamTaskId || (task.localTaskId ? task.taskId : ''), outputs:[], error:task.error});
                 return;
             }
             node.pendingTasks = smartPendingTasks(node).filter(item => item.taskId !== task.taskId);
@@ -3681,11 +3786,13 @@ async function resumeSmartPendingNode(node){
                 }
             }
             failures.push(e);
+            settlements.push({taskId:localTaskId, upstreamTaskId:task.upstreamTaskId || (task.localTaskId ? task.taskId : ''), outputs:[], error:e.message || String(e)});
             if(!handleTaskLimitSignal(e)) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
             render();
             scheduleSave();
         }
     }));
+    node._smartRunSettlements = settlements;
     if(failures.length && !(node.images || []).length && candidateCountForNode(node)) setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
     if(failures.length && !(node.images || []).length){
         const quotaFailure = failures.find(e => e && e.storageQuotaExceeded);
@@ -3693,6 +3800,7 @@ async function resumeSmartPendingNode(node){
         const messages = [...new Set(failures.map(e => (e?.message || String(e || '')).trim()).filter(Boolean))];
         throw new Error(messages.join('；') || tr('smart.errRunFailed'));
     }
+    return settlements;
 }
 function resumeSmartPendingTasks(){
     nodes.filter(node => smartPendingTasks(node).length).forEach(node => {

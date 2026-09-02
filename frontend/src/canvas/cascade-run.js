@@ -73,6 +73,21 @@ function canonicalRunSettings(value={}){
     delete settings.videoModel;
     return settings;
 }
+// Turn the per-task settlements recorded by resumeSmartPendingNode into the
+// `tasks` array consumed by addSmartGenerationLog, so a multi-task run produces
+// one log entry per task_id. Returns null when no settlements are available
+// (caller then falls back to a single aggregate log entry).
+function smartLogTasksFromNode(node){
+    const settlements = node && Array.isArray(node._smartRunSettlements) ? node._smartRunSettlements : null;
+    if(node) delete node._smartRunSettlements;
+    if(!settlements || !settlements.length) return null;
+    return settlements.map(item => ({
+        taskId:item.taskId || '',
+        upstreamTaskId:item.upstreamTaskId || '',
+        outputs:item.outputs || [],
+        error:item.error || ''
+    }));
+}
 async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runState=null){
     let next = 0;
     const workerCount = Math.max(1, Math.min(Number(limit) || 1, roundIndexes.length));
@@ -189,11 +204,13 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
         if(data.success === false) throw new Error(data.detail || data.error || tr('smart.rhFailed'));
         return data.data || data;
     });
-    const taskId = submit.taskId;
+    const taskId = submit.upstream_task_id;
     if(!taskId) throw new Error(tr('smart.rhNoTaskId'));
     return {
         ...submit,
         taskId,
+        localTaskId:submit.task_id || '',
+        upstreamTaskId:submit.upstream_task_id || '',
         connectionId:stable.connection_id,
         resourceId:stable.resource_id,
         mode:'app'
@@ -207,6 +224,8 @@ async function pollRunningHubTask(taskId, target={}){
         for(let i = 0; i < 360; i++){
             await sleep(5000);
             const query = new URLSearchParams({taskId, connection_id:target.connectionId || target.connection_id || '', resource_id:target.resourceId || target.resource_id || ''});
+            const localTaskId = target.localTaskId || target.local_task_id || '';
+            if(localTaskId) query.set('local_task_id', localTaskId);
             const data = await fetch(`/api/runninghub/query?${query}`).then(async r => {
                 const json = await r.json();
                 if(!r.ok || json.success === false){
@@ -256,7 +275,17 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
         body:JSON.stringify(payload)
     }).then(async r => { if(!r.ok) throw await smartResponseError(r, tr('smart.errRunFailed')); return r.json(); });
     checkQuotaWarningFromResult(result);
-    return resultMediaUrls(result);
+    // Prefer video_items: they carry the MinIO file_id, which lets the log
+    // thumbnail reuse the backend FFmpeg poster frame (/api/files/<id>/thumb)
+    // instead of loading the whole video to grab a first frame.
+    const items = Array.isArray(result?.video_items) && result.video_items.length
+        ? result.video_items
+        : resultMediaUrls(result);
+    return {
+        urls:items,
+        taskId:(result && result.task_id) || '',
+        upstreamTaskId:(result && result.upstream_task_id) || ''
+    };
 }
 async function urlToBase64(itemOrUrl){
     const target = typeof itemOrUrl === 'string'
@@ -463,7 +492,7 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
         const result = await generateUrlsForCurrentSettings(outputNode, prompt, request.refs || [], runSettings);
         if(!result.urls?.length) throw new Error(result.kind === 'video' ? tr('smart.errNoOutVideos') : tr('smart.errNoOutImages'));
         if(outpaintSize) delete requestNode.outpaintSize;
-        addSmartGenerationLog({run:{...runLog, kind:result.kind || logKind}, outputs:result.urls, runMs:nowMs() - runLogStart});
+        addSmartGenerationLog({run:{...runLog, kind:result.kind || logKind}, outputs:result.urls, runMs:nowMs() - runLogStart, tasks:result.tasks || null});
         const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
         const additions = result.urls.map((item, i) => {
             const url = typeof item === 'string' ? item : item?.url || '';
@@ -491,7 +520,7 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
     } catch(e) {
         settings = previousSettings;
         outputNode.running = false;
-        addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e)});
+        addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e), tasks:smartLogTasksFromNode(outputNode)});
         render();
         throw e;
     }
@@ -555,7 +584,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             render();
             await saveCanvas();
             await resumeSmartPendingNode(outputSlot);
-            result = {urls:(outputSlot.images || []).map(img => img?.url ? img : null).filter(Boolean), kind:'image'};
+            result = {urls:(outputSlot.images || []).map(img => img?.url ? img : null).filter(Boolean), kind:'image', tasks:smartLogTasksFromNode(outputSlot)};
         } else {
             result = await generateUrlsForCurrentSettings(outputSlot, prompt, request.refs || [], runSettings);
         }
@@ -577,7 +606,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             runPath.states[edgeKey] = 'done';
             refreshConnectionLayer();
         }
-        addSmartGenerationLog({run:{...runLog, kind:result.kind || logKind}, outputs:result.urls, runMs:nowMs() - runLogStart});
+        addSmartGenerationLog({run:{...runLog, kind:result.kind || logKind}, outputs:result.urls, runMs:nowMs() - runLogStart, tasks:result.tasks || null});
         return additions;
     } catch(e) {
         outputSlot.queued = false;
@@ -1036,16 +1065,17 @@ async function runGeneration(){
         if(settings.engine === 'comfy'){
             await runComfyGeneration(pendingNode, prompt, refs, pendingNode, pendingMeta);
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
-            addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart});
+            addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart, tasks:smartLogTasksFromNode(pendingNode)});
             settings = previousSettings;
             return;
         }
         if(isApiLikeEngine(settings.engine) && settings.apiKind === 'video'){
-            const outVideos = await runApiVideoGeneration(prompt, refs);
+            const videoResult = await runApiVideoGeneration(prompt, refs);
+            const outVideos = videoResult.urls || videoResult;
             if(!outVideos.length) throw new Error(tr('smart.errNoOutVideos'));
             finalizePendingNode(pendingNode, outVideos, pendingMeta, 'video');
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
-            addSmartGenerationLog({run:runLog, outputs:outVideos, runMs:nowMs() - runLogStart});
+            addSmartGenerationLog({run:runLog, outputs:outVideos, runMs:nowMs() - runLogStart, taskId:videoResult.taskId || '', upstreamTaskId:videoResult.upstreamTaskId || ''});
             clearPromptInput({preserveDraft:true});
             settings = previousSettings;
             scheduleSave();
@@ -1055,7 +1085,7 @@ async function runGeneration(){
             const taskResult = await submitRunningHubGeneration(prompt, refs);
             const taskIds = [taskResult.taskId].filter(Boolean);
             if(!taskIds.length) throw new Error(tr('smart.rhNoTaskId'));
-            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:'runninghub', connectionId:taskResult.connectionId, resourceId:taskResult.resourceId, mode:taskResult.mode}));
+            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:'runninghub', connectionId:taskResult.connectionId, resourceId:taskResult.resourceId, mode:taskResult.mode, localTaskId:taskResult.localTaskId || '', upstreamTaskId:taskResult.upstreamTaskId || taskId}));
             pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
             pendingNode.pendingCandidatePool = true;
             pendingNode.runStartedAt = nowMs();
@@ -1067,7 +1097,7 @@ async function runGeneration(){
             if(!(pendingNode.images || []).length) throw new Error(tr('smart.errNoOutImages'));
             if(outpaintSize) delete node.outpaintSize;
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
-            addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart});
+            addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart, tasks:smartLogTasksFromNode(pendingNode)});
             clearPromptInput({preserveDraft:true});
             settings = previousSettings;
             scheduleSave();
@@ -1089,7 +1119,7 @@ async function runGeneration(){
             if(!(pendingNode.images || []).length) throw new Error(tr('smart.errNoOutImages'));
             if(outpaintSize) delete node.outpaintSize;
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
-            addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart});
+            addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart, tasks:smartLogTasksFromNode(pendingNode)});
             clearPromptInput({preserveDraft:true});
             settings = previousSettings;
             scheduleSave();
@@ -1130,7 +1160,7 @@ async function runGeneration(){
         if(extracted) restoreFromExtraction(node, extracted);
         delete pendingNode._runMetaTargetId;
         delete pendingNode._rerunPreviousImages;
-        addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e)});
+        addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e), tasks:smartLogTasksFromNode(pendingNode)});
         if(!handleTaskLimitSignal(e)) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
     } finally {
         if(!apiConcurrentRun){

@@ -31,7 +31,7 @@ window.RunningHubClient = (function () {
         if (!response.ok || data.success === false) {
             throw new Error(data.detail || 'RunningHub 提交失败');
         }
-        const taskId = (data.data || data).taskId;
+        const taskId = (data.data || data).upstream_task_id;
         if (!taskId) {
             throw new Error('RunningHub 未返回 taskId');
         }

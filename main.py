@@ -2904,17 +2904,31 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
             detail="RunningHub 正在执行当前 API Key 的其他任务，请等待其完成后再提交。",
         )
     if isinstance(raw, dict) and raw.get("code") in (0, "0"):
-        task_id = raw.get("data", {}).get("taskId") if isinstance(raw.get("data"), dict) else ""
-        if not task_id:
+        upstream_task_id = raw.get("data", {}).get("taskId") if isinstance(raw.get("data"), dict) else ""
+        if not upstream_task_id:
             raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId：{raw}")
         await asyncio.to_thread(
-            record_runninghub_submission, user_id, task_id,
+            record_runninghub_submission, user_id, upstream_task_id,
             operation="ai_app", model=webapp_id,
             connection_id=selected_resource.connection.id if selected_resource else "",
             resource_id=payload.resource_id or "",
         )
+        local_task_id = f"canvas_rh_{uuid.uuid4().hex}"
+        task_logger.info(
+            "canvas RunningHub task submitted",
+            extra={
+                "event": "task_submitted",
+                "task_id": local_task_id,
+                "upstream_task_id": upstream_task_id,
+                "connection_id": selected_resource.connection.id if selected_resource else "",
+                "resource_id": payload.resource_id or "",
+                "operation": "app_generation",
+                "status": "queued",
+            },
+        )
         return {"success": True, "data": {
-            "taskId": task_id,
+            "task_id": local_task_id,
+            "upstream_task_id": upstream_task_id,
             "connection_id": selected_resource.connection.id if selected_resource else "",
             "resource_id": payload.resource_id or "",
             "raw": raw,
@@ -2922,7 +2936,7 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
 
 @app.get("/api/runninghub/query")
-async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connection_id: str = "", resource_id: str = ""):
+async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connection_id: str = "", resource_id: str = "", local_task_id: str = ""):
     user_id = current_user_id()
     from app.services.usage import settle_runninghub_usage
     task_id = str(taskId or "").strip()
@@ -2967,6 +2981,26 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connec
         settle_runninghub_usage, user_id, task_id, raw,
         status=status, operation="ai_app", connection_id=connection_id, resource_id=resource_id,
     )
+    # RunningHub app tasks are polled by the client (no canvas worker), so the
+    # terminal lifecycle line is emitted here, keyed by the local task_id issued
+    # at submit time. Only terminal states are logged to avoid one line per poll.
+    normalized_terminal = str(status or "").upper()
+    if local_task_id and normalized_terminal in {"SUCCESS", "FAILED"}:
+        succeeded = normalized_terminal == "SUCCESS"
+        task_logger.info(
+            "canvas RunningHub task completed" if succeeded else "canvas RunningHub task failed",
+            extra={
+                "event": "task_completed" if succeeded else "task_failed",
+                "task_id": local_task_id,
+                "upstream_task_id": task_id,
+                "connection_id": connection_id,
+                "resource_id": resource_id,
+                "operation": "app_generation",
+                "status": "succeeded" if succeeded else "failed",
+                "output_count": len(urls),
+                "error": "" if succeeded else str(runninghub_fail_reason(raw) or ""),
+            },
+        )
     result_data = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}
     try:
         quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
@@ -3907,13 +3941,14 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
         except Exception:
             quota_warning = None
-        task_data = {"status": "succeeded", "result": result, "error": ""}
+        upstream_task_id = str((result.get("task_id") if isinstance(result, dict) else "") or "")
+        task_data = {"status": "succeeded", "result": result, "error": "", "upstream_task_id": upstream_task_id}
         if quota_warning:
             task_data["quota_warning"] = quota_warning
         await update_claimed_canvas_task(task_id, lease_token, **task_data)
         task_logger.info(
             "canvas image task completed",
-            extra={"event": "task_completed", "connection_id": payload.connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={"event": "task_completed", "connection_id": payload.connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "succeeded", "upstream_task_id": upstream_task_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
@@ -4151,13 +4186,14 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
         except Exception:
             quota_warning = None
-        task_data = {"status": "succeeded", "result": result, "error": ""}
+        upstream_task_id = str((result.get("task_id") or result.get("prompt_id") if isinstance(result, dict) else "") or "")
+        task_data = {"status": "succeeded", "result": result, "error": "", "upstream_task_id": upstream_task_id}
         if quota_warning:
             task_data["quota_warning"] = quota_warning
         await update_claimed_canvas_task(task_id, lease_token, **task_data)
         task_logger.info(
             "canvas ComfyUI task completed",
-            extra={"event": "task_completed", "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "succeeded", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={"event": "task_completed", "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "succeeded", "upstream_task_id": upstream_task_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
@@ -4677,10 +4713,75 @@ async def canvas_video(payload: CanvasVideoRequest):
     )
     command_payload = payload.model_dump(mode="json")
     command_payload.pop("model", None)
-    return await gateway.generate_target(
-        VideoCommand(target=target, payload=command_payload),
-        actor=Actor(user_id=current_user_id()),
+
+    # Unified task_id contract: even though video runs synchronously (no Redis
+    # Streams worker), generate a local canvas task_id and write the task.log
+    # lifecycle so operators can search the same way as image/ComfyUI tasks.
+    # The task is created directly in ``running`` and never enqueued, so the
+    # recovery scan will mark it ``interrupted`` if this process dies mid-poll
+    # (matching the no-retry policy for providers that already billed upstream).
+    local_task_id = f"canvas_vid_{uuid.uuid4().hex}"
+    owner_id = current_user_id()
+    video_resource_meta = {
+        "connection_id": target.connection.id,
+        "model_id": payload.model_id or "",
+        "resource_id": payload.resource_id or "",
+    }
+    request_snapshot = payload.model_dump(mode="json")
+    for _key in ("provider_id", "provider", "model"):
+        request_snapshot.pop(_key, None)
+    request_snapshot.update({k: v for k, v in video_resource_meta.items() if v})
+    await create_canvas_task({
+        "id": local_task_id,
+        "type": "online-video",
+        "status": "running",
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "result": None,
+        "error": "",
+        **video_resource_meta,
+        "owner_id": owner_id,
+        "request": request_snapshot,
+    })
+    started = time.perf_counter()
+    task_logger.info(
+        "canvas video task started",
+        extra={"event": "task_started", "task_id": local_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "running"},
     )
+    try:
+        result = await gateway.generate_target(
+            VideoCommand(target=target, payload=command_payload),
+            actor=Actor(user_id=current_user_id()),
+        )
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        status_code = getattr(exc, "status_code", 500)
+        upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
+        failed_record = await update_canvas_task(
+            local_task_id, expected_status="running", status="failed",
+            error=str(detail), status_code=status_code, upstream_task_id=upstream_task_id,
+        )
+        if failed_record:
+            await asyncio.to_thread(archive_ai_task, failed_record)
+        task_logger.exception(
+            "canvas video task failed",
+            extra={"event": "task_failed", "task_id": local_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "failed", "upstream_task_id": upstream_task_id, "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
+        raise
+    upstream_task_id = str((result.get("task_id") if isinstance(result, dict) else "") or "")
+    succeeded_record = await update_canvas_task(
+        local_task_id, expected_status="running", status="succeeded",
+        result=result, error="", upstream_task_id=upstream_task_id,
+    )
+    if succeeded_record:
+        await asyncio.to_thread(archive_ai_task, succeeded_record)
+    task_logger.info(
+        "canvas video task completed",
+        extra={"event": "task_completed", "task_id": local_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "succeeded", "upstream_task_id": upstream_task_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+    )
+    if isinstance(result, dict):
+        return {**result, "task_id": local_task_id, "upstream_task_id": upstream_task_id}
+    return result
 
 # --- Caption Rules (per-user) ---
 
