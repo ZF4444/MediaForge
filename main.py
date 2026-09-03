@@ -2417,7 +2417,7 @@ def canonical_connection_view(target) -> dict[str, Any]:
     model = getattr(target, "model", None)
     if model is not None:
         settings = dict(getattr(model, "settings", {}) or {})
-        if settings.get("input_per_million") is not None or settings.get("text_input_per_million") is not None:
+        if any(settings.get(key) is not None for key in ("input_per_million", "text_input_per_million", "image_input_per_million", "output_per_million")):
             price = {
                 "input_per_million": settings.get("input_per_million", settings.get("text_input_per_million", 0)),
                 "text_input_per_million": settings.get("text_input_per_million", settings.get("input_per_million", 0)),

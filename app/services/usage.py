@@ -422,19 +422,34 @@ def openai_response_usage_values(provider: dict[str, Any], model: str, usage: di
     details = details if isinstance(details, dict) else {}
     cached_tokens = int(_decimal(details.get("cached_tokens", usage.get("cached_tokens"))))
     cached_tokens = min(cached_tokens, prompt_tokens)
+    text_tokens = int(_decimal(usage.get("text_input_tokens", usage.get("text_tokens", details.get("text_tokens")))))
+    image_tokens = int(_decimal(usage.get("image_input_tokens", usage.get("image_tokens", details.get("image_tokens")))))
+    if text_tokens + image_tokens <= 0:
+        text_tokens, image_tokens = prompt_tokens, 0
+    elif text_tokens + image_tokens < prompt_tokens:
+        text_tokens += prompt_tokens - text_tokens - image_tokens
+    else:
+        text_tokens = min(text_tokens, prompt_tokens)
+        image_tokens = min(image_tokens, prompt_tokens - text_tokens)
     total_tokens = int(_decimal(usage.get("total_tokens"))) or prompt_tokens + completion_tokens
     prices = provider.get("model_prices") or provider.get("omnilojo_model_prices") or {}
     configured_price = prices.get(str(model or ""), {}) if isinstance(prices, dict) else {}
     input_per_million = _decimal(configured_price.get("input_per_million", configured_price.get("text_input_per_million"))) if isinstance(configured_price, dict) else Decimal("0")
+    image_input_per_million = _decimal(configured_price.get("image_input_per_million")) if isinstance(configured_price, dict) else Decimal("0")
     cached_input_per_million = _decimal(configured_price.get("cached_input_per_million", configured_price.get("cache_input_per_million", input_per_million))) if isinstance(configured_price, dict) else Decimal("0")
     output_per_million = _decimal(configured_price.get("output_per_million")) if isinstance(configured_price, dict) else Decimal("0")
-    cost_usd = (Decimal(prompt_tokens - cached_tokens) * input_per_million + Decimal(cached_tokens) * cached_input_per_million + Decimal(completion_tokens) * output_per_million) / Decimal("1000000")
+    cached_text_tokens = min(cached_tokens, text_tokens)
+    cost_usd = (Decimal(text_tokens - cached_text_tokens) * input_per_million + Decimal(cached_text_tokens) * cached_input_per_million + Decimal(image_tokens) * image_input_per_million + Decimal(completion_tokens) * output_per_million) / Decimal("1000000")
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
+        "text_input_tokens": text_tokens,
+        "image_input_tokens": image_tokens,
         "cached_tokens": cached_tokens,
         "total_tokens": total_tokens,
         "input_per_million": input_per_million,
+        "text_input_per_million": input_per_million,
+        "image_input_per_million": image_input_per_million,
         "cached_input_per_million": cached_input_per_million,
         "output_per_million": output_per_million,
         "cost_usd": cost_usd,
@@ -469,6 +484,8 @@ def record_openai_response_usage(user_id: str, provider: dict[str, Any], model: 
         "operation": str(operation or ""),
         "pricing": {
             "input_per_million": str(values["input_per_million"]),
+            "text_input_per_million": str(values["text_input_per_million"]),
+            "image_input_per_million": str(values["image_input_per_million"]),
             "cached_input_per_million": str(values["cached_input_per_million"]),
             "output_per_million": str(values["output_per_million"]),
             "currency": "USD",
@@ -485,14 +502,14 @@ def record_openai_response_usage(user_id: str, provider: dict[str, Any], model: 
             model_id = str(model_row["id"] if model_row else "")
         protocol = str(provider.get("protocol") or "openai").lower()
         cur.execute(
-            """INSERT INTO ai_usage_records(id,protocol,connection_id,upstream_log_id,model_id,resource_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,operation,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,cached_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,'',%s,%s,'','',%s,%s,0,%s,%s,%s,%s,%s,%s,'succeeded',TRUE,%s,%s,%s,%s,%s)
+            """INSERT INTO ai_usage_records(id,protocol,connection_id,upstream_log_id,model_id,resource_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,operation,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,text_input_tokens,image_input_tokens,cached_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,'',%s,%s,'','',%s,%s,0,%s,%s,%s,%s,%s,%s,%s,%s,'succeeded',TRUE,%s,%s,%s,%s,%s)
                ON CONFLICT(protocol,connection_id,upstream_log_id) DO UPDATE SET
                  cost_usd=EXCLUDED.cost_usd,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,cached_tokens=EXCLUDED.cached_tokens,total_tokens=EXCLUDED.total_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at
                RETURNING id""",
             (new_id(), protocol, connection_id, request_id, model_id, str(provider.get("resource_id") or ""), request_id,
              str(user_id or ""), org_id, str(model or ""), str(operation or ""), str(values["cost_usd"]), "0",
-             values["prompt_tokens"], values["completion_tokens"], values["cached_tokens"], values["total_tokens"], values["configured"], now,
+             values["prompt_tokens"], values["completion_tokens"], values["text_input_tokens"], values["image_input_tokens"], values["cached_tokens"], values["total_tokens"], values["configured"], now,
              json_value(raw_usage), now, now),
         )
         return cur.fetchone() is not None
@@ -570,12 +587,12 @@ def _store_ai_usage_records(provider: dict[str, Any], items: list[dict[str, Any]
             model_row = cur.fetchone()
             model_id = str(model_row["id"] if model_row else "")
             cur.execute(
-                """INSERT INTO ai_usage_records(id,protocol,connection_id,upstream_log_id,model_id,resource_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,operation,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,cached_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at)
-                   VALUES(%s,'omnilojo',%s,%s,%s,'',%s,%s,%s,%s,%s,%s,%s,'usage_sync',%s,%s,%s,%s,%s,0,%s,'succeeded',TRUE,TRUE,%s,%s,%s,%s)
-                   ON CONFLICT(protocol,connection_id,upstream_log_id) DO UPDATE SET request_id=EXCLUDED.request_id,upstream_request_id=EXCLUDED.upstream_request_id,quota=EXCLUDED.quota,cost_usd=EXCLUDED.cost_usd,total_money_cny=EXCLUDED.total_money_cny,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,total_tokens=EXCLUDED.total_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at""",
+                """INSERT INTO ai_usage_records(id,protocol,connection_id,upstream_log_id,model_id,resource_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,operation,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,text_input_tokens,image_input_tokens,cached_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at)
+                   VALUES(%s,'omnilojo',%s,%s,%s,'',%s,%s,%s,%s,%s,%s,%s,'usage_sync',%s,%s,%s,%s,%s,%s,0,%s,'succeeded',TRUE,TRUE,%s,%s,%s,%s)
+                   ON CONFLICT(protocol,connection_id,upstream_log_id) DO UPDATE SET request_id=EXCLUDED.request_id,upstream_request_id=EXCLUDED.upstream_request_id,quota=EXCLUDED.quota,cost_usd=EXCLUDED.cost_usd,total_money_cny=EXCLUDED.total_money_cny,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,text_input_tokens=EXCLUDED.text_input_tokens,image_input_tokens=EXCLUDED.image_input_tokens,total_tokens=EXCLUDED.total_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at""",
                 (new_id(), connection_id, log_id, model_id, request_id, upstream_request_id, user["id"] if user else "", user["org_id"] if user else None, external_username,
                  str(item.get("token_name") or ""), str(item.get("model_name") or ""), str(quota), str(cost_usd), str(cost_cny),
-                 int(_omnilojo_number(item.get("prompt_tokens"))), int(_omnilojo_number(item.get("completion_tokens"))),
+                 int(_omnilojo_number(item.get("prompt_tokens"))), int(_omnilojo_number(item.get("completion_tokens"))), int(_omnilojo_number(item.get("prompt_tokens"))), 0,
                  int(_omnilojo_number(item.get("prompt_tokens"))) + int(_omnilojo_number(item.get("completion_tokens"))), created_at, json_value(item), now, now),
             )
             imported += 1

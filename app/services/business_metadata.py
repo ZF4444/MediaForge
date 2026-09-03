@@ -322,6 +322,7 @@ CREATE TABLE IF NOT EXISTS ai_usage_records (
     model TEXT NOT NULL DEFAULT '', operation TEXT NOT NULL DEFAULT '', quota NUMERIC(18, 4) NOT NULL DEFAULT 0,
     cost_usd NUMERIC(14, 6) NOT NULL DEFAULT 0, total_money_cny NUMERIC(14, 4) NOT NULL DEFAULT 0,
     prompt_tokens BIGINT NOT NULL DEFAULT 0, completion_tokens BIGINT NOT NULL DEFAULT 0,
+    text_input_tokens BIGINT NOT NULL DEFAULT 0, image_input_tokens BIGINT NOT NULL DEFAULT 0,
     cached_tokens BIGINT NOT NULL DEFAULT 0, total_tokens BIGINT NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'succeeded', usage_available BOOLEAN NOT NULL DEFAULT TRUE,
     pricing_configured BOOLEAN NOT NULL DEFAULT FALSE,
@@ -333,6 +334,8 @@ ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEF
 ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS operation TEXT NOT NULL DEFAULT '';
 ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS cached_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS total_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS text_input_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS image_input_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS usage_available BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS pricing_configured BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_ai_usage_org_created ON ai_usage_records(org_id, created_at DESC);
@@ -341,11 +344,11 @@ CREATE INDEX IF NOT EXISTS idx_ai_usage_user_created ON ai_usage_records(user_id
 INSERT INTO ai_usage_records(
     id,protocol,upstream_log_id,connection_id,model_id,resource_id,request_id,upstream_request_id,
     user_id,org_id,external_username,token_name,model,operation,quota,cost_usd,total_money_cny,
-    prompt_tokens,completion_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at
+    prompt_tokens,completion_tokens,text_input_tokens,image_input_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at
 )
 SELECT id,'omnilojo',upstream_log_id,connection_id,model_id,resource_id,request_id,upstream_request_id,
        user_id,org_id,external_username,token_name,model,'',quota,cost_usd,total_money_cny,
-       prompt_tokens,completion_tokens,prompt_tokens + completion_tokens,status,TRUE,TRUE,created_at,raw_log,inserted_at,updated_at
+       prompt_tokens,completion_tokens,prompt_tokens,0,prompt_tokens + completion_tokens,status,TRUE,TRUE,created_at,raw_log,inserted_at,updated_at
 FROM omnilojo_usage_records
 ON CONFLICT(protocol, connection_id, upstream_log_id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS user_sessions (

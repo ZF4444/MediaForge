@@ -71,7 +71,7 @@ class DatabaseAIRepository:
             config[key].append(model.upstream_model)
             config["model_aliases"][model.upstream_model] = model.alias
             config["model_enabled"][model.upstream_model] = model.enabled
-            if model.settings.get("text_input_per_million") is not None or model.settings.get("input_per_million") is not None:
+            if any(model.settings.get(key) is not None for key in ("text_input_per_million", "input_per_million", "image_input_per_million", "output_per_million")):
                 price = {
                     "text_input_per_million": model.settings.get("text_input_per_million", model.settings.get("input_per_million", 0)),
                     "input_per_million": model.settings.get("input_per_million", model.settings.get("text_input_per_million", 0)),
