@@ -284,7 +284,11 @@ def user_usage_dashboard(user_id: str, month: str | None = None, limit: int = 20
         runninghub = cur.fetchone() or {}
         cur.execute(
             """SELECT COALESCE(SUM(cost_usd),0) AS omnilojo_cost_usd,
-                      COUNT(*) AS omnilojo_requests
+                      COUNT(*) AS omnilojo_requests,
+                      COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+                      COALESCE(SUM(image_input_tokens),0) AS image_input_tokens,
+                      COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+                      COALESCE(SUM(total_tokens),0) AS total_tokens
                FROM ai_usage_records
                WHERE user_id=%s AND status='succeeded' AND created_at>=%s AND created_at<%s""",
             (user_id, start, end),
@@ -365,6 +369,10 @@ def user_usage_dashboard(user_id: str, month: str | None = None, limit: int = 20
             "runninghub_coins": _number(_decimal(runninghub.get("runninghub_coins"))),
             "task_count": int(runninghub.get("runninghub_tasks") or 0),
             "request_count": int(omnilojo.get("omnilojo_requests") or 0),
+            "prompt_tokens": int(omnilojo.get("prompt_tokens") or 0),
+            "image_input_tokens": int(omnilojo.get("image_input_tokens") or 0),
+            "completion_tokens": int(omnilojo.get("completion_tokens") or 0),
+            "total_tokens": int(omnilojo.get("total_tokens") or 0),
             "monthly_budget_usd": _number(budget),
             "budget_enabled": bool(profile.get("budget_enabled")),
         },

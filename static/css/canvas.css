@@ -48,7 +48,17 @@ button { border:0; cursor:pointer; }
 .canvas-log-toggle { right:130px; }
 .canvas-shortcut-toggle { right:238px; }
 .canvas-workflow-toggle { right:346px; }
-.canvas-log-toggle:hover,.canvas-shortcut-toggle:hover,.canvas-workflow-toggle:hover { transform:translateY(-1px); border-color:var(--text); }
+.canvas-usage-toggle { position:absolute; top:22px; right:454px; z-index:56; height:40px; min-width:126px; padding:0 13px; border-radius:999px; background:var(--panel); color:var(--text); border:1px solid var(--line); box-shadow:0 14px 34px var(--shadow); display:flex; align-items:center; justify-content:center; gap:7px; font-size:12px; font-weight:750; white-space:nowrap; }
+.canvas-usage-toggle strong { font-variant-numeric:tabular-nums; }
+.canvas-usage-panel { position:absolute; top:70px; right:454px; z-index:70; width:250px; padding:15px; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:0 18px 45px var(--shadow); backdrop-filter:blur(18px); }
+.canvas-usage-panel[hidden] { display:none; }
+.canvas-usage-panel-head { display:flex; align-items:center; justify-content:space-between; font-size:13px; }
+.canvas-usage-panel-head button { width:26px; height:26px; display:grid; place-items:center; border-radius:6px; background:transparent; color:var(--muted); }
+.canvas-usage-total { margin:12px 0; font-size:24px; font-weight:850; font-variant-numeric:tabular-nums; }
+.canvas-usage-grid { display:grid; grid-template-columns:1fr auto; gap:8px 14px; color:var(--muted); font-size:12px; }
+.canvas-usage-grid strong { color:var(--text); font-variant-numeric:tabular-nums; }
+.canvas-usage-panel > a { display:flex; align-items:center; gap:4px; margin-top:14px; color:var(--text); font-size:12px; font-weight:700; text-decoration:none; }
+.canvas-log-toggle:hover,.canvas-shortcut-toggle:hover,.canvas-workflow-toggle:hover,.canvas-usage-toggle:hover { transform:translateY(-1px); border-color:var(--text); }
 .canvas-log-toggle.active,.canvas-shortcut-toggle.active,.canvas-workflow-toggle.active { background:var(--strong); color:var(--strong-text); border-color:var(--strong); box-shadow:0 16px 38px var(--shadow); }
 .canvas-log-toggle i,.canvas-log-toggle svg,.canvas-shortcut-toggle i,.canvas-shortcut-toggle svg,.canvas-workflow-toggle i,.canvas-workflow-toggle svg { width:16px; height:16px; }
 .image-node { position:absolute; width:260px; min-height:178px; border-radius:16px; background:transparent; border:0; box-shadow:none; overflow:visible; user-select:none; cursor:move; }
@@ -1412,7 +1422,7 @@ input[type=range].smart-range::-webkit-slider-thumb { -webkit-appearance:none; w
 .image-node.selected:not(.group-node) .image-wrap img,.image-node.selected:not(.group-node) .node-img { border-color:var(--mf-canvas-accent); box-shadow:0 0 0 2px var(--mf-canvas-accent); }
 .prompt-node-text,.prompt-composer-instruction,.loop-smart-count,.loop-smart-toggle,.prompt-node-pill { background:var(--mf-canvas-surface-2); border-color:var(--mf-canvas-line); color:var(--text); }
 button:active { transform:scale(.97); }
-@media (max-width:760px) { .canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle { top:64px; width:38px; padding:0; font-size:0; } .canvas-log-toggle { right:14px; } .canvas-shortcut-toggle { right:58px; } .canvas-workflow-toggle { right:102px; } }
+@media (max-width:760px) { .canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.canvas-usage-toggle { top:64px; width:38px; min-width:38px; padding:0; font-size:0; } .canvas-log-toggle { right:14px; } .canvas-shortcut-toggle { right:58px; } .canvas-workflow-toggle { right:102px; } .canvas-usage-toggle { right:146px; } .canvas-usage-panel { top:112px; right:14px; } }
 
 /* Apple interaction pass for the dark canvas workbench. */
 .canvas-log-toggle,.canvas-shortcut-toggle,.canvas-workflow-toggle,.asset-toggle { border-radius:11px; border-color:rgba(148,163,184,.24); background:rgba(18,22,29,.78); box-shadow:0 12px 30px rgba(0,0,0,.24),inset 0 1px rgba(255,255,255,.08); backdrop-filter:blur(22px) saturate(145%); -webkit-backdrop-filter:blur(22px) saturate(145%); transition:transform .22s cubic-bezier(.22,1,.36,1),border-color .18s ease,background .18s ease,box-shadow .18s ease; }
