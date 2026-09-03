@@ -38,6 +38,9 @@ const canvasLogModal = document.getElementById('canvasLogModal');
 const canvasLogList = document.getElementById('canvasLogList');
 const canvasShortcutModal = document.getElementById('canvasShortcutModal');
 const canvasWorkflowToggle = document.getElementById('canvasWorkflowToggle');
+const canvasUsageToggle = document.getElementById('canvasUsageToggle');
+const canvasUsagePanel = document.getElementById('canvasUsagePanel');
+const canvasUsageClose = document.getElementById('canvasUsageClose');
 const canvasWorkflowTransferModal = document.getElementById('canvasWorkflowTransferModal');
 const canvasWorkflowTransferSub = document.getElementById('canvasWorkflowTransferSub');
 const canvasWorkflowExportMeta = document.getElementById('canvasWorkflowExportMeta');
@@ -4564,6 +4567,17 @@ if(canvasWorkflowToggle) canvasWorkflowToggle.onclick = event => {
     if(canvasWorkflowTransferModal?.classList.contains('open')) closeCanvasWorkflowTransferModal();
     else openCanvasWorkflowTransferModal();
 };
+function renderCanvasUsage(data){
+    const s = data?.spending || {}, money = `$${Number(s.total_usd || 0).toFixed(2)}`;
+    const set = (id, value) => { const el = document.getElementById(id); if(el) el.textContent = Number(value || 0).toLocaleString(); };
+    document.getElementById('canvasUsageAmount')?.replaceChildren(money);
+    document.getElementById('canvasUsagePanelTotal')?.replaceChildren(money);
+    set('canvasUsageRequests', s.request_count); set('canvasUsageTokens', s.total_tokens); set('canvasUsageText', s.prompt_tokens); set('canvasUsageImage', s.image_input_tokens); set('canvasUsageOutput', s.completion_tokens);
+}
+async function loadCanvasUsage(){ try { const r = await fetch('/api/account/overview?limit=1'); if(!r.ok) throw new Error('usage'); renderCanvasUsage(await r.json()); } catch(_) { renderCanvasUsage({}); } }
+canvasUsageToggle?.addEventListener('click', e => { e.stopPropagation(); canvasUsagePanel.hidden = !canvasUsagePanel.hidden; canvasUsageToggle.classList.toggle('active', !canvasUsagePanel.hidden); });
+canvasUsageClose?.addEventListener('click', () => { canvasUsagePanel.hidden = true; canvasUsageToggle?.classList.remove('active'); });
+document.addEventListener('click', e => { if(canvasUsagePanel && !canvasUsagePanel.hidden && !canvasUsagePanel.contains(e.target) && !canvasUsageToggle?.contains(e.target)){ canvasUsagePanel.hidden = true; canvasUsageToggle?.classList.remove('active'); } });
 function canvasWorkflowImportInputChangeHandler(event){
     const file = event.target.files?.[0];
     if(file) importCanvasWorkflowFile(file);
@@ -5342,6 +5356,7 @@ async function windowLoadHandler(){
     const canvasLoaded = await loadCanvas({renderCanvas:false});
     const configPromise = loadConfig();
     const assetLibraryPromise = loadAssetLibrary();
+    const usagePromise = loadCanvasUsage();
     if(canvasLoaded){
         await renderBootCanvas((percent, label) => {
             updateBootLoadingPercent(percent, label);
@@ -5352,7 +5367,7 @@ async function windowLoadHandler(){
         startCanvasMetaPoll();
     }
     await waitForVisibleBootMedia(2500, canvasLoaded ? 70 : 0, 100);
-    await Promise.allSettled([promptTemplatesPromise, configPromise, assetLibraryPromise]);
+    await Promise.allSettled([promptTemplatesPromise, configPromise, assetLibraryPromise, usagePromise]);
     updateComposer();
     updatePromptComposer();
     requestAnimationFrame(() => hideBootLoadingOverlay(() => {
