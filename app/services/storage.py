@@ -439,6 +439,16 @@ _UNREFERENCED_FILE_SQL = """
           AND NOT EXISTS (SELECT 1 FROM conversation_message_files WHERE file_id = files.id)
           AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id = files.id)
           AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id = files.id)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM comfy_workflows
+              WHERE config_json->'cover'->>'file_id' = files.id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM ai_resources
+              WHERE settings_json->'cover'->>'file_id' = files.id
+          )
 """
 
 
