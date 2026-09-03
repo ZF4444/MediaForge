@@ -61,6 +61,7 @@ class DatabaseAIRepository:
                 "primary": connection.primary,
                 "chat_models": [], "image_models": [], "video_models": [],
                 "model_aliases": {}, "model_enabled": {}, "rh_apps": [], "comfy_workflows": [],
+                "model_prices": {},
                 "omnilojo_model_prices": {},
             }
         for model in self.models(include_disabled=True):
@@ -71,11 +72,15 @@ class DatabaseAIRepository:
             config["model_aliases"][model.upstream_model] = model.alias
             config["model_enabled"][model.upstream_model] = model.enabled
             if model.settings.get("text_input_per_million") is not None or model.settings.get("input_per_million") is not None:
-                config["omnilojo_model_prices"][model.upstream_model] = {
+                price = {
                     "text_input_per_million": model.settings.get("text_input_per_million", model.settings.get("input_per_million", 0)),
+                    "input_per_million": model.settings.get("input_per_million", model.settings.get("text_input_per_million", 0)),
+                    "cached_input_per_million": model.settings.get("cached_input_per_million", model.settings.get("input_per_million", model.settings.get("text_input_per_million", 0))),
                     "image_input_per_million": model.settings.get("image_input_per_million", 0),
                     "output_per_million": model.settings.get("output_per_million", 0),
                 }
+                config["model_prices"][model.upstream_model] = price
+                config["omnilojo_model_prices"][model.upstream_model] = price
         for resource in self.executable_resources(include_disabled=True):
             config = by_id.get(resource.connection_id)
             if config is None: continue

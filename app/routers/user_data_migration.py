@@ -68,7 +68,7 @@ def migration_execute(payload: dict[str, Any]):
             ("smart_canvases", "user_id"), ("canvas_agent_runs", "user_id"),
             ("canvas_agent_event_outbox", "user_id"), ("canvas_agent_templates", "user_id"),
             ("canvas_agent_project_assets", "user_id"), ("runninghub_usage_records", "user_id"),
-            ("omnilojo_usage_records", "user_id"), ("feedback_entries", "user_id"),
+            ("omnilojo_usage_records", "user_id"), ("ai_usage_records", "user_id"), ("feedback_entries", "user_id"),
             ("user_settings", "user_id"), ("files", "user_id"), ("ai_task_archive", "owner_id"),
             ("asset_libraries", "user_id"),
         ]

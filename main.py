@@ -2406,7 +2406,7 @@ def canonical_connection_view(target) -> dict[str, Any]:
     """Expose only transport metadata for a resolved canonical target."""
     connection = getattr(target, "connection", target)
     protocol = getattr(target, "protocol", None) or connection.protocol
-    return {
+    view = {
         "id": connection.id,
         "connection_id": connection.id,
         "name": connection.name,
@@ -2414,6 +2414,20 @@ def canonical_connection_view(target) -> dict[str, Any]:
         "base_url": connection.base_url,
         **dict(connection.settings or {}),
     }
+    model = getattr(target, "model", None)
+    if model is not None:
+        settings = dict(getattr(model, "settings", {}) or {})
+        if settings.get("input_per_million") is not None or settings.get("text_input_per_million") is not None:
+            price = {
+                "input_per_million": settings.get("input_per_million", settings.get("text_input_per_million", 0)),
+                "text_input_per_million": settings.get("text_input_per_million", settings.get("input_per_million", 0)),
+                "cached_input_per_million": settings.get("cached_input_per_million", settings.get("input_per_million", settings.get("text_input_per_million", 0))),
+                "output_per_million": settings.get("output_per_million", 0),
+                "image_input_per_million": settings.get("image_input_per_million", 0),
+            }
+            view.setdefault("model_prices", {})[model.upstream_model] = price
+            view.setdefault("omnilojo_model_prices", {})[model.upstream_model] = price
+    return view
 
 
 async def generate_ai_image_target(target, *, prompt: str, size: str, quality: str, reference_images=None, user_id: str = ""):
@@ -2604,11 +2618,11 @@ async def decide_chat_agent_action(payload, conversation, refs):
         from app.ai.chat import ChatGateway
         chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
         raw = await chat_gateway.complete_target(target=chat_target, messages=messages, user_id=current_user_id())
-        if provider_cfg.get("protocol") == "omnilojo":
-            from app.services.usage import record_omnilojo_response_usage
+        if provider_cfg.get("protocol") in {"omnilojo", "openai"}:
+            from app.services.usage import record_openai_response_usage
             usage_payload = dict(raw) if isinstance(raw, dict) else {}
             usage_payload.setdefault("id", uuid.uuid4().hex)
-            await asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider_cfg, model, usage_payload, operation="agent_router")
+            await asyncio.to_thread(record_openai_response_usage, current_user_id(), provider_cfg, model, usage_payload, operation="agent_router")
         decision = parse_agent_decision(text_from_chat_response(raw), payload.message, refs, previous)
         decision["router_model"] = model
         return decision
@@ -2653,11 +2667,11 @@ async def build_chat_text_reply(payload, conversation):
         raise HTTPException(status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body[:300]}") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游接口失败：{exc}") from exc
-    if provider.get("protocol") == "omnilojo":
-        from app.services.usage import record_omnilojo_response_usage
+    if provider.get("protocol") in {"omnilojo", "openai"}:
+        from app.services.usage import record_openai_response_usage
         usage_payload = dict(raw) if isinstance(raw, dict) else {}
         usage_payload.setdefault("id", uuid.uuid4().hex)
-        await asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), provider, model, usage_payload, operation="chat")
+        await asyncio.to_thread(record_openai_response_usage, current_user_id(), provider, model, usage_payload, operation="chat")
     return {"id": uuid.uuid4().hex, "role": "assistant", "content": text_from_chat_response(raw).strip() or "接口返回了空回复。", "created_at": now_ms(), "model": model, "raw_usage": raw.get("usage") if isinstance(raw, dict) else None}
 
 # --- 路由接口 ---
@@ -3644,9 +3658,9 @@ async def build_online_image_result(payload: OnlineImageRequest):
                 resource_id=target.resource.id if target.resource else "",
             )
     elif isinstance(raw, dict) and raw.get("usage"):
-        from app.services.usage import record_omnilojo_response_usage
+        from app.services.usage import record_openai_response_usage
         await asyncio.gather(*(
-            asyncio.to_thread(record_omnilojo_response_usage, current_user_id(), runtime_provider, model, {**raw_item, "local_request_id": f"image:{uuid.uuid4().hex}"}, operation="image_generation")
+            asyncio.to_thread(record_openai_response_usage, current_user_id(), runtime_provider, model, {**raw_item, "local_request_id": f"image:{uuid.uuid4().hex}"}, operation="image_generation")
             for _url, raw_item in generated
         ))
     await asyncio.to_thread(save_to_history, result)
@@ -5198,10 +5212,10 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"解析上游响应失败：{exc}") from exc
     text = "".join(content_parts_acc).strip() or "接口返回了空回复。"
-    if _llm_provider.get("protocol") == "omnilojo":
-        from app.services.usage import record_omnilojo_response_usage
+    if _llm_provider.get("protocol") in {"omnilojo", "openai"}:
+        from app.services.usage import record_openai_response_usage
         await asyncio.to_thread(
-            record_omnilojo_response_usage, current_user_id(), _llm_provider, model,
+            record_openai_response_usage, current_user_id(), _llm_provider, model,
             {"id": response_id or uuid.uuid4().hex, "usage": raw_usage}, operation="canvas_llm",
         )
     return {"text": text, "model": model, "raw_usage": raw_usage}
@@ -5661,9 +5675,9 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "model": model,
             "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
         }
-        if is_omnilojo_connection(provider):
-            from app.services.usage import record_omnilojo_response_usage
-            await asyncio.to_thread(record_omnilojo_response_usage, user_id, provider, model, raw, operation="image_generation")
+        if isinstance(raw, dict) and isinstance(raw.get("usage"), dict):
+            from app.services.usage import record_openai_response_usage
+            await asyncio.to_thread(record_openai_response_usage, user_id, provider, model, raw, operation="image_generation")
     else:
         _conv_provider = None
         model = payload.model
@@ -5720,11 +5734,11 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "model": model,
             "raw_usage": raw_data.get("usage") if isinstance(raw_data, dict) else None,
         }
-        if _conv_provider.get("protocol") == "omnilojo":
-            from app.services.usage import record_omnilojo_response_usage
+        if _conv_provider.get("protocol") in {"omnilojo", "openai"}:
+            from app.services.usage import record_openai_response_usage
             usage_payload = dict(raw_data) if isinstance(raw_data, dict) else {}
             usage_payload.setdefault("id", uuid.uuid4().hex)
-            await asyncio.to_thread(record_omnilojo_response_usage, user_id, _conv_provider, model, usage_payload, operation="chat")
+            await asyncio.to_thread(record_openai_response_usage, user_id, _conv_provider, model, usage_payload, operation="chat")
 
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
@@ -5929,9 +5943,9 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         conversation["messages"].append(assistant_message)
         conversation["updated_at"] = now_ms()
         await asyncio.to_thread(save_conversation, user_id, conversation)
-        if _stream_provider.get("protocol") == "omnilojo":
-            from app.services.usage import record_omnilojo_response_usage
-            await asyncio.to_thread(record_omnilojo_response_usage, user_id, _stream_provider, model, {"id": response_id or uuid.uuid4().hex, "usage": raw_usage}, operation="chat")
+        if _stream_provider.get("protocol") in {"omnilojo", "openai"}:
+            from app.services.usage import record_openai_response_usage
+            await asyncio.to_thread(record_openai_response_usage, user_id, _stream_provider, model, {"id": response_id or uuid.uuid4().hex, "usage": raw_usage}, operation="chat")
         yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
