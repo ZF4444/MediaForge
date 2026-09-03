@@ -216,7 +216,7 @@ def capability_parameters(*, capability: str, provider_id: str = "", model: str 
         return {"capability": capability, "connection_id": connection_id, "model_id": model_id, "resource_id": resource_id, "model": model, "params_path": "runSettings.comfyParams", "fields": list(config.get("fields") or []), "source": ["workflow.config.fields"]}
     if provider_id == "runninghub" or capability.startswith("runninghub."):
         provider = selected or next((item for item in providers if item.get("id") == "runninghub"), None)
-        app = next((item for item in (provider or {}).get("rh_apps") or [] if model in {str(item.get("id") or ""), str(item.get("appId") or ""), str(item.get("webappId") or "")}), None)
+        app = next((item for item in (provider or {}).get("rh_apps") or [] if model in {str(item.get("app_id") or ""), str(item.get("id") or ""), str(item.get("appId") or ""), str(item.get("webappId") or "")}), None)
         if app is None:
             raise ValueError("RunningHub application not found")
         return {"capability": capability, "connection_id": connection_id, "model_id": model_id, "resource_id": resource_id, "model": model, "params_path": "runSettings.rhParams", "fields": [_normalize_rh_field(field) for field in app.get("fields") or [] if isinstance(field, dict)], "source": ["runninghub.rh_apps.fields"]}

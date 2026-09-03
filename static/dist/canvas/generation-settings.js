@@ -116,7 +116,7 @@ function runningHubEntries(kind){
     const resourceApps = (Array.isArray(aiResourceIndex?.resources) ? aiResourceIndex.resources : [])
         .filter(item => item?.kind === 'runninghub_app')
         .map(item => {
-            const id = item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id;
+            const id = item.settings?.app_id || item.settings?.id || item.settings?.appId || item.settings?.webappId || item.id;
             return {...(item.settings || {}), id, appId:id, webappId:id, title:item.title || item.settings?.title, name:item.name, enabled:item.enabled !== false};
         });
     const resourceAppsById = new Map(resourceApps.map(entry => [runningHubEntryId(entry, 'app'), entry]));
@@ -132,7 +132,7 @@ function runningHubEntries(kind){
     return apps.filter(item => item?.enabled !== false && item?.hidden !== true);
 }
 function runningHubEntryId(entry, kind){
-    return String(entry?.id || entry?.appId || entry?.webappId || '').trim();
+    return String(entry?.app_id || entry?.id || entry?.appId || entry?.webappId || '').trim();
 }
 function runningHubEntryLabel(entry, kind){
     const id = runningHubEntryId(entry, kind);
@@ -205,7 +205,7 @@ function runningHubTarget(ref=selectedRunningHubRef(), sourceSettings=settings){
         if(item?.kind !== 'runninghub_app' || item?.enabled === false) return false;
         const resourceSettings = item.settings && typeof item.settings === 'object' ? item.settings : {};
         return item.id === appId || item.name === appId
-            || resourceSettings.id === appId || resourceSettings.appId === appId || resourceSettings.webappId === appId;
+            || resourceSettings.app_id === appId || resourceSettings.id === appId || resourceSettings.appId === appId || resourceSettings.webappId === appId;
     };
     // Resolve from the selected app first. A prior API model can leave its
     // connection_id on the settings object, which must never steer RH runs.
@@ -1896,7 +1896,7 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
             // configuration. Attach them to their connection for the legacy
             // provider-shaped canvas selectors.
             rh_apps:(stableCfg.resources || []).filter(r => r.connection_id === c.id && r.kind === 'runninghub_app').map(r => {
-                const id = r.settings?.id || r.settings?.appId || r.settings?.webappId || r.id;
+                const id = r.settings?.app_id || r.settings?.id || r.settings?.appId || r.settings?.webappId || r.id;
                 return {...(r.settings || {}), id, appId:id, webappId:id, title:r.title || r.settings?.title || r.name, name:r.name, enabled:r.enabled !== false};
             }),
             comfy_workflows:(stableCfg.resources || []).filter(r => r.connection_id === c.id && r.kind === 'comfyui_workflow').map(r => ({
@@ -1969,7 +1969,7 @@ function stableCanvasTarget(kind, providerId, model, resourceName=''){
         if(item.enabled === false || (connection && item.connection_id !== connection.id)) return false;
         const settings = item.settings && typeof item.settings === 'object' ? item.settings : {};
         return item.id === resourceName || item.name === resourceName
-            || settings.webappId === resourceName || settings.appId === resourceName
+            || settings.app_id === resourceName || settings.webappId === resourceName || settings.appId === resourceName
             || settings.workflow_name === resourceName || settings.workflowName === resourceName;
     }) : null;
     return {connection_id: targetModel?.connection_id || targetResource?.connection_id || connection?.id || '', model_id: targetModel?.id || '', resource_id: targetResource?.id || ''};

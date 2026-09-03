@@ -4308,7 +4308,11 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
             raise ValueError("RunningHub 资源不存在或已禁用") from exc
         provider = canonical_connection_view(selected_resource)
         settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
-        webapp_id = str(payload.webappId or settings.get("app_id") or "").strip()
+        # The persisted resource is authoritative. A request value can be a
+        # stale/internal resource id and must never be sent upstream.
+        webapp_id = str(settings.get("app_id") or "").strip()
+        if not webapp_id:
+            raise ValueError("RunningHub 资源缺少规范 app_id")
         api_key = await runninghub_api_key_async(provider)
         transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=120.0, pool=20.0))
 
@@ -4425,7 +4429,9 @@ async def create_canvas_runninghub_task(payload: RunningHubSubmitRequest):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
     settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
-    webapp_id = str(payload.webappId or settings.get("app_id") or "").strip()
+    # The persisted resource is authoritative. A request value can be a
+    # stale/internal resource id and must never be sent upstream.
+    webapp_id = str(settings.get("app_id") or "").strip()
     if not webapp_id:
         raise HTTPException(status_code=400, detail="webappId 必填")
     provider = canonical_connection_view(selected_resource)
