@@ -442,6 +442,10 @@ def openai_response_usage_values(provider: dict[str, Any], model: str, usage: di
     }
 
 
+# Compatibility name retained for existing Omnilojo integrations.
+omnilojo_response_usage_values = openai_response_usage_values
+
+
 def record_openai_response_usage(user_id: str, provider: dict[str, Any], model: str, raw: Any, *, operation: str) -> bool:
     """Persist a user-attributed charge from an OpenAI-compatible response.
 
