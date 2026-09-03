@@ -15,6 +15,8 @@
   window.CanvasAgentClient = {
     request, getRun: () => request(runPath('')), events: after => request(`${runPath('/events')}?after_sequence=${encodeURIComponent(after)}`),
     listRuns: (canvasId, limit=50) => request(`/api/canvas-agent/runs?canvas_id=${encodeURIComponent(canvasId)}&limit=${limit}`),
+    renameRun: (id, title) => request(`/api/canvas-agent/runs/${encodeURIComponent(id)}`, {method:'PATCH', body:JSON.stringify({title})}),
+    deleteRun: id => request(`/api/canvas-agent/runs/${encodeURIComponent(id)}`, {method:'DELETE'}),
     createRun: () => request('/api/canvas-agent/runs', {method:'POST', body:JSON.stringify({canvas_id:window.CanvasAgentBridge.canvasId(), mode:'fast_track'})}),
     send: body => request(runPath('/messages'), {method:'POST', body:JSON.stringify({...body, use_model:true, client_request_id:body.client_request_id || requestId()})}),
     answer: (answer, target={}, clientRequestId='') => request(runPath('/answers'), {method:'POST', body:JSON.stringify({answer, use_model:true, ...target, client_request_id:clientRequestId || requestId()})}),

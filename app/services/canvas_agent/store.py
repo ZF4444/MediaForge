@@ -34,13 +34,26 @@ def list_runs(user_id: str, canvas_id: str, *, limit: int = 50) -> list[dict[str
                        SELECT m.content FROM canvas_agent_messages m
                        WHERE m.run_id = r.id AND m.role = 'user'
                        ORDER BY m.sequence LIMIT 1
-                   ), '') AS title
+                   ), '') AS message_title,
+                   COALESCE(r.metadata_json->>'title', '') AS title
             FROM canvas_agent_runs r
             WHERE r.user_id=%s AND r.canvas_id=%s
             ORDER BY r.updated_at DESC
             LIMIT %s
         """, (user_id, canvas_id, max(1, min(int(limit), 100))))
         return cur.fetchall()
+
+def rename_run(user_id: str, run_id: str, title: str) -> dict[str, Any] | None:
+    title = " ".join(str(title or "").split())[:120]
+    if not title: raise ValueError("会话名称不能为空")
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("UPDATE canvas_agent_runs SET metadata_json=jsonb_set(COALESCE(metadata_json,'{}'::jsonb),'{title}',%s::jsonb),updated_at=%s WHERE id=%s AND user_id=%s RETURNING *", (json_value(title), now_ms(), run_id, user_id))
+        return cur.fetchone()
+
+def delete_run(user_id: str, run_id: str) -> bool:
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("DELETE FROM canvas_agent_runs WHERE id=%s AND user_id=%s RETURNING id", (run_id, user_id))
+        return cur.fetchone() is not None
 
 def update_run(user_id: str, run_id: str, **changes: Any) -> dict[str, Any] | None:
     allowed = {"status", "phase", "step_count", "max_steps", "base_canvas_version", "conversation_id", "metadata_json"}

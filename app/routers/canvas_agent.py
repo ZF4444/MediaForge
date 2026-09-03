@@ -24,7 +24,7 @@ from app.services.canvas_agent.reliability import DEFAULT_RUN_LIMITS, canvas_str
 from app.config import CANVAS_TASK_TIMEOUT_SECONDS
 from app.core.logging import audit_event, get_logger
 from app.core.metrics import AGENT_RUNS, AGENT_OPERATION_SECONDS, AGENT_FAILURES
-from app.services.canvas_agent.store import append_message, create_run, create_template, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, request_run_command_cancellation, replace_plan_content, save_artifact, save_plan, set_artifact_status, set_plan_status, share_project_asset, submit_command, update_run
+from app.services.canvas_agent.store import append_message, create_run, create_template, delete_run, get_artifact, get_run, get_template, latest_plan, list_artifacts, list_events, list_messages, list_operations, list_project_assets, list_runs, list_templates, rename_run, request_run_command_cancellation, replace_plan_content, save_artifact, save_plan, set_artifact_status, set_plan_status, share_project_asset, submit_command, update_run
 from app.services.canvas_agent.artifacts import ARTIFACT_STAGES, compile_prompt, normalize_anchors, validate_stage
 from app.services.canvas_agent.skills import get_enabled_skill, list_enabled_skill_summaries, read_skill
 from app.services.canvas_agent.doc_chain import stage_sources, validate_stage_sources
@@ -319,6 +319,23 @@ async def list_agent_runs(canvas_id: str, request: Request, limit: int = 50, x_u
     # cannot expose runs belonging to another user.
     runs = await asyncio.to_thread(list_runs, user_id, canvas_id, limit=limit)
     return {"runs": runs}
+
+@router.patch("/api/canvas-agent/runs/{run_id}")
+async def rename_agent_run(run_id: str, request: Request, x_user_id: str = Header(default="")):
+    user_id = _user(request, x_user_id)
+    try:
+        payload = await request.json()
+        run = await asyncio.to_thread(rename_run, user_id, run_id, payload.get("title", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not run: raise HTTPException(status_code=404, detail="会话不存在")
+    return {"run": run}
+
+@router.delete("/api/canvas-agent/runs/{run_id}")
+async def delete_agent_run(run_id: str, request: Request, x_user_id: str = Header(default="")):
+    user_id = _user(request, x_user_id)
+    if not await asyncio.to_thread(delete_run, user_id, run_id): raise HTTPException(status_code=404, detail="会话不存在")
+    return {"deleted": True, "run_id": run_id}
 
 @router.get("/api/canvas-agent/runs/{run_id}")
 async def get_agent_run(run_id: str, request: Request, x_user_id: str = Header(default="")):

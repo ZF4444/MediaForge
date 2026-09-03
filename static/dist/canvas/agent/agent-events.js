@@ -12,6 +12,15 @@
       localStorage.setItem(key, JSON.stringify(history.slice(0, 100)));
     } catch (_) {}
   }
+  function removeRun(runId) {
+    const canvasId = window.CanvasAgentBridge.canvasId();
+    try {
+      const key = `canvas-agent-runs:${canvasId}`;
+      const history = JSON.parse(localStorage.getItem(key) || '[]').filter(id => id && id !== runId);
+      localStorage.setItem(key, JSON.stringify(history));
+    } catch (_) {}
+    if (localStorage.getItem(`canvas-agent-run:${canvasId}`) === runId) localStorage.removeItem(`canvas-agent-run:${canvasId}`);
+  }
   function applyEvent(event) {
     if (!event || Number(event.sequence) <= state.sequence) return;
     state.sequence = Number(event.sequence); const type = String(event.type || '').replace(/^agent\./, ''); const data = event.payload || event.payload_json || event.data || {};
@@ -73,5 +82,5 @@
     if (event?.run_id === state.runId) applyEvent(event);
   };
   window.addEventListener('online', recover); document.addEventListener('visibilitychange', () => { if (!document.hidden) recover(); });
-  window.CanvasAgentEvents = { applyEvent, catchUp, recover, start, stop, saveRun, switchRun };
+  window.CanvasAgentEvents = { applyEvent, catchUp, recover, start, stop, saveRun, removeRun, switchRun };
 })();
