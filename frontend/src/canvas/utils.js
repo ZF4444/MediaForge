@@ -1,4 +1,4 @@
-// 从 static/js/canvas.js 剪切出的无状态工具函数（M1 拆分批次）。
+// 从 frontend/src/canvas/main.js 剪切出的无状态工具函数（M1 拆分批次）。
 // 原文件位置：tr/trf/refreshIcons/uid/escapeHtml/escapeAttr 在 481-488 行，
 // nowMs 单独在 6941 行。剪切时未改动任何函数签名/内部逻辑。
 //

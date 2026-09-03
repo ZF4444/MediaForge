@@ -1,4 +1,4 @@
-// 从 static/js/canvas.js 剪切出的节点数据模型逻辑（M3 拆分批次）。
+// 从 frontend/src/canvas/main.js 剪切出的节点数据模型逻辑（M3 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1 utils.js / M2 loop-node.js /
@@ -10,7 +10,7 @@
 // 通过 <script src="node-model.js"> 排在 node-layout.js 之后、main.js
 // 之前加载（createImageNodeAt 依赖 node-layout.js 的 imageLayout）。
 //
-// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里，
+// 依赖的外部全局（都还留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   状态变量：nodes, selectedId
 //   工具函数（M1 已拆到 utils.js）：uid, tr

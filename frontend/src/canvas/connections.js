@@ -1,4 +1,4 @@
-// 从 static/js/canvas.js 剪切出的连线（connection）数据与渲染逻辑（M4 拆分批次）。
+// 从 frontend/src/canvas/main.js 剪切出的连线（connection）数据与渲染逻辑（M4 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1 utils.js / M2 loop-node.js /
@@ -23,7 +23,7 @@
 // 连线菜单功能内部使用，未在文件其它地方被引用，随函数一起搬过来）：
 //   portDropMenuDrag, portDropMenuScreenPoint
 //
-// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里，
+// 依赖的外部全局（都还留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   DOM 元素：shell, world, portDropMenu
 //   状态变量：nodes, canvas, dragState, portDragState, loopInsertPreview,

@@ -1,4 +1,4 @@
-// 从 static/js/canvas.js 剪切出的上传/拖拽/本地文件导入逻辑（M6 拆分批次）。
+// 从 frontend/src/canvas/main.js 剪切出的上传/拖拽/本地文件导入逻辑（M6 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M5 同一个原因）：
@@ -33,7 +33,7 @@
 //   跟 M5 阶段"createGenerationNodeByKind 留在 main.js"是同一个判断原则：
 //   按实际调用关系归属，而不是按物理位置或名字表面含义。
 //
-// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里，
+// 依赖的外部全局（都还留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   状态变量：nodes, selectedId, undoSuppressed
 //   工具函数（M1 已拆到 utils.js）：tr

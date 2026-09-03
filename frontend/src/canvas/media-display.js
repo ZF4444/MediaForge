@@ -1,4 +1,4 @@
-// 从 static/js/canvas.js 剪切出的媒体展示/下载逻辑（M11 拆分批次）。
+// 从 frontend/src/canvas/main.js 剪切出的媒体展示/下载逻辑（M11 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M10 同一个原因）：

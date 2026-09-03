@@ -1,4 +1,4 @@
-// 从 static/js/canvas.js 剪切出的核心渲染/节点事件绑定逻辑（M7 拆分批次）。
+// 从 frontend/src/canvas/main.js 剪切出的核心渲染/节点事件绑定逻辑（M7 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M6 同一个原因）：
@@ -745,7 +745,7 @@ function restoreDraggedNodePosition(){
 }
 
 // M19 追加：window.onmousemove / window.onmouseup 全局交互状态调度中心
-// + 右键拖拽取消处理。从 static/js/canvas.js 原样剪切，未改动
+// + 右键拖拽取消处理。从 frontend/src/canvas/main.js 原样剪切，未改动
 // 任何函数内部逻辑，只做了纯粹的位置搬移，追加到本文件（canvas-render.js）
 // 末尾——它们和上面的 dragConnectTargetFor/rectOverlapNode/
 // canAutoConnectDraggedNode/restoreDraggedNodePosition（M7 已迁移）
@@ -783,7 +783,7 @@ function restoreDraggedNodePosition(){
 //     连接输入"/"合并为图片组"/"连接输入节点"，最后落地判断是否
 //     真的发生了有效变更从而决定 commit 还是 discard 撤销快照）。
 //
-// 依赖的外部全局（刻意留在 static/js/canvas.js / main.js 里，
+// 依赖的外部全局（刻意留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享脚本作用域访问，未随本次搬移迁移，因为被 main.js 里其它
 // 大量代码——尤其是各种 mousedown/pointerdown/dragstart 事件绑定——
 // 同样读写，属于跨文件共享的可变交互状态，风险量级和 state.js 一致，

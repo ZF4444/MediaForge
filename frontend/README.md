@@ -5,7 +5,7 @@
 **范围**：目前覆盖五个页面——`canvas`（画布，M1-M22，见下方
 主体章节）、`api-settings`（API 设置页）、`asset-manager`（素材库管理
 页）、`comfyui-settings`（ComfyUI 设置页）、`index`（应用外壳，见文末
-对应章节）。**`static/js/canvas.js`（旧画布/无限画布）明确不在
+对应章节）。**`frontend/src/canvas/main.js`（旧画布/无限画布）明确不在
 范围内**——已确认未来会弃用，只需保证能打开旧画布，不值得投入模块化
 重构的精力，保持现状手写单文件即可。`static/js/ltx-director-timeline.js`
 （4111 行）也暂不纳入范围——这是一个 ComfyUI 自定义节点的前端 widget
@@ -26,7 +26,7 @@ M2 原计划是拆 `loop-node.js` + 建立布局快照测试。已完成，但�
 经典脚本方案（原因见下方），且严格排除了跟级联执行调度耦合的函数。
 
 - **唯一源码分成三部分**：
-  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/main.js`：主体代码，改动依然很频繁。
   - `frontend/src/canvas/utils.js`：M1 拆出的 7 个无状态工具函数。
   - `frontend/src/canvas/loop-node.js`：M2 拆出的循环节点
     （`smart-loop`）专属逻辑，约 30 个函数/常量，包括
@@ -71,7 +71,7 @@ M3 拆了 `node-layout.js`（节点布局计算）和 `node-model.js`（节点�
 同样沿用经典脚本方案。
 
 - **唯一源码分成五部分**：
-  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/main.js`：主体代码，改动依然很频繁。
   - `frontend/src/canvas/utils.js`（M1）：7 个无状态工具函数。
   - `frontend/src/canvas/loop-node.js`（M2）：循环节点专属逻辑。
   - `frontend/src/canvas/node-layout.js`（M3）：节点布局计算，
@@ -112,7 +112,7 @@ M3 拆了 `node-layout.js`（节点布局计算）和 `node-model.js`（节点�
 M4 拆了 `connections.js`（连线数据与渲染），同样沿用经典脚本方案。
 
 - **唯一源码分成六部分**：
-  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/main.js`：主体代码，改动依然很频繁。
   - `frontend/src/canvas/utils.js`（M1）。
   - `frontend/src/canvas/loop-node.js`（M2）。
   - `frontend/src/canvas/node-layout.js` + `node-model.js`（M3）。
@@ -159,7 +159,7 @@ M5 拆了 `cascade-run.js`（一键运行/级联生成调度），是体量最�
 单独验证，不一次性全部完成。
 
 - **唯一源码分成七部分**：
-  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/main.js`：主体代码，改动依然很频繁。
   - `frontend/src/canvas/{utils,loop-node,node-layout,node-model,connections}.js`
     （M1-M4）。
   - `frontend/src/canvas/cascade-run.js`（M5）：共 32 个函数，
@@ -208,7 +208,7 @@ M5 拆了 `cascade-run.js`（一键运行/级联生成调度），是体量最�
 M6 拆了 `upload.js`（上传/拖拽/配额弹窗），共 28 个函数。
 
 - **唯一源码分成八部分**：
-  - `static/js/canvas.js`：主体代码，改动依然很频繁。
+  - `frontend/src/canvas/main.js`：主体代码，改动依然很频繁。
   - `frontend/src/canvas/{utils,loop-node,node-layout,node-model,connections,cascade-run}.js`
     （M1-M5）。
   - `frontend/src/canvas/upload.js`（M6）：拖拽数据解析
@@ -833,7 +833,7 @@ not defined`，报错栈经过 `nodeScale`/`mediaNodeDefaultScale`
 `SMART_GROUP_LEGACY_HEIGHT`/`SMART_GROUP_MIN_WIDTH`/
 `SMART_GROUP_MIN_HEIGHT`）——这些常量当时的设计意图是"留在
 main.js"（`node-layout.js` 文件头的注释也确实这样写了），但实际
-删除 `static/js/canvas.js` 里的函数区间时，连带把这 10 行
+删除 `frontend/src/canvas/main.js` 里的函数区间时，连带把这 10 行
 常量声明一起删掉了，且从未补回任何地方，变成了"哪个文件都没有
 声明"。因为这些常量只在函数体内部被引用（不是模块顶层立即执行的
 代码），所以当时的 10 步校验流程里的"语法检查"/"vm 交叉模拟"都没
@@ -842,7 +842,7 @@ main.js"（`node-layout.js` 文件头的注释也确实这样写了），但实�
 任何一个模块的单元测试覆盖到，因为那些测试都是用手造的最小化输入
 调用纯函数，不会经过"渲染整个画布"的完整调用链。
 
-**修复**：把这 10 个常量声明原样补回 `static/js/canvas.js`
+**修复**：把这 10 个常量声明原样补回 `frontend/src/canvas/main.js`
 里 M3 拆分注释的位置。
 
 **教训**：
@@ -1197,7 +1197,7 @@ M22 拆了 `state.js`，包含 6 个核心状态变量：`canvas`/`nodes`/
   直接读 `sandbox.nodes`。这也解释了为什么本次会话所有 vm 交叉模拟
   脚本从 M1 开始就一直用 `vm.runInContext(...)` 而不是直接读 sandbox
   属性——不是随手选的写法，是必须这样才能拿到真实的当前值。
-- **效果**：`static/js/canvas.js` 从 16590 行的单体文件，到
+- **效果**：`frontend/src/canvas/main.js` 从 16590 行的单体文件，到
   现在物理拆分出 21 个模块（含 `state.js`），本次会话计划的三大
   高风险区块（`window.onmousemove`/`onmouseup` 物理拆分、顶层匿名
   脚本具名化 + @mention/composer 拆分、`state.js` 真正提取）全部
@@ -1230,7 +1230,7 @@ npm test        # 跑全部拆分模块的 Vitest 回归测试（三个页面的
 `<script>`，都走 `/static` 挂载和版本号注入逻辑，main.py 不需要任何
 改动）。
 
-**重要**：每次修改了 `static/js/canvas.js` 或
+**重要**：每次修改了 `frontend/src/canvas/main.js` 或
 `frontend/src/canvas/` 下任何一个手写模块文件之后，必须重新
 运行 `npm run build`，否则 `static/canvas.html` 加载到的会是
 旧版本。这个规则对下面 api-settings/asset-manager 两个页面同样适用。

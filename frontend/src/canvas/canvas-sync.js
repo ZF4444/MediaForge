@@ -1,5 +1,5 @@
 // M16 拆分：画布多端协作合并系统。
-// 从 static/js/canvas.js 原样剪切，未改动任何函数签名/内部逻辑，
+// 从 frontend/src/canvas/main.js 原样剪切，未改动任何函数签名/内部逻辑，
 // 只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M15 同一个原因）：
@@ -17,7 +17,7 @@
 // 和本地当前编辑状态合并（本地正在生成/排队的节点以本地为准，图片取
 // 并集，避免互相冲掉对方的生成结果）。
 //
-// 依赖的外部全局（刻意留在 static/js/canvas.js / main.js 里，
+// 依赖的外部全局（刻意留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享脚本作用域访问，未随本文件迁移）：
 //   状态变量：nodes（画布节点数组，本文件内会直接重新赋值 nodes = ...，
 //     和 M2 loop-node.js 里 selectedId = ... 同一个道理，经典脚本才能

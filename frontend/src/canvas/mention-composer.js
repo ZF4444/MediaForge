@@ -1,5 +1,5 @@
 // M21 拆分：@mention 提及系统 + 提示词节点 composer（promptComposer）+
-// 生成请求引用图片收集系统。从 static/js/canvas.js 原样剪切，
+// 生成请求引用图片收集系统。从 frontend/src/canvas/main.js 原样剪切，
 // 未改动任何函数内部逻辑，只做了纯粹的位置搬移，物理上分两段不连续
 // 区间（原文件 2192-2598 行 + 2780-3461 行，中间 2609-2779 行是 M6
 // 阶段确认的通用配额/尺寸计算基础设施，物理上夹在中间但完全不相关，
@@ -67,7 +67,7 @@
 //     最终把提示词文本 + 引用图片组装成发给后端的生成请求体，是本系统的
 //     出口函数。
 //
-// 依赖的外部全局（刻意留在 static/js/canvas.js / main.js 里，
+// 依赖的外部全局（刻意留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享脚本作用域访问，未随本文件迁移）：
 //   状态变量：nodes, viewport, settings（只读，可能被 renderPromptComposer
 //     等函数修改属性但不整体重新赋值）, mentionPickerState 及其它 mention

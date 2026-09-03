@@ -1,4 +1,4 @@
-// 从 static/js/canvas.js 剪切出的循环节点（smart-loop）专属逻辑（M2 拆分批次）。
+// 从 frontend/src/canvas/main.js 剪切出的循环节点（smart-loop）专属逻辑（M2 拆分批次）。
 // 剪切时未改动任何函数签名/内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1 的 utils.js 同一个原因）：
@@ -15,7 +15,7 @@
 //   通过 <script src="loop-node.js"> 排在 main.js 之前加载，main.js 里
 //   剩余代码对这些函数的调用方式完全不变。
 //
-// 依赖的外部全局（都还留在 static/js/canvas.js / main.js 里，
+// 依赖的外部全局（都还留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   状态变量：nodes, selectedId, canvas, smartLoopContext
 //   工具函数（M1 已拆到 utils.js，同样是经典脚本挂全局）：

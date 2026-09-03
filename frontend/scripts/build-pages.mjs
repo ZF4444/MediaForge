@@ -11,9 +11,9 @@
  *
  * 每个页面在 PAGES 里注册：
  *   - page: 页面标识（对应 frontend/src/<page>/ 和 static/dist/<page>/）
- *   - mainSrc: 该页面"唯一源码"文件在 static/js/ 下的路径（跟画布
- *     一样，拆分完之后仍保留一个 main.js 承载还没拆出去的代码，每次
- *     构建都从 static/js/<xxx>.js 重新复制过来）
+ *   - mainSrc: 该页面的唯一源码文件路径。画布源码位于
+ *     frontend/src/canvas/main.js；尚未完成迁移的页面仍暂时使用
+ *     static/js/<xxx>.js。
  *   - handwrittenFiles: 已经物理拆分出来的模块文件名列表，顺序即
  *     <script src> 加载顺序（越靠前越先加载）
  *
@@ -39,7 +39,7 @@ const PAGES = [
   {
     // 画布（M1-M22 已完成的拆分，21 个模块 + main.js）
     page: 'canvas',
-    mainSrc: 'static/js/canvas.js',
+    mainSrc: 'frontend/src/canvas/main.js',
     handwrittenFiles: [
       'state.js', 'utils.js', 'loop-node.js', 'node-layout.js', 'node-model.js',
       'connections.js', 'cascade-run.js', 'upload.js', 'media-display.js',
@@ -78,19 +78,15 @@ const PAGES = [
 
 function buildPage({ page, mainSrc, handwrittenFiles }) {
   const mainSrcAbs = resolve(repoRoot, mainSrc);
-  const mainStagingCopy = resolve(frontendRoot, 'src', page, 'main.js');
   const outDir = resolve(repoRoot, 'static/dist', page);
   const mainDest = resolve(outDir, 'main.js');
 
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
 
-  // main.js：仍从 static/js/<page>.js 复制（唯一源码在那边）。
+  // main.js：始终从页面源码目录单向生成发布产物。
   copyFileSync(mainSrcAbs, mainDest);
-  mkdirSync(dirname(mainStagingCopy), { recursive: true });
-  copyFileSync(mainSrcAbs, mainStagingCopy);
   console.log(`[build:${page}] copied ${mainSrcAbs} -> ${mainDest}`);
-  console.log(`[build:${page}] staged  ${mainSrcAbs} -> ${mainStagingCopy}`);
 
   // 手写源码文件（经典脚本，各自独立拆出的模块），直接复制，顺序即
   // <script src> 加载顺序。

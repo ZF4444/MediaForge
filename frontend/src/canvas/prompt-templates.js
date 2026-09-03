@@ -1,5 +1,5 @@
 // M17 拆分：提示词预设（prompt preset）+ 提示词模板库（prompt template）
-// 管理系统。从 static/js/canvas.js 原样剪切，未改动任何函数签名/
+// 管理系统。从 frontend/src/canvas/main.js 原样剪切，未改动任何函数签名/
 // 内部逻辑，只做了纯粹的位置搬移。
 //
 // 为什么这里不用 ES module 的 export/import（跟 M1-M16 同一个原因）：
@@ -48,7 +48,7 @@
 //     createPromptTemplateGroup/renamePromptTemplateGroup/
 //     deletePromptTemplateGroup
 //
-// 依赖的外部全局（刻意留在 static/js/canvas.js / main.js 里，
+// 依赖的外部全局（刻意留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享脚本作用域访问，未随本文件迁移）：
 //   状态变量（本文件读写，main.js 里其它代码——主要是顶层匿名脚本里
 //   模板面板的分类/搜索/编辑模式点击事件绑定——也会读写，属于跨函数
