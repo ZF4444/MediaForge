@@ -208,6 +208,12 @@
             if(el) el.classList.add('active');
             document.querySelectorAll('iframe').forEach(f => f.classList.remove('active'));
             const target = document.getElementById('frame-' + id);
+            // 子页面中的普通链接可能曾把 iframe 导航到别的页面；恢复入口时
+            // 必须把它指回该 iframe 声明的页面，否则只切换 active 类不会恢复画布。
+            if (target && target.dataset.src) {
+                const expectedSrc = new URL(target.dataset.src, location.href).href;
+                if (target.src && target.src !== expectedSrc) target.src = target.dataset.src;
+            }
             if(id === 'user-management' && legacyUserTab && !target.src) target.dataset.src = `/static/user-management.html#${legacyUserTab}`;
             target.classList.add('active');
             // 切换功能页面时自动收起帮助面板：不同页面的帮助内容互相独立，
@@ -260,6 +266,10 @@
                 if(frame && !frame.src) frame.addEventListener('load', notifyStorageTab, {once:true});
                 switchUI(trigger, 'asset-manager');
                 notifyStorageTab();
+                return;
+            }
+            if (d.type === 'studio-open-account') {
+                switchUI(pageTrigger('my-account'), 'my-account');
                 return;
             }
             // 子页面声明/取消"离开需确认"守卫
