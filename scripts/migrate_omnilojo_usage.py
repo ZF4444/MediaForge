@@ -7,6 +7,7 @@ work. It is safe to run repeatedly: rows already copied are skipped by the
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -90,7 +91,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="只统计待迁移数据，不写入")
     args = parser.parse_args()
-    result = migrate(dry_run=args.dry_run)
+
+    from app.core.database import close_database_pool, open_database_pool
+
+    async def run() -> dict[str, int | str | bool]:
+        await open_database_pool()
+        try:
+            return await asyncio.to_thread(migrate, dry_run=args.dry_run)
+        finally:
+            await close_database_pool()
+
+    result = asyncio.run(run())
     print(json.dumps(result, ensure_ascii=False))
 
 

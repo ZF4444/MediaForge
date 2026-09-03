@@ -21,9 +21,8 @@ def test_prompt_compiler_keeps_anchor_provenance():
     assert result["source_anchor_ids"] == ["hero-v2", "style_1"]
 
 
-def test_skills_are_versioned_and_read_on_demand():
+def test_skills_are_discovered_and_read_on_demand():
     summaries = {skill.name: skill for skill in list_skill_summaries()}
-    assert summaries["prompt-pack"].version == "1.0.0"
     assert get_skill("shot-list") is not None
     assert "Shot List" in read_skill("shot-list")
 

@@ -16,7 +16,6 @@ class CanvasAgentState(TypedDict, total=False):
     user_id: str
     canvas_id: str
     loaded_skills: list[dict[str, str]]
-    loaded_skill_resources: list[dict[str, str]]
     confirmed: bool
     plan_version: int
     authorized_node_ids: list[str]
@@ -50,7 +49,6 @@ def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canv
             "read_artifact": "正在读取关联素材…",
             "list_canvas_skills": "正在查询可用技能…",
             "read_canvas_skill": "正在读取技能说明…",
-            "read_canvas_skill_resource": "正在读取技能资源…",
             "propose_canvas_patch": "正在生成执行计划…",
             "request_clarification": "正在整理需要补充的信息…",
         }
@@ -71,8 +69,7 @@ def create_canvas_agent(*, model: Any, user_id: str = "", run_id: str = "", canv
             "提案返回 awaiting_confirmation 后必须等待用户确认；不要在规划阶段调用任何执行工具。用户批准后，图会自动调用专用执行工具并记录执行结果。"
             "缺少目标时调用 request_clarification。普通问答直接用中文回答。"
             "\n\n" + skill_metadata_prompt() + "\n"
-            "用户请求明显匹配某个 Skill 时，先调用 read_canvas_skill。只有该正文明确引用的已登记资源才可调用 "
-            "read_canvas_skill_resource；资源和 scripts 都只可用于规划参考，不能执行。"))
+            "用户请求明显匹配某个 Skill 时，先调用 read_canvas_skill。Skill 正文仅用于规划参考，不能执行脚本或外部命令。"))
         response = await model.bind_tools(planning_tools).ainvoke([system, *(state.get("messages") or [])])
         return {"messages": [response]}
 

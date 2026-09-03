@@ -1,3 +1,7 @@
+---
+name: canvas-capabilities
+description: "Read-only canvas capability and parameter reference"
+---
 # Canvas Capabilities
 
 Read the current capability registry before proposing generation. Use only enabled provider and model combinations.

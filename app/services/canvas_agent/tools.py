@@ -14,12 +14,7 @@ from .context import build_canvas_context
 from .policy import assess_patch
 from .adapter import semantic_plan_to_patch
 from .store import latest_artifact, save_plan
-from .skills import (
-    MAX_RESOURCES_PER_TURN,
-    list_enabled_skill_summaries,
-    read_skill_document,
-    read_skill_resource,
-)
+from .skills import list_enabled_skill_summaries, read_skill_document
 
 
 def submit_semantic_plan(plan: dict[str, Any]) -> SemanticPlan:
@@ -95,13 +90,11 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
         skills = [
             {
                 "name": skill.name,
-                "version": skill.version,
                 "description": skill.description,
-                "triggers": list(skill.triggers),
             }
             for skill in list_enabled_skill_summaries()
         ]
-        await skill_event("skill.discovered", {"skills": [{"name": item["name"], "version": item["version"]} for item in skills]})
+        await skill_event("skill.discovered", {"skills": [{"name": item["name"]} for item in skills]})
         return skills
 
     @tool
@@ -113,57 +106,20 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
             await skill_event("skill.rejected", {"skill": {"name": str(name)[:64]}, "reason": str(exc)[:500]})
             return Command(update={"messages": [ToolMessage(content=f"Skill 读取被拒绝：{exc}", tool_call_id=runtime.tool_call_id)]})
         loaded = list(runtime.state.get("loaded_skills") or [])
-        item = {"name": document.name, "version": document.version, "content_sha256": document.content_sha256}
+        item = {"name": document.name, "content_sha256": document.content_sha256}
         if item not in loaded:
             loaded.append(item)
-        await skill_event("skill.loaded", {"skill": {"name": document.name, "version": document.version, "content_sha256": document.content_sha256}})
+        await skill_event("skill.loaded", {"skill": {"name": document.name, "content_sha256": document.content_sha256}})
         return Command(update={
             "loaded_skills": loaded,
             "messages": [ToolMessage(
                 content=document.content,
                 tool_call_id=runtime.tool_call_id,
                 name="read_canvas_skill",
-                artifact={"name": document.name, "version": document.version, "content_sha256": document.content_sha256},
+                artifact={"name": document.name, "content_sha256": document.content_sha256},
             )],
         })
 
-    @tool
-    async def read_canvas_skill_resource(skill_name: str, resource_path: str, runtime: ToolRuntime) -> Command:
-        """Read one registered text resource from an already loaded enabled Skill."""
-        loaded_skills = list(runtime.state.get("loaded_skills") or [])
-        if not any(item.get("name") == skill_name for item in loaded_skills):
-            reason = "必须先读取该 Skill 正文，才能读取其资源"
-            await skill_event("skill.resource_rejected", {"skill": {"name": str(skill_name)[:64]}, "path": str(resource_path)[:256], "reason": reason})
-            return Command(update={"messages": [ToolMessage(content=f"Skill 资源读取被拒绝：{reason}", tool_call_id=runtime.tool_call_id)]})
-        loaded_resources = list(runtime.state.get("loaded_skill_resources") or [])
-        if len(loaded_resources) >= MAX_RESOURCES_PER_TURN:
-            reason = "本轮 Skill 资源加载数量已达上限"
-            await skill_event("skill.resource_rejected", {"skill": {"name": str(skill_name)[:64]}, "path": str(resource_path)[:256], "reason": reason})
-            return Command(update={"messages": [ToolMessage(content=f"Skill 资源读取被拒绝：{reason}", tool_call_id=runtime.tool_call_id)]})
-        try:
-            resource = await asyncio.to_thread(read_skill_resource, skill_name, resource_path)
-        except Exception as exc:
-            await skill_event("skill.resource_rejected", {"skill": {"name": str(skill_name)[:64]}, "path": str(resource_path)[:256], "reason": str(exc)[:500]})
-            return Command(update={"messages": [ToolMessage(content=f"Skill 资源读取被拒绝：{exc}", tool_call_id=runtime.tool_call_id)]})
-        item = {
-            "skill_name": resource.skill_name,
-            "skill_version": resource.skill_version,
-            "path": resource.path,
-            "sha256": resource.content_sha256,
-            "media_type": resource.media_type,
-        }
-        if item not in loaded_resources:
-            loaded_resources.append(item)
-        await skill_event("skill.resource_loaded", {"skill": {"name": resource.skill_name, "version": resource.skill_version}, "resource": item})
-        return Command(update={
-            "loaded_skill_resources": loaded_resources,
-            "messages": [ToolMessage(
-                content=resource.content,
-                tool_call_id=runtime.tool_call_id,
-                name="read_canvas_skill_resource",
-                artifact=item,
-            )],
-        })
 
     @tool(args_schema=SemanticPlan)
     async def propose_canvas_patch(**plan_fields: Any) -> dict[str, Any]:
@@ -196,7 +152,7 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
 
     tools = [
         read_canvas_context, read_capability_registry, read_capability_parameters, read_artifact,
-        list_canvas_skills, read_canvas_skill, read_canvas_skill_resource,
+        list_canvas_skills, read_canvas_skill,
         propose_canvas_patch, request_clarification,
     ]
     # Planning graphs must not expose the mutation tool. The graph only adds

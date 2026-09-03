@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Wireframe Prompt Generator"
+  short_description: "Generate LoRA-ready Chinese UI prompts from wireframes"
+  default_prompt: "Use $ui-wireframe-prompt-generator to generate a LoRA-ready Chinese UI prompt from this UX wireframe and my visual inputs."

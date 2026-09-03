@@ -1,6 +1,6 @@
 ---
 name: image-generation
-version: 1.0.0
+description: "Canvas image-generation planning and iteration workflow"
 ---
 # Image Generation
 
