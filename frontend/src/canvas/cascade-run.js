@@ -73,6 +73,9 @@ function canonicalRunSettings(value={}){
     delete settings.videoModel;
     return settings;
 }
+function workflowTaskCount(runSettings=settings){
+    return Math.max(1, Math.min(4, Number(runSettings?.count || 1) || 1));
+}
 // Turn the per-task settlements recorded by resumeSmartPendingNode into the
 // `tasks` array consumed by addSmartGenerationLog, so a multi-task run produces
 // one log entry per task_id. Returns null when no settlements are available
@@ -323,18 +326,20 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'video'), videoRefsOnly(allRefs));
     await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'audio'), audioRefsOnly(allRefs));
     fields.filter(f => comfyFieldKind(f) === 'setting').forEach(field => {
-        if(comfyRandomEnabledField(field) && smartComfyRandomActive(field.id)){
-            values[field.id] = smartComfyRandomValue(field);
-        } else {
-            values[field.id] = settings.comfyParams?.[field.id] ?? field.default;
-        }
+        values[field.id] = settings.comfyParams?.[field.id] ?? field.default;
     });
     const stable = stableCanvasTarget('comfyui_workflow', 'comfyui', workflowName);
-    const task = await createSmartComfyTask({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId, ...stable});
-    if(!task?.task_id) throw new Error(tr('smart.errRunFailed'));
+    const createTask = async () => {
+        const taskValues = {...values};
+        fields.filter(f => comfyFieldKind(f) === 'setting' && comfyRandomEnabledField(f) && smartComfyRandomActive(f.id))
+            .forEach(field => { taskValues[field.id] = smartComfyRandomValue(field); });
+        return createSmartComfyTask({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, taskValues), type:'workflow-custom', client_id:smartClientId, ...stable});
+    };
+    const tasks = await Promise.all(Array.from({length:workflowTaskCount(settings)}, createTask));
+    if(tasks.some(task => !task?.task_id)) throw new Error(tr('smart.errRunFailed'));
     if(pendingNode){
-        pendingNode.pendingTasks = [{taskId:task.task_id, kind:'image', connectionId:stable.connection_id, resourceId:stable.resource_id, taskType:'comfy'}];
-        pendingNode.pending = 1;
+        pendingNode.pendingTasks = tasks.map(task => ({taskId:task.task_id, kind:'image', connectionId:stable.connection_id, resourceId:stable.resource_id, taskType:'comfy'}));
+        pendingNode.pending = tasks.length;
         pendingNode.pendingCandidatePool = true;
         pendingNode.running = false;
         render();
@@ -345,10 +350,11 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
         scheduleSave();
         return;
     }
-    const result = await pollCanvasComfyTask(task.task_id);
-    const urls = resultMediaUrls(result);
+    const results = await Promise.all(tasks.map(task => pollCanvasComfyTask(task.task_id)));
+    const urls = results.flatMap(result => resultMediaUrls(result));
     if(!urls.length) throw new Error(tr('smart.errComfyNoImages'));
-    const kind = mediaKindForUrls(urls, result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image');
+    const fallbackKind = results.some(result => result?.videos?.length) ? 'video' : results.some(result => result?.audios?.length) ? 'audio' : results.some(result => result?.texts?.length) ? 'text' : 'image';
+    const kind = mediaKindForUrls(urls, fallbackKind);
     const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : 'png';
     const out = urls.map((url, i) => ({url, name:`comfy-${i + 1}.${ext}`, kind})).filter(x => x.url);
     if(!out.length) throw new Error(tr('smart.errComfyEmpty'));
@@ -549,7 +555,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         const runLogStart = nowMs();
         const expectedCount = isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'
             ? Math.max(1, Math.min(4, Number(runSettings.count || 1)))
-            : 1;
+            : ['comfy', 'runninghub'].includes(runSettings.engine) ? workflowTaskCount(runSettings) : 1;
         outputSlot.queued = false;
         outputSlot.running = true;
         outputSlot.pending = expectedCount;
@@ -1007,10 +1013,8 @@ async function runGeneration(){
     const runLog = smartRunSnapshot(node, prompt, refs, logKind);
     rememberRecentSmartSettings(settings, node);
     const runLogStart = nowMs();
-    const expectedCount = settings.engine === 'runninghub'
-        ? 1
-        : settings.engine === 'comfy'
-        ? 1
+    const expectedCount = ['runninghub', 'comfy'].includes(settings.engine)
+        ? workflowTaskCount(settings)
         : Math.max(1, Math.min(4, Number(settings.count || 1)));
     // 图片 API 任务提交后还会经历服务端排队与轮询。运行态必须持续到该
     // 任务真正结束，不能用短暂的按钮冷却替代，否则用户可以重复提交。
@@ -1080,10 +1084,10 @@ async function runGeneration(){
             return;
         }
         if(settings.engine === 'runninghub'){
-            const taskResult = await submitRunningHubGeneration(prompt, refs);
-            const taskIds = [taskResult.taskId].filter(Boolean);
+            const taskResults = await Promise.all(Array.from({length:workflowTaskCount(settings)}, () => submitRunningHubGeneration(prompt, refs)));
+            const taskIds = taskResults.map(task => task.taskId).filter(Boolean);
             if(!taskIds.length) throw new Error(tr('smart.rhNoTaskId'));
-            pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:'runninghub', connectionId:taskResult.connectionId, resourceId:taskResult.resourceId, mode:taskResult.mode}));
+            pendingNode.pendingTasks = taskResults.filter(task => task.taskId).map(task => ({taskId:task.taskId, kind:'image', providerId:'runninghub', connectionId:task.connectionId, resourceId:task.resourceId, mode:task.mode}));
             pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
             pendingNode.pendingCandidatePool = true;
             pendingNode.runStartedAt = nowMs();

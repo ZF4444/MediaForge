@@ -730,7 +730,7 @@ function renderRunningHubParams(){
     settings.rhRandomActive = settings.rhRandomActive || {};
     if(composerHeadParams) composerHeadParams.innerHTML = '';
     if(!ref){
-        dynamicParams.innerHTML = `${renderWorkflowSourceControl()}<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>`;
+        dynamicParams.innerHTML = `${renderWorkflowSourceControl()}<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>${renderCountVisualControl()}`;
         return;
     }
     const params = fields.filter(field => {
@@ -741,6 +741,7 @@ function renderRunningHubParams(){
         ${renderWorkflowSourceControl()}
         ${renderRhMachineControl()}
         ${params.length ? params.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(fields.length ? tr('smart.rhNoParams') : tr('smart.rhNeedFields'))}</div>`}
+        ${renderCountVisualControl()}
     `;
 }
 function rhEntryMediaFields(entry, kind){
@@ -813,6 +814,7 @@ function renderComfyParams(){
     dynamicParams.innerHTML = `
         ${renderWorkflowSourceControl()}
         ${fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`)}
+        ${renderCountVisualControl()}
     `;
 }
 function renderWorkflowNodeParams(){
@@ -844,7 +846,10 @@ function renderWorkflowNodeParams(){
             body = `${renderRhMachineControl()}${fields.length ? fields.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(tr('smart.rhNoParams'))}</div>`}`;
         }
     }
-    dynamicParams.innerHTML = `${renderWorkflowSourceControl()}${body}`;
+    // Workflow engines submit one task per requested result. Keep this control
+    // alongside the workflow-specific parameters so both ComfyUI and RH use
+    // the same 1-4 task selection as image generation.
+    dynamicParams.innerHTML = `${renderWorkflowSourceControl()}${body}${renderCountVisualControl()}`;
 }
 function renderWorkflowSourceControl(){
     const node = activeSettingsSubject();

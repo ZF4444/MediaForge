@@ -3387,7 +3387,7 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
     const urls = activeSettings.engine === 'runninghub'
-        ? await runRunningHubGeneration(prompt, refs, activeSettings)
+        ? (await Promise.all(Array.from({length:workflowTaskCount(activeSettings)}, () => runRunningHubGeneration(prompt, refs, activeSettings)))).flat()
         : [];
     return {urls, kind:mediaKindForUrls(urls, 'image')};
 }
@@ -3414,17 +3414,22 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'video'), videoRefsOnly(allRefs));
     await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'audio'), audioRefsOnly(allRefs));
     fields.filter(f => comfyFieldKind(f) === 'setting').forEach(field => {
-        if(comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id)){
-            values[field.id] = smartComfyRandomValue(field);
-        } else {
-            values[field.id] = runSettings.comfyParams?.[field.id] ?? field.default;
-        }
+        values[field.id] = runSettings.comfyParams?.[field.id] ?? field.default;
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
-    const urls = resultMediaUrls(result);
-    const fallbackKind = result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image';
-    const comfyTaskId = (result && (result.task_id || result.prompt_id)) || '';
-    return {urls, kind:mediaKindForUrls(urls, fallbackKind), tasks:comfyTaskId ? [{taskId:comfyTaskId, upstreamTaskId:(result && result.prompt_id) || '', outputs:urls}] : null};
+    const runTask = async () => {
+        const taskValues = {...values};
+        fields.filter(f => comfyFieldKind(f) === 'setting' && comfyRandomEnabledField(f) && smartComfyRandomActiveFor(runSettings, f.id))
+            .forEach(field => { taskValues[field.id] = smartComfyRandomValue(field); });
+        return runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, taskValues), type:'workflow-custom', client_id:smartClientId});
+    };
+    const results = await Promise.all(Array.from({length:workflowTaskCount(runSettings)}, runTask));
+    const urls = results.flatMap(result => resultMediaUrls(result));
+    const fallbackKind = results.some(result => result?.videos?.length) ? 'video' : results.some(result => result?.audios?.length) ? 'audio' : results.some(result => result?.texts?.length) ? 'text' : 'image';
+    const tasks = results.map(result => {
+        const taskId = (result && (result.task_id || result.prompt_id)) || '';
+        return taskId ? {taskId, upstreamTaskId:(result && result.prompt_id) || '', outputs:resultMediaUrls(result)} : null;
+    }).filter(Boolean);
+    return {urls, kind:mediaKindForUrls(urls, fallbackKind), tasks:tasks.length ? tasks : null};
 }
 // M5 拆分（第3批）：runCascadeStepIntoNode / runLoopRoundIntoSlot /
 // runClonedLoopChain / appendCascadeRefsToReceiver / cascadeRefsFromOutputs /
