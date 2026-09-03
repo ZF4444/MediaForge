@@ -73,3 +73,9 @@ def test_usage_tables_migrate_canonical_target_columns():
         for column in ("connection_id", "model_id", "resource_id"):
             statement = f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} "
             assert statement in BUSINESS_METADATA_SQL, f"缺少迁移语句: {statement}"
+
+
+def test_legacy_usage_copy_is_not_part_of_startup_schema():
+    """历史用量复制必须由显式脚本触发，不能随项目重启执行。"""
+    assert "ai_usage_migrations" not in BUSINESS_METADATA_SQL
+    assert "INSERT INTO ai_usage_records" not in BUSINESS_METADATA_SQL

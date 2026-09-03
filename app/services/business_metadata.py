@@ -312,8 +312,8 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_org_created ON omnilojo_usage_records(org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_created ON omnilojo_usage_records(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_omnilojo_usage_user_created ON omnilojo_usage_records(user_id, created_at DESC);
--- Protocol-neutral token usage ledger. Historical Omnilojo rows are copied
--- below so all OpenAI-compatible providers share one reporting surface.
+-- Protocol-neutral token usage ledger. Historical Omnilojo rows are migrated
+-- by scripts/migrate_omnilojo_usage.py, outside application startup.
 CREATE TABLE IF NOT EXISTS ai_usage_records (
     id TEXT PRIMARY KEY, protocol TEXT NOT NULL DEFAULT 'openai', upstream_log_id TEXT NOT NULL,
     connection_id TEXT NOT NULL DEFAULT '', model_id TEXT NOT NULL DEFAULT '', resource_id TEXT NOT NULL DEFAULT '',
@@ -341,26 +341,6 @@ ALTER TABLE ai_usage_records ADD COLUMN IF NOT EXISTS pricing_configured BOOLEAN
 CREATE INDEX IF NOT EXISTS idx_ai_usage_org_created ON ai_usage_records(org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage_records(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_usage_user_created ON ai_usage_records(user_id, created_at DESC);
-CREATE TABLE IF NOT EXISTS ai_usage_migrations (
-    name TEXT PRIMARY KEY, applied_at BIGINT NOT NULL
-);
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM ai_usage_migrations WHERE name='omnilojo_to_ai_usage_v1') THEN
-    INSERT INTO ai_usage_records(
-        id,protocol,upstream_log_id,connection_id,model_id,resource_id,request_id,upstream_request_id,
-        user_id,org_id,external_username,token_name,model,operation,quota,cost_usd,total_money_cny,
-        prompt_tokens,completion_tokens,text_input_tokens,image_input_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at
-    )
-    SELECT id,'omnilojo',upstream_log_id,connection_id,model_id,resource_id,request_id,upstream_request_id,
-           user_id,org_id,external_username,token_name,model,'',quota,cost_usd,total_money_cny,
-           prompt_tokens,completion_tokens,prompt_tokens,0,prompt_tokens + completion_tokens,status,TRUE,TRUE,created_at,raw_log,inserted_at,updated_at
-    FROM omnilojo_usage_records
-    ON CONFLICT(protocol, connection_id, upstream_log_id) DO NOTHING;
-    INSERT INTO ai_usage_migrations(name, applied_at)
-    VALUES ('omnilojo_to_ai_usage_v1', (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT);
-  END IF;
-END $$;
 CREATE TABLE IF NOT EXISTS user_sessions (
     token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     username TEXT NOT NULL, created_at BIGINT NOT NULL, last_seen BIGINT NOT NULL, expires_at BIGINT NOT NULL
