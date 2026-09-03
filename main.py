@@ -5182,7 +5182,7 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     try:
         from app.ai.chat import ChatGateway
         chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
-        stream_options = {"stream_options": {"include_usage": True}} if _llm_provider.get("protocol") == "omnilojo" else {}
+        stream_options = {"stream_options": {"include_usage": True}} if _llm_provider.get("protocol") in {"omnilojo", "openai"} else {}
         async for line in chat_gateway.stream_target(target=chat_target, messages=upstream_messages, user_id=current_user_id(), extra_body=stream_options):
             if not line:
                 continue
@@ -5905,7 +5905,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         try:
             from app.ai.chat import ChatGateway
             chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
-            stream_options = {"stream_options": {"include_usage": True}} if _stream_provider.get("protocol") == "omnilojo" else {}
+            stream_options = {"stream_options": {"include_usage": True}} if _stream_provider.get("protocol") in {"omnilojo", "openai"} else {}
             async for line in chat_gateway.stream_target(target=chat_target, messages=upstream_messages, user_id=user_id, extra_body=stream_options):
                 if not line:
                     continue
