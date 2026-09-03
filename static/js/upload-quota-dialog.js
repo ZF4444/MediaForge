@@ -76,7 +76,11 @@
                     <div id="storageQuotaDialogTitle" class="storage-quota-dialog-title">存储空间不足</div>
                     <button class="storage-quota-dialog-close" type="button" data-quota-close aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
                 </div>
-                <div class="storage-quota-dialog-message">存储空间不足: 存储空间 ${quotaGb}GB, 已使用了 ${usedGb}GB</div>
+                <div class="storage-quota-dialog-message">
+                    存储空间不足: 存储空间 ${quotaGb}GB, 已使用了 ${usedGb}GB<br>
+                    可在素材库-&gt;空间管理-&gt;条件筛选-&gt;勾选无引用，删除符合条件的文件<br>
+                    如果无引用的文件较少，可以删除无用的画布或画布中的节点，然后再勾选无引用的文件删除。
+                </div>
                 <div class="storage-quota-dialog-actions">
                     <button class="storage-quota-dialog-btn" type="button" data-quota-close>关闭</button>
                     <button class="storage-quota-dialog-btn primary" type="button" data-quota-manage><i data-lucide="database"></i><span>前往空间管理</span></button>
