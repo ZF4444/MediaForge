@@ -354,6 +354,11 @@ function measureSmartNodeImages({applyReady=false, renderOnChange=true}={}){
             const w = imgEl.naturalWidth || imgEl.videoWidth || 0;
             const h = imgEl.naturalHeight || imgEl.videoHeight || 0;
             if(w <= 0 || h <= 0) return;
+            const source = String(imgEl.currentSrc || imgEl.getAttribute('src') || '');
+            const thumbnailPath = image.file_id ? `/api/files/${encodeURIComponent(image.file_id)}/thumb` : '';
+            // Node images deliberately load a small derivative. Its dimensions
+            // describe the thumbnail, not the source media.
+            if(thumbnailPath && source.includes(thumbnailPath)) return;
             const currentW = Number(image.natural_w || image.width || image.w || 0);
             const currentH = Number(image.natural_h || image.height || image.h || 0);
             if(currentW === w && currentH === h) return;

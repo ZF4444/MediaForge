@@ -941,7 +941,9 @@ function rememberPreviewImageResolution(){
     const cropImg = document.getElementById('cropImage');
     const w = Number(currentVideo?.videoWidth || 0) || Number(currentImg?.naturalWidth || 0) || Number(cropImg?.naturalWidth || 0);
     const h = Number(currentVideo?.videoHeight || 0) || Number(currentImg?.naturalHeight || 0) || Number(cropImg?.naturalHeight || 0);
-    if(w > 0 && h > 0 && (!image.natural_w || !image.natural_h)){
+    // The preview loads /preview (the original media), so it is authoritative.
+    // This also repairs dimensions previously saved from a /thumb response.
+    if(w > 0 && h > 0 && (Number(image.natural_w || 0) !== w || Number(image.natural_h || 0) !== h)){
         image.natural_w = w;
         image.natural_h = h;
         scheduleSave();
@@ -2165,7 +2167,7 @@ function openImageEditor(nodeId, imageIndex=0, options={}){
     }
     img.onload = () => {
         const targetImage = currentEditImage().image;
-        if(targetImage && img.naturalWidth && img.naturalHeight && (!targetImage.natural_w || !targetImage.natural_h)){
+        if(targetImage && img.naturalWidth && img.naturalHeight && (Number(targetImage.natural_w || 0) !== img.naturalWidth || Number(targetImage.natural_h || 0) !== img.naturalHeight)){
             targetImage.natural_w = img.naturalWidth;
             targetImage.natural_h = img.naturalHeight;
             if(source === 'candidates') syncCandidateImageDimensions(node, targetImage, img.naturalWidth, img.naturalHeight);
