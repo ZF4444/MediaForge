@@ -138,6 +138,22 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
             fileobj.close()
             continue
         filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
+        # Measure image dimensions from the in-memory spooled upload before it is
+        # consumed/closed by _save_uploaded_media. Node boxes rely on
+        # natural_w/natural_h to render the true aspect ratio; without them the
+        # canvas falls back to a default (wide) box for uploaded images.
+        natural_w = natural_h = 0
+        if kind == "image":
+            try:
+                from PIL import Image
+
+                fileobj.seek(0)
+                with Image.open(fileobj) as probe:
+                    natural_w, natural_h = int(probe.width), int(probe.height)
+            except Exception:
+                natural_w = natural_h = 0
+            finally:
+                fileobj.seek(0)
         entry = await run_storage_io(
             _save_uploaded_media,
             "input",
@@ -152,6 +168,9 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
         item = {"url": entry.get("url") or file_preview_url(entry.get("file_id") or ""), "name": file.filename or filename, "kind": kind}
         if entry.get("file_id"):
             item["file_id"] = entry["file_id"]
+        if natural_w > 0 and natural_h > 0:
+            item["natural_w"] = natural_w
+            item["natural_h"] = natural_h
         uploaded.append(item)
     return {"files": uploaded}
 
