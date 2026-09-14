@@ -32,6 +32,10 @@ class ImageCommand:
     quality: str
     references: list[dict[str, Any]] = field(default_factory=list)
     idempotency_key: str = ""
+    # Enum-tier resolution ("1k"/"2k"/"4k") and aspect ratio, forwarded to
+    # protocols that accept a pixel budget + aspect natively (Gemini/Omnilojo).
+    resolution: str = ""
+    ratio: str = ""
 
 
 @dataclass(frozen=True)

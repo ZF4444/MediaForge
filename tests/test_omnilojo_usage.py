@@ -31,6 +31,36 @@ def test_omnilojo_image_request_uses_google_image_size_and_nearest_ratio():
     assert gemini_image_options("2048x1024") == {"aspectRatio": "16:9", "imageSize": "2K"}
 
 
+def test_gemini_image_options_supports_21_9_ratio():
+    # nano-banana / Gemini expose native 21:9. Wide sizes must resolve to 21:9
+    # instead of snapping to the nearest previously-known 16:9 ratio.
+    assert gemini_image_options("1584x672")["aspectRatio"] == "21:9"
+    assert gemini_image_options("3168x1344")["aspectRatio"] == "21:9"
+
+
+def test_gemini_image_options_from_settings_passes_enums_directly():
+    from app.ai.transport import gemini_image_options_from_settings
+    # Canvas enums map straight to Gemini options without a pixel round-trip.
+    assert gemini_image_options_from_settings("1k", "21:9") == {"aspectRatio": "21:9", "imageSize": "1K"}
+    assert gemini_image_options_from_settings("4k", "1:1") == {"aspectRatio": "1:1", "imageSize": "4K"}
+    # Unsupported/custom inputs return None so callers fall back to pixel size.
+    assert gemini_image_options_from_settings("custom", "1:1") is None
+    assert gemini_image_options_from_settings("1k", "7:3") is None
+
+
+def test_gemini_image_options_classifies_tier_by_area_not_long_edge():
+    # The image tier is a pixel budget, not a fixed edge length. A wide 1K
+    # image (1584x672) has a long edge > 1500 but stays 1K by area; the old
+    # long-edge rule wrongly promoted it to 2K.
+    assert gemini_image_options("1584x672")["imageSize"] == "1K"
+    assert gemini_image_options("3168x1344")["imageSize"] == "2K"
+    assert gemini_image_options("6336x2688")["imageSize"] == "4K"
+    # Square tiers remain unchanged.
+    assert gemini_image_options("1024x1024")["imageSize"] == "1K"
+    assert gemini_image_options("2048x2048")["imageSize"] == "2K"
+    assert gemini_image_options("4096x4096")["imageSize"] == "4K"
+
+
 def test_omnilojo_response_usage_calculates_model_pricing():
     values = omnilojo_response_usage_values(
         {"omnilojo_model_prices": {

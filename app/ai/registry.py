@@ -17,6 +17,12 @@ class ImageGenerationRequest:
     reference_images: list[dict[str, Any]]
     connection: Mapping[str, Any]
     target: ResolvedTarget | None = None
+    # Enum-tier resolution ("1k"/"2k"/"4k") and aspect ratio ("16:9", ...).
+    # Protocols that natively accept a pixel budget + aspect (Gemini/Omnilojo)
+    # consume these directly, avoiding a lossy pixel<->enum round-trip. Pixel
+    # protocols (OpenAI Images / gpt-image-2) keep using ``size``.
+    resolution: str = ""
+    ratio: str = ""
 
     @property
     def connection_id(self) -> str:

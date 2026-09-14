@@ -535,30 +535,6 @@ function parseRatioValue(value){
     const h = Number(parts[1]);
     return w > 0 && h > 0 ? w / h : 0;
 }
-function apiImageSize(ratioValue, resolutionValue, customRatioValue='', customSizeValue='', matchedRatioKey=''){
-    if(resolutionValue === 'custom') return String(customSizeValue || '').trim();
-    const resolutionKey = resolutionValue || '1k';
-    if(ratioValue === 'source'){
-        // 适配比例：已在 applySourceRatioToSettings 里用原图宽高比匹配好最接近的标准比例档位，
-        // 直接取该档位在当前分辨率下的预设尺寸，不再做任何和分辨率相关的比例计算。
-        const key = matchedRatioKey && SIZE_MAP[matchedRatioKey] ? matchedRatioKey : '1:1';
-        return SIZE_MAP[key]?.[resolutionKey] || SIZE_MAP['1:1'][resolutionKey] || SIZE_MAP['1:1']['1k'];
-    }
-    if(ratioValue === 'custom'){
-        const parsed = parseRatioValue(customRatioValue);
-        const longSide = RES_LONG_SIDE[resolutionKey] || 1024;
-        if(parsed){
-            const pixelLimit = RES_PIXEL_LIMIT[resolutionKey] || (longSide * longSide);
-            const rawWidth = parsed >= 1 ? longSide : Math.min(longSide * parsed, Math.sqrt(pixelLimit * parsed));
-            const rawHeight = parsed >= 1 ? Math.min(longSide / parsed, Math.sqrt(pixelLimit / parsed)) : longSide;
-            const width = Math.floor(rawWidth / 16) * 16;
-            const height = Math.floor(rawHeight / 16) * 16;
-            return `${Math.max(64, width)}x${Math.max(64, height)}`;
-        }
-    }
-    const ratioKey = ratioValue && SIZE_MAP[ratioValue] ? ratioValue : '1:1';
-    return SIZE_MAP[ratioKey]?.[resolutionKey] || SIZE_MAP['1:1'][resolutionKey] || SIZE_MAP['1:1']['1k'];
-}
 function normalizeApiSizeSettings(prefix=''){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';

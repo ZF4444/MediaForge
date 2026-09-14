@@ -509,19 +509,6 @@ const MS_GEN_MODELS = {
     klein_edit: { label:'Klein', modelId:'black-forest-labs/FLUX.2-klein-9B', supportsImage:true, endpoint:'/api/ms/generate' },
     custom: { label:tr('smart.custom') || '自定义', modelId:'', acceptsImage:true, endpoint:'/api/ms/generate' }
 };
-const SIZE_MAP = {
-    '1:1': {'1k':'1024x1024','2k':'2048x2048','4k':'4096x4096'},
-    '3:2': {'1k':'1536x1024','2k':'2048x1360','4k':'3520x2336'},
-    '2:3': {'1k':'1024x1536','2k':'1360x2048','4k':'2336x3520'},
-    '4:3': {'1k':'1024x768','2k':'2048x1536','4k':'3312x2480'},
-    '3:4': {'1k':'768x1024','2k':'1536x2048','4k':'2480x3312'},
-    '16:9': {'1k':'1536x864','2k':'2048x1152','4k':'3840x2160'},
-    '9:16': {'1k':'864x1536','2k':'1152x2048','4k':'2160x3840'},
-    '21:9': {'1k':'1536x656','2k':'2048x880','4k':'3840x1648'},
-    '9:21': {'1k':'656x1536','2k':'880x2048','4k':'1648x3840'}
-};
-const RES_LONG_SIDE = { '1k':1024, '2k':2048, '4k':3840 };
-const RES_PIXEL_LIMIT = { '1k':2359296, '2k':4194304, '4k':8294400 };
 // M1 拆分：tr/trf/refreshIcons/uid/escapeHtml/escapeAttr 已迁移到
 // frontend/src/canvas/utils.js（经典 <script>，非 ES module，
 // 顶层声明仍挂到 window，构建产物里通过 <script src> 排在本文件之前
@@ -776,27 +763,14 @@ function validOutpaintSize(node){
     const h = Math.round(Number(node?.outpaintSize?.height || 0));
     return w > 0 && h > 0 ? {width:w, height:h} : null;
 }
-function parseSizePair(value){
-    const match = String(value || '').match(/(\d+)\s*x\s*(\d+)/i);
-    return match ? {width:Number(match[1]), height:Number(match[2])} : null;
-}
-function nearestFourKSizeFor(width, height){
+// The 4K ceiling is a total pixel budget (matches the backend
+// CANVAS_IMAGE_PIXEL_LIMIT['4k']). Outpaint warns when the requested region
+// exceeds that budget, independent of aspect ratio.
+const FOUR_K_PIXEL_LIMIT = 8294400;
+function exceedsFourKStandard(width, height){
     const w = Math.max(1, Number(width) || 1);
     const h = Math.max(1, Number(height) || 1);
-    const ratio = w / h;
-    let best = null;
-    Object.entries(SIZE_MAP).forEach(([key, values]) => {
-        const size = parseSizePair(values?.['4k']);
-        if(!size) return;
-        const score = Math.abs(Math.log(ratio / (size.width / size.height)));
-        if(!best || score < best.score) best = {...size, key, score};
-    });
-    return best;
-}
-function exceedsFourKStandard(width, height){
-    const standard = nearestFourKSizeFor(width, height);
-    if(!standard) return false;
-    return Number(width) > standard.width || Number(height) > standard.height;
+    return w * h > FOUR_K_PIXEL_LIMIT;
 }
 function withOutpaintDisplaySettings(node, baseSettings){
     const size = validOutpaintSize(node);
@@ -1861,8 +1835,18 @@ function smartRunSnapshot(node, prompt, refs=[], kind='image'){
         settings:settingsSnapshot,
         prompt:prompt || '',
         refs:(refs || []).map(ref => ({file_id:ref.file_id || '', url:ref.url || '', name:ref.name || 'image', kind:ref.kind || ''})).filter(ref => ref.url),
-        size: kind === 'image' && isApiLikeEngine(settingsSnapshot.engine) ? sizeForRun(settingsSnapshot) : ''
+        // The backend resolves the exact pixel size per protocol. For log/meta
+        // display, record the user's chosen resolution/ratio tokens instead.
+        size: kind === 'image' && isApiLikeEngine(settingsSnapshot.engine) ? smartRunSizeLabel(settingsSnapshot) : ''
     };
+}
+function smartRunSizeLabel(sourceSettings=settings){
+    const resolution = String(sourceSettings.resolution || '1k');
+    if(resolution === 'custom') return String(sourceSettings.customSize || '').trim();
+    let ratio = String(sourceSettings.ratio || '1:1');
+    if(ratio === 'source') ratio = sourceSettings.ratioMatched || '1:1';
+    if(ratio === 'custom') ratio = sourceSettings.customRatio || 'custom';
+    return `${resolution} · ${ratio}`;
 }
 function buildSmartLogEntry(run, {outputs=[], runMs=0, error='', taskId='', upstreamTaskId=''}={}){
     const request = smartRunRequestMeta(run);
@@ -2521,25 +2505,39 @@ async function smartResponseErrorMessage(response, fallback='请求失败', pref
 // appendImagesToSmartNode / handleFiles / importSmartLocalImages /
 // handleSmartImageDropPayload 已迁移到 frontend/src/canvas/upload.js
 // （经典 <script>，非 ES module，原因同 M1-M5）。
-function sizeForRun(sourceSettings=settings){
-    return apiImageSize(sourceSettings.ratio || '1:1', sourceSettings.resolution || '1k', sourceSettings.customRatio || '', sourceSettings.customSize || '', sourceSettings.ratioMatched || '') || '1024x1024';
+// Placeholder boxes only need the aspect ratio the user selected; the true
+// pixel size is resolved by the backend per protocol. Expand the chosen ratio
+// onto a fixed base edge so the pending box shows the correct proportion.
+function ratioBoxSize(sourceSettings=settings){
+    const base = 1024;
+    // Custom explicit size carries an exact W×H proportion.
+    if((sourceSettings.resolution || '') === 'custom'){
+        const parsedSize = parseSizeValue(sourceSettings.customSize || '');
+        if(parsedSize){
+            const w = Number(parsedSize.width) || base;
+            const h = Number(parsedSize.height) || base;
+            return {w, h};
+        }
+    }
+    let ratioValue = String(sourceSettings.ratio || '1:1');
+    if(ratioValue === 'source') ratioValue = sourceSettings.ratioMatched || '1:1';
+    if(ratioValue === 'custom') ratioValue = sourceSettings.customRatio || '1:1';
+    const aspect = parseRatioValue(ratioValue);
+    if(!aspect || !Number.isFinite(aspect) || aspect <= 0) return {w:base, h:base};
+    return aspect >= 1
+        ? {w:base, h:Math.max(1, Math.round(base / aspect))}
+        : {w:Math.max(1, Math.round(base * aspect)), h:base};
 }
 function expectedOutputSize(){
     if(settings.engine === 'comfy'){
         return {w:1024, h:1024};
     }
     if(settings.engine === 'runninghub') return {w:1024, h:1024};
-    const sizeStr = sizeForRun();
-    const parsed = parseSizeValue(sizeStr);
-    if(parsed){
-        return {w: Number(parsed.width) || 1024, h: Number(parsed.height) || 1024};
-    }
-    return {w:1024, h:1024};
+    return ratioBoxSize();
 }
 function explicitRequestOutputSizeForPending(){
     if(isApiLikeEngine(settings.engine) && settings.apiKind !== 'video'){
-        const parsed = parseSizeValue(sizeForRun());
-        if(parsed) return {w:Number(parsed.width) || 1024, h:Number(parsed.height) || 1024};
+        return ratioBoxSize();
     }
     return null;
 }
@@ -3743,7 +3741,13 @@ async function resumeSmartPendingNode(node){
             const result = await pollSmartPendingTask(task);
             const upstreamFromResult = (result && typeof result === 'object' && (result.task_id || result.upstream_task_id)) || '';
             const upstreamTaskId = task.upstreamTaskId || (task.localTaskId ? task.taskId : '') || upstreamFromResult || '';
-            const additions = finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(result?.images?.length ? result.images : result), task.kind || 'image');
+            // resultMediaUrls reads image_items (which carry natural_w/natural_h)
+            // in addition to the bare images URL list. Passing only result.images
+            // dropped dimensions, so the node box rendered a default aspect until
+            // a preview reloaded the real image size. For object results pass the
+            // whole result; RunningHub already returns a normalized media array.
+            const mediaSource = Array.isArray(result) ? result : (result && typeof result === 'object' ? result : (result?.images || result));
+            const additions = finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(mediaSource), task.kind || 'image');
             settlements.push({taskId:localTaskId, upstreamTaskId, outputs:(additions || []).filter(img => img && img.url).map(img => ({url:img.url, file_id:img.file_id || '', kind:img.kind || '', poster_url:img.poster_url || '', thumbnail_url:img.thumbnail_url || ''}))});
             render();
             scheduleSave();

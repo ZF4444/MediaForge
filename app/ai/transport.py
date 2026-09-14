@@ -12,8 +12,30 @@ from app.services.connection_secrets import get_connection_secret
 _GEMINI_IMAGE_RATIOS = (
     (1, 1, "1:1"), (16, 9, "16:9"), (9, 16, "9:16"),
     (4, 3, "4:3"), (3, 4, "3:4"), (3, 2, "3:2"), (2, 3, "2:3"),
-    (5, 4, "5:4"), (4, 5, "4:5"),
+    (5, 4, "5:4"), (4, 5, "4:5"), (21, 9, "21:9"), (9, 21, "9:21"),
 )
+
+_GEMINI_IMAGE_SIZE_AREA_1K_MAX = 2_000_000
+_GEMINI_IMAGE_SIZE_AREA_2K_MAX = 8_000_000
+
+# nano-banana / Gemini natively accept a tier enum plus an aspect ratio. Map the
+# canvas resolution tokens and ratios straight through so a request does not
+# round-trip through pixel dimensions (which loses the intended tier).
+_GEMINI_RESOLUTION_TIERS = {"1k": "1K", "2k": "2K", "4k": "4K"}
+_GEMINI_SUPPORTED_ASPECTS = {aspect for *_, aspect in _GEMINI_IMAGE_RATIOS}
+
+
+def gemini_image_options_from_settings(resolution: str, ratio: str) -> dict[str, str] | None:
+    """Translate canvas resolution/ratio enums directly to Gemini image options.
+
+    Returns ``None`` when the inputs cannot be resolved (e.g. custom sizes),
+    so callers can fall back to the pixel-based :func:`gemini_image_options`.
+    """
+    tier = _GEMINI_RESOLUTION_TIERS.get(str(resolution or "").strip().lower())
+    aspect = str(ratio or "").strip()
+    if tier is None or aspect not in _GEMINI_SUPPORTED_ASPECTS:
+        return None
+    return {"aspectRatio": aspect, "imageSize": tier}
 
 
 def gemini_image_options(size: str) -> dict[str, str]:
@@ -25,8 +47,9 @@ def gemini_image_options(size: str) -> dict[str, str]:
     width, height = int(match.group(1)), int(match.group(2))
     ratio = width / max(1, height)
     _rw, _rh, aspect = min(_GEMINI_IMAGE_RATIOS, key=lambda item: abs(ratio - item[0] / item[1]))
-    longest = max(width, height)
-    return {"aspectRatio": aspect, "imageSize": "4K" if longest > 3000 else "2K" if longest > 1500 else "1K"}
+    area = width * height
+    image_size = "1K" if area <= _GEMINI_IMAGE_SIZE_AREA_1K_MAX else "2K" if area <= _GEMINI_IMAGE_SIZE_AREA_2K_MAX else "4K"
+    return {"aspectRatio": aspect, "imageSize": image_size}
 
 
 def endpoint_for_target(target: ResolvedTarget, operation: str = "chat") -> str:

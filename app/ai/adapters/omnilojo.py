@@ -27,7 +27,7 @@ class OmnilojoImageAdapter:
         headers: Callable[[Mapping[str, Any], str], Mapping[str, str]],
         resolve_reference: Callable[[dict[str, Any]], Awaitable[str]],
         client_factory: Callable[..., Any],
-        image_options: Callable[[str], Mapping[str, Any]],
+        image_options: Callable[["ImageGenerationRequest"], Mapping[str, Any]],
         timeout: httpx.Timeout,
     ) -> None:
         self._endpoint = endpoint
@@ -51,7 +51,7 @@ class OmnilojoImageAdapter:
         body = {
             "model": request.model,
             "messages": [{"role": "user", "content": content}],
-            "extra_body": {"google": {"image_config": dict(self._image_options(request.size))}},
+            "extra_body": {"google": {"image_config": dict(self._image_options(request))}},
         }
         endpoint = self._endpoint(connection)
         async with self._client_factory(timeout=self._timeout) as client:

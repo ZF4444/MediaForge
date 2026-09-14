@@ -68,7 +68,7 @@ from app.core.retry import retry_operation_id
 from app.core.logging import audit_event, configure_logging, get_logger, get_task_logger
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.core.comfyui import comfyui_url, normalize_comfyui_endpoint
-from app.ai.transport import gemini_image_options, parse_models_payload
+from app.ai.transport import gemini_image_options, gemini_image_options_from_settings, parse_models_payload
 
 configure_logging()
 logger = get_logger("main")
@@ -2284,7 +2284,20 @@ async def runninghub_store_remote_output_item(remote, *, persist=True, fallback_
         url = remote
     return url, await run_storage_io(media_response_item, url, "", kind)
 
-async def generate_omnilojo_image(prompt, size, model, reference_images=None, provider=None):
+def _gemini_image_config(request):
+    """Build the Gemini/Omnilojo image_config from a request.
+
+    Prefer the canvas resolution/ratio enums (no pixel round-trip); fall back
+    to parsing the pixel ``size`` for callers that only supply dimensions
+    (e.g. gpt-chat, pose-studio).
+    """
+    options = gemini_image_options_from_settings(
+        getattr(request, "resolution", ""), getattr(request, "ratio", "")
+    ) or gemini_image_options(getattr(request, "size", ""))
+    return {"aspect_ratio": options["aspectRatio"], "image_size": options["imageSize"]}
+
+
+async def generate_omnilojo_image(prompt, size, model, reference_images=None, provider=None, resolution="", ratio=""):
     from app.ai.adapters.omnilojo import OmnilojoImageAdapter
 
     connection = provider or {}
@@ -2293,10 +2306,7 @@ async def generate_omnilojo_image(prompt, size, model, reference_images=None, pr
         headers=lambda value, upstream_model: api_headers(connection=value, model=upstream_model),
         resolve_reference=lambda reference: run_storage_io(reference_to_data_url, reference, 1536),
         client_factory=shared_http_client,
-        image_options=lambda requested_size: {
-            "aspect_ratio": gemini_image_options(requested_size)["aspectRatio"],
-            "image_size": gemini_image_options(requested_size)["imageSize"],
-        },
+        image_options=_gemini_image_config,
         timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
     )
     return await adapter.generate(ImageGenerationRequest(
@@ -2306,6 +2316,8 @@ async def generate_omnilojo_image(prompt, size, model, reference_images=None, pr
         model=model,
         reference_images=list(reference_images or []),
         connection=connection,
+        resolution=resolution,
+        ratio=ratio,
     ))
 
 async def generate_openai_image(prompt, size, quality, model, reference_images=None, provider=None):
@@ -2328,7 +2340,7 @@ async def generate_openai_image(prompt, size, quality, model, reference_images=N
     target = SimpleNamespace(connection=SimpleNamespace(id=connection.get("connection_id") or connection.get("id") or "", base_url=connection.get("base_url") or "", settings=connection), model=SimpleNamespace(id="", upstream_model=model), resource=None)
     return await executor.generate(ImageGenerationRequest(prompt=prompt, size=size, quality=quality, model=model, reference_images=list(reference_images or []), connection=connection, target=target))
 
-async def generate_gemini_image(prompt, size, model, reference_images=None, provider=None):
+async def generate_gemini_image(prompt, size, model, reference_images=None, provider=None, resolution="", ratio=""):
     """Generate an image through Gemini's OpenAI-compatible chat facade."""
     from app.ai.adapters.omnilojo import OmnilojoImageAdapter
 
@@ -2337,15 +2349,13 @@ async def generate_gemini_image(prompt, size, model, reference_images=None, prov
         headers=lambda value, upstream_model: api_headers(connection=value, model=upstream_model),
         resolve_reference=lambda reference: run_storage_io(reference_to_data_url, reference, 1536),
         client_factory=shared_http_client,
-        image_options=lambda requested_size: {
-            "aspect_ratio": gemini_image_options(requested_size)["aspectRatio"],
-            "image_size": gemini_image_options(requested_size)["imageSize"],
-        },
+        image_options=_gemini_image_config,
         timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
     )
     return await adapter.generate(ImageGenerationRequest(
         prompt=prompt, size=size, quality="", model=model,
         reference_images=list(reference_images or []), connection=provider or {},
+        resolution=resolution, ratio=ratio,
     ))
 
 
@@ -2390,12 +2400,14 @@ async def _image_adapter_runninghub(request: ImageGenerationRequest):
 async def _image_adapter_omnilojo(request: ImageGenerationRequest):
     return await generate_omnilojo_image(
         request.prompt, request.size, request.model, request.reference_images, request.connection,
+        resolution=request.resolution, ratio=request.ratio,
     )
 
 
 async def _image_adapter_gemini(request: ImageGenerationRequest):
     return await generate_gemini_image(
         request.prompt, request.size, request.model, request.reference_images, request.connection,
+        resolution=request.resolution, ratio=request.ratio,
     )
 
 
@@ -2448,7 +2460,7 @@ def canonical_connection_view(target) -> dict[str, Any]:
     return view
 
 
-async def generate_ai_image_target(target, *, prompt: str, size: str, quality: str, reference_images=None, user_id: str = ""):
+async def generate_ai_image_target(target, *, prompt: str, size: str, quality: str, reference_images=None, user_id: str = "", resolution: str = "", ratio: str = ""):
     """Execute image generation from an authoritative resolved target."""
     from app.ai.contracts import Actor, ImageCommand
     from app.ai.images import ImageGateway
@@ -2470,6 +2482,8 @@ async def generate_ai_image_target(target, *, prompt: str, size: str, quality: s
                 reference_images=list(command.references),
                 connection=runtime_provider,
                 target=command.target,
+                resolution=command.resolution,
+                ratio=command.ratio,
             ),
         )
 
@@ -2484,6 +2498,8 @@ async def generate_ai_image_target(target, *, prompt: str, size: str, quality: s
             size=size,
             quality=quality,
             references=list(reference_images or []),
+            resolution=resolution,
+            ratio=ratio,
         ),
         actor=Actor(user_id=user_id or current_user_id()),
     )
@@ -3609,10 +3625,12 @@ async def build_online_image_result(payload: OnlineImageRequest):
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
     max_count = max(1, min(8, int(os.getenv("AI_ONLINE_IMAGE_MAX_COUNT", "4"))))
     count = max(1, min(max_count, int(payload.n or 1)))
+    enum_resolution, enum_ratio = canvas_image_enum_from_settings(_canvas_settings(payload))
     async def generate_one():
         image_data, raw_item = await generate_ai_image_target(
             target, prompt=payload.prompt, size=payload.size, quality=payload.quality,
             reference_images=refs, user_id=current_user_id(),
+            resolution=enum_resolution, ratio=enum_ratio,
         )
         local_url = await save_ai_image_to_output(image_data, prefix="online_")
         return local_url, raw_item
@@ -3715,6 +3733,21 @@ def _canvas_bool(settings: dict, key: str, fallback: bool = False) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+def canvas_image_enum_from_settings(settings: dict) -> tuple[str, str]:
+    """Return the effective (resolution, ratio) enums for pixel-budget protocols.
+
+    Gemini/Omnilojo accept a tier enum + aspect natively, so resolve ``source``
+    to its matched standard ratio and pass the tokens straight through. Custom
+    sizes/ratios return ("", "") so the adapter falls back to the pixel size.
+    """
+    resolution = _canvas_string(settings, "resolution", "1k").lower() or "1k"
+    ratio = _canvas_string(settings, "ratio", "1:1") or "1:1"
+    if resolution == "custom" or ratio == "custom":
+        return "", ""
+    if ratio == "source":
+        ratio = _canvas_string(settings, "ratioMatched", "1:1") or "1:1"
+    return resolution, ratio
 
 
 def canvas_image_size_from_settings(settings: dict) -> str:
