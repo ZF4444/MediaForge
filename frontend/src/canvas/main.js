@@ -936,19 +936,64 @@ function toast(text, options={}){
     const el = document.getElementById('toast');
     const value = String(text || '');
     const type = typeof options === 'string' ? options : (options.type || '');
-    const persistent = Boolean(options.persistent)
-        || ['warning', 'warn', 'error'].includes(type)
+    // 错误/警告类消息展示更久，方便阅读和复制，但都会自动消失。
+    const isAlert = ['warning', 'warn', 'error'].includes(type)
         || /失败|错误|异常|缺少|请输入|请选择|请先|没有|无法|不能|不支持|超时|未|fail|failed|error|need|required|invalid/i.test(value);
     clearTimeout(toast._timer);
-    el.innerHTML = `<span class="toast-text">${escapeHtml(text)}</span><button class="toast-close" onclick="this.parentElement.classList.remove('show')">&times;</button>`;
-    el.classList.toggle('toast-persistent', persistent);
+    const duration = Number(options.duration || (isAlert ? 8000 : 4000));
+    el.dataset.toastMessage = value;
+    el.innerHTML = `<span class="toast-text">${escapeHtml(text)}</span>`
+        + `<button class="toast-copy" type="button" title="复制" aria-label="复制">${TOAST_COPY_ICON}</button>`;
     el.classList.add('show');
-    if(!persistent){
-        toast._timer = setTimeout(() => {
-            el.classList.remove('show');
-        }, Number(options.duration || 4000));
+    const scheduleHide = () => {
+        clearTimeout(toast._timer);
+        toast._timer = setTimeout(() => { el.classList.remove('show'); }, duration);
+    };
+    // 悬停或选中文字时暂停自动消失，方便复制。
+    if(!toast._hoverBound){
+        toast._hoverBound = true;
+        el.addEventListener('mouseenter', () => { clearTimeout(toast._timer); });
+        el.addEventListener('mouseleave', () => {
+            if(el.classList.contains('show')) scheduleHide();
+        });
+    }
+    scheduleHide();
+}
+const TOAST_COPY_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+function copyToastMessage(){
+    const el = document.getElementById('toast');
+    if(!el) return;
+    const message = el.dataset.toastMessage || el.querySelector('.toast-text')?.textContent || '';
+    if(!message) return;
+    const done = () => toast('已复制到剪贴板');
+    if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
+        navigator.clipboard.writeText(message).then(done).catch(() => fallbackCopyText(message, done));
+    } else {
+        fallbackCopyText(message, done);
     }
 }
+function fallbackCopyText(text, onDone){
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        onDone?.();
+    } catch (err) {
+        console.warn('复制失败', err);
+    }
+}
+document.addEventListener('click', event => {
+    const btn = event.target.closest?.('#toast .toast-copy');
+    if(btn){
+        event.preventDefault();
+        copyToastMessage();
+    }
+});
 function selectedNode(){ return nodes.find(n => n.id === selectedId) || null; }
 function clearSelection(){
     savePromptDraftForCurrent();
