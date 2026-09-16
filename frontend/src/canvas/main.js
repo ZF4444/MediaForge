@@ -19,6 +19,8 @@ const engineSelect = document.getElementById('engineSelect');
 const composerHeadParams = document.getElementById('composerHeadParams');
 const dynamicParams = document.getElementById('dynamicParams');
 const runBtn = document.getElementById('runBtn');
+const runBtnLabel = document.getElementById('runBtnLabel');
+const composerCountControl = document.getElementById('composerCountControl');
 const cascadeRunBtn = document.getElementById('cascadeRunBtn');
 const promptComposer = document.getElementById('promptComposer');
 const promptTaskSelect = document.getElementById('promptTaskSelect');
@@ -4561,6 +4563,7 @@ function engineSelectChangeHandler(){
             settings.apiKind = 'image';
             renderApiParams();
         }
+        syncComposerCountControl();
         bindDynamicParams();
         updatePromptPlaceholder();
         syncComposerPromptVisibility();

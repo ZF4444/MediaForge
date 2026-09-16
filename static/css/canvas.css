@@ -855,6 +855,7 @@ video.node-img { object-fit:contain; background:#0f172a; }
     .prompt-template-group-list { grid-template-columns:1fr; }
 }
 .run-btn { width:76px; height:var(--ctrl-height); border-radius:999px; background:var(--strong); color:var(--strong-text); display:flex; align-items:center; justify-content:center; gap:4px; font-size:var(--ctrl-font); line-height:1; font-weight:500; justify-self:end; white-space:nowrap; transition:transform .12s ease, box-shadow .12s ease; }
+#runBtn { width:auto; padding:0 10px; }
 .run-btn:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 6px 14px rgba(15,23,42,.18); }
 .run-btn span { white-space:nowrap; }
 .run-btn i,.run-btn svg { width:var(--ctrl-icon) !important; height:var(--ctrl-icon) !important; stroke-width:2; flex:0 0 auto; }
@@ -1292,7 +1293,10 @@ input[type=range].smart-range::-webkit-slider-thumb { -webkit-appearance:none; w
 .selection-actions button:disabled { opacity:.38; cursor:not-allowed; }
 .selection-actions i,.selection-actions svg { width:14px; height:14px; stroke-width:2.2; }
 .theme-dark .selection-actions { background:rgba(15,23,42,.92); border-color:rgba(148,163,184,.24); box-shadow:0 14px 34px rgba(0,0,0,.38); }
-.composer-actions { grid-area:run; display:flex; justify-content:flex-end; gap:6px; }
+.composer-actions { grid-area:run; display:flex; align-items:center; justify-content:flex-end; gap:6px; }
+.composer-count-control { display:flex; align-items:center; margin-right:auto; }
+.composer-count-control:empty { display:none; }
+.composer-count-control .count-control .smart-pill { border:1px solid var(--line); background:var(--card); }
 .preview-icon-btn { width:34px; height:34px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; color:var(--muted); background:var(--card); border:1px solid var(--line); }
 .preview-icon-btn:hover { background:var(--strong); color:var(--strong-text); }
 .preview-nav-bar { display:none; align-items:center; justify-content:center; gap:8px; flex:0 0 auto; min-height:36px; line-height:1; cursor:default; }

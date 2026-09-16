@@ -601,6 +601,7 @@ function renderDynamicParams(){
         // 工作流节点在配置框中统一列出 ComfyUI 工作流与 RH 应用，避免再通过引擎下拉切换来源。
         engineSelect.style.display = 'none';
         renderWorkflowNodeParams();
+        syncComposerCountControl();
         bindDynamicParams();
         updatePromptPlaceholder();
         syncComposerPromptVisibility();
@@ -620,6 +621,7 @@ function renderDynamicParams(){
     }
     else if(settings.engine === 'runninghub') renderRunningHubParams();
     else renderComfyParams();
+    syncComposerCountControl();
     bindDynamicParams();
     updatePromptPlaceholder();
     syncComposerPromptVisibility();
@@ -649,7 +651,6 @@ function renderApiParams(){
         ${renderResolutionControl('', false)}
         ${outpaintLocked ? '' : renderRatioControl('', true, false)}
         ${renderQualityControl()}
-        ${renderCountVisualControl()}
     `;
 }
 function renderApiVideoParams(){
@@ -685,7 +686,6 @@ function renderVolcengineParams(){
         ${outpaintLocked ? '' : renderInlineCustomSizeFields('')}
         ${outpaintLocked ? '' : renderInlineCustomRatioFields('')}
         ${renderQualityControl()}
-        ${renderCountVisualControl()}
     `;
 }
 function renderVolcengineVideoParams(){
@@ -706,7 +706,7 @@ function renderRunningHubParams(){
     settings.rhRandomActive = settings.rhRandomActive || {};
     if(composerHeadParams) composerHeadParams.innerHTML = '';
     if(!ref){
-        dynamicParams.innerHTML = `${renderWorkflowSourceControl()}<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>${renderCountVisualControl()}`;
+        dynamicParams.innerHTML = `${renderWorkflowSourceControl()}<div class="muted-note">${escapeHtml(tr('smart.rhNeedConfig'))}</div>`;
         return;
     }
     const params = fields.filter(field => {
@@ -717,7 +717,6 @@ function renderRunningHubParams(){
         ${renderWorkflowSourceControl()}
         ${renderRhMachineControl()}
         ${params.length ? params.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(fields.length ? tr('smart.rhNoParams') : tr('smart.rhNeedFields'))}</div>`}
-        ${renderCountVisualControl()}
     `;
 }
 function rhEntryMediaFields(entry, kind){
@@ -790,7 +789,6 @@ function renderComfyParams(){
     dynamicParams.innerHTML = `
         ${renderWorkflowSourceControl()}
         ${fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`)}
-        ${renderCountVisualControl()}
     `;
 }
 function renderWorkflowNodeParams(){
@@ -822,10 +820,9 @@ function renderWorkflowNodeParams(){
             body = `${renderRhMachineControl()}${fields.length ? fields.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(tr('smart.rhNoParams'))}</div>`}`;
         }
     }
-    // Workflow engines submit one task per requested result. Keep this control
-    // alongside the workflow-specific parameters so both ComfyUI and RH use
-    // the same 1-4 task selection as image generation.
-    dynamicParams.innerHTML = `${renderWorkflowSourceControl()}${body}${renderCountVisualControl()}`;
+    // Workflow engines submit one task per requested result. The task count
+    // control now lives next to the run button (see syncComposerCountControl).
+    dynamicParams.innerHTML = `${renderWorkflowSourceControl()}${body}`;
 }
 function renderWorkflowSourceControl(){
     const node = activeSettingsSubject();
@@ -1160,6 +1157,30 @@ function renderCountVisualControl(){
 }
 function renderCountControl(){
     return `<select data-param="count">${[1,2,3,4].map(n => optionHtml(n, `${n} 张`, Number(settings.count || 1))).join('')}</select>`;
+}
+// 视频生成节点一次只产出一个结果，不提供数量选项。
+function composerCountApplies(){
+    const node = activeSettingsSubject();
+    if(node?.genKind === 'video') return false;
+    if(node?.genKind === 'image' || node?.genKind === 'workflow') return true;
+    // 非定型节点：按当前 apiKind 判断（视频面板不展示数量）。
+    return settings.apiKind !== 'video';
+}
+// 把数量选择控件渲染到运行按钮左侧，并同步运行按钮文案为「运行节点x{count}」。
+function syncComposerCountControl(){
+    const applies = composerCountApplies();
+    if(composerCountControl){
+        composerCountControl.innerHTML = applies ? renderCountVisualControl() : '';
+        composerCountControl.style.display = applies ? '' : 'none';
+    }
+    updateRunBtnLabel(applies);
+    if(applies && window.lucide) lucide.createIcons();
+}
+function updateRunBtnLabel(applies=composerCountApplies()){
+    if(!runBtnLabel) return;
+    const base = tr('smart.run') || '运行节点';
+    const count = Math.max(1, Number(settings.count || 1) || 1);
+    runBtnLabel.textContent = applies ? `${base}x${count}` : base;
 }
 function apiImageModelEntries(){
     return imageConnections().flatMap(provider => connectionImageModels(provider.id).map(model => {
@@ -1648,7 +1669,7 @@ function closeAllSmartPopovers(){
     document.querySelectorAll('.smart-control.pinned').forEach(c => c.classList.remove('pinned'));
 }
 function smartParamRoots(){
-    return [dynamicParams, composerHeadParams].filter(Boolean);
+    return [dynamicParams, composerHeadParams, composerCountControl].filter(Boolean);
 }
 function bindDynamicParams(){
     const queryAll = selector => smartParamRoots().flatMap(root => Array.from(root.querySelectorAll(selector)));
