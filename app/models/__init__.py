@@ -112,6 +112,7 @@ class CanvasVideoRequest(BaseModel):
     return_last_frame: bool = False
     generate_audio: bool = False
     multimodal: bool = False
+    n: int = 1
     run_settings: Dict[str, Any] = Field(default_factory=dict)
 
 

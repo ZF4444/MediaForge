@@ -4194,6 +4194,8 @@ async def get_canvas_image_task(task_id: str):
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
     if task.get("type") == "online-image-batch":
         task = await _canvas_image_batch_view(task)
+    elif task.get("type") == "online-video-batch":
+        task = await _canvas_video_batch_view(task)
     task.pop("request", None)
     return task
 
@@ -4658,6 +4660,29 @@ async def execute_canvas_task(task_id: str):
                 canonical_request.pop(key, None)
             canonical_request.update({k: v for k, v in task_updates.items() if v})
             await update_canvas_task(task_id, **task_updates, request=canonical_request)
+        elif task.get("type") == "online-video":
+            stable_model_id = str(task.get("model_id") or request.get("model_id") or "")
+            if not stable_model_id and not (task.get("connection_id") or request.get("connection_id")):
+                raise LookupError("视频任务缺少 model_id 或 connection_id")
+            resolved = await asyncio.to_thread(
+                database_repository.resolve_model,
+                model_id=stable_model_id,
+                connection_id=str(task.get("connection_id") or request.get("connection_id") or ""),
+                model=str(task.get("model") or request.get("model") or ""),
+                kind="video",
+            )
+            task_updates = {
+                "connection_id": resolved.connection.id,
+                "model_id": resolved.model.id if resolved.model else "",
+            }
+            # Keep both persisted and in-memory requests canonical. The video
+            # executor resolves the upstream model from model_id at execution.
+            runtime_request = {**request, **{k: v for k, v in task_updates.items() if v}}
+            canonical_request = dict(request)
+            for key in ("provider_id", "provider", "model"):
+                canonical_request.pop(key, None)
+            canonical_request.update({k: v for k, v in task_updates.items() if v})
+            await update_canvas_task(task_id, **task_updates, request=canonical_request)
         elif task.get("type") == "comfy":
             if not (task.get("resource_id") or request.get("resource_id")):
                 raise LookupError("历史 ComfyUI 任务缺少已迁移的 resource_id")
@@ -4702,6 +4727,8 @@ async def execute_canvas_task(task_id: str):
         try:
             if task.get("type") == "online-image":
                 await asyncio.wait_for(run_canvas_image_task(task_id, OnlineImageRequest.model_validate(runtime_request)), timeout=timeout)
+            elif task.get("type") == "online-video":
+                await asyncio.wait_for(run_canvas_video_task(task_id, CanvasVideoRequest.model_validate(runtime_request)), timeout=timeout)
             elif task.get("type") == "comfy":
                 await asyncio.wait_for(run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request)), timeout=timeout)
             elif task.get("type") == "online-runninghub":
@@ -4984,6 +5011,143 @@ async def _video_provider_adapter(payload: CanvasVideoRequest, provider: dict):
 AI_CAPABILITY_RUNTIME.register("video_generation", "default", _video_provider_adapter)
 
 
+def _video_runtime_provider(target) -> dict:
+    return {
+        "id": target.connection.id,
+        "connection_id": target.connection.id,
+        "name": target.connection.name,
+        "protocol": target.protocol,
+        "base_url": target.connection.base_url,
+        "runtime_model": target.model.upstream_model if target.model else "",
+        **dict(target.connection.settings or {}),
+    }
+
+
+async def _run_video_generation(payload: CanvasVideoRequest, target):
+    """Execute one upstream video generation and return the result dict.
+
+    Shared by the synchronous ``/api/canvas-video`` path (count<=1) and the
+    Redis worker executor (batch child tasks). Billing happens exactly once
+    per call inside the gateway/`_canvas_video_impl`, so each child task bills
+    independently — matching the image batch contract.
+    """
+    from app.ai.contracts import Actor, VideoCommand
+    from app.ai.videos import VideoGateway
+    runtime_provider = _video_runtime_provider(target)
+
+    async def dispatch_target(command):
+        return await _canvas_video_impl(payload, runtime_provider)
+
+    gateway = VideoGateway(target_handler=dispatch_target)
+    command_payload = payload.model_dump(mode="json")
+    command_payload.pop("model", None)
+    return await gateway.generate_target(
+        VideoCommand(target=target, payload=command_payload),
+        actor=Actor(user_id=current_user_id()),
+    )
+
+
+async def _canvas_video_batch_view(task: dict):
+    """Aggregate ``online-video-batch`` child results into one candidate pool.
+
+    Mirrors ``_canvas_image_batch_view`` but carries video URLs/items so the
+    frontend candidate pool can render each child video.
+    """
+    child_ids = [str(task_id) for task_id in task.get("child_task_ids") or [] if task_id]
+    children = await asyncio.gather(*(get_canvas_task(task_id) for task_id in child_ids))
+    completed = [child for child in children if child and child.get("status") in {"succeeded", "failed", "interrupted"}]
+    videos = []
+    video_items = []
+    failures = []
+    for child in children:
+        if not child:
+            continue
+        result = child.get("result") if isinstance(child.get("result"), dict) else {}
+        videos.extend(result.get("videos") or [])
+        video_items.extend(result.get("video_items") or [])
+        if child.get("status") in {"failed", "interrupted"}:
+            failures.append({"task_id": child.get("id"), "error": child.get("error") or "任务失败"})
+    if len(completed) < len(child_ids):
+        status = "running" if any(child and child.get("status") == "running" for child in children) else "queued"
+    elif videos:
+        status = "succeeded"
+    else:
+        status = "failed"
+    return {
+        **task,
+        "status": status,
+        "result": {"videos": videos, "video_items": video_items, "failed_children": failures},
+        "completed_children": len(completed),
+        "total_children": len(child_ids),
+        "failed_children": failures,
+    }
+
+
+async def run_canvas_video_task(task_id: str, payload: CanvasVideoRequest):
+    """Worker executor for a single ``online-video`` child task.
+
+    Resolves the video target from the persisted stable IDs, runs one upstream
+    generation, and writes the result under the current lease token. Uses the
+    same claim/lease/heartbeat fencing as image tasks so a failed-over worker
+    cannot overwrite a takeover's result.
+    """
+    lease_token = await claim_canvas_task(task_id, CLIENT_ID)
+    if not lease_token:
+        return
+    bind_log_context(task_id=task_id)
+    started = time.perf_counter()
+    task_logger.info(
+        "canvas video task started",
+        extra={"event": "task_started", "task_id": task_id, "connection_id": payload.connection_id, "model_id": payload.model_id, "operation": "video_generation", "status": "running"},
+    )
+    if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
+        await release_canvas_task_claim(task_id, lease_token)
+        return
+    lease_heartbeat = asyncio.create_task(canvas_task_lease_heartbeat(task_id, lease_token))
+    try:
+        from app.ai.database_repository import DatabaseAIRepository
+        try:
+            target = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_model,
+                model_id=payload.model_id,
+                connection_id=payload.connection_id,
+                model=payload.model,
+                kind="video",
+            )
+        except LookupError as exc:
+            raise ValueError("视频模型资源不存在或已禁用") from exc
+        exec_payload = payload.model_copy(update={"model": "", "connection_id": target.connection.id})
+        result = await _run_video_generation(exec_payload, target)
+        upstream_task_id = str((result.get("task_id") if isinstance(result, dict) else "") or "")
+        await update_claimed_canvas_task(task_id, lease_token, status="succeeded", result=result, error="", upstream_task_id=upstream_task_id)
+        task_logger.info(
+            "canvas video task completed",
+            extra={"event": "task_completed", "task_id": task_id, "connection_id": payload.connection_id, "model_id": payload.model_id, "operation": "video_generation", "status": "succeeded", "upstream_task_id": upstream_task_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        status_code = getattr(exc, "status_code", 500)
+        budget_error = detail if isinstance(detail, dict) and detail.get("error_code") == "usage_budget_exceeded" else None
+        upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
+        failure = {
+            "status": "failed",
+            "error": str((budget_error or {}).get("message") or detail),
+            "status_code": status_code,
+            "upstream_task_id": upstream_task_id,
+            "updated_at": time.time(),
+        }
+        if budget_error:
+            failure.update({"error_code": "usage_budget_exceeded", "contact_admin": bool(budget_error.get("contact_admin", True))})
+        await update_claimed_canvas_task(task_id, lease_token, **failure)
+        task_logger.exception(
+            "canvas video task failed",
+            extra={"event": "task_failed", "task_id": task_id, "connection_id": payload.connection_id, "model_id": payload.model_id, "operation": "video_generation", "status": "failed", "upstream_task_id": upstream_task_id, "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        )
+    finally:
+        lease_heartbeat.cancel()
+        await release_canvas_task_claim(task_id, lease_token)
+
+
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
     payload = await asyncio.to_thread(normalize_canvas_video_request, payload)
@@ -5004,41 +5168,75 @@ async def canvas_video(payload: CanvasVideoRequest):
     # Resolve the upstream model once, but keep the command payload canonical.
     # The execution handler receives the model through transient context below.
     payload = payload.model_copy(update={"model": "", "connection_id": target.connection.id})
-    from app.ai.videos import VideoGateway
-    runtime_provider = {
-        "id": target.connection.id,
-        "connection_id": target.connection.id,
-        "name": target.connection.name,
-        "protocol": target.protocol,
-        "base_url": target.connection.base_url,
-        "runtime_model": target.model.upstream_model if target.model else "",
-        **dict(target.connection.settings or {}),
-    }
-    async def dispatch_target(command):
-        return await _canvas_video_impl(payload, runtime_provider)
-    gateway = VideoGateway(
-        target_handler=dispatch_target,
-    )
-    command_payload = payload.model_dump(mode="json")
-    command_payload.pop("model", None)
-
-    # Unified task_id contract: even though video runs synchronously (no Redis
-    # Streams worker), generate a local canvas task_id and write the task.log
-    # lifecycle so operators can search the same way as image/ComfyUI tasks.
-    # The task is created directly in ``running`` and never enqueued, so the
-    # recovery scan will mark it ``interrupted`` if this process dies mid-poll
-    # (matching the no-retry policy for providers that already billed upstream).
-    local_task_id = f"canvas_vid_{uuid.uuid4().hex}"
+    await assert_provider_budget_available(canonical_connection_view(target), current_user_id())
     owner_id = current_user_id()
     video_resource_meta = {
         "connection_id": target.connection.id,
         "model_id": payload.model_id or "",
         "resource_id": payload.resource_id or "",
     }
-    request_snapshot = payload.model_dump(mode="json")
-    for _key in ("provider_id", "provider", "model"):
-        request_snapshot.pop(_key, None)
-    request_snapshot.update({k: v for k, v in video_resource_meta.items() if v})
+
+    def _video_request_snapshot(value: CanvasVideoRequest) -> dict[str, Any]:
+        snapshot = value.model_dump(mode="json")
+        for _key in ("provider_id", "provider", "model"):
+            snapshot.pop(_key, None)
+        snapshot.update({k: v for k, v in video_resource_meta.items() if v})
+        return snapshot
+
+    count = max(1, min(4, int(payload.n or 1)))
+    # Batch: fan out N independent online-video child tasks onto the Redis
+    # queue and aggregate them through a metadata-only parent, exactly like the
+    # image batch path. Each child bills once when the worker calls upstream.
+    if count > 1:
+        parent_task_id = f"canvas_vid_batch_{uuid.uuid4().hex}"
+        child_request = _video_request_snapshot(payload.model_copy(update={"n": 1}))
+        child_tasks = []
+        for index in range(count):
+            child_task_id = f"canvas_vid_{uuid.uuid4().hex}"
+            child_tasks.append(child_task_id)
+            await create_canvas_task({
+                "id": child_task_id,
+                "type": "online-video",
+                "status": "queued",
+                "created_at": time.time(),
+                "updated_at": time.time(),
+                "result": None,
+                "error": "",
+                **video_resource_meta,
+                "owner_id": owner_id,
+                "parent_task_id": parent_task_id,
+                "child_index": index,
+                "request": child_request,
+            })
+        # The parent is metadata only. It is never enqueued, so recovery does
+        # not try to execute it as a video-generation task.
+        await create_canvas_task({
+            "id": parent_task_id,
+            "type": "online-video-batch",
+            "status": "batching",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "result": None,
+            "error": "",
+            **video_resource_meta,
+            "owner_id": owner_id,
+            "child_task_ids": child_tasks,
+            "request": _video_request_snapshot(payload),
+        })
+        for child_task_id in child_tasks:
+            await enqueue_canvas_task(child_task_id)
+        task_logger.info(
+            "canvas video batch submitted",
+            extra={"event": "task_batch_submitted", "task_id": parent_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "queued", "count": count},
+        )
+        return {"task_id": parent_task_id, "child_task_ids": child_tasks, "status": "queued", "count": count}
+
+    # Single video keeps the synchronous contract: create the task in
+    # ``running`` (never enqueued), poll upstream inline, and return the
+    # finished result. Recovery marks it ``interrupted`` if this process dies
+    # mid-poll (no auto-retry for providers that already billed upstream).
+    local_task_id = f"canvas_vid_{uuid.uuid4().hex}"
+    request_snapshot = _video_request_snapshot(payload)
     await create_canvas_task({
         "id": local_task_id,
         "type": "online-video",
@@ -5058,10 +5256,7 @@ async def canvas_video(payload: CanvasVideoRequest):
         extra={"event": "task_started", "task_id": local_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "running"},
     )
     try:
-        result = await gateway.generate_target(
-            VideoCommand(target=target, payload=command_payload),
-            actor=Actor(user_id=current_user_id()),
-        )
+        result = await _run_video_generation(payload, target)
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)

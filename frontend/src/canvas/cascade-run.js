@@ -275,6 +275,20 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(payload)
     }).then(async r => { if(!r.ok) throw await smartResponseError(r, tr('smart.errRunFailed')); return r.json(); });
+    // count>1: backend fans out N online-video child tasks onto the Redis
+    // queue and returns their ids. The caller polls them into the candidate
+    // pool, exactly like the image batch path.
+    const childTaskIds = Array.isArray(result?.child_task_ids) ? result.child_task_ids.filter(Boolean) : [];
+    if(childTaskIds.length){
+        return {
+            batch:true,
+            taskIds:childTaskIds,
+            parentTaskId:(result && result.task_id) || '',
+            connectionId:runSettings.videoConnectionId,
+            modelId:runSettings.videoModelId,
+            resourceId:runSettings.videoResourceId || ''
+        };
+    }
     checkQuotaWarningFromResult(result);
     // Prefer video_items: they carry the MinIO file_id, which lets the log
     // thumbnail reuse the backend FFmpeg poster frame (/api/files/<id>/thumb)
@@ -553,7 +567,9 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         const logKind = isApiLikeEngine(runSettings.engine) && runSettings.apiKind === 'video' ? 'video' : 'image';
         const runLog = smartRunSnapshot(rootNode, prompt, request.refs || [], logKind);
         const runLogStart = nowMs();
-        const expectedCount = isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'
+        const expectedCount = isApiLikeEngine(runSettings.engine) && runSettings.apiKind === 'video'
+            ? Math.max(1, Math.min(4, Number(runSettings.count || 1)))
+            : isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'
             ? Math.max(1, Math.min(4, Number(runSettings.count || 1)))
             : ['comfy', 'runninghub'].includes(runSettings.engine) ? workflowTaskCount(runSettings) : 1;
         outputSlot.queued = false;
@@ -572,6 +588,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         render();
         settings = previousSettings;
         let result;
+        let videoBatchHandled = false;
         if(isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'){
             const taskResult = await runApiGeneration(prompt, request.refs || [], runSettings);
             const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
@@ -589,12 +606,38 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             await saveCanvas();
             await resumeSmartPendingNode(outputSlot);
             result = {urls:(outputSlot.images || []).map(img => img?.url ? img : null).filter(Boolean), kind:'image', tasks:smartLogTasksFromNode(outputSlot)};
+        } else if(isApiLikeEngine(runSettings.engine) && runSettings.apiKind === 'video'){
+            // Video: submit through /api/canvas-video. count>1 returns child
+            // task ids (batch) → poll them into the candidate pool like images;
+            // count===1 keeps the synchronous single-video contract.
+            const videoResult = await runApiVideoGeneration(prompt, request.refs || [], runSettings);
+            if(videoResult && videoResult.batch){
+                const taskIds = Array.isArray(videoResult.taskIds) ? videoResult.taskIds : [];
+                if(!taskIds.length) throw new Error(tr('smart.errNoOutVideos'));
+                const existing = cleanHistoryImages(outputSlot.images || []);
+                if(existing.length){
+                    addGeneratedCandidatesToNode(outputSlot, existing, {main:'preserve'});
+                    outputSlot.images = [];
+                }
+                outputSlot.pendingTasks = taskIds.map(taskId => ({taskId, kind:'video', connectionId:videoResult.connectionId, modelId:videoResult.modelId, resourceId:videoResult.resourceId}));
+                outputSlot.pending = Math.max(taskIds.length, Number(outputSlot.pending || 0) || taskIds.length);
+                outputSlot.pendingCandidatePool = true;
+                outputSlot.running = false;
+                render();
+                await saveCanvas();
+                await resumeSmartPendingNode(outputSlot);
+                result = {urls:(outputSlot.images || []).map(img => img?.url ? img : null).filter(Boolean), kind:'video', tasks:smartLogTasksFromNode(outputSlot)};
+                videoBatchHandled = true;
+            } else {
+                const urls = videoResult?.urls || videoResult;
+                result = {urls, kind:'video', tasks:videoResult?.taskId ? [{taskId:videoResult.taskId, upstreamTaskId:videoResult.upstreamTaskId || '', outputs:(videoResult.urls || [])}] : null};
+            }
         } else {
             result = await generateUrlsForCurrentSettings(outputSlot, prompt, request.refs || [], runSettings);
         }
         if(!result.urls?.length) throw new Error(result.kind === 'video' ? tr('smart.errNoOutVideos') : tr('smart.errNoOutImages'));
         let additions;
-        if(isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'){
+        if((isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video') || videoBatchHandled){
             additions = uniqueGeneratedImages(outputSlot.images || []).filter(img => img?.url);
             if(meta) attachRunMeta(outputSlot, meta);
         } else {

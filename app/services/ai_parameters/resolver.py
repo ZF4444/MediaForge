@@ -53,6 +53,7 @@ DEFAULT_API_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         _field(field_id="videoGenerateAudio", name="Generate audio", field_type="boolean", default=False, target="generate_audio", transform="boolean"),
         _field(field_id="videoMultimodal", name="Multimodal input", field_type="boolean", default=True, target="multimodal", transform="boolean"),
         _field(field_id="videoUseFrameRoles", name="Use frame roles", field_type="boolean", default=False, target="frame_roles", transform="boolean"),
+        _field(field_id="count", name="Count", field_type="number", default=1, minimum=1, maximum=4, step=1, target="n", transform="integer"),
     ]},
 }
 

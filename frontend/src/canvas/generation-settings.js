@@ -1139,8 +1139,10 @@ function renderQualityControl(){
 }
 function renderCountVisualControl(){
     const value = Number(settings.count || 1);
-    const field = canvasSchemaField('image', 'count');
-    const countName = canvasSchemaFieldName('image', 'count', tr('smart.count'));
+    const node = activeSettingsSubject();
+    const schemaKind = (node?.genKind === 'video' || settings.apiKind === 'video') ? 'video' : 'image';
+    const field = canvasSchemaField(schemaKind, 'count');
+    const countName = canvasSchemaFieldName(schemaKind, 'count', tr('smart.count'));
     const min = Number(field.min ?? 1), max = Number(field.max ?? 4), step = Number(field.step ?? 1);
     const values = [];
     for(let n=min; n<=max; n+=step) values.push(n);
@@ -1158,13 +1160,12 @@ function renderCountVisualControl(){
 function renderCountControl(){
     return `<select data-param="count">${[1,2,3,4].map(n => optionHtml(n, `${n} 张`, Number(settings.count || 1))).join('')}</select>`;
 }
-// 视频生成节点一次只产出一个结果，不提供数量选项。
+// 图片/视频/工作流生成节点都支持一次生成多个候选结果。
 function composerCountApplies(){
     const node = activeSettingsSubject();
-    if(node?.genKind === 'video') return false;
-    if(node?.genKind === 'image' || node?.genKind === 'workflow') return true;
-    // 非定型节点：按当前 apiKind 判断（视频面板不展示数量）。
-    return settings.apiKind !== 'video';
+    if(node?.genKind === 'image' || node?.genKind === 'video' || node?.genKind === 'workflow') return true;
+    // 非定型节点：AI 生成（图片或视频）与工作流都支持数量。
+    return true;
 }
 // 把数量选择控件渲染到运行按钮左侧，并同步运行按钮文案为「运行节点x{count}」。
 function syncComposerCountControl(){
