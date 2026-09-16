@@ -2506,7 +2506,11 @@ async def generate_ai_image_target(target, *, prompt: str, size: str, quality: s
 
 
 async def assert_provider_budget_available(provider, user_id):
-    if not (is_runninghub_connection(provider) or is_omnilojo_connection(provider)):
+    # RunningHub 按 coins/money 结算，不依赖 model_prices，需单独保留。其它连接
+    # （含 Omnilojo、GPT-Image-2 等 OpenAI 兼容计费网关）只要为模型配置了价格，
+    # 消费就会记入 ai_usage_records，因此以“是否配置了价格”作为纳入预算的统一判据。
+    has_pricing = bool((provider or {}).get("model_prices") or (provider or {}).get("omnilojo_model_prices"))
+    if not (is_runninghub_connection(provider) or has_pricing):
         return
     from app.services.usage import assert_runninghub_budget_available
     try:
@@ -3863,6 +3867,7 @@ async def online_image(payload: OnlineImageRequest):
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="图片模型或连接不存在或已禁用") from exc
     payload = await asyncio.to_thread(normalize_canvas_image_request, payload)
+    await assert_provider_budget_available(canonical_connection_view(target), current_user_id())
     return await build_online_image_result(payload)
 
 @app.post("/api/image-task-query")

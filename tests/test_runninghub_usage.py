@@ -88,3 +88,31 @@ def test_budget_exhaustion_returns_structured_error_for_task_clients(monkeypatch
         }
     else:
         raise AssertionError("expected budget exhaustion to block the task")
+
+
+def test_priced_openai_connection_is_budget_enforced(monkeypatch):
+    # GPT-Image-2 走 OpenAI 兼容协议，既非 runninghub 也非 omnilojo。只要模型配置了
+    # 价格（model_prices 非空），就应纳入预算并在超支时拦截。
+    monkeypatch.setattr(main, "is_runninghub_connection", lambda _provider: False)
+    monkeypatch.setattr(usage, "assert_runninghub_budget_available", lambda _user_id: (_ for _ in ()).throw(ValueError("个人本月 USD 预算已用尽，无法继续提交任务。")))
+
+    provider = {"id": "comfly", "protocol": "openai", "model_prices": {"gpt-image-2": {"output_per_million": 40}}}
+    try:
+        asyncio.run(main.assert_provider_budget_available(provider, "user-1"))
+    except HTTPException as exc:
+        assert exc.status_code == 429
+        assert exc.detail["error_code"] == "usage_budget_exceeded"
+    else:
+        raise AssertionError("expected priced OpenAI connection to be budget enforced")
+
+
+def test_unpriced_connection_bypasses_budget(monkeypatch):
+    # 未配置价格且非 runninghub 的连接不计费，因此不应触发预算查询。
+    monkeypatch.setattr(main, "is_runninghub_connection", lambda _provider: False)
+
+    def _fail(_user_id):
+        raise AssertionError("budget lookup must not run for unpriced connections")
+
+    monkeypatch.setattr(usage, "assert_runninghub_budget_available", _fail)
+    # 返回 None 即视为放行（无异常）。
+    assert asyncio.run(main.assert_provider_budget_available({"id": "local-comfy", "protocol": "comfyui"}, "user-1")) is None
