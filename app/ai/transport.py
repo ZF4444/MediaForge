@@ -9,10 +9,14 @@ from app.ai.domain import ResolvedTarget
 from app.services.connection_secrets import get_connection_secret
 
 
+# Aspect ratios natively accepted by the Gemini / nano-banana image API.
+# The upstream rejects any other value with a 400. Note it accepts the wide
+# 21:9 but NOT the tall 9:21, so a near-9:21 input under "source"/auto must
+# snap to the nearest supported ratio (9:16) rather than an unsupported 9:21.
 _GEMINI_IMAGE_RATIOS = (
     (1, 1, "1:1"), (16, 9, "16:9"), (9, 16, "9:16"),
     (4, 3, "4:3"), (3, 4, "3:4"), (3, 2, "3:2"), (2, 3, "2:3"),
-    (5, 4, "5:4"), (4, 5, "4:5"), (21, 9, "21:9"), (9, 21, "9:21"),
+    (5, 4, "5:4"), (4, 5, "4:5"), (21, 9, "21:9"),
 )
 
 _GEMINI_IMAGE_SIZE_AREA_1K_MAX = 2_000_000

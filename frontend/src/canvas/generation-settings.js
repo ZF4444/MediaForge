@@ -961,7 +961,9 @@ function sourceRatioCandidateImageForNode(node){
     if(!refs.length) return null;
     return refs.find(img => imageSizeForRatio(img)) || refs[0];
 }
-// 标准比例表：与 SIZE_MAP / renderRatioControl 保持一致的 9 个预设档位
+// 标准比例表：与 SIZE_MAP / renderRatioControl 保持一致的 9 个预设档位。
+// 上游 Gemini 不接受竖幅 9:21，但此表保留 9:21 作为前端匹配/可选档位；
+// 真正发给 Gemini 上游时由后端 transport 层将 9:21 纠正为受支持的 9:16。
 const STANDARD_RATIO_CHOICES = [
     ['1:1', 1, 1], ['2:3', 2, 3], ['3:2', 3, 2], ['3:4', 3, 4], ['4:3', 4, 3],
     ['9:16', 9, 16], ['16:9', 16, 9], ['21:9', 21, 9], ['9:21', 9, 21]

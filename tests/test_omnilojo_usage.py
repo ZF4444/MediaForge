@@ -38,6 +38,14 @@ def test_gemini_image_options_supports_21_9_ratio():
     assert gemini_image_options("3168x1344")["aspectRatio"] == "21:9"
 
 
+def test_gemini_image_options_tall_source_snaps_to_supported_ratio():
+    # The upstream accepts the wide 21:9 but rejects the tall 9:21. A near-9:21
+    # portrait input under source/auto must snap to the nearest supported ratio
+    # (9:16) rather than emitting an unsupported 9:21.
+    assert gemini_image_options("672x1584")["aspectRatio"] == "9:16"
+    assert gemini_image_options("900x2100")["aspectRatio"] == "9:16"
+
+
 def test_gemini_image_options_from_settings_passes_enums_directly():
     from app.ai.transport import gemini_image_options_from_settings
     # Canvas enums map straight to Gemini options without a pixel round-trip.
