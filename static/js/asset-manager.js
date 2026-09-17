@@ -773,5 +773,10 @@ window.addEventListener('message', event => {
     if(event.data?.type === 'asset-manager-open-tab' && ASSET_MANAGER_TABS.has(event.data.tab)) {
         switchTab(event.data.tab).catch(err => setStatus(err.message || '加载失败'));
     }
+    // 宿主每次切换/重新打开空间管理页时发来 storage-focus：iframe 不重载，
+    // 需主动刷新用量与文件列表，避免显示切走前的旧数据。
+    if(event.data?.type === 'storage-focus') {
+        loadAll().catch(err => setStatus(err.message || '加载失败'));
+    }
 });
 document.addEventListener('DOMContentLoaded', () => loadAll().catch(err => setStatus(err.message || '加载失败')));

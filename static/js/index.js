@@ -246,6 +246,11 @@
             if (id === 'canvas' && target.src) {
                 try { target.contentWindow?.postMessage({ type: 'canvas-focus' }, '*'); } catch(e) {}
             }
+            // 切换/重新打开空间管理时通知其刷新用量与文件列表。iframe 懒加载后
+            // 再次激活只切 active 类、不会重载，若不通知会一直显示切走前的旧数据。
+            if (id === 'storage-manager' && target.src) {
+                try { target.contentWindow?.postMessage({ type: 'storage-focus' }, '*'); } catch(e) {}
+            }
             resetStudioRootScroll();
         }
 
