@@ -204,7 +204,29 @@ async function switchTab(tab='assets'){
     }
     render();
 }
-function render(){
+// 各面板重渲染都会整体重建 root.innerHTML，滚动容器随之销毁，scrollTop 归零。
+// 批量管理模式下点选靠后的文件会触发 render()，导致滚动条跳回顶部。仅在明确
+// 传入 {preserveScroll:true} 的选择类操作里记录并恢复滚动位置；切换 tab、筛选、
+// 排序、翻页、删除等改变列表内容的操作仍按原有行为回到顶部。
+const SCROLL_CONTAINER_SELECTORS = ['.content-scroll', '.nav-scroll', '.detail-scroll'];
+function captureScrollPositions(){
+    const positions = {};
+    SCROLL_CONTAINER_SELECTORS.forEach(selector => {
+        const el = root?.querySelector?.(selector);
+        if(el && el.scrollTop > 0) positions[selector] = el.scrollTop;
+    });
+    return positions;
+}
+function restoreScrollPositions(positions){
+    if(!positions) return;
+    Object.keys(positions).forEach(selector => {
+        const el = root?.querySelector?.(selector);
+        if(el) el.scrollTop = positions[selector];
+    });
+}
+function render(options){
+    const preserveScroll = !!(options && options.preserveScroll);
+    const scrollPositions = preserveScroll ? captureScrollPositions() : null;
     document.querySelectorAll('[data-tab]').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === activeTab));
     if(activeTab === 'prompts') renderPromptManager();
     else if(activeTab === 'local') renderLocalManager();
@@ -212,6 +234,7 @@ function render(){
     else if(activeTab === 'canvas-assets') renderCanvasAssetsManager();
     else renderAssetManager();
     refreshIcons();
+    if(preserveScroll) restoreScrollPositions(scrollPositions);
 }
 // [asset-manager 迁移] renderStorageManager/renderStorageDetail 已拆分到
 // frontend/src/asset-manager/storage-manager.js。
@@ -298,8 +321,8 @@ async function handleClick(event){
         render();
         return;
     }
-    if(target.closest?.('[data-storage-select-all]')){ currentStorageEntries().forEach(item => storageSelectedIds.add(item.file_id)); render(); return; }
-    if(target.closest?.('[data-storage-clear]')){ storageSelectedIds.clear(); render(); return; }
+    if(target.closest?.('[data-storage-select-all]')){ currentStorageEntries().forEach(item => storageSelectedIds.add(item.file_id)); render({preserveScroll:true}); return; }
+    if(target.closest?.('[data-storage-clear]')){ storageSelectedIds.clear(); render({preserveScroll:true}); return; }
     if(target.closest?.('[data-storage-delete-selected]')){ await deleteStorageEntries([...storageSelectedIds]); return; }
     const storageDeleteOne = target.closest?.('[data-storage-delete-one]');
     if(storageDeleteOne){ await deleteStorageEntries([storageDeleteOne.dataset.storageDeleteOne || '']); return; }
@@ -307,7 +330,7 @@ async function handleClick(event){
     if(storageCheck){
         const id = storageCheck.dataset.storageCheck || '';
         if(storageSelectedIds.has(id)) storageSelectedIds.delete(id); else storageSelectedIds.add(id);
-        render();
+        render({preserveScroll:true});
         return;
     }
     const storageOpen = target.closest?.('[data-storage-open]');
@@ -334,7 +357,7 @@ async function handleClick(event){
         } else {
             storageSelectedIds = new Set(id ? [id] : []);
         }
-        render();
+        render({preserveScroll:true});
         return;
     }
     const storageCategory = target.closest?.('[data-storage-category]');
