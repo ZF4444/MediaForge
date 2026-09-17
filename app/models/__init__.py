@@ -30,6 +30,12 @@ class GenerateRequest(BaseModel):
     type: str = "zimage"
     client_id: str = ""
     convert_to_jpg: bool = False
+    # Request origin. "canvas" means the generation was dispatched from the
+    # Smart Canvas task queue; such generations are intentionally NOT written to
+    # the history table (history has no canvas-facing UI and the reference would
+    # only block file cleanup). Empty/other values keep the legacy behaviour of
+    # writing history (e.g. pose-studio, ComfyUI direct calls).
+    source: str = ""
 
 
 class DeleteHistoryRequest(BaseModel):
@@ -85,6 +91,8 @@ class OnlineImageRequest(BaseModel):
     n: int = 1
     reference_images: List[AIReference] = []
     run_settings: Dict[str, Any] = Field(default_factory=dict)
+    # See GenerateRequest.source. "canvas" skips history writes.
+    source: str = ""
 
 
 class ImageTaskQueryRequest(BaseModel):
@@ -92,6 +100,8 @@ class ImageTaskQueryRequest(BaseModel):
     resource_id: str = ""
     provider_id: str = ""
     task_id: str = Field(min_length=1, max_length=240)
+    # See GenerateRequest.source. "canvas" skips history writes.
+    source: str = ""
 
 
 class CanvasVideoRequest(BaseModel):

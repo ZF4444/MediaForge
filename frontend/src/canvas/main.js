@@ -3626,7 +3626,7 @@ async function fetchImageTaskQuery(taskId, task={}){
     return fetch('/api/image-task-query', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({connection_id:task.connectionId || task.connection_id || '', resource_id:task.resourceId || task.resource_id || '', task_id:taskId})
+        body:JSON.stringify({connection_id:task.connectionId || task.connection_id || '', resource_id:task.resourceId || task.resource_id || '', task_id:taskId, source:'canvas'})
     }).then(async r => {
         if(!r.ok) throw new Error(await smartResponseErrorMessage(r, '查询失败'));
         return r.json();

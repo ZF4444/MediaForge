@@ -76,7 +76,7 @@
                 </div>
                 <div class="storage-quota-dialog-message">
                     存储空间不足: 存储空间 ${quotaGb}GB, 已使用了 ${usedGb}GB<br>
-                    可前往空间管理，在条件筛选中勾选“仅未被画布、历史、对话或素材库引用”，删除符合条件的文件<br>
+                    可前往空间管理，在条件筛选中勾选“仅未被画布、对话或素材库引用”，删除符合条件的文件<br>
                     如果无引用的文件较少，可以删除无用的画布或画布中的节点，然后再勾选无引用的文件删除。
                 </div>
                 <div class="storage-quota-dialog-actions">

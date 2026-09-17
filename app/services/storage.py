@@ -452,6 +452,30 @@ _UNREFERENCED_FILE_SQL = """
 """
 
 
+# Filter-only variant used by the storage-management UI checkbox
+# ("仅未被画布、对话或素材库引用"). It intentionally omits the
+# history_record_files check so that a file which is *only* referenced by the
+# generation history still shows up as filterable. This is DISTINCT from the
+# background cleanup guard (_UNREFERENCED_FILE_SQL): automatic cleanup must keep
+# treating history references as protective, otherwise a file that is only kept
+# alive by a History-page record could be reaped and break that record's images.
+_UNREFERENCED_FILE_SQL_FOR_FILTER = """
+          AND NOT EXISTS (SELECT 1 FROM conversation_message_files WHERE file_id = files.id)
+          AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id = files.id)
+          AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id = files.id)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM comfy_workflows
+              WHERE config_json->'cover'->>'file_id' = files.id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM ai_resources
+              WHERE settings_json->'cover'->>'file_id' = files.id
+          )
+"""
+
+
 def _cleanup_candidates(limit: int, now_ms_value: int) -> List[Dict[str, Any]]:
     if not metadata_db_enabled():
         return []
@@ -1442,7 +1466,7 @@ def _media_entries_where_for_user(
         where += " AND created_at < %s"
         params.append(int(created_before))
     if unreferenced_only:
-        where += _UNREFERENCED_FILE_SQL
+        where += _UNREFERENCED_FILE_SQL_FOR_FILTER
     return where, params
 
 

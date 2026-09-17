@@ -1147,6 +1147,16 @@ def collect_comfy_file_items(node_output):
 # 此处导入以保持原模块级名称可用（生成域多处仍在 main.py 使用）。
 from app.services.history import save_to_history, get_comfy_history
 
+# 画布来源标记：画布任务队列派发的生成请求带 source="canvas"。
+# 画布生成不写历史表——历史表没有面向画布的浏览/删除 UI，写入只会在
+# history_record_files 留下阻止文件清理的引用。其它来源（pose-studio、
+# ComfyUI 直连等）保持写历史的既有行为。
+CANVAS_REQUEST_SOURCE = "canvas"
+
+
+def _is_canvas_sourced(payload) -> bool:
+    return str(getattr(payload, "source", "") or "").strip().lower() == CANVAS_REQUEST_SOURCE
+
 # --- 用户身份解析 / 对话管理 ---
 # safe_user_id 已迁移至 app/core/auth.py；
 # 对话管理 helpers 与路由已迁移至 app/routers/conversations.py。
@@ -3692,7 +3702,8 @@ async def build_online_image_result(payload: OnlineImageRequest):
             asyncio.to_thread(record_openai_response_usage, current_user_id(), runtime_provider, model, {**raw_item, "local_request_id": f"image:{uuid.uuid4().hex}"}, operation="image_generation")
             for _url, raw_item in generated
         ))
-    await asyncio.to_thread(save_to_history, result)
+    if not _is_canvas_sourced(payload):
+        await asyncio.to_thread(save_to_history, result)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
     return result
@@ -3946,7 +3957,8 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "params": {"connection_id": provider.get("connection_id") or provider.get("id") or "", "resource_id": payload.resource_id or ""},
             "raw": raw,
         }
-        await asyncio.to_thread(save_to_history, result)
+        if not _is_canvas_sourced(payload):
+            await asyncio.to_thread(save_to_history, result)
         if GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
         return result
@@ -4040,6 +4052,9 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
+    # Canvas task queue is the authoritative origin marker: tag every canvas
+    # image generation so the worker's build_online_image_result skips history.
+    payload = payload.model_copy(update={"source": CANVAS_REQUEST_SOURCE})
     payload = await asyncio.to_thread(normalize_canvas_image_request, payload)
     if not (payload.resource_id or payload.model_id or payload.connection_id):
         raise HTTPException(status_code=400, detail="图片任务必须指定 model_id、connection_id 或 resource_id")
@@ -4281,6 +4296,8 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
 async def create_canvas_comfy_task(payload: GenerateRequest):
     if not (payload.resource_id or payload.connection_id):
         raise HTTPException(status_code=400, detail="ComfyUI 任务必须指定 resource_id 或 connection_id")
+    # Canvas-sourced ComfyUI generations must not be written to history.
+    payload = payload.model_copy(update={"source": CANVAS_REQUEST_SOURCE})
     from app.ai.database_repository import DatabaseAIRepository
     try:
         target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id, connection_id=payload.connection_id, kind="comfyui_workflow")
@@ -6377,7 +6394,8 @@ def generate(req: GenerateRequest):
             "backend": target_backend,
             "params": req.params
         }
-        save_to_history(result)
+        if not _is_canvas_sourced(req):
+            save_to_history(result)
         if GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
         return result
