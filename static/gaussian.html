@@ -359,8 +359,12 @@
             document.getElementById('gen-percent').innerText = '0%';
 
             try {
+                // 解析 RunningHub 目标资源（connection_id / resource_id），
+                // 上传、提交、查询都必须携带，否则后端会拒绝素材上传。
+                const genTarget = await RunningHubClient.resolveTarget(GEN_WEBAPP_ID);
+
                 updateGenProgress({ status: '上传参考图...', progress: 10 });
-                const imageFileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'source.png');
+                const imageFileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'source.png', genTarget);
 
                 updateGenProgress({ status: 'Queueing...', progress: 30 });
                 const taskId = await RunningHubClient.submitTask({
@@ -368,11 +372,15 @@
                     nodeInfoList: [
                         { nodeId: GEN_NODE_IMAGE, fieldName: 'image', fieldValue: imageFileName, description: 'image' }
                     ],
-                    instanceType: 'default'
+                    instanceType: 'default',
+                    connection_id: genTarget.connection_id,
+                    resource_id: genTarget.resource_id
                 });
 
                 const data = await RunningHubClient.pollTask(taskId, {
                     persistOutputs: false,
+                    connection_id: genTarget.connection_id,
+                    resource_id: genTarget.resource_id,
                     onUpdate(task) {
                         if (task.status === 'QUEUED') updateGenProgress({ status: 'Queueing...', progress: 45 });
                         else if (task.status === 'RUNNING') updateGenProgress({ status: 'Generating...', progress: 70 });
@@ -446,15 +454,19 @@
         }
 
         async function runRepairTask() {
+            // 解析 RunningHub 目标资源（connection_id / resource_id），
+            // 上传、提交、查询都必须携带，否则后端会拒绝素材上传。
+            const repairTarget = await RunningHubClient.resolveTarget(RH_WEBAPP_ID);
+
             // 1. 输入源图 -> SourceImage fileName
             updateCloudProgress({ status: '上传参考图...', progress: 10 });
-            const sourceFileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'source.png');
+            const sourceFileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'source.png', repairTarget);
 
             // 2. 查看器渲染图 -> GaussianImage fileName
             updateCloudProgress({ status: '渲染高斯视角...', progress: 25 });
             const renderDataUrl = await requestViewerRender();
             updateCloudProgress({ status: '上传渲染图...', progress: 40 });
-            const gaussianFileName = await RunningHubClient.uploadFile(dataUrlToBlob(renderDataUrl), 'gaussian_render.png');
+            const gaussianFileName = await RunningHubClient.uploadFile(dataUrlToBlob(renderDataUrl), 'gaussian_render.png', repairTarget);
 
             // 3. 提交任务
             updateCloudProgress({ status: 'Queueing...', progress: 55 });
@@ -464,11 +476,15 @@
                     { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
                     { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
                 ],
-                instanceType: 'default'
+                instanceType: 'default',
+                connection_id: repairTarget.connection_id,
+                resource_id: repairTarget.resource_id
             });
 
                 const data = await RunningHubClient.pollTask(taskId, {
                     persistOutputs: false,
+                    connection_id: repairTarget.connection_id,
+                    resource_id: repairTarget.resource_id,
                     onUpdate(task) {
                         if (task.status === 'QUEUED') updateCloudProgress({ status: 'Queueing...', progress: 60 });
                         else if (task.status === 'RUNNING') updateCloudProgress({ status: 'Generating...', progress: 80 });
