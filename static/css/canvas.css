@@ -476,8 +476,9 @@ video.node-img { object-fit:contain; background:#0f172a; }
 .connection-layer { position:absolute; left:0; top:0; width:6000px; height:4000px; pointer-events:none; z-index:0; overflow:visible; }
 .connection-layer path { transition:stroke-opacity .14s ease; }
 .connection-layer .conn-hit { pointer-events:stroke; cursor:pointer; }
-.connection-layer .conn-cut { pointer-events:auto; cursor:pointer; opacity:.55; transition:opacity .14s ease; }
+.connection-layer .conn-cut { pointer-events:auto; cursor:pointer; opacity:.85; transition:opacity .12s ease; }
 .connection-layer .conn-cut:hover { opacity:1; }
+.connection-layer .conn-cut.conn-cut-hidden { opacity:0; pointer-events:none; }
 .connection-layer .conn-pending { stroke-dasharray:5 4; animation:dash 1.5s linear infinite; }
 .connection-layer .conn-cascade { filter:none; }
 .connection-layer .conn-cascade-wait { stroke-dasharray:7 6; opacity:.58; }
