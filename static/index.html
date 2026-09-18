@@ -661,9 +661,12 @@
             font-size: 13px;
             font-weight: 700;
             transition: background-color .18s, transform .18s, box-shadow .18s;
+            text-decoration: none;
+            box-sizing: border-box;
         }
-        .floating-action.feedback-float { top: calc(50% + 56px); }
-        .floating-action.help-float { top: calc(50% - 56px); }
+        .floating-action.help-float { top: calc(50% - 104px); }
+        .floating-action.feedback-float { top: calc(50% + 4px); }
+        .floating-action.contact-float { top: calc(50% + 112px); }
         .floating-action:hover,
         .floating-action:focus-visible {
             background: var(--nav-hover-bg);
@@ -1245,12 +1248,13 @@
         </main>
     </div>
 
-    <button class="floating-action help-float" id="helpOpenBtn" type="button" title="查看帮助">帮助</button>
+    <button class="floating-action help-float" id="helpOpenBtn" type="button" title="查看说明">说明</button>
     <button class="floating-action feedback-float" id="feedbackOpenBtn" type="button" title="提交反馈">反馈</button>
+    <a class="floating-action contact-float" id="contactAdminBtn" href="https://applink.feishu.cn/client/chat/open?openId=ou_a7412f70153a57bf5e696197a35fdf1c" target="_blank" rel="noopener noreferrer" title="联系管理员">联系管理员</a>
     <aside class="help-drawer" id="helpDrawer" aria-hidden="true">
         <div class="help-resize-handle" id="helpResizeHandle" role="separator" aria-orientation="vertical" tabindex="0" title="调整宽度"></div>
         <div class="help-head">
-            <div class="help-title">帮助<span class="help-title-page" id="helpTitlePage"></span></div>
+            <div class="help-title">说明<span class="help-title-page" id="helpTitlePage"></span></div>
             <div class="help-head-actions">
                 <button class="help-mini-btn" id="helpPreviewBtn" type="button" style="display:none">预览</button>
                 <button class="help-mini-btn" id="helpEditBtn" type="button" style="display:none">编辑</button>

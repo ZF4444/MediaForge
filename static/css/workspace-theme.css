@@ -43,6 +43,7 @@ html:not(.studio-theme-dark):not(.theme-dark) body:has(.asset-page) {
   color: var(--workspace-ink);
 }
 html:not(.studio-theme-dark):not(.theme-dark) .asset-page { max-width: none; padding: 20px 28px; gap: 12px; }
+html:not(.studio-theme-dark):not(.theme-dark) .asset-page-head { background: transparent; border-bottom: 0; backdrop-filter: none; padding: 2px 4px 0; }
 html:not(.studio-theme-dark):not(.theme-dark) .asset-title { font-size: 18px; letter-spacing: -.015em; line-height: 1.15; }
 html:not(.studio-theme-dark):not(.theme-dark) .asset-sub { margin-top: 5px; color: var(--workspace-muted); font-size: 12px; }
 html:not(.studio-theme-dark):not(.theme-dark) .asset-status,

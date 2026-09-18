@@ -2360,7 +2360,13 @@ def media_objects_exist(entry: Dict[str, Any]) -> bool:
 
 def _generate_image_thumb_bytes(payload: bytes, size: int = THUMB_SIZE_DEFAULT) -> bytes:
     with Image.open(BytesIO(payload)) as img:
-        frame = img.convert("RGB")
+        # Preserve transparency: images with an alpha channel (RGBA/LA) or a
+        # palette transparency (P + "transparency") are converted to RGBA so
+        # the WEBP thumbnail keeps its alpha. Converting straight to RGB would
+        # drop the alpha and expose the (often garbage) RGB values stored under
+        # fully-transparent pixels, which shows up as noise on the canvas.
+        has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+        frame = img.convert("RGBA") if has_alpha else img.convert("RGB")
         frame.thumbnail((size, size), Image.Resampling.LANCZOS)
         out = BytesIO()
         frame.save(out, format="WEBP", quality=76, method=6)
