@@ -79,7 +79,7 @@ async function uploadFilesFromDataTransfer(dataTransfer){
     const raw = entries.length
         ? (await Promise.all(entries.map(filesFromEntry))).flat()
         : [...(dataTransfer?.files || [])];
-    return raw.filter(isSupportedUploadFile);
+    return raw.filter(file => isSupportedUploadFile(file) || isPromptTextFile(file));
 }
 function uploadTitleForItems(items, fallback='Upload'){
     const list = [...(items || [])];
@@ -106,7 +106,7 @@ const SMART_IMAGE_DROP_TEXT_TYPES = [
 ];
 const SMART_IMAGE_DROP_TYPE_HINT_RE = /^(?:files?|image\/.+|text\/(?:uri-list|html|plain|x-moz-url|x-file-url)|downloadurl|public\.(?:file-url|url)|uniformresourcelocator|filenamew?)$|application\/x-qt-(?:windows-mime|image)|application\/x-moz-file|com\.eagle/i;
 function smartImageFilesFromDataTransfer(dataTransfer){
-    return [...(dataTransfer?.files || [])].filter(isSupportedUploadFile);
+    return [...(dataTransfer?.files || [])].filter(file => isSupportedUploadFile(file) || isPromptTextFile(file));
 }
 function smartDropDataTypes(dataTransfer){
     return [...(dataTransfer?.types || [])].map(type => String(type || ''));
@@ -271,16 +271,29 @@ function appendImagesToSmartNode(uploaded, targetId='', opts={}){
         delete node.w;
         delete node.h;
     }
-    if(node.images.length === 1){ node.title = uploadTitleForItems(node.images, node.title || 'Image'); delete node.w; delete node.h; }
+    if(node.images.length === 1){ node.title = nodeTitleForMediaItem(node.images[0], uploadTitleForItems(node.images, node.title || 'Image')); delete node.w; delete node.h; }
     selectedId = node.id;
     render();
     scheduleSave();
     return node;
 }
+// 媒体节点标题优先复用上传文件名（去扩展名）；无文件名时回退到类型标题。
+function nodeTitleForMediaItem(item, fallback='Image'){
+    const raw = String(item?.name || '').trim();
+    if(!raw) return fallback;
+    // 去掉最后一个扩展名，保留文件名主体。
+    const base = raw.replace(/\.[^./\\]+$/, '').trim();
+    return base || fallback;
+}
 async function handleFiles(files, targetId='', opts={}){
     try {
-        const fileList = [...(files || [])].filter(isSupportedUploadFile);
-        if(!fileList.length) return null;
+        const allFiles = [...(files || [])];
+        // 纯文本 .txt 文件不作为媒体上传，而是读取内容创建提示词节点：
+        // 文件名作为节点名称，文本内容作为提示词内容。
+        const textFiles = allFiles.filter(isPromptTextFile);
+        if(textFiles.length) await createPromptNodesFromTextFiles(textFiles, opts);
+        const fileList = allFiles.filter(file => !isPromptTextFile(file)).filter(isSupportedUploadFile);
+        if(!fileList.length) return textFiles.length ? {uploaded:[], node:null} : null;
         const uploaded = await uploadFiles(fileList);
         if(!uploaded.length) return null;
         if(!opts.skipUndo) pushUndo();
@@ -288,6 +301,29 @@ async function handleFiles(files, targetId='', opts={}){
         const node = appendImagesToSmartNode(normalized, targetId, opts);
         return {uploaded:normalized, node};
     } catch(e) { toast(e.message || tr('smart.toastUploadFail')); return null; }
+}
+// 判断是否为应转成提示词节点的纯文本文件（仅限 .txt / text/plain）。
+function isPromptTextFile(file){
+    const type = String(file?.type || '').toLowerCase();
+    const name = String(file?.name || '').toLowerCase();
+    return type === 'text/plain' || /\.txt(\?|$)/.test(name);
+}
+// 读取每个 txt 文件的内容，逐个创建 smart-prompt 节点。多个文件时纵向错开摆放。
+async function createPromptNodesFromTextFiles(textFiles, opts={}){
+    const base = opts.point || (typeof viewportCenter === 'function' ? viewportCenter() : {x:0, y:0});
+    let created = 0;
+    for(const file of textFiles){
+        let content = '';
+        try { content = await file.text(); }
+        catch(e){ toast(tr('smart.toastUploadFail')); continue; }
+        // 文件名去掉扩展名作为节点标题。
+        const title = String(file.name || '').replace(/\.txt$/i, '') || 'Prompt';
+        const x = (Number(base.x) || 0) - 158;
+        const y = (Number(base.y) || 0) - 97 + created * 40;
+        createPromptNode(x, y, {title, text:content, skipUndo:created > 0 ? true : opts.skipUndo});
+        created += 1;
+    }
+    return created;
 }
 async function importSmartLocalImages(paths){
     if(!paths?.length) return [];

@@ -225,3 +225,109 @@ describe('appendImagesToSmartNode', () => {
         expect(node.scale).toBe(0.8);
     });
 });
+
+describe('isPromptTextFile', () => {
+    it('识别 text/plain 或 .txt 文件为提示词文本', () => {
+        const sandbox = createUploadSandbox();
+        expect(sandbox.isPromptTextFile({ type: 'text/plain', name: 'a.txt' })).toBe(true);
+        expect(sandbox.isPromptTextFile({ type: '', name: 'note.TXT' })).toBe(true);
+        expect(sandbox.isPromptTextFile({ type: 'image/png', name: 'a.png' })).toBe(false);
+        // 其它文本类（json/csv/md）不算提示词 txt
+        expect(sandbox.isPromptTextFile({ type: '', name: 'data.csv' })).toBe(false);
+        expect(sandbox.isPromptTextFile(null)).toBe(false);
+    });
+});
+
+describe('handleFiles: txt -> smart-prompt 节点', () => {
+    // 带 .text() 的 File mock
+    class TextFile {
+        constructor(content, name, opts) { this._content = content; this.name = name; this.type = opts?.type || ''; }
+        text() { return Promise.resolve(this._content); }
+    }
+
+    it('上传 txt：文件名（去扩展名）作节点标题、内容作提示词，且不走上传', async () => {
+        const created = [];
+        const uploadSpy = vi.fn(() => Promise.resolve([]));
+        const sandbox = createUploadSandbox({
+            File: TextFile,
+            mediaForgeUpload: { upload: uploadSpy },
+            fns: {
+                viewportCenter: () => ({ x: 200, y: 100 }),
+                createPromptNode: (x, y, opts) => { const n = { id: 'p', type: 'smart-prompt', x, y, ...opts }; created.push(n); return n; },
+            },
+        });
+        const file = new TextFile('hello prompt', 'my-prompt.txt', { type: 'text/plain' });
+        await sandbox.handleFiles([file], '');
+        expect(created).toHaveLength(1);
+        expect(created[0].title).toBe('my-prompt');
+        expect(created[0].text).toBe('hello prompt');
+        // txt 不应触发媒体上传
+        expect(uploadSpy).not.toHaveBeenCalled();
+    });
+
+    it('拖拽落点存在时，提示词节点以落点为中心放置', async () => {
+        const created = [];
+        const sandbox = createUploadSandbox({
+            File: TextFile,
+            fns: {
+                createPromptNode: (x, y, opts) => { const n = { x, y, ...opts }; created.push(n); return n; },
+            },
+        });
+        const file = new TextFile('content', 'note.txt', { type: 'text/plain' });
+        await sandbox.handleFiles([file], '', { point: { x: 500, y: 400 } });
+        // 节点尺寸 316x194，以落点为中心 => x=500-158, y=400-97
+        expect(created[0].x).toBe(342);
+        expect(created[0].y).toBe(303);
+    });
+
+    it('多个 txt 文件会创建多个节点并纵向错开', async () => {
+        const created = [];
+        const sandbox = createUploadSandbox({
+            File: TextFile,
+            fns: {
+                viewportCenter: () => ({ x: 0, y: 0 }),
+                createPromptNode: (x, y, opts) => { const n = { x, y, ...opts }; created.push(n); return n; },
+            },
+        });
+        await sandbox.handleFiles([
+            new TextFile('a', 'one.txt', { type: 'text/plain' }),
+            new TextFile('b', 'two.txt', { type: 'text/plain' }),
+        ], '');
+        expect(created).toHaveLength(2);
+        expect(created[0].title).toBe('one');
+        expect(created[1].title).toBe('two');
+        expect(created[1].y - created[0].y).toBe(40);
+    });
+});
+
+describe('appendImagesToSmartNode: 单文件节点标题复用文件名', () => {
+    it('单张图片上传：节点标题为文件名（去扩展名）', () => {
+        const sandbox = createUploadSandbox({ nodes: [] });
+        const node = sandbox.appendImagesToSmartNode([{ url: 'x.png', kind: 'image', name: '风景照.png' }], '');
+        expect(node.images).toHaveLength(1);
+        expect(node.title).toBe('风景照');
+    });
+
+    it('单个视频上传：标题为文件名（去扩展名）', () => {
+        const sandbox = createUploadSandbox({ nodes: [] });
+        const node = sandbox.appendImagesToSmartNode([{ url: 'v.mp4', kind: 'video', name: 'demo clip.mp4' }], '');
+        expect(node.title).toBe('demo clip');
+    });
+
+    it('文件名缺失时回退到类型标题', () => {
+        const sandbox = createUploadSandbox({
+            nodes: [],
+            fns: { mediaKindForItem: () => 'image' },
+        });
+        const node = sandbox.appendImagesToSmartNode([{ url: 'x.png', kind: 'image' }], '');
+        expect(node.title).toBe('Image');
+    });
+
+    it('多文件仍使用类型汇总标题（Group），不取单个文件名', () => {
+        const node = { id: 'n1', type: 'smart-image', images: [{ url: 'old.png', name: 'old.png' }] };
+        const sandbox = createUploadSandbox({ nodes: [node] });
+        sandbox.appendImagesToSmartNode([{ url: 'a.png', kind: 'image', name: 'a.png' }], 'n1');
+        expect(node.images).toHaveLength(2);
+        expect(node.title).toBe('Group');
+    });
+});

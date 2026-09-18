@@ -69,6 +69,7 @@ export function createUploadSandbox(overrides = {}) {
         isSmartImageNode: overrides.fns?.isSmartImageNode || ((n) => !n?.type || n.type === 'smart-image'),
         arrangeSmartGroupMembers: overrides.fns?.arrangeSmartGroupMembers || (() => {}),
         createImageNodeAt: overrides.fns?.createImageNodeAt || ((point, images, opts) => ({ id: 'new_node', type: opts?.type || 'smart-image', images: images || [] })),
+        createPromptNode: overrides.fns?.createPromptNode || ((x, y, opts) => ({ id: 'prompt_node', type: 'smart-prompt', x, y, title: opts?.title || 'Prompt', text: opts?.text || '' })),
         viewportCenter: overrides.fns?.viewportCenter || (() => ({ x: 0, y: 0 })),
         render: overrides.fns?.render || (() => {}),
         scheduleSave: overrides.fns?.scheduleSave || (() => {}),
