@@ -774,8 +774,10 @@ window.addEventListener('message', event => {
         switchTab(event.data.tab).catch(err => setStatus(err.message || '加载失败'));
     }
     // 宿主每次切换/重新打开空间管理页时发来 storage-focus：iframe 不重载，
-    // 需主动刷新用量与文件列表，避免显示切走前的旧数据。
+    // 需主动刷新用量与文件列表，避免显示切走前的旧数据。刷新时重置类别筛选
+    // 为「全部类别」，而非保留上次选择的子类别。
     if(event.data?.type === 'storage-focus') {
+        storageCategoryFilter = '';
         loadAll().catch(err => setStatus(err.message || '加载失败'));
     }
 });
