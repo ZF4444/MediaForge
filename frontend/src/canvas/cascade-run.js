@@ -60,9 +60,12 @@ function requestSmartCascadeStop(loopId=''){
 }
 function smartCascadeParallelLimit(chain=[]){
     const hasComfy = (chain || []).some(node => smartSettingsForNode(node)?.engine === 'comfy');
-    const hasRunningHub = (chain || []).some(node => smartSettingsForNode(node)?.engine === 'runninghub');
-    if(hasRunningHub) return 1;
-    return hasComfy ? Math.max(1, Math.min(6, Number(comfyInstanceCount) || 1)) : 6;
+    // ComfyUI 的循环并发受本地实例数物理约束；RunningHub 与 API 引擎一样按每次运行放开到 6
+    // （这里的并发是"单个用户、单个循环节点这一次运行"内同时进行的轮次数，不是跨用户的全局上限）。
+    // RunningHub 同一 API Key 的并发提交由后端吸收（803/804 视为排队中的 RUNNING），
+    // 超出账户额度的轮次会在上游排队而不是报错。
+    if(hasComfy) return Math.max(1, Math.min(6, Number(comfyInstanceCount) || 1));
+    return 6;
 }
 function canonicalRunSettings(value={}){
     const settings={...(value || {})};
@@ -514,7 +517,12 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
         const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
         const additions = result.urls.map((item, i) => {
             const url = typeof item === 'string' ? item : item?.url || '';
-            const image = {url, file_id:(typeof item === 'object' && item.file_id) || '', name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true};
+            const src = typeof item === 'object' && item ? item : {};
+            // 保留结果媒体自带的原始尺寸，否则克隆链路的输出节点会退回默认 4:3 比例。
+            const image = {url, file_id:src.file_id || '', name:src.name || `output-${i + 1}.${ext}`, kind:src.kind || result.kind, generatedResult:true};
+            const naturalW = Number(src.natural_w || src.width || src.w || 0);
+            const naturalH = Number(src.natural_h || src.height || src.h || 0);
+            if(naturalW > 0 && naturalH > 0){ image.natural_w = naturalW; image.natural_h = naturalH; }
             return result.kind === 'image' ? generatedImageWithRunMeta(image, meta) : stripImageGenerationMeta(image);
         }).filter(item => item.url);
         replaceOutputsToNodeWithHistory(outputNode, additions, result.kind, null, {skipShift:Boolean(ctx?.nodeId)});
@@ -644,7 +652,13 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
             additions = result.urls.map((item, i) => {
                 const url = typeof item === 'string' ? item : item?.url || '';
-                const image = {url, file_id:(typeof item === 'object' && item.file_id) || '', name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true};
+                const src = typeof item === 'object' && item ? item : {};
+                // 保留结果媒体自带的原始尺寸（RunningHub/ComfyUI 结果里的 natural_w/h 由后端读取），
+                // 否则输出节点会退回默认 4:3 比例，显示与实际图片比例不符。
+                const image = {url, file_id:src.file_id || '', name:src.name || `output-${i + 1}.${ext}`, kind:src.kind || result.kind, generatedResult:true};
+                const naturalW = Number(src.natural_w || src.width || src.w || 0);
+                const naturalH = Number(src.natural_h || src.height || src.h || 0);
+                if(naturalW > 0 && naturalH > 0){ image.natural_w = naturalW; image.natural_h = naturalH; }
                 return result.kind === 'image' ? generatedImageWithRunMeta(image, meta) : stripImageGenerationMeta(image);
             }).filter(item => item.url);
             replaceOutputsToNodeWithHistory(outputSlot, additions, result.kind, meta, {skipShift:Boolean(ctx?.nodeId)});

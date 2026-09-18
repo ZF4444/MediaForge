@@ -126,6 +126,21 @@ describe('smartCascadeParallelLimit', () => {
         });
         expect(sandbox.smartCascadeParallelLimit([{ id: 'a' }])).toBe(1);
     });
+
+    it('RunningHub 引擎与 API 引擎一致，返回 6（不再强制串行）', () => {
+        const sandbox = createCascadeRunSandbox({
+            fns: { smartSettingsForNode: () => ({ engine: 'runninghub' }) },
+        });
+        expect(sandbox.smartCascadeParallelLimit([{ id: 'a' }])).toBe(6);
+    });
+
+    it('链路同时含 comfy 与 runninghub 时，仍按 comfy 实例数限制', () => {
+        const sandbox = createCascadeRunSandbox({
+            comfyInstanceCount: 2,
+            fns: { smartSettingsForNode: (node) => (node.id === 'b' ? { engine: 'comfy' } : { engine: 'runninghub' }) },
+        });
+        expect(sandbox.smartCascadeParallelLimit([{ id: 'a' }, { id: 'b' }])).toBe(2);
+    });
 });
 
 describe('runSmartCascadeRoundsWithLimit', () => {
