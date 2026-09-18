@@ -85,7 +85,7 @@ function renderConnections(){
         const color = isCascade ? '#16a34a' : isHistory ? 'rgba(100,116,139,0.46)' : kind === 'input' ? 'rgba(100,116,139,0.62)' : 'rgba(148,163,184,0.62)';
         const opacity = isPendingLine ? '.82' : '1';
         const width = kind === 'input' ? '1.9' : '1.6';
-        return `<g class="conn-group" data-conn-geo data-from="${escapeAttr(conn.from)}" data-to="${escapeAttr(conn.to)}" data-history="${isHistory ? '1' : ''}"><path class="${cls}" d="${curve}" stroke="${color}" stroke-width="${width}" fill="none" opacity="${opacity}"></path><path class="conn-hit" data-conn-index="${conn.index}" d="${curve}" stroke="transparent" stroke-width="28" fill="none"></path><circle class="conn-endpoint" cx="${tx}" cy="${ty}" r="3.5" fill="${color}" opacity=".66"></circle><g class="conn-cut" data-conn-index="${conn.index}" transform="translate(${mx} ${my})"><circle r="16" fill="var(--card)" stroke="${color}" stroke-width="2.8"></circle><path d="M-6 -6 L6 6 M6 -6 L-6 6" stroke="${color}" stroke-width="3" stroke-linecap="round"></path></g></g>`;
+        return `<g class="conn-group" data-conn-geo data-from="${escapeAttr(conn.from)}" data-to="${escapeAttr(conn.to)}" data-history="${isHistory ? '1' : ''}" data-fx="${fx}" data-fy="${fy}" data-tx="${tx}" data-ty="${ty}" data-cut-color="${escapeAttr(color)}"><path class="${cls}" d="${curve}" stroke="${color}" stroke-width="${width}" fill="none" opacity="${opacity}"></path><path class="conn-hit" data-conn-index="${conn.index}" d="${curve}" stroke="transparent" stroke-width="28" fill="none"></path><circle class="conn-endpoint" cx="${tx}" cy="${ty}" r="3.5" fill="${color}" opacity=".66"></circle><g class="conn-cut conn-cut-hidden" data-conn-index="${conn.index}" transform="translate(${mx} ${my})"><circle r="16" fill="var(--card)" stroke="${color}" stroke-width="2.8"></circle><path d="M-6 -6 L6 6 M6 -6 L-6 6" stroke="${color}" stroke-width="3" stroke-linecap="round"></path></g></g>`;
     }).join('');
     return `<svg class="connection-layer" width="6000" height="4000" viewBox="0 0 6000 4000" xmlns="http://www.w3.org/2000/svg">${paths}</svg>`;
 }
@@ -96,12 +96,15 @@ function updateConnectionGeometryInPlace(){
         const fromNode = nodes.find(n => n.id === group.dataset.from);
         const toNode = nodes.find(n => n.id === group.dataset.to);
         if(!fromNode || !toNode) return;
-        const {tx, ty, curve, mx, my} = connectionGeometry(fromNode, toNode, group.dataset.history === '1');
+        const {tx, ty, curve, mx, my, fx, fy} = connectionGeometry(fromNode, toNode, group.dataset.history === '1');
         group.querySelectorAll(':scope > path').forEach(p => p.setAttribute('d', curve));
         const endpoint = group.querySelector(':scope > circle.conn-endpoint');
         if(endpoint){ endpoint.setAttribute('cx', tx); endpoint.setAttribute('cy', ty); }
+        group.dataset.fx = fx; group.dataset.fy = fy;
+        group.dataset.tx = tx; group.dataset.ty = ty;
         const cut = group.querySelector(':scope > g.conn-cut');
-        if(cut) cut.setAttribute('transform', `translate(${mx} ${my})`);
+        // 拖动过程中隐藏删除按钮：几何在变，鼠标不一定落在线上，让它回到隐藏状态。
+        if(cut && !cut.classList.contains('conn-cut-hidden')) cut.setAttribute('transform', `translate(${mx} ${my})`);
     });
 }
 function refreshConnectionLayer(){
@@ -144,6 +147,15 @@ function bindConnectionEvents(connectionElements=world.querySelectorAll('[data-c
                 e.preventDefault(); e.stopPropagation();
                 disconnectConnection(Number(el.dataset.connIndex));
             });
+            // 删除按钮默认隐藏，鼠标移动到连线上时跟随光标出现在最近的线上位置，
+            // 离开连线时隐藏。靠近端口（输入/输出连接处）时不显示，优先保留端口交互。
+            el.addEventListener('mousemove', e => positionConnectionCut(el, e));
+            // mouseleave 绑定在整个 conn-group 上，这样鼠标在 hit 与删除按钮之间移动不会误触发隐藏。
+            const group = el.closest('.conn-group');
+            if(group && !group.dataset.cutLeaveBound){
+                group.dataset.cutLeaveBound = '1';
+                group.addEventListener('mouseleave', () => hideConnectionCut(group));
+            }
             return;
         }
         el.addEventListener('click', e => {
@@ -152,6 +164,26 @@ function bindConnectionEvents(connectionElements=world.querySelectorAll('[data-c
             disconnectConnection(index);
         });
     });
+}
+// 端口连接处附近的最小避让半径（世界坐标）。小于该距离时优先显示端口，不显示删除按钮。
+const CONN_CUT_PORT_GUARD = 30;
+function positionConnectionCut(hitEl, event){
+    const group = hitEl.closest('.conn-group');
+    if(!group) return;
+    const cut = group.querySelector(':scope > g.conn-cut');
+    if(!cut) return;
+    const p = screenToWorld({clientX: event.clientX, clientY: event.clientY});
+    const fx = Number(group.dataset.fx), fy = Number(group.dataset.fy);
+    const tx = Number(group.dataset.tx), ty = Number(group.dataset.ty);
+    // 优先保护端口：靠近起点/终点（输入输出连接处）时隐藏删除按钮，避免与端口冲突。
+    if(Number.isFinite(fx) && Math.hypot(p.x - fx, p.y - fy) < CONN_CUT_PORT_GUARD){ hideConnectionCut(hitEl); return; }
+    if(Number.isFinite(tx) && Math.hypot(p.x - tx, p.y - ty) < CONN_CUT_PORT_GUARD){ hideConnectionCut(hitEl); return; }
+    cut.setAttribute('transform', `translate(${p.x} ${p.y})`);
+    cut.classList.remove('conn-cut-hidden');
+}
+function hideConnectionCut(hitEl){
+    const group = hitEl.closest?.('.conn-group');
+    group?.querySelector(':scope > g.conn-cut')?.classList.add('conn-cut-hidden');
 }
 function ensurePortDragPathElement(){
     const svg = world.querySelector('svg.connection-layer');
