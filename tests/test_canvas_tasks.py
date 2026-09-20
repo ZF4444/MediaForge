@@ -1,5 +1,8 @@
 import asyncio
 
+import pytest
+from redis.exceptions import TimeoutError as RedisTimeoutError
+
 from app.core.log_context import reset_log_context, set_log_context
 from app.services import canvas_tasks
 
@@ -157,6 +160,7 @@ class Redis:
 def test_canvas_tasks_persist_update_claim_and_recover(monkeypatch):
     redis = Redis()
     monkeypatch.setattr(canvas_tasks, "get_redis_client", lambda: redis)
+    monkeypatch.setattr(canvas_tasks, "get_canvas_stream_client", lambda: redis)
 
     async def scenario():
         await canvas_tasks.create_canvas_task({"id": "task-1", "status": "queued", "type": "online-image"})
@@ -188,6 +192,42 @@ def test_canvas_tasks_persist_update_claim_and_recover(monkeypatch):
         assert redis.streams[canvas_tasks._DEAD_LETTER_STREAM][0][1]["task_id"] == "task-2"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("message", [
+    "Timeout reading from 127.0.0.1:6379",
+    "Timeout reading from redis.example:6379",
+    "Timeout connecting to server",
+])
+def test_canvas_task_timeout_reconnects_and_retries(monkeypatch, message):
+    class TimeoutStreamClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def xreadgroup(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RedisTimeoutError(message)
+            return []
+
+    client = TimeoutStreamClient()
+    monkeypatch.setattr(canvas_tasks, "get_canvas_stream_client", lambda: client)
+    monkeypatch.setattr(canvas_tasks, "reset_canvas_stream_connections", lambda: asyncio.sleep(0))
+
+    assert asyncio.run(canvas_tasks.dequeue_canvas_tasks("worker-a")) == []
+    assert client.calls == 2
+
+
+def test_canvas_task_repeated_timeout_is_storage_failure(monkeypatch):
+    class TimeoutStreamClient:
+        async def xreadgroup(self, *_args, **_kwargs):
+            raise RedisTimeoutError("provider-specific timeout text")
+
+    monkeypatch.setattr(canvas_tasks, "get_canvas_stream_client", lambda: TimeoutStreamClient())
+    monkeypatch.setattr(canvas_tasks, "reset_canvas_stream_connections", lambda: asyncio.sleep(0))
+
+    with pytest.raises(canvas_tasks.RedisUnavailableError, match="dequeue_timeout"):
+        asyncio.run(canvas_tasks.dequeue_canvas_tasks("worker-a"))
 
 
 def test_canvas_task_strips_legacy_fields_for_stable_target(monkeypatch):

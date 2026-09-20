@@ -40,6 +40,12 @@ REDIS_CONNECT_TIMEOUT_SECONDS = float(os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS",
 # Canvas workers use a 1-second Redis Streams long poll. Keep the command
 # timeout comfortably above it so an empty queue is not treated as an outage.
 REDIS_SOCKET_TIMEOUT_SECONDS = float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "5"))
+# A Streams BLOCK read needs a finite deadline longer than the normal poll
+# interval, while still allowing half-open connections to be recycled.
+REDIS_CANVAS_STREAM_SOCKET_TIMEOUT_SECONDS = max(
+    REDIS_SOCKET_TIMEOUT_SECONDS,
+    float(os.getenv("REDIS_CANVAS_STREAM_SOCKET_TIMEOUT_SECONDS", "30")),
+)
 REDIS_SESSION_PREFIX = str(os.getenv("REDIS_SESSION_PREFIX", "mediaforge:session:")).strip()
 REDIS_LAST_SEEN_WRITE_INTERVAL_SECONDS = int(os.getenv("REDIS_LAST_SEEN_WRITE_INTERVAL_SECONDS", "60"))
 REDIS_LAST_SEEN_FLUSH_INTERVAL_SECONDS = int(os.getenv("REDIS_LAST_SEEN_FLUSH_INTERVAL_SECONDS", "300"))

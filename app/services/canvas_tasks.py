@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from redis.exceptions import RedisError
+from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError
 
 from app.config import (
     CANVAS_TASK_TIMEOUT_SECONDS,
@@ -20,7 +20,12 @@ from app.config import (
     REDIS_CANVAS_TASK_STREAM_MAXLEN,
     REDIS_CANVAS_TASK_TTL_SECONDS,
 )
-from app.core.redis_client import RedisUnavailableError, get_redis_client
+from app.core.redis_client import (
+    RedisUnavailableError,
+    get_canvas_stream_client,
+    get_redis_client,
+    reset_canvas_stream_connections,
+)
 from app.core.log_context import get_log_context
 
 
@@ -343,14 +348,23 @@ async def enqueue_canvas_task(task_id: str) -> str:
 
 
 async def dequeue_canvas_tasks(consumer_id: str, *, block_ms: int = 1000) -> list[tuple[str, str]]:
-    client = get_redis_client()
-    try:
-        messages = await client.xreadgroup(
-            REDIS_CANVAS_TASK_CONSUMER_GROUP, consumer_id,
-            {REDIS_CANVAS_TASK_STREAM: ">"}, count=1, block=block_ms,
-        )
-    except RedisError as exc:
-        raise _unavailable("dequeue", exc) from exc
+    client = get_canvas_stream_client()
+    for attempt in range(2):
+        try:
+            messages = await client.xreadgroup(
+                REDIS_CANVAS_TASK_CONSUMER_GROUP, consumer_id,
+                {REDIS_CANVAS_TASK_STREAM: ">"}, count=1, block=block_ms,
+            )
+            break
+        except RedisTimeoutError as exc:
+            if attempt == 1:
+                raise _unavailable("dequeue_timeout", exc) from exc
+            try:
+                await reset_canvas_stream_connections()
+            except RedisError as reset_exc:
+                raise _unavailable("dequeue_reset", reset_exc) from reset_exc
+        except RedisError as exc:
+            raise _unavailable("dequeue", exc) from exc
     return [
         (str(message_id), str(fields.get("task_id") or ""))
         for _stream, entries in messages or []
