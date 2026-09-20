@@ -108,6 +108,14 @@ export REDIS_URL=redis://mediaforge:readygo123@127.0.0.1:6379/0
 export APP_SECRET_KEY="$(openssl rand -hex 32)"
 ```
 
+`APP_SECRET_KEY` 是 AI 连接密钥（各平台 API Key）在数据库中加密存储的主密钥，长度至少 16
+个字符。它必须**生成一次后长期固定**，不能每次启动随机生成：一旦更换，之前用旧密钥加密写入
+`ai_connection_secrets` 表的所有密钥都将无法解密，AI 调用随之失效。上面的 `openssl rand -hex 32`
+仅用于**首次生成**，生成后应把结果固定写入 `API/.env`、systemd `Environment=` 或 Secret Manager，
+后续启动直接复用同一个值。多 worker / 多副本部署时，所有进程也必须共享同一个 `APP_SECRET_KEY`，
+否则一个进程加密的密钥另一个进程无法解密。确需轮换密钥时，须先用旧密钥解密再用新密钥重新加密迁移，
+不能直接替换。
+
 如果 Redis 使用 ACL 用户而不是默认用户，该用户还需要发布订阅权限（跨进程 WebSocket 和 Provider 配置通知会使用 Pub/Sub）：
 
 ```text
