@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
 from typing import Any
 
-from redis.exceptions import RedisError
+from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError
 
 from app.config import (
     CANVAS_TASK_TIMEOUT_SECONDS,
@@ -20,7 +21,7 @@ from app.config import (
     REDIS_CANVAS_TASK_STREAM_MAXLEN,
     REDIS_CANVAS_TASK_TTL_SECONDS,
 )
-from app.core.redis_client import RedisUnavailableError, get_redis_client
+from app.core.redis_client import RedisUnavailableError, get_canvas_stream_client, get_redis_client
 from app.core.log_context import get_log_context
 
 
@@ -343,12 +344,20 @@ async def enqueue_canvas_task(task_id: str) -> str:
 
 
 async def dequeue_canvas_tasks(consumer_id: str, *, block_ms: int = 1000) -> list[tuple[str, str]]:
-    client = get_redis_client()
+    client = get_canvas_stream_client()
     try:
         messages = await client.xreadgroup(
             REDIS_CANVAS_TASK_CONSUMER_GROUP, consumer_id,
             {REDIS_CANVAS_TASK_STREAM: ">"}, count=1, block=block_ms,
         )
+    except asyncio.CancelledError:
+        raise
+    except RedisTimeoutError:
+        # A Redis Streams BLOCK wait may end at an intermediary or Redis client
+        # deadline. It is equivalent to an empty queue poll, not a task-store
+        # failure; the dedicated client has no socket read timeout for normal
+        # operation, but this also covers infrastructure-imposed read limits.
+        return []
     except RedisError as exc:
         raise _unavailable("dequeue", exc) from exc
     return [

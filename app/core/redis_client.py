@@ -17,6 +17,7 @@ from app.core.metrics import REDIS_AVAILABLE, REDIS_OPERATION_SECONDS
 
 logger = get_logger("redis")
 _CLIENT: Any = None
+_CANVAS_STREAM_CLIENT: Any = None
 
 
 class RedisUnavailableError(RuntimeError):
@@ -36,7 +37,7 @@ def _validate_redis_settings() -> None:
 
 async def open_redis_client() -> Any:
     """Create the process-local client and fail startup unless PING succeeds."""
-    global _CLIENT
+    global _CLIENT, _CANVAS_STREAM_CLIENT
     if _CLIENT is not None:
         return _CLIENT
 
@@ -54,15 +55,29 @@ async def open_redis_client() -> Any:
         socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
         health_check_interval=30,
     )
+    # Redis Streams consumers intentionally hold XREADGROUP open while the
+    # queue is empty.  Keep that read on its own pool and disable its socket
+    # read deadline, so a normal BLOCK wait cannot be reported as an outage.
+    stream_client = Redis.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        max_connections=REDIS_MAX_CONNECTIONS,
+        socket_connect_timeout=REDIS_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=None,
+        health_check_interval=30,
+    )
     try:
         with REDIS_OPERATION_SECONDS.labels(operation="ping").time():
             await client.ping()
+            await stream_client.ping()
     except Exception as exc:
         REDIS_AVAILABLE.set(0)
         await client.aclose()
+        await stream_client.aclose()
         raise RedisUnavailableError("Redis 认证缓存不可用，应用拒绝启动") from exc
 
     _CLIENT = client
+    _CANVAS_STREAM_CLIENT = stream_client
     REDIS_AVAILABLE.set(1)
     logger.info(
         "Redis authentication cache connected",
@@ -76,6 +91,15 @@ def get_redis_client() -> Any:
     if client is None:
         REDIS_AVAILABLE.set(0)
         raise RedisUnavailableError("Redis 认证缓存尚未启动")
+    return client
+
+
+def get_canvas_stream_client() -> Any:
+    """Return the Redis client reserved for blocking Canvas Streams reads."""
+    client = _CANVAS_STREAM_CLIENT
+    if client is None:
+        REDIS_AVAILABLE.set(0)
+        raise RedisUnavailableError("Redis 画布任务流尚未启动")
     return client
 
 
@@ -100,11 +124,16 @@ async def redis_readiness_status() -> dict[str, Any]:
 
 
 async def close_redis_client() -> None:
-    global _CLIENT
+    global _CLIENT, _CANVAS_STREAM_CLIENT
     client = _CLIENT
+    stream_client = _CANVAS_STREAM_CLIENT
     _CLIENT = None
+    _CANVAS_STREAM_CLIENT = None
     REDIS_AVAILABLE.set(0)
-    if client is None:
+    if client is not None:
+        await client.aclose()
+    if stream_client is not None:
+        await stream_client.aclose()
+    if client is None and stream_client is None:
         return
-    await client.aclose()
     logger.info("Redis authentication cache closed", extra={"event": "redis_client_closed"})

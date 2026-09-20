@@ -4631,14 +4631,21 @@ async def recover_canvas_tasks_once():
 
 
 async def canvas_task_recovery_loop():
+    interval = REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS
+    retry_delay = interval
+    max_retry_delay = max(interval, 60)
     while True:
         try:
             await recover_canvas_tasks_once()
         except RedisUnavailableError:
             logger.exception("canvas task recovery storage unavailable", extra={"event": "task_recovery_storage_failed"})
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(max_retry_delay, retry_delay * 2)
+            continue
         except Exception:
             logger.exception("canvas task recovery loop failed", extra={"event": "task_recovery_failed"})
-        await asyncio.sleep(REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS)
+        retry_delay = interval
+        await asyncio.sleep(interval)
 
 
 async def execute_canvas_task(task_id: str):

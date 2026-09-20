@@ -63,6 +63,32 @@ def test_redis_client_is_shared_and_closed(monkeypatch):
     assert redis_client._CLIENT is None
 
 
+def test_canvas_stream_client_disables_socket_read_timeout(monkeypatch):
+    import redis.asyncio
+
+    clients = []
+
+    def from_url(*_args, **kwargs):
+        client = FakeRedisClient()
+        client.options = kwargs
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(redis_client, "_CLIENT", None)
+    monkeypatch.setattr(redis_client, "_CANVAS_STREAM_CLIENT", None)
+    monkeypatch.setattr(redis_client, "REDIS_URL", "redis://127.0.0.1:6379/0")
+    monkeypatch.setattr(redis.asyncio.Redis, "from_url", from_url)
+
+    async def scenario():
+        await redis_client.open_redis_client()
+        assert redis_client.get_canvas_stream_client() is clients[1]
+        await redis_client.close_redis_client()
+
+    asyncio.run(scenario())
+    assert clients[0].options["socket_timeout"] == redis_client.REDIS_SOCKET_TIMEOUT_SECONDS
+    assert clients[1].options["socket_timeout"] is None
+
+
 def test_auth_middleware_returns_503_when_redis_fails(monkeypatch):
     import main
 

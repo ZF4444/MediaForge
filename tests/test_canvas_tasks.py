@@ -1,5 +1,7 @@
 import asyncio
 
+from redis.exceptions import TimeoutError as RedisTimeoutError
+
 from app.core.log_context import reset_log_context, set_log_context
 from app.services import canvas_tasks
 
@@ -157,6 +159,7 @@ class Redis:
 def test_canvas_tasks_persist_update_claim_and_recover(monkeypatch):
     redis = Redis()
     monkeypatch.setattr(canvas_tasks, "get_redis_client", lambda: redis)
+    monkeypatch.setattr(canvas_tasks, "get_canvas_stream_client", lambda: redis)
 
     async def scenario():
         await canvas_tasks.create_canvas_task({"id": "task-1", "status": "queued", "type": "online-image"})
@@ -188,6 +191,16 @@ def test_canvas_tasks_persist_update_claim_and_recover(monkeypatch):
         assert redis.streams[canvas_tasks._DEAD_LETTER_STREAM][0][1]["task_id"] == "task-2"
 
     asyncio.run(scenario())
+
+
+def test_canvas_task_dequeue_timeout_is_an_empty_poll(monkeypatch):
+    class TimeoutStreamClient:
+        async def xreadgroup(self, *_args, **_kwargs):
+            raise RedisTimeoutError("read timed out")
+
+    monkeypatch.setattr(canvas_tasks, "get_canvas_stream_client", TimeoutStreamClient)
+
+    assert asyncio.run(canvas_tasks.dequeue_canvas_tasks("worker-a")) == []
 
 
 def test_canvas_task_strips_legacy_fields_for_stable_target(monkeypatch):
