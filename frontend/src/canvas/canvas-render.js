@@ -13,8 +13,7 @@
 //   2. 主渲染循环与节点事件绑定：formatRunDuration / nodeRunElapsedMs /
 //      runTimePillHtml / hideRunTimerForNode / refreshRunTimerPills /
 //      render / measureSmartNodeImages / pickMediaForSmartNode /
-//      bindNodeEvents / rectOverlapNode / dragConnectTargetFor /
-//      canAutoConnectDraggedNode / restoreDraggedNodePosition
+//      bindNodeEvents / rectOverlapNode
 //
 // 这是整个 canvas.js 中耦合度最高的模块：render()/bindNodeEvents() 直接
 // 读写几乎所有全局状态（nodes/viewport/selectedId/selectedIds/selectedImage/
@@ -204,6 +203,7 @@ function smartNodeHtmlEntry(node){
             <div class="node-body">${body}</div>
             ${expandedCandidateGridHtml(node)}
             <div class="node-hint">${hint}</div>
+            ${isPrompt ? `<span class="prompt-node-resize-handle prompt-node-resize-n" data-resize="n"></span><span class="prompt-node-resize-handle prompt-node-resize-ne" data-resize="ne"></span><span class="prompt-node-resize-handle prompt-node-resize-e" data-resize="e"></span><span class="prompt-node-resize-handle prompt-node-resize-se" data-resize="se"></span><span class="prompt-node-resize-handle prompt-node-resize-s" data-resize="s"></span><span class="prompt-node-resize-handle prompt-node-resize-sw" data-resize="sw"></span><span class="prompt-node-resize-handle prompt-node-resize-w" data-resize="w"></span><span class="prompt-node-resize-handle prompt-node-resize-nw" data-resize="nw"></span>` : ''}
             <div class="node-port port-in" data-port="in" title="input"></div>
             <div class="node-port port-out" data-port="out" title="output"></div>
         </div>`;
@@ -474,6 +474,28 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
         const id = el.dataset.id;
         const nodeForControls = nodes.find(n => n.id === id);
         if(nodeForControls?.type === 'smart-prompt') bindPromptNodeControls(el, nodeForControls);
+        el.querySelectorAll('.prompt-node-resize-handle').forEach(handle => {
+            handle.addEventListener('mousedown', e => {
+                if(e.button !== 0 || !nodeForControls || nodeForControls.type !== 'smart-prompt') return;
+                e.preventDefault();
+                e.stopPropagation();
+                selectedId = nodeForControls.id;
+                selectedIds = [];
+                capturePendingUndo();
+                promptNodeResizeState = {
+                    nodeId:nodeForControls.id,
+                    handle:handle.dataset.resize || '',
+                    startX:e.clientX,
+                    startY:e.clientY,
+                    startXWorld:Number(nodeForControls.x) || 0,
+                    startYWorld:Number(nodeForControls.y) || 0,
+                    startW:Number(nodeForControls.w) || el.offsetWidth || 316,
+                    startH:Number(nodeForControls.h) || el.offsetHeight || 194,
+                    el
+                };
+                document.body.classList.add('prompt-node-resizing');
+            });
+        });
         if(nodeForControls?.type === 'smart-loop') bindLoopNodeControls(el, nodeForControls);
         // Native <video controls> can swallow click events without bubbling, so use a
         // capture-phase mousedown on the whole node to reliably select it and (re)open
@@ -770,7 +792,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             // reserved for image reordering / preview interactions.
             if(e.button !== 0 || (!isMultiSelected && e.target.closest('.mini-x, .thumb-item, .node-port, select, input, button'))) return;
             if(isMultiSelected && e.target.closest('.mini-x, .node-port, select, input, button')) return;
-            if(e.target.closest('.prompt-node-pill, textarea:not(.prompt-node-text)')) return;
+            if(e.target.closest('textarea:not(.prompt-node-text)')) return;
             e.preventDefault(); e.stopPropagation();
             window.getSelection?.()?.removeAllRanges?.();
             if(document.activeElement?.blur) document.activeElement.blur();
@@ -814,6 +836,12 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             openNodeContextMenu(id, e);
         });
         el.onmousedown = beginNodeDrag;
+        if(nodeForControls?.type === 'smart-prompt'){
+            const promptText = el.querySelector('.prompt-node-text');
+            promptText?.addEventListener('mousedown', e => {
+                if(promptText.readOnly) beginNodeDrag(e);
+            }, true);
+        }
         el.ondragover = e => setSmartDropCopyEffect(e);
         el.ondrop = async e => {
             e.preventDefault();
@@ -834,39 +862,11 @@ function rectOverlapNode(draggedId, x, y, w, h, excludeIds=[]){
     }
     return null;
 }
-function dragConnectTargetFor(sourceNode, point=lastMouseWorld){
-    if(!sourceNode || (dragState?.group || []).length > 1) return null;
-    if(['smart-prompt', 'smart-loop'].includes(sourceNode.type) && point){
-        return rectOverlapNode(sourceNode.id, point.x - 1, point.y - 1, 2, 2, dragState?.groupIds || []);
-    }
-    const r = nodeRect(sourceNode);
-    return rectOverlapNode(sourceNode.id, r.x, r.y, r.width, r.height, dragState?.groupIds || []);
-}
-function canAutoConnectDraggedNode(sourceNode, targetNode){
-    if(!sourceNode || !targetNode || sourceNode.id === targetNode.id) return false;
-    if(isHistoryGroupNode(sourceNode) || isHistoryGroupNode(targetNode)) return false;
-    if(isSmartImageNode(sourceNode)) return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop' || targetNode.type === 'smart-prompt';
-    if(sourceNode.type === 'smart-prompt') return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop' || targetNode.type === 'smart-prompt';
-    if(sourceNode.type === 'smart-loop') return isSmartImageNode(targetNode);
-    if(sourceNode.type === 'smart-group') return isSmartImageNode(targetNode) || targetNode.type === 'smart-loop';
-    return false;
-}
-function restoreDraggedNodePosition(){
-    if(!dragState) return;
-    (dragState.group || [{id:dragState.id, ox:dragState.ox, oy:dragState.oy}]).forEach(item => {
-        const n = nodes.find(x => x.id === item.id);
-        if(n){
-            n.x = item.ox;
-            n.y = item.oy;
-        }
-    });
-}
 
 // M19 追加：window.onmousemove / window.onmouseup 全局交互状态调度中心
 // + 右键拖拽取消处理。从 frontend/src/canvas/main.js 原样剪切，未改动
 // 任何函数内部逻辑，只做了纯粹的位置搬移，追加到本文件（canvas-render.js）
-// 末尾——它们和上面的 dragConnectTargetFor/rectOverlapNode/
-// canAutoConnectDraggedNode/restoreDraggedNodePosition（M7 已迁移）
+// 末尾——它们和上面的 rectOverlapNode（M7 已迁移）
 // 本来就是同一个"节点拖拽/画布交互"关注点，物理上放在一起合情合理。
 //
 // 背景（M7 阶段的架构判断，M18 已完成前置步骤，本次 M19 完成物理拆分）：
@@ -883,7 +883,7 @@ function restoreDraggedNodePosition(){
 //     输入框高度拖拽中 / 框选中 / 预览对比拖拽中 / 全景图拖拽中 /
 //     预览图平移中 / 图片编辑器画面平移中 / 裁剪框拖拽中 / 缩略图
 //     拖拽中（含"拖出缩略图独立成节点"的特殊逻辑）/ 画布平移中 /
-//     节点拖拽中（含拖入资产库面板的高亮反馈、自动连线/合并/插入
+//     节点拖拽中（含拖入资产库面板的高亮反馈、合并/插入
 //     分组的候选目标高亮）。
 //   finishCanvasRightClick / cancelCanvasRightClick —— 右键按下后
 //     判断"是否发生了拖动"，没有拖动才在 pointerup 时打开右键菜单；
@@ -926,8 +926,8 @@ function restoreDraggedNodePosition(){
 //     minimapEventToWorld, updateSelectionBox, persistActiveSmartSettings,
 //     applyViewport, flushDeferredViewportRendering, applyNodeMetaToImage,
 //     inheritNodeMetaFromImage, commitPendingUndo, discardPendingUndo,
-//     moveNodeElementsDuringDrag, updateLoopInsertPreview, setDropHighlight,
-//     clearDropHighlight, setAssetDragOver, finishSelection,
+//     moveNodeElementsDuringDrag, updateLoopInsertPreview, setAssetDragOver,
+//     finishSelection,
 //     mergeImageNodesIntoGroup, smartGroupTargetForDraggedNode,
 //     addDraggedNodesToSmartGroup, scheduleSave, render, screenToWorld,
 //     openCanvasContextMenu
@@ -939,8 +939,7 @@ function restoreDraggedNodePosition(){
 //   asset-library.js（M9）：addFileToAssetLibrary
 //   loop-node.js（M2）：insertLoopNodeIntoConnection
 //   node-layout.js（M3）：nodeRect
-//   本文件（canvas-render.js，M7）：dragConnectTargetFor, rectOverlapNode,
-//     canAutoConnectDraggedNode, restoreDraggedNodePosition
+//   本文件（canvas-render.js，M7）：rectOverlapNode
 //
 // main.js 里仍保留的部分会调用本次追加的函数（通过共享脚本作用域）：
 //   各处 mousedown/pointerdown 事件绑定设置好 dragState/panState/
@@ -987,6 +986,40 @@ function handleWindowMouseMove(e){
         settings.promptH = Math.max(60, Math.min(380, promptResizeState.startH + dy));
         promptInput.style.setProperty('--prompt-h', `${settings.promptH}px`);
         persistActiveSmartSettings();
+        return;
+    }
+    if(promptNodeResizeState){
+        e.preventDefault();
+        const resize = promptNodeResizeState;
+        const dx = (e.clientX - resize.startX) / viewport.scale;
+        const dy = (e.clientY - resize.startY) / viewport.scale;
+        const handle = resize.handle;
+        const minW = 220;
+        const minH = 150;
+        const maxW = 900;
+        const maxH = 700;
+        let width = resize.startW;
+        let height = resize.startH;
+        let x = resize.startXWorld;
+        let y = resize.startYWorld;
+        if(handle.includes('e')) width = resize.startW + dx;
+        if(handle.includes('w')) width = resize.startW - dx;
+        if(handle.includes('s')) height = resize.startH + dy;
+        if(handle.includes('n')) height = resize.startH - dy;
+        width = Math.max(minW, Math.min(maxW, width));
+        height = Math.max(minH, Math.min(maxH, height));
+        if(handle.includes('w')) x = resize.startXWorld + resize.startW - width;
+        if(handle.includes('n')) y = resize.startYWorld + resize.startH - height;
+        const node = nodes.find(item => item.id === resize.nodeId);
+        if(!node) return;
+        node.x = x;
+        node.y = y;
+        node.w = width;
+        node.h = height;
+        resize.el.style.left = `${x}px`;
+        resize.el.style.top = `${y}px`;
+        resize.el.style.width = `${width}px`;
+        resize.el.style.height = `${height}px`;
         return;
     }
     if(selectionState){
@@ -1100,23 +1133,12 @@ function handleWindowMouseMove(e){
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         if(hit && assetPanel?.contains(hit)){
             setAssetDragOver(true);
-            clearDropHighlight();
-            setAssetDragOver(true);
             return;
         }
         setAssetDragOver(false);
     }
-    const draggedRect = nodeRect(node);
-    const rawTarget = (dragState.ctrlGroup || ['smart-image','smart-prompt','smart-loop','smart-group'].includes(node.type))
-        ? (['smart-prompt','smart-loop'].includes(node.type)
-            ? dragConnectTargetFor(node, screenToWorld(e))
-            : rectOverlapNode(node.id, draggedRect.x, draggedRect.y, draggedRect.width, draggedRect.height, dragState.groupIds))
-        : null;
-    const target = rawTarget;
-    setDropHighlight(target?.id || '');
     moveNodeElementsDuringDrag();
     updateLoopInsertPreview();
-    if(target) setDropHighlight(target.id);
 }
 window.onmousemove = handleWindowMouseMove;
 function finishCanvasRightClick(e){
@@ -1152,6 +1174,14 @@ function handleWindowMouseUp(e){
         return;
     }
     if(promptResizeState){ promptResizeState = null; scheduleSave(); }
+    if(promptNodeResizeState){
+        promptNodeResizeState = null;
+        document.body.classList.remove('prompt-node-resizing');
+        commitPendingUndo();
+        scheduleSave();
+        render();
+        return;
+    }
     if(selectionState) finishSelection(e);
     if(previewCompareDrag) previewCompareDrag = false;
     if(panoramaState.drag){
@@ -1196,14 +1226,12 @@ function handleWindowMouseUp(e){
             });
             setAssetDragOver(false);
             discardPendingUndo();
-            clearDropHighlight();
             dragState = null;
             document.body.classList.remove('smart-node-drag');
             render();
             scheduleSave();
             return;
         }
-        const autoTarget = draggedNode ? dragConnectTargetFor(draggedNode, screenToWorld(e)) : null;
         const insertHit = draggedNode?.type === 'smart-loop' && dragState.ctrlGroup && (dragState.group || []).length <= 1
             ? insertionConnectionForNode(draggedNode)
             : null;
@@ -1221,30 +1249,12 @@ function handleWindowMouseUp(e){
         ){
             stateChanged = true;
             render();
-        } else if(
-            draggedNode &&
-            autoTarget &&
-            !dragState.ctrlGroup &&
-            (dragState.group || []).length <= 1 &&
-            canAutoConnectDraggedNode(draggedNode, autoTarget) &&
-            connectInputNode(draggedNode.id, autoTarget.id)
-        ){
-            stateChanged = true;
-            restoreDraggedNodePosition();
-            if(selectedId === draggedNode.id) selectedId = '';
-            render();
         } else if(draggedNode && (draggedNode.images || []).length && (dragState.ctrlGroup || (dragState.group || []).length <= 1)){
             const r = nodeRect(draggedNode);
             const target = rectOverlapNode(draggedNode.id, r.x, r.y, r.width, r.height, dragState.groupIds);
             if(target && (target.images || []).length && (dragState.ctrlGroup || (target.images || []).length > 1)){
                 stateChanged = true;
                 mergeImageNodesIntoGroup(draggedNode.id, target.id);
-                render();
-            } else if(target && !dragState.ctrlGroup && (dragState.group || []).length <= 1){
-                stateChanged = true;
-                connectInputNode(draggedNode.id, target.id);
-                if(!dragState.thumbDetached) restoreDraggedNodePosition();
-                if(selectedId === draggedNode.id) selectedId = '';
                 render();
             } else if((dragState.group || []).some(item => {
                 const n = nodes.find(x => x.id === item.id);
@@ -1263,7 +1273,6 @@ function handleWindowMouseUp(e){
         if(stateChanged) commitPendingUndo();
         else discardPendingUndo();
         if(stateChanged || thumbDetached) suppressNodeClickUntil = Date.now() + 180;
-        clearDropHighlight();
         loopInsertPreview = null;
         dragState = null;
         if(stateChanged || thumbDetached) scheduleSave();

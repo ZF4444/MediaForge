@@ -62,7 +62,8 @@ function normalizeLegacySmartNode(node){
     // Older canvases did not persist genKind on the node itself. Recover the
     // semantic type from its saved run settings so a reload cannot turn a
     // video node into an image node.
-    if(!['image', 'video', 'workflow'].includes(node.genKind)){
+    if((node.type === 'smart-image' || node.type === 'smart-asset-image' || !node.type)
+        && !['image', 'video', 'workflow'].includes(node.genKind)){
         const saved = node.runSettings && typeof node.runSettings === 'object' ? node.runSettings : {};
         if(saved.apiKind === 'video' || saved.videoModel || saved.videoProvider){
             node.genKind = 'video';
@@ -70,6 +71,7 @@ function normalizeLegacySmartNode(node){
             node.genKind = 'image';
         }
     }
+    if(['smart-prompt', 'smart-loop', 'smart-group'].includes(node.type)) delete node.genKind;
     if(node.type === 'smart-image' || node.type === 'smart-asset-image') delete node.imageMode;
     if(node.type === 'smart-image' && node.historyFor) node.isHistoryGroup = true;
     if(node.type === 'smart-image' || node.type === 'smart-asset-image'){

@@ -661,6 +661,10 @@ function clearVolcengineSelectionOutsideVolcengine(target=settings){
     return target;
 }
 function isSmartImageNode(node){
+    // Prompt/loop/group nodes may have received a legacy `genKind: image`
+    // marker during normalization. Their explicit w/h are real layout state,
+    // so never treat them as media nodes for storage or image layout.
+    if(node?.type && ['smart-prompt', 'smart-loop', 'smart-group'].includes(node.type)) return false;
     return Boolean(node && (
         node.type === 'smart-image' ||
         node.type === 'smart-asset-image' ||
@@ -2097,12 +2101,8 @@ function closeCanvasShortcuts(){
 }
 function promptNodeBodyHtml(node){
     node.llmTask = ['llm', 'caption', 'expand'].includes(node.llmTask) ? node.llmTask : 'llm';
-    const templateActive = activePromptTemplateNodeId() === node.id;
     return `<div class="prompt-node-card">
         <textarea class="prompt-node-text prompt-node-control" readonly placeholder="${escapeHtml(tr('smart.promptPlaceholderNode'))}">${escapeHtml(node.text || '')}</textarea>
-        <div class="prompt-node-tools">
-            <button class="prompt-node-pill prompt-node-control prompt-preset-edit ${templateActive ? 'active' : ''}" type="button"><i data-lucide="library"></i><span>模板库</span></button>
-        </div>
     </div>`;
 }
 // M2 拆分：loopNumberControlHtml / smartLoopTokenLabel / smartLoopTokenChipHtml /
@@ -2117,7 +2117,7 @@ function promptNodeBodyHtml(node){
 // clearPortDragVisual 已迁移到
 // frontend/src/canvas/connections.js（经典 <script>，同上）。
 function bindPromptNodeControls(el, node){
-    el.querySelectorAll('.prompt-node-control, .prompt-node-pill').forEach(control => {
+    el.querySelectorAll('.prompt-node-control').forEach(control => {
         control.addEventListener('mousedown', e => e.stopPropagation());
         control.addEventListener('click', e => e.stopPropagation());
         control.addEventListener('dblclick', e => e.stopPropagation());
@@ -2147,16 +2147,6 @@ function bindPromptNodeControls(el, node){
         });
         textEl.addEventListener('blur', () => { textEl.readOnly = true; });
     }
-    const presetEdit = el.querySelector('.prompt-preset-edit');
-    if(presetEdit) presetEdit.onclick = e => {
-        e.preventDefault();
-        e.stopPropagation();
-        if(promptTemplatePanel?.classList.contains('open') && promptTemplatePanel.dataset.target === 'node' && promptTemplatePanel.dataset.nodeId === node.id){
-            closePromptTemplatePanel();
-            return;
-        }
-        editPromptPresetForNode(node);
-    };
 }
 // M2 拆分：bindLoopNodeControls 已迁移到 frontend/src/canvas/loop-node.js。
 function bindScrollableText(el){
@@ -2234,18 +2224,8 @@ function bindScrollableText(el){
 // handlePortDropMenuSelect 已迁移到
 // frontend/src/canvas/connections.js（经典 <script>，同上）。
 
-// M7 拆分：pickMediaForSmartNode / bindNodeEvents / rectOverlapNode /
-// dragConnectTargetFor / canAutoConnectDraggedNode / restoreDraggedNodePosition
+// M7 拆分：pickMediaForSmartNode / bindNodeEvents / rectOverlapNode
 // 已迁移到 frontend/src/canvas/canvas-render.js（经典 <script>，非 ES module，原因同 M1-M6）。
-function clearDropHighlight(){
-    world.querySelectorAll('.image-node.drop-target').forEach(el => el.classList.remove('drop-target'));
-}
-function setDropHighlight(targetId){
-    clearDropHighlight();
-    if(!targetId) return;
-    const el = world.querySelector(`.image-node[data-id="${targetId}"]`);
-    if(el) el.classList.add('drop-target');
-}
 function deleteNode(id){
     pushUndo();
     const deleteIds = new Set([id]);
@@ -4580,6 +4560,7 @@ function engineSelectChangeHandler(){
 }
 engineSelect.onchange = engineSelectChangeHandler;
 let promptResizeState = null;
+let promptNodeResizeState = null;
 const promptResize = document.getElementById('promptResize');
 if(promptResize){
     promptResize.addEventListener('mousedown', e => {
@@ -4790,6 +4771,16 @@ if(composerTemplateBtn) composerTemplateBtn.onclick = event => {
         return;
     }
     openPromptTemplatePanel(activeComposerNode()?.id || selectedNode()?.id || '', promptTemplateSelectedId, {target:'composer'});
+};
+const promptComposerTemplateBtn = document.getElementById('promptComposerTemplateBtn');
+if(promptComposerTemplateBtn) promptComposerTemplateBtn.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if(promptTemplatePanel?.classList?.contains('open') && promptTemplatePanel.dataset.target === 'prompt-composer'){
+        closePromptTemplatePanel();
+        return;
+    }
+    openPromptTemplatePanel(selectedNode()?.id || '', promptTemplateSelectedId, {target:'prompt-composer'});
 };
 if(promptPresetSelect) promptPresetSelect.onchange = () => renderPromptPresetPanel(promptPresetSelect.value);
 [promptPresetName, promptPresetText].forEach(input => {
@@ -5130,8 +5121,8 @@ mentionPicker.addEventListener('mousedown', event => event.stopPropagation());
 function documentClickHandler2(event){
     if(!event.target.closest('.smart-control')) closeAllSmartPopovers();
     if(!event.target.closest('.mention-picker') && !event.target.closest('#promptInput')) closeMentionPicker();
-    if(!event.target.closest('.prompt-preset-panel') && !event.target.closest('.prompt-preset-edit') && !event.target.closest('.prompt-preset-save')) closePromptPresetPanel();
-    if(!event.target.closest('.prompt-template-panel') && !event.target.closest('.prompt-preset-edit') && !event.target.closest('#composerTemplateBtn')) closePromptTemplatePanel();
+    if(!event.target.closest('.prompt-preset-panel') && !event.target.closest('.prompt-preset-save')) closePromptPresetPanel();
+    if(!event.target.closest('.prompt-template-panel') && !event.target.closest('#composerTemplateBtn') && !event.target.closest('#promptComposerTemplateBtn')) closePromptTemplatePanel();
 }
 document.addEventListener('click', documentClickHandler2);
 function documentKeydownHandler(event){

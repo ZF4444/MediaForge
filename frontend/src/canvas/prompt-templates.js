@@ -503,17 +503,25 @@ function renderPromptTemplatePanel(options={}){
     restorePromptTemplateScroll(scrollSnapshot);
 }
 function activePromptTemplateNodeId(){
-    return promptTemplatePanel?.classList?.contains('open') && promptTemplatePanel.dataset.target !== 'composer' ? (promptTemplatePanel.dataset.nodeId || '') : '';
+    return promptTemplatePanel?.classList?.contains('open') && promptTemplatePanel.dataset.target === 'node' ? (promptTemplatePanel.dataset.nodeId || '') : '';
 }
 function syncComposerTemplateButton(){
-    if(!composerTemplateBtn || !promptTemplatePanel) return;
-    const active = promptTemplatePanel.classList.contains('open') && promptTemplatePanel.dataset.target === 'composer';
-    composerTemplateBtn.classList.toggle('active', active);
-    composerTemplateBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    if(!promptTemplatePanel) return;
+    const target = promptTemplatePanel.classList.contains('open') ? promptTemplatePanel.dataset.target : '';
+    const imageComposerActive = target === 'composer';
+    const promptComposerActive = target === 'prompt-composer';
+    [
+        [composerTemplateBtn, imageComposerActive],
+        [promptComposerTemplateBtn, promptComposerActive]
+    ].forEach(([button, active]) => {
+        if(!button) return;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
 }
 function openPromptTemplatePanel(nodeId='', templateId='', options={}){
     if(!promptTemplatePanel) return;
-    const target = options.target === 'composer' ? 'composer' : 'node';
+    const target = ['composer', 'prompt-composer'].includes(options.target) ? options.target : 'node';
     promptTemplatePanel.dataset.target = target;
     promptTemplatePanel.dataset.nodeId = nodeId || '';
     if(promptTemplatePanel.parentElement !== shell) shell.appendChild(promptTemplatePanel);
@@ -548,6 +556,15 @@ function applyPromptTemplateToNode(mode='positive'){
         scheduleSave();
         return;
     }
+    if(promptTemplatePanel?.dataset.target === 'prompt-composer'){
+        const node = nodes.find(n => n.id === promptTemplatePanel.dataset.nodeId);
+        if(!node) return;
+        node.llmInstruction = promptTemplateText(template, mode);
+        closePromptTemplatePanel();
+        renderPromptComposer(node);
+        scheduleSave();
+        return;
+    }
     const node = nodes.find(n => n.id === promptTemplatePanel?.dataset.nodeId);
     if(!node) return;
     node.text = promptTemplateText(template, mode);
@@ -559,8 +576,11 @@ function applyPromptTemplateToNode(mode='positive'){
 async function saveCurrentPromptAsTemplate(){
     const library = activePromptLibrary();
     if(library.id === 'system' || library.readonly){ toast('请选择可编辑的提示词库'); return; }
-    const text = promptTemplatePanel?.dataset.target === 'composer'
+    const target = promptTemplatePanel?.dataset.target;
+    const text = target === 'composer'
         ? promptPlainText()
+        : target === 'prompt-composer'
+        ? String(nodes.find(n => n.id === promptTemplatePanel?.dataset.nodeId)?.llmInstruction || '').trim()
         : String(nodes.find(n => n.id === promptTemplatePanel?.dataset.nodeId)?.text || '').trim();
     if(!text){ toast(tr('smart.promptPresetEmpty')); return; }
     try {
