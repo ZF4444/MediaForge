@@ -111,11 +111,7 @@ function savePromptPresets(){
 }
 function defaultPromptTemplateGroups(){
     return [
-        {id:'view', name:tr('smart.tplCatView')},
-        {id:'storyboard', name:tr('smart.tplCatStoryboard')},
-        {id:'character', name:tr('smart.tplCatCharacter')},
-        {id:'product', name:tr('smart.tplCatProduct')},
-        {id:'lighting', name:tr('smart.tplCatLighting')},
+        {id:'builtin', name:tr('smart.tplCatBuiltin')},
         {id:'mine', name:tr('smart.tplCatMine')}
     ];
 }
@@ -175,7 +171,8 @@ function renderPromptLibrarySelect(){
 }
 function promptTemplateItems(){
     const activeLibrary = activePromptLibrary();
-    if(activeLibrary.id !== 'system'){
+    const builtinLibrary = ['system', 'caption', 'expand'].includes(String(activeLibrary.id || '')) || activeLibrary.system || activeLibrary.readonly;
+    if(!builtinLibrary){
         return (activeLibrary.items || []).filter(t => t?.id && t?.positive).map(t => ({
             ...t,
             sourceId:t.id,
@@ -184,11 +181,22 @@ function promptTemplateItems(){
             libraryId:activeLibrary.id
         }));
     }
-    const hidden = new Set(promptTemplateOverrides.hiddenBuiltinIds || []);
-    const builtins = builtinPromptTemplates
+    const hidden = new Set(activeLibrary.id === 'system' ? (promptTemplateOverrides.hiddenBuiltinIds || []) : []);
+    const libraryItems = Array.isArray(activeLibrary.items) ? activeLibrary.items : builtinPromptTemplates;
+    const builtins = libraryItems
+        .filter(t => t?.builtin !== false)
         .filter(t => !hidden.has(t.id))
-        .map(t => ({...t, ...(promptTemplateOverrides.editedBuiltins?.[t.id] || {}), builtin:true}));
-    const mine = promptPresets.map(p => ({
+        .filter(t => t?.id && t?.positive)
+        .map(t => ({...t, ...(activeLibrary.id === 'system' ? (promptTemplateOverrides.editedBuiltins?.[t.id] || {}) : {}), builtin:true, remote:true, libraryId:activeLibrary.id}));
+    const accountItems = activeLibrary.id === 'system' ? libraryItems.filter(t => t?.builtin === false).map(t => ({
+        ...t,
+        sourceId:t.id,
+        category:'mine',
+        builtin:false,
+        remote:true,
+        libraryId:activeLibrary.id
+    })) : [];
+    const mine = activeLibrary.id === 'system' ? promptPresets.map(p => ({
         id:`mine:${p.id}`,
         sourceId:p.id,
         name:p.name || tr('smart.promptPresetUnnamed'),
@@ -198,8 +206,8 @@ function promptTemplateItems(){
         negative:'',
         params:{},
         builtin:false
-    }));
-    return [...builtins, ...mine];
+    })) : [];
+    return [...builtins, ...accountItems, ...mine];
 }
 function promptTemplateText(template, mode='positive'){
     const positive = String(template?.positive || '').trim();
@@ -228,21 +236,17 @@ function promptTemplateSearchText(template){
 }
 function activePromptTemplateGroups(){
     const lib = activePromptLibrary();
-    if(!lib || lib.id === 'system') return promptTemplateGroups;
+    if(!lib || ['system', 'caption', 'expand'].includes(String(lib.id || '')) || lib.system || lib.readonly) return promptTemplateGroups;
     return Array.isArray(lib.categories) ? lib.categories.filter(c => c?.id && c?.name) : [];
 }
 function promptTemplateCategoryLabel(category){
     if(category === 'all') return tr('smart.tplAll');
     const lib = activePromptLibrary();
-    if(lib && lib.id !== 'system'){
+    if(lib && !['system', 'caption', 'expand'].includes(String(lib.id || '')) && !lib.system && !lib.readonly){
         return activePromptTemplateGroups().find(g => g.id === category)?.name || category;
     }
     const builtin = {
-        view:tr('smart.tplCatView'),
-        storyboard:tr('smart.tplCatStoryboard'),
-        character:tr('smart.tplCatCharacter'),
-        product:tr('smart.tplCatProduct'),
-        lighting:tr('smart.tplCatLighting'),
+        builtin:tr('smart.tplCatBuiltin'),
         mine:tr('smart.tplCatMine')
     };
     return builtin[category] || promptTemplateGroups.find(g => g.id === category)?.name || category;
@@ -391,13 +395,13 @@ function renderPromptTemplatePanel(options={}){
             </div>
             <div class="prompt-template-group-list">
                 ${activeGroups.map(group => `
-                    <div class="prompt-template-group-row ${['view','storyboard','character','product','lighting','mine'].includes(group.id) ? '' : 'has-delete'}">
+                    <div class="prompt-template-group-row ${['builtin','mine'].includes(group.id) ? '' : 'has-delete'}">
                         <button type="button" class="group-name ${group.id === promptTemplateCategory ? 'active' : ''}" data-template-cat="${escapeHtml(group.id)}">
                             <span>${escapeHtml(promptTemplateCategoryLabel(group.id))}</span>
                             <small>${groupCounts[group.id] || 0}</small>
                         </button>
                         <button type="button" class="group-tool" data-template-cat-edit="${escapeHtml(group.id)}" title="${escapeAttr(tr('smart.tplRename'))}"><i data-lucide="pencil"></i></button>
-                        ${['view','storyboard','character','product','lighting','mine'].includes(group.id) ? '' : `<button type="button" class="group-tool danger" data-template-cat-delete="${escapeHtml(group.id)}" title="${escapeAttr(tr('common.delete'))}"><i data-lucide="trash-2"></i></button>`}
+                        ${['builtin','mine'].includes(group.id) ? '' : `<button type="button" class="group-tool danger" data-template-cat-delete="${escapeHtml(group.id)}" title="${escapeAttr(tr('common.delete'))}"><i data-lucide="trash-2"></i></button>`}
                     </div>
                 `).join('')}
             </div>
@@ -423,12 +427,12 @@ function renderPromptTemplatePanel(options={}){
     if(items.length && !items.some(item => item.id === promptTemplateSelectedId)) promptTemplateSelectedId = items[0].id;
     const selected = items.find(item => item.id === promptTemplateSelectedId) || items[0] || null;
     const selectedPreset = selected?.builtin || selected?.remote
-        ? {id:selected.id, name:selected.name || '', text:selected.positive || '', category:selected.category || 'storyboard', builtin:Boolean(selected.builtin)}
+        ? {id:selected.id, name:selected.name || '', text:selected.positive || '', category:selected.category || 'builtin', builtin:Boolean(selected.builtin)}
         : (selected ? currentPromptPreset(selected.sourceId) : null);
     const target = promptTemplatePanel.dataset.target || 'node';
     const node = nodes.find(n => n.id === promptTemplatePanel.dataset.nodeId);
     const activeLibrary = activePromptLibrary();
-    const canEditCurrentLibrary = activeLibrary.id !== 'system' && !activeLibrary.readonly;
+    const canEditCurrentLibrary = !['system', 'caption', 'expand'].includes(String(activeLibrary.id || '')) && !activeLibrary.system && !activeLibrary.readonly;
     const editMode = Boolean(promptTemplateEditing && selectedPreset);
     promptTemplateBody.innerHTML = `
         <div class="prompt-template-list">
@@ -575,7 +579,7 @@ function applyPromptTemplateToNode(mode='positive'){
 }
 async function saveCurrentPromptAsTemplate(){
     const library = activePromptLibrary();
-    if(library.id === 'system' || library.readonly){ toast('请选择可编辑的提示词库'); return; }
+    if(['system', 'caption', 'expand'].includes(String(library.id || '')) || library.system || library.readonly){ toast('请选择可编辑的提示词库'); return; }
     const target = promptTemplatePanel?.dataset.target;
     const text = target === 'composer'
         ? promptPlainText()

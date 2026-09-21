@@ -113,20 +113,17 @@ describe('promptTemplateSearchText', () => {
 });
 
 describe('defaultPromptTemplateGroups', () => {
-    it('返回6个内置分组，且包含 mine 分组', () => {
+    it('返回2个内置分组：builtin 与 mine', () => {
         const sandbox = createPromptTemplatesSandbox({
             trDict: {
-                'smart.tplCatView': '视角',
-                'smart.tplCatStoryboard': '分镜',
-                'smart.tplCatCharacter': '角色',
-                'smart.tplCatProduct': '产品',
-                'smart.tplCatLighting': '光照',
+                'smart.tplCatBuiltin': '内置',
                 'smart.tplCatMine': '我的',
             },
         });
         const groups = sandbox.defaultPromptTemplateGroups();
-        expect(groups.length).toBe(6);
-        expect(groups.map(g => g.id)).toEqual(['view', 'storyboard', 'character', 'product', 'lighting', 'mine']);
+        expect(groups.length).toBe(2);
+        expect(groups.map(g => g.id)).toEqual(['builtin', 'mine']);
+        expect(groups.find(g => g.id === 'builtin').name).toBe('内置');
         expect(groups.find(g => g.id === 'mine').name).toBe('我的');
     });
 });

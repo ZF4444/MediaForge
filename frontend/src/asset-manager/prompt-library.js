@@ -25,12 +25,12 @@
 function promptLibraries(){
     const libs = Array.isArray(promptLibrary.libraries) ? promptLibrary.libraries.filter(Boolean) : [];
     if(!libs.length) return [{id:'system', name:'系统提示词库', system:true, items:[], categories:[]}];
-    const system = libs.filter(lib => lib.id === 'system');
-    const others = libs.filter(lib => lib.id !== 'system');
+    const system = libs.filter(lib => ['system', 'caption', 'expand'].includes(String(lib.id || '')) || lib.system === true || lib.readonly === true);
+    const others = libs.filter(lib => !system.includes(lib));
     return [...system, ...others];
 }
 function isSystemPromptLibrary(lib){
-    return !lib || lib.id === 'system';
+    return !lib || ['system', 'caption', 'expand'].includes(String(lib.id || '')) || lib.system === true || lib.readonly === true;
 }
 function activePromptLibrary(){
     const libs = promptLibraries();
@@ -42,19 +42,15 @@ function activePromptCategories(){
     if(fromLib.length) return fromLib;
     if(!isSystemPromptLibrary(lib)) return [];
     return [
-        {id:'view', name:'视角'},
-        {id:'storyboard', name:'分镜'},
-        {id:'character', name:'角色'},
-        {id:'product', name:'产品'},
-        {id:'lighting', name:'光影'},
+        {id:'builtin', name:'内置'},
         {id:'custom', name:'我的'}
     ];
 }
-const PROMPT_BUILTIN_CATEGORY_IDS = new Set(['view','storyboard','character','product','lighting','custom']);
+const PROMPT_BUILTIN_CATEGORY_IDS = new Set(['builtin','custom']);
 function promptCategoryLabel(category='custom'){
     const found = activePromptCategories().find(cat => cat.id === category);
     if(found?.name) return found.name;
-    const map = {view:'视角', storyboard:'分镜', character:'角色', product:'产品', lighting:'光影', mine:'我的', custom:'我的'};
+    const map = {builtin:'内置', mine:'我的', custom:'我的'};
     return map[category] || category || '自定义';
 }
 function promptCountForCategory(category, lib=activePromptLibrary()){
@@ -93,7 +89,9 @@ function renderPromptManager(){
     normalizePromptState();
     const libs = promptLibraries();
     const lib = activePromptLibrary();
-    const readonly = Boolean(lib?.readonly);
+    // 系统管理员可以调整内置提示词库（对应后端 app/routers/prompts.py 的
+    // _current_user_is_admin() 放开逻辑），此时保留库不再是只读的。
+    const readonly = Boolean(lib?.readonly) && !meInfo?.is_admin;
     const cats = activePromptCategories();
     const items = currentPromptItems();
     const detail = promptCreateMode ? null : selectedPrompt();
@@ -151,7 +149,7 @@ function renderPromptTreeBranch(lib){
     const showLibActions = isActiveLib && promptTreeFocus === 'library';
     return `<div class="tree-branch ${isActiveLib ? 'expanded' : ''}">
         <button class="tree-row tree-parent ${isActiveLib ? 'contains-active' : ''} ${showLibActions ? 'active' : ''}" type="button" data-prompt-lib="${libId}">
-            <span class="tree-row-icon"><i data-lucide="${lib.id === 'system' ? 'sparkles' : 'book-open'}"></i></span>
+            <span class="tree-row-icon"><i data-lucide="${isSystemPromptLibrary(lib) ? 'sparkles' : 'book-open'}"></i></span>
             <span class="tree-row-name">${escapeHtml(lib.name || '提示词库')}</span>
             <span class="tree-row-count">${(lib.items || []).length}</span>
         </button>
@@ -188,8 +186,15 @@ function renderPromptTreeActionBar(kind){
             ${isSystem ? '' : `<button type="button" class="danger ${pendingTreeDelete === deleteKey ? 'detail-confirm' : ''}" data-prompt-lib-delete><i data-lucide="trash-2"></i><span>${pendingTreeDelete === deleteKey ? '确认删除' : '删除库'}</span></button>`}
         </div>`;
     }
-    if(activePromptCategory === 'all' || PROMPT_BUILTIN_CATEGORY_IDS.has(activePromptCategory)){
+    if(activePromptCategory === 'all' || (PROMPT_BUILTIN_CATEGORY_IDS.has(activePromptCategory) && !meInfo?.is_admin)){
         return `<div class="tree-action-bar child-actions muted-actions"><span><i data-lucide="lock"></i>内置分组不可编辑</span></div>`;
+    }
+    if(PROMPT_BUILTIN_CATEGORY_IDS.has(activePromptCategory)){
+        // 系统管理员可以重命名内置分组，但删除内置分组始终禁止（后端
+        // delete_prompt_library_category 会拒绝，规范化流程也会把它复原）。
+        return `<div class="tree-action-bar child-actions">
+            <button type="button" data-prompt-cat-rename><i data-lucide="pencil"></i><span>重命名</span></button>
+        </div>`;
     }
     const deleteKey = `prompt-cat:${activePromptCategory}`;
     return `<div class="tree-action-bar child-actions">
@@ -212,7 +217,7 @@ function renderPromptRow(item, readonly){
     return `<article class="prompt-row ${item.id === selectedPromptId ? 'active' : ''}" data-prompt-row="${escapeAttr(item.id)}">
         <input class="prompt-row-check" type="checkbox" data-prompt-check="${escapeAttr(item.id)}" ${selectedPromptIds.has(item.id) ? 'checked' : ''} ${readonly ? 'disabled' : ''}>
         <div class="prompt-row-main">
-            <div class="prompt-row-title"><strong>${escapeHtml(item.name || '提示词')}</strong><span class="prompt-tag">${escapeHtml(promptCategoryLabel(item.category || 'custom'))}</span></div>
+            <div class="prompt-row-title"><strong>${escapeHtml(item.name || '提示词')}</strong></div>
             <div class="prompt-row-scene">${escapeHtml(item.scene || '未填写用途说明')}</div>
             <div class="prompt-row-text">${escapeHtml(item.positive || '')}</div>
         </div>

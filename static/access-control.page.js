@@ -2,13 +2,14 @@
 (function () {
   'use strict';
   var DEFAULT_TYPE_ID = 'new-user';
+  var ADMIN_TYPE_ID = 'sys-admin';
   var state = { allPages: [], users: [], types: {}, userTypes: {}, selected: null, draftPages: new Set() };
   function $(id) { return document.getElementById(id); }
   function typeEntries() { return Object.keys(state.types).map(function (id) { return { id: id, value: state.types[id] }; }); }
   function setStatus(message, kind) { var el = $('acStatus'); el.textContent = message || ''; el.className = 'ac-status' + (kind ? ' ' + kind : ''); }
   function markDirty(message) { setStatus(message || '有未保存的变更。'); }
   function fetchJSON(url, options) { return fetch(url, Object.assign({ credentials: 'same-origin' }, options || {})).then(function (res) { if (res.status === 403) { var forbidden = new Error('forbidden'); forbidden.code = 403; throw forbidden; } if (!res.ok) { var error = new Error('http ' + res.status); error.code = res.status; throw error; } return res.json(); }); }
-  function commitSelected() { if (state.selected && state.types[state.selected]) state.types[state.selected] = { name: $('acTypeName').value.trim() || state.selected, pages: Array.from(state.draftPages) }; }
+  function commitSelected() { if (state.selected && state.types[state.selected] && state.selected !== ADMIN_TYPE_ID) state.types[state.selected] = { name: $('acTypeName').value.trim() || state.selected, pages: Array.from(state.draftPages) }; }
   function renderTypes() {
     var list = $('acTypeList'); list.innerHTML = '';
     typeEntries().forEach(function (entry) {
@@ -31,6 +32,10 @@
   }
   function buildChecks() {
     var box = $('acPages'); box.innerHTML = '';
+    if (state.selected === ADMIN_TYPE_ID) {
+      var hint = document.createElement('p'); hint.className = 'ac-admin-hint'; hint.textContent = '系统管理员固定拥有全部页面权限，无需单独配置。';
+      box.appendChild(hint); return;
+    }
     state.allPages.forEach(function (item) {
       var label = document.createElement('label'), input = document.createElement('input'), text = document.createElement('span');
       label.className = 'ac-check' + (state.draftPages.has(item.id) ? ' checked' : ''); input.type = 'checkbox'; input.checked = state.draftPages.has(item.id);
@@ -40,16 +45,18 @@
   }
   function selectType(typeId) {
     commitSelected(); state.selected = typeId; var type = state.types[typeId]; if (!type) return;
-    state.draftPages = new Set(type.pages || []); $('acDetailEmpty').style.display = 'none'; $('acDetail').style.display = ''; $('acTypeName').value = type.name || typeId; $('acDetailTitle').textContent = type.name || typeId; $('acDeleteTypeBtn').style.display = typeId === DEFAULT_TYPE_ID ? 'none' : ''; renderTypes(); buildChecks();
+    state.draftPages = new Set(type.pages || []); $('acDetailEmpty').style.display = 'none'; $('acDetail').style.display = ''; $('acTypeName').value = type.name || typeId; $('acDetailTitle').textContent = type.name || typeId; $('acDeleteTypeBtn').style.display = (typeId === DEFAULT_TYPE_ID || typeId === ADMIN_TYPE_ID) ? 'none' : ''; $('acTypeName').disabled = typeId === ADMIN_TYPE_ID;
+    document.querySelectorAll('[data-bulk]').forEach(function (button) { button.disabled = typeId === ADMIN_TYPE_ID; });
+    renderTypes(); buildChecks();
   }
-  function applyBulk(value) { state.draftPages.clear(); if (value === 'all') state.allPages.forEach(function (item) { state.draftPages.add(item.id); }); buildChecks(); markDirty(); }
+  function applyBulk(value) { if (state.selected === ADMIN_TYPE_ID) return; state.draftPages.clear(); if (value === 'all') state.allPages.forEach(function (item) { state.draftPages.add(item.id); }); buildChecks(); markDirty(); }
   function newType() {
     var name = window.prompt('用户类型名称'); if (!name || !name.trim()) return;
     var id = 'type-' + Date.now().toString(36); state.types[id] = { name: name.trim(), pages: [] }; selectType(id); renderUsers(); markDirty('已创建用户类型，请配置权限后保存。');
   }
   function deleteType() {
-    var typeId = state.selected; if (!typeId || typeId === DEFAULT_TYPE_ID || !window.confirm('删除此用户类型？相关用户将改为“默认用户”。')) return;
-    delete state.types[typeId]; Object.keys(state.userTypes).forEach(function (uid) { if (state.userTypes[uid] === typeId) state.userTypes[uid] = DEFAULT_TYPE_ID; }); state.selected = DEFAULT_TYPE_ID; selectType(DEFAULT_TYPE_ID); renderUsers(); markDirty('已删除用户类型，请保存变更。');
+    var typeId = state.selected; if (!typeId || typeId === DEFAULT_TYPE_ID || typeId === ADMIN_TYPE_ID || !window.confirm('删除此用户类型？相关用户将改为“默认用户”。')) return;
+    delete state.types[typeId]; Object.keys(state.userTypes).forEach(function (uid) { if (state.userTypes[uid] === typeId) state.userTypes[uid] = DEFAULT_TYPE_ID; }); selectType(DEFAULT_TYPE_ID); renderUsers(); markDirty('已删除用户类型，请保存变更。');
   }
   function persist() {
     commitSelected(); $('acSaveBtn').disabled = true; setStatus('保存中...');

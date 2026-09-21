@@ -249,6 +249,7 @@ async def startup_event():
         # initialization in startup so new deployments and existing databases are
         # upgraded automatically before serving requests.
         await asyncio.to_thread(initialize_business_metadata)
+        await asyncio.to_thread(sync_system_prompt_libraries)
         await asyncio.to_thread(register_builtin_skills)
         if os.getenv("APP_SECRET_KEY"):
             await asyncio.to_thread(initialize_connection_secrets)
@@ -816,17 +817,8 @@ from app.routers.pages import (
     static_html_response,
 )
 
-STATIC_PROMPT_TEMPLATE_MD = os.path.join(STATIC_DIR, "system-prompts", "infinite-canvas-prompt-templates.md")
-# 提示词模板解析/英文映射已迁移至 app/services/prompts.py（原样迁移）。
-# 此处导入以保持原模块级名称可用（canvas smart-templates 路由仍在 main.py 使用）。
-from app.services.prompts import (
-    PROMPT_TEMPLATE_PATHS,
-    PROMPT_TEMPLATE_EN,
-    prompt_template_markdown_path,
-    prompt_template_category,
-    extract_prompt_template_section,
-    parse_prompt_template_markdown,
-)
+# 提示词模板解析已迁移至 app/services/prompts.py（原样迁移，builtin_prompt_templates
+# 的导入见后文与「提示词库」区块合并的 import 块）。
 
 # --- Pydantic 模型 ---
 # 全部模型已迁移至 app/models/__init__.py，此处统一导入以保持原模块级名称可用。
@@ -1440,6 +1432,8 @@ from app.services.prompts import (
     save_prompt_libraries,
     public_prompt_libraries,
     find_prompt_library,
+    sync_system_prompt_libraries,
+    load_system_prompt_libraries,
 )
 
 from app.core.shared import sanitize_asset_name
@@ -5316,58 +5310,70 @@ async def canvas_video(payload: CanvasVideoRequest):
         return {**result, "task_id": local_task_id, "upstream_task_id": upstream_task_id}
     return result
 
-# --- Caption Rules (per-user) ---
+# --- Caption / expand rules (compatibility API over unified prompt libraries) ---
 
-_CAPTION_RULES_BUILTIN = None
-def _load_builtin_caption_rules():
-    global _CAPTION_RULES_BUILTIN
-    if _CAPTION_RULES_BUILTIN is None:
-        p = os.path.join(DATA_DIR, "caption_rules_builtin.json")
-        if os.path.isfile(p):
-            with open(p, "r", encoding="utf-8") as f:
-                _CAPTION_RULES_BUILTIN = json.load(f)
+def _legacy_rules_from_library(kind: str):
+    data = load_prompt_libraries()
+    library = find_prompt_library(data, kind) or {}
+    builtin = []
+    user = []
+    for item in library.get("items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        rule = {
+            "id": item.get("id"),
+            "name": item.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
+            "category": item.get("category") or "",
+            "content": item.get("positive") or "",
+        }
+        if str(item.get("id") or "").startswith("builtin_"):
+            rule["builtin"] = True
+            builtin.append(rule)
         else:
-            _CAPTION_RULES_BUILTIN = []
-    return _CAPTION_RULES_BUILTIN
+            user.append(rule)
+    return builtin, user
 
-_EXPAND_RULES_BUILTIN = None
-def _load_builtin_expand_rules():
-    global _EXPAND_RULES_BUILTIN
-    if _EXPAND_RULES_BUILTIN is None:
-        p = os.path.join(DATA_DIR, "expand_rules_builtin.json")
-        if os.path.isfile(p):
-            with open(p, "r", encoding="utf-8") as f:
-                _EXPAND_RULES_BUILTIN = json.load(f)
-        else:
-            _EXPAND_RULES_BUILTIN = []
-    return _EXPAND_RULES_BUILTIN
+
+def _save_legacy_rules(kind: str, rules):
+    data = load_prompt_libraries()
+    library = find_prompt_library(data, kind)
+    if not library:
+        raise HTTPException(status_code=404, detail="提示词库不存在")
+    builtin_items = [item for item in library.get("items", []) if str(item.get("id") or "").startswith("builtin_")]
+    custom_items = [normalize_prompt_library_item({
+        "id": item.get("id") or f"legacy_{kind}_{uuid.uuid4().hex[:10]}",
+        "name": item.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
+        "category": item.get("category") or "custom",
+        "positive": item.get("content") or item.get("positive") or "",
+    }) for item in (rules if isinstance(rules, list) else []) if isinstance(item, dict) and str(item.get("content") or item.get("positive") or "").strip()]
+    library["items"] = builtin_items + custom_items
+    save_prompt_libraries(data)
+    # Keep the old setting as a migration/rollback source for older clients.
+    from app.services.business_metadata import set_user_setting
+    set_user_setting(current_user_id(), f"{kind}_rules", rules if isinstance(rules, list) else [])
 
 
 @app.get("/api/caption-rules")
 def get_caption_rules():
-    from app.services.business_metadata import get_user_setting
-    user_rules = get_user_setting(current_user_id(), "caption_rules", [])
-    return {"builtin_rules": _load_builtin_caption_rules(), "user_rules": user_rules}
+    builtin, user = _legacy_rules_from_library("caption")
+    return {"builtin_rules": builtin, "user_rules": user}
 
 
 @app.post("/api/caption-rules")
 def save_caption_rules(payload: dict):
-    from app.services.business_metadata import set_user_setting
-    set_user_setting(current_user_id(), "caption_rules", payload.get("user_rules", []))
+    _save_legacy_rules("caption", payload.get("user_rules", []))
     return {"ok": True}
 
 
 @app.get("/api/expand-rules")
 def get_expand_rules():
-    from app.services.business_metadata import get_user_setting
-    user_rules = get_user_setting(current_user_id(), "expand_rules", [])
-    return {"builtin_rules": _load_builtin_expand_rules(), "user_rules": user_rules}
+    builtin, user = _legacy_rules_from_library("expand")
+    return {"builtin_rules": builtin, "user_rules": user}
 
 
 @app.post("/api/expand-rules")
 def save_expand_rules(payload: dict):
-    from app.services.business_metadata import set_user_setting
-    set_user_setting(current_user_id(), "expand_rules", payload.get("user_rules", []))
+    _save_legacy_rules("expand", payload.get("user_rules", []))
     return {"ok": True}
 
 
@@ -5501,9 +5507,7 @@ async def canvas_llm(payload: CanvasLLMRequest):
 @app.get("/api/canvas/prompt-templates")
 async def smart_canvas_prompt_templates():
     try:
-        template_path = prompt_template_markdown_path()
-        source = os.path.relpath(template_path, BASE_DIR).replace("\\", "/") if template_path else ""
-        return {"templates": builtin_prompt_templates(), "source": source}
+        return {"templates": builtin_prompt_templates(), "source": ""}
     except Exception:
         logger.exception("failed to read prompt templates", extra={"event": "prompt_templates_load_failed"})
         return {"templates": []}

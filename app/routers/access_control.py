@@ -18,6 +18,7 @@ from app.core.access_control import (
     all_pages,
     effective_permissions,
     has_page_access,
+    is_admin,
     load_config,
     save_config,
 )
@@ -59,6 +60,7 @@ def access_control_me():
         "user_id": uid,
         "user_type": perms["user_type"],
         "pages": perms["pages"],
+        "is_admin": is_admin(uid),
     }
 
 

@@ -223,6 +223,21 @@ CREATE TABLE IF NOT EXISTS user_settings (
     user_id TEXT NOT NULL, key TEXT NOT NULL, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id, key)
 );
+CREATE TABLE IF NOT EXISTS system_prompt_libraries (
+    id TEXT PRIMARY KEY, library_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_checksum TEXT NOT NULL DEFAULT '', version BIGINT NOT NULL DEFAULT 1,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_system_prompt_libraries_updated ON system_prompt_libraries(updated_at DESC);
+CREATE TABLE IF NOT EXISTS prompt_templates (
+    id TEXT NOT NULL, account_id TEXT NOT NULL DEFAULT '', template_type TEXT NOT NULL,
+    library_id TEXT NOT NULL DEFAULT '', builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    builtin_key TEXT NOT NULL DEFAULT '', payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
+    PRIMARY KEY (id, account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_templates_account_type ON prompt_templates(account_id, template_type, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_prompt_templates_builtin ON prompt_templates(template_type, builtin_key) WHERE builtin = TRUE;
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, username TEXT NOT NULL, created_at BIGINT NOT NULL
 );
@@ -700,6 +715,97 @@ def set_user_setting(user_id: str, key: str, value: Any) -> Any:
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("INSERT INTO user_settings(user_id,key,value_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s) ON CONFLICT(user_id,key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=EXCLUDED.updated_at", (user_id, key, json_value(value), now, now))
     return value
+
+
+def get_system_prompt_libraries() -> list[dict[str, Any]]:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT library_json FROM system_prompt_libraries ORDER BY id")
+        return [row["library_json"] for row in cur.fetchall() if isinstance(row["library_json"], dict)]
+
+
+def get_system_prompt_library_records() -> list[dict[str, Any]]:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, library_json, source_checksum, version FROM system_prompt_libraries ORDER BY id")
+        return [row for row in cur.fetchall() if isinstance(row.get("library_json"), dict)]
+
+
+def upsert_system_prompt_library(library_id: str, library: dict[str, Any], checksum: str) -> None:
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO system_prompt_libraries(id,library_json,source_checksum,created_at,updated_at)
+               VALUES(%s,%s,%s,%s,%s)
+               ON CONFLICT(id) DO UPDATE SET library_json=EXCLUDED.library_json,
+                 source_checksum=EXCLUDED.source_checksum, version=system_prompt_libraries.version+1,
+                 updated_at=EXCLUDED.updated_at""",
+            (str(library_id), json_value(library), str(checksum or ""), now, now),
+        )
+
+
+def list_prompt_templates(account_id: str | None = None, template_type: str | None = None) -> list[dict[str, Any]]:
+    with metadata_connection() as conn, conn.cursor() as cur:
+        clauses, params = [], []
+        if account_id is None:
+            clauses.append("account_id='' ")
+        else:
+            clauses.append("account_id=%s")
+            params.append(account_id)
+        if template_type:
+            clauses.append("template_type=%s")
+            params.append(template_type)
+        cur.execute("SELECT id,account_id,template_type,library_id,builtin,builtin_key,payload_json,created_at,updated_at FROM prompt_templates WHERE " + " AND ".join(clauses) + " ORDER BY updated_at DESC", params)
+        return list(cur.fetchall())
+
+
+def upsert_prompt_template(template_id: str, account_id: str | None, template_type: str, library_id: str, payload: dict[str, Any], builtin: bool = False, builtin_key: str = "") -> None:
+    now = now_ms()
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO prompt_templates(id,account_id,template_type,library_id,builtin,builtin_key,payload_json,created_at,updated_at)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (id, account_id) DO UPDATE SET payload_json=EXCLUDED.payload_json,
+                 library_id=EXCLUDED.library_id,builtin=EXCLUDED.builtin,builtin_key=EXCLUDED.builtin_key,updated_at=EXCLUDED.updated_at""",
+            (template_id, account_id or "", template_type, library_id, bool(builtin), builtin_key, json_value(payload), now, now),
+        )
+
+
+def replace_account_prompt_templates(account_id: str, templates: list[dict[str, Any]]) -> None:
+    now = now_ms()
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("DELETE FROM prompt_templates WHERE account_id=%s", (account_id,))
+        for template in templates:
+            cur.execute(
+                """INSERT INTO prompt_templates(id,account_id,template_type,library_id,builtin,builtin_key,payload_json,created_at,updated_at)
+                   VALUES(%s,%s,%s,%s,FALSE,'',%s,%s,%s)
+                   ON CONFLICT (id, account_id) DO UPDATE SET template_type=EXCLUDED.template_type,
+                     library_id=EXCLUDED.library_id,payload_json=EXCLUDED.payload_json,updated_at=EXCLUDED.updated_at""",
+                (str(template["id"]), account_id, str(template["template_type"]), str(template["library_id"]),
+                 json_value(template.get("payload") or {}), now, now),
+            )
+
+
+def replace_global_library_prompt_templates(library_id: str, templates: list[dict[str, Any]]) -> None:
+    """替换某个全局提示词库（account_id=''）下的全部模板记录。
+
+    仅供系统管理员编辑内置提示词库（system/caption/expand）时调用：先清空该
+    library_id 下的全局记录，再按当前条目集合重新插入，天然处理了删除场景
+    （消失的条目不会被重新插入，也就不会残留在全局表里）。
+    """
+    now = now_ms()
+    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("DELETE FROM prompt_templates WHERE account_id='' AND library_id=%s", (library_id,))
+        for template in templates:
+            item = template.get("payload") or {}
+            builtin = bool(item.get("builtin"))
+            cur.execute(
+                """INSERT INTO prompt_templates(id,account_id,template_type,library_id,builtin,builtin_key,payload_json,created_at,updated_at)
+                   VALUES(%s,'',%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (id, account_id) DO UPDATE SET template_type=EXCLUDED.template_type,
+                     library_id=EXCLUDED.library_id,builtin=EXCLUDED.builtin,builtin_key=EXCLUDED.builtin_key,
+                     payload_json=EXCLUDED.payload_json,updated_at=EXCLUDED.updated_at""",
+                (str(template["id"]), str(template["template_type"]), library_id, builtin,
+                 str(item.get("id")) if builtin else "", json_value(item), now, now),
+            )
 
 
 def save_canvas_payload(user_id: str, canvas: Dict[str, Any]) -> None:

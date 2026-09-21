@@ -12,6 +12,8 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.access_control import is_admin
+from app.core.auth import current_user_id
 from app.core.shared import sanitize_asset_name
 from app.core.utils import now_ms
 from app.models import (
@@ -30,8 +32,27 @@ from app.services.prompts import (
 
 router = APIRouter()
 
-PROMPT_BUILTIN_CATEGORY_IDS = {"view", "storyboard", "character", "product", "lighting", "custom"}
+PROMPT_BUILTIN_CATEGORY_IDS = {"builtin", "custom"}
 PROMPT_RESERVED_LIBRARY_IDS = {"system", "caption", "expand"}
+
+
+def _current_user_is_admin() -> bool:
+    """系统管理员可以调整内置提示词库（改名分类、编辑/删除内置条目）。"""
+    return is_admin(current_user_id())
+
+
+def _save_prompt_libraries_for(data, library_ids="") -> dict:
+    """按当前用户身份与操作涉及的库决定是否把改动同步为全局共享内容。
+
+    系统管理员编辑保留库（system/caption/expand）时，改动落到全局
+    system_prompt_libraries 表，对所有用户立即可见；其余情况维持原有的
+    账户级保存语义（普通用户在保留库下新增的条目只挂在自己账户名下）。
+    library_ids 可以是单个 library_id 字符串，也可以是涉及多个库的集合/列表
+    （如跨库批量删除）；只要其中任意一个是保留库且当前用户是管理员即可触发。
+    """
+    ids = {library_ids} if isinstance(library_ids, str) else set(library_ids or ())
+    sync_global = bool(ids & PROMPT_RESERVED_LIBRARY_IDS) and _current_user_is_admin()
+    return save_prompt_libraries(data, sync_global_reserved=sync_global)
 
 
 @router.get("/api/prompt-libraries")
@@ -58,14 +79,14 @@ def create_prompt_library(payload: PromptLibraryRequest):
 
 @router.patch("/api/prompt-libraries/{library_id}")
 def rename_prompt_library(library_id: str, payload: PromptLibraryRequest):
-    if library_id in PROMPT_RESERVED_LIBRARY_IDS:
+    if library_id in PROMPT_RESERVED_LIBRARY_IDS and not _current_user_is_admin():
         raise HTTPException(status_code=400, detail="内置提示词库不能改名")
     data = load_prompt_libraries()
     library = find_prompt_library(data, library_id)
     if not library or library.get("id") != library_id:
         raise HTTPException(status_code=404, detail="提示词库不存在")
     library["name"] = sanitize_asset_name(payload.name, library.get("name") or "提示词库")
-    data = save_prompt_libraries(data)
+    data = _save_prompt_libraries_for(data, library_id)
     return {"library": public_prompt_libraries(data), "prompt_library": library}
 
 
@@ -105,7 +126,7 @@ def add_prompt_library_item(payload: PromptLibraryItemRequest):
     })
     library.setdefault("items", []).insert(0, item)
     data["active_library_id"] = library.get("id") or data.get("active_library_id")
-    data = save_prompt_libraries(data)
+    data = _save_prompt_libraries_for(data, library.get("id"))
     return {"library": public_prompt_libraries(data), "item": item}
 
 
@@ -127,7 +148,7 @@ def update_prompt_library_item(item_id: str, payload: PromptLibraryItemRequest):
                     "updated_at": now_ms(),
                 })
                 library["items"][index] = next_item
-                data = save_prompt_libraries(data)
+                data = _save_prompt_libraries_for(data, library.get("id"))
                 return {"library": public_prompt_libraries(data), "item": next_item}
     raise HTTPException(status_code=404, detail="提示词不存在")
 
@@ -136,17 +157,19 @@ def update_prompt_library_item(item_id: str, payload: PromptLibraryItemRequest):
 def delete_prompt_library_item(item_id: str):
     data = load_prompt_libraries()
     removed = None
+    removed_library_id = ""
     for library in data.get("libraries", []) or []:
         keep = []
         for item in library.get("items", []) or []:
             if item.get("id") == item_id:
                 removed = item
+                removed_library_id = str(library.get("id") or "")
             else:
                 keep.append(item)
         library["items"] = keep
     if not removed:
         raise HTTPException(status_code=404, detail="提示词不存在")
-    data = save_prompt_libraries(data)
+    data = _save_prompt_libraries_for(data, removed_library_id)
     return {"library": public_prompt_libraries(data), "removed": 1}
 
 
@@ -157,15 +180,17 @@ def batch_delete_prompt_library_items(payload: PromptLibraryBatchDeleteRequest):
         raise HTTPException(status_code=400, detail="没有选择提示词")
     data = load_prompt_libraries()
     removed = 0
+    affected_library_ids = set()
     for library in data.get("libraries", []) or []:
         keep = []
         for item in library.get("items", []) or []:
             if item.get("id") in ids:
                 removed += 1
+                affected_library_ids.add(str(library.get("id") or ""))
             else:
                 keep.append(item)
         library["items"] = keep
-    data = save_prompt_libraries(data)
+    data = _save_prompt_libraries_for(data, affected_library_ids)
     return {"library": public_prompt_libraries(data), "removed": removed}
 
 
@@ -182,27 +207,29 @@ def add_prompt_library_category(payload: PromptLibraryCategoryRequest):
         cat_id = f"pcat_{uuid.uuid4().hex[:10]}"
     category = {"id": cat_id, "name": name}
     library.setdefault("categories", []).append(category)
-    data = save_prompt_libraries(data)
+    data = _save_prompt_libraries_for(data, library.get("id"))
     return {"library": public_prompt_libraries(data), "category": category}
 
 
 @router.patch("/api/prompt-libraries/categories/{category_id}")
 def rename_prompt_library_category(category_id: str, payload: PromptLibraryCategoryRequest):
-    if category_id in PROMPT_BUILTIN_CATEGORY_IDS:
+    if category_id in PROMPT_BUILTIN_CATEGORY_IDS and not _current_user_is_admin():
         raise HTTPException(status_code=400, detail="内置分组不能重命名")
     name = sanitize_asset_name(payload.name, "")
     if not name:
         raise HTTPException(status_code=400, detail="分组名称不能为空")
     data = load_prompt_libraries()
     updated = False
+    affected_library_ids = set()
     for library in data.get("libraries", []) or []:
         for cat in library.get("categories") or []:
             if isinstance(cat, dict) and cat.get("id") == category_id:
                 cat["name"] = name
                 updated = True
+                affected_library_ids.add(str(library.get("id") or ""))
     if not updated:
         raise HTTPException(status_code=404, detail="分组不存在")
-    data = save_prompt_libraries(data)
+    data = _save_prompt_libraries_for(data, affected_library_ids)
     return {"library": public_prompt_libraries(data)}
 
 

@@ -28,6 +28,12 @@ from app.services.business_metadata import get_app_setting, set_app_setting
 
 DEFAULT_USER_TYPE_ID = "new-user"
 DEFAULT_USER_TYPE_NAME = "默认用户"
+# 系统管理员是第二个内置用户类型：始终拥有全部页面权限，且可编辑内置提示词库
+# （app/services/prompts.py 的只读限制会检查用户是否属于该类型）。类型 id 特意
+# 与登录用户 id 空间区分（不叫 "admin"），避免与 ADMIN_USER_ID 环境变量语义混淆。
+ADMIN_USER_TYPE_ID = "sys-admin"
+ADMIN_USER_TYPE_NAME = "系统管理员"
+BUILTIN_USER_TYPE_IDS = {DEFAULT_USER_TYPE_ID, ADMIN_USER_TYPE_ID}
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "admin").strip() or "admin"
 
 ACCESS_CONTROL_LOCK = Lock()
@@ -121,12 +127,28 @@ def is_model_allowed(user_id: str, connection_id: str, model: str) -> bool:
 
 
 def is_admin(user_id: str) -> bool:
-    return str(user_id or "") == ADMIN_USER_ID
+    user_id = str(user_id or "")
+    if not user_id:
+        return False
+    if user_id == ADMIN_USER_ID:
+        return True
+    config = load_config()
+    return config.get("user_types", {}).get(user_id) == ADMIN_USER_TYPE_ID
 
 
 def has_page_access(user_id: str, page_id: str) -> bool:
     """用户是否拥有指定侧边栏页面的权限。"""
     return str(page_id or "") in set(effective_permissions(user_id).get("pages") or [])
+
+
+def _ensure_builtin_types(types: Dict[str, Any]) -> Dict[str, Any]:
+    """确保两个内置用户类型始终存在；系统管理员的页面权限始终等于全集，
+    不接受外部传入值覆盖（语义上等价于「拥有全部页面权限」，无需在权限
+    管理页面里单独勾选，且会随页面清单增减自动同步）。"""
+    if DEFAULT_USER_TYPE_ID not in types:
+        types[DEFAULT_USER_TYPE_ID] = {"name": DEFAULT_USER_TYPE_NAME, **_sanitize_user_entry({})}
+    types[ADMIN_USER_TYPE_ID] = {"name": ADMIN_USER_TYPE_NAME, "pages": all_page_ids()}
+    return types
 
 
 def _legacy_config_to_types(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -144,6 +166,7 @@ def _legacy_config_to_types(data: Dict[str, Any]) -> Dict[str, Any]:
         type_id = f"legacy-{uid}"
         types[type_id] = {"name": f"迁移用户 {uid}", **_sanitize_user_entry(entry)}
         user_types[uid] = type_id
+    _ensure_builtin_types(types)
     return {"types": types, "user_types": user_types}
 
 
@@ -154,15 +177,14 @@ def _normalize_config(data: Any) -> Dict[str, Any]:
     types = {}
     for type_id, entry in data["types"].items():
         type_id = str(type_id or "").strip()
-        if not type_id:
+        if not type_id or type_id == ADMIN_USER_TYPE_ID:
             continue
         entry = entry if isinstance(entry, dict) else {}
         name = str(entry.get("name") or type_id).strip()[:80] or type_id
         if type_id == DEFAULT_USER_TYPE_ID and name == "新用户":
             name = DEFAULT_USER_TYPE_NAME
         types[type_id] = {"name": name, **_sanitize_user_entry(entry)}
-    if DEFAULT_USER_TYPE_ID not in types:
-        types[DEFAULT_USER_TYPE_ID] = {"name": DEFAULT_USER_TYPE_NAME, **_sanitize_user_entry({})}
+    _ensure_builtin_types(types)
     user_types = {}
     for uid, type_id in (data.get("user_types") or {}).items():
         uid, type_id = str(uid or "").strip(), str(type_id or "").strip()
@@ -217,7 +239,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     sanitized: Dict[str, Any] = {"types": {}, "user_types": {}}
     for type_id, entry in types_in.items():
         type_id = str(type_id or "").strip()
-        if not type_id:
+        if not type_id or type_id == ADMIN_USER_TYPE_ID:
             continue
         entry = entry if isinstance(entry, dict) else {}
         name = str(entry.get("name") or type_id).strip()[:80] or type_id
@@ -227,8 +249,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
             "name": name,
             **_sanitize_user_entry(entry),
         }
-    if DEFAULT_USER_TYPE_ID not in sanitized["types"]:
-        sanitized["types"][DEFAULT_USER_TYPE_ID] = {"name": DEFAULT_USER_TYPE_NAME, **_sanitize_user_entry({})}
+    _ensure_builtin_types(sanitized["types"])
     for uid, type_id in assignments_in.items():
         uid, type_id = str(uid or "").strip(), str(type_id or "").strip()
         if uid and type_id in sanitized["types"]:
