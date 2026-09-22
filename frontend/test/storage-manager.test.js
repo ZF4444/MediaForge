@@ -96,6 +96,43 @@ describe('storageThumbUrl', () => {
     });
 });
 
+describe('storageCardThumb', () => {
+    it('video 类型渲染 <img> 指向 /thumb 接口，而不是 <video>（/thumb 只返回静态图片，video 标签加载会静默失败）', () => {
+        const ctx = createStorageManagerSandbox();
+        const html = run(ctx, "storageCardThumb({file_id:'abc', kind:'video', original_name:'clip.mp4'})");
+        expect(html).toContain('<img');
+        expect(html).not.toContain('<video');
+        expect(html).toContain('/api/files/abc/thumb');
+    });
+
+    it('image 类型同样渲染 <img> 指向 /thumb 接口', () => {
+        const ctx = createStorageManagerSandbox();
+        const html = run(ctx, "storageCardThumb({file_id:'xyz', kind:'image', original_name:'pic.png'})");
+        expect(html).toContain('<img');
+        expect(html).toContain('/api/files/xyz/thumb');
+    });
+
+    it('缺少 file_id 时回退到 assetThumb(item.url)', () => {
+        const calls = [];
+        const ctx = createStorageManagerSandbox({
+            fns: { assetThumb: (item) => { calls.push(item); return '<i>fallback</i>'; } },
+        });
+        const html = run(ctx, "storageCardThumb({kind:'video', url:'https://example.com/v.mp4', original_name:'clip.mp4'})");
+        expect(html).toBe('<i>fallback</i>');
+        expect(calls[0].url).toBe('https://example.com/v.mp4');
+    });
+
+    it('非 image/video 类型（如文档）回退到 assetThumb(item.url)', () => {
+        const calls = [];
+        const ctx = createStorageManagerSandbox({
+            fns: { assetThumb: (item) => { calls.push(item); return '<i>doc</i>'; } },
+        });
+        const html = run(ctx, "storageCardThumb({file_id:'doc1', kind:'document', url:'https://example.com/f.pdf'})");
+        expect(html).toBe('<i>doc</i>');
+        expect(calls[0].kind).toBe('document');
+    });
+});
+
 describe('storageDateInputValue', () => {
     it('未设置 storageCreatedBefore 时返回空字符串', () => {
         const ctx = createStorageManagerSandbox({ storageCreatedBefore: null });

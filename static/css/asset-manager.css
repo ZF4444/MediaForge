@@ -241,6 +241,7 @@ button { border:0; cursor:pointer; }
 .asset-lightbox { position:fixed; inset:0; z-index:9999; padding:28px; background:rgba(8,10,14,.86); backdrop-filter:blur(10px); display:flex; align-items:center; justify-content:center; overflow:hidden; cursor:zoom-out; }
 .asset-lightbox-inner { min-width:min-content; min-height:min-content; display:flex; align-items:center; justify-content:center; }
 .asset-lightbox-image { max-width:94vw; max-height:92vh; width:auto; height:auto; object-fit:contain; display:block; transform-origin:center center; will-change:transform; cursor:zoom-in; user-select:none; }
+video.asset-lightbox-image { cursor:default; }
 .asset-lightbox.zoomed .asset-lightbox-image { cursor:grab; }
 .asset-lightbox.dragging .asset-lightbox-image { cursor:grabbing; }
 .detail-body { display:flex; flex-direction:column; gap:11px; }

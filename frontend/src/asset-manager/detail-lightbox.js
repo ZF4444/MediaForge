@@ -40,8 +40,8 @@ function showDetailPreview(source, id){
                 : findAssetItem(id);
     if(!item) return;
     const kind = source === 'local' ? (item.kind || localItemKind(item)) : source === 'storage' ? String(item.kind || 'document') : assetKind(item);
-    if(kind !== 'image'){
-        setStatus('仅图片支持放大预览');
+    if(kind !== 'image' && kind !== 'video'){
+        setStatus('仅图片/视频支持放大预览');
         return;
     }
     const url = source === 'local' ? localObjectUrl(item) : item.url;
@@ -52,9 +52,12 @@ function showDetailPreview(source, id){
     overlay.dataset.scale = '1';
     overlay.dataset.x = '0';
     overlay.dataset.y = '0';
+    const mediaHtml = kind === 'video'
+        ? `<video class="asset-lightbox-image" src="${escapeAttr(url)}" controls autoplay playsinline draggable="false"></video>`
+        : `<img class="asset-lightbox-image" src="${escapeAttr(url)}" alt="${escapeAttr(item.name || 'preview')}" draggable="false">`;
     overlay.innerHTML = `
-        <div class="asset-lightbox-inner" role="dialog" aria-modal="true" aria-label="图片预览">
-            <img class="asset-lightbox-image" src="${escapeAttr(url)}" alt="${escapeAttr(item.name || 'preview')}" draggable="false">
+        <div class="asset-lightbox-inner" role="dialog" aria-modal="true" aria-label="${kind === 'video' ? '视频预览' : '图片预览'}">
+            ${mediaHtml}
         </div>
     `;
     document.body.appendChild(overlay);
@@ -78,6 +81,9 @@ function zoomDetailPreview(event){
     const overlay = event.target.closest?.('.asset-lightbox');
     const image = event.target.closest?.('.asset-lightbox-image');
     if(!overlay || !image) return;
+    // 视频预览保留原生 <video controls>（进度条/音量/全屏），不套用缩放手势，
+    // 避免鼠标滚轮缩放和播放器内部滚动/音量交互冲突。
+    if(image.tagName === 'VIDEO') return;
     event.preventDefault();
     const current = Number(overlay.dataset.scale || 1);
     const next = Math.max(0.25, Math.min(8, current * (event.deltaY < 0 ? 1.15 : 0.87)));
@@ -100,6 +106,8 @@ function zoomDetailPreview(event){
 function beginLightboxPan(event){
     const image = event.target.closest?.('.asset-lightbox-image');
     const overlay = event.target.closest?.('.asset-lightbox');
+    // 视频预览保留原生控件的点击/拖拽（进度条、音量、播放按钮），不拦截为平移手势。
+    if(image?.tagName === 'VIDEO') return;
     if(!image || !overlay) return;
     const scale = Number(overlay.dataset.scale || 1);
     if(scale <= 1.01) return;

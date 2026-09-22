@@ -50,8 +50,11 @@ export function createDetailLightboxSandbox(overrides = {}) {
         document: overrides.document ?? {
             querySelector: () => null,
             querySelectorAll: () => [],
-            createElement: () => ({ classList: { add(){}, remove(){}, toggle(){} }, dataset: {}, style: {}, addEventListener(){}, appendChild(){}, remove(){} }),
-            body: { appendChild(){} },
+            createElement: () => {
+                const el = { classList: { add(){}, remove(){}, toggle(){} }, dataset: {}, style: {}, addEventListener(){}, appendChild(){}, remove(){}, innerHTML:'' };
+                return el;
+            },
+            body: { appendChild(){}, classList: { add(){}, remove(){} } },
             addEventListener(){},
             removeEventListener(){},
         },

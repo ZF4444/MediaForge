@@ -83,12 +83,13 @@ function storageThumbUrl(fileId=''){
 function storageCardThumb(item){
     const fileId = String(item?.file_id || '').trim();
     const kind = String(item?.kind || '').toLowerCase();
+    // /api/files/{id}/thumb 对 image 和 video 都返回静态图片（JPEG 封面帧或
+    // SVG 占位图，视频从不是视频流），必须用 <img> 渲染；不能复用 assetThumb()
+    // 的 video 分支（那里假设 url 是原始视频文件，会生成 <video src>，加载
+    // 一张图片会静默失败导致缩略图空白）。
     if(fileId && (kind === 'image' || kind === 'video')){
-        return assetThumb({
-            url: storageThumbUrl(fileId),
-            name: item?.original_name || item?.filename || 'file',
-            kind: item?.kind || 'document',
-        });
+        const name = item?.original_name || item?.filename || 'file';
+        return `<img src="${escapeAttr(storageThumbUrl(fileId))}" alt="${escapeAttr(name)}" loading="lazy">`;
     }
     return assetThumb({
         url: item?.url,

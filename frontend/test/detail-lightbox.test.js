@@ -62,3 +62,72 @@ describe('marqueeTargetSelector', () => {
         expect(run(ctx, 'marqueeTargetSelector()')).toBe('');
     });
 });
+
+describe('showDetailPreview', () => {
+    function sandboxWithCapturedOverlay(overrides = {}) {
+        let capturedOverlay = null;
+        const doc = {
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            createElement: () => {
+                capturedOverlay = { classList: { add(){}, remove(){}, toggle(){} }, dataset: {}, style: {}, addEventListener(){}, appendChild(){}, remove(){}, innerHTML:'' };
+                return capturedOverlay;
+            },
+            body: { appendChild(){}, classList: { add(){}, remove(){} } },
+            addEventListener(){},
+            removeEventListener(){},
+        };
+        const statusCalls = [];
+        const ctx = createDetailLightboxSandbox({
+            ...overrides,
+            document: doc,
+            fns: { ...(overrides.fns || {}), setStatus: (msg) => statusCalls.push(msg) },
+        });
+        return { ctx, getOverlay: () => capturedOverlay, statusCalls };
+    }
+
+    it('video 类型渲染 <video> 标签并允许预览（不再提示"仅图片支持"）', () => {
+        const { ctx, getOverlay, statusCalls } = sandboxWithCapturedOverlay({
+            activeTab: 'storage',
+            fns: { findStorageEntry: () => ({ file_id: 'v1', kind: 'video', url: 'https://example.com/clip.mp4', original_name: 'clip.mp4' }) },
+        });
+        run(ctx, "showDetailPreview('storage', 'v1')");
+        expect(statusCalls).toEqual([]);
+        expect(getOverlay().innerHTML).toContain('<video');
+        expect(getOverlay().innerHTML).toContain('controls');
+        expect(getOverlay().innerHTML).toContain('clip.mp4');
+    });
+
+    it('image 类型仍渲染 <img> 标签', () => {
+        const { ctx, getOverlay, statusCalls } = sandboxWithCapturedOverlay({
+            activeTab: 'storage',
+            fns: { findStorageEntry: () => ({ file_id: 'i1', kind: 'image', url: 'https://example.com/pic.png', original_name: 'pic.png' }) },
+        });
+        run(ctx, "showDetailPreview('storage', 'i1')");
+        expect(statusCalls).toEqual([]);
+        expect(getOverlay().innerHTML).toContain('<img');
+        expect(getOverlay().innerHTML).not.toContain('<video');
+    });
+
+    it('文档等其它类型仍提示不支持放大预览，不创建 overlay', () => {
+        const { ctx, getOverlay, statusCalls } = sandboxWithCapturedOverlay({
+            activeTab: 'storage',
+            fns: { findStorageEntry: () => ({ file_id: 'd1', kind: 'document', url: 'https://example.com/f.pdf' }) },
+        });
+        run(ctx, "showDetailPreview('storage', 'd1')");
+        expect(statusCalls).toEqual(['仅图片/视频支持放大预览']);
+        expect(getOverlay()).toBeNull();
+    });
+
+    it('asset 来源的视频同样支持预览', () => {
+        const { ctx, getOverlay } = sandboxWithCapturedOverlay({
+            activeTab: 'assets',
+            fns: {
+                assetKind: () => 'video',
+                findAssetItem: () => ({ id: 'a1', url: 'https://example.com/a.mp4', name: 'a.mp4' }),
+            },
+        });
+        run(ctx, "showDetailPreview('asset', 'a1')");
+        expect(getOverlay().innerHTML).toContain('<video');
+    });
+});
