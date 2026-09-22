@@ -191,7 +191,10 @@ function updateMarqueeSelection(event){
     } else if(activeTab === 'prompts') {
         selectedPromptIds = new Set(marqueeState.basePrompt);
         document.querySelectorAll(marqueeState.selector).forEach(el => {
-            if(rectsIntersect(rect, el.getBoundingClientRect())) selectedPromptIds.add(el.dataset.promptRow);
+            const id = el.dataset.promptRow;
+            const item = findPromptItem(id);
+            if(item && isPromptItemReadonly(item)) return;
+            if(rectsIntersect(rect, el.getBoundingClientRect())) selectedPromptIds.add(id);
         });
     } else if(activeTab === 'local') {
         selectedLocalIds = new Set(marqueeState.baseLocal);

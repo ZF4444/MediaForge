@@ -49,6 +49,13 @@ button { border:0; cursor:pointer; }
 .asset-tabs button.active { background:var(--strong); color:var(--strong-text); }
 .asset-tabs svg,.asset-btn svg,.asset-icon-btn svg,.asset-row-icon svg,.detail-empty svg { width:14px; height:14px; }
 .asset-manager-root { min-height:0; flex:1; display:grid; grid-template-columns:320px minmax(640px, 1fr) 420px; gap:14px; }
+/* 提示词库两栏布局：左侧树形结构（库/分组/条目叶子节点）加宽，右侧详情
+   面板占据剩余空间。只在 activeTab==='prompts' 时由 render() 切换这个
+   class（见 static/js/asset-manager.js），其它 tab 维持三栏 grid-template-columns。 */
+.asset-manager-root.asset-manager-root-two-col { grid-template-columns:420px minmax(0, 1fr); }
+.prompt-tree-nav { display:flex; flex-direction:column; }
+.prompt-tree-nav .content-toolbar { flex-wrap:wrap; }
+.prompt-tree-nav .asset-search-wrap { flex:1; min-width:160px; width:auto; }
 .asset-panel { min-height:0; border:1px solid rgba(148,163,184,.2); border-radius:16px; background:var(--panel); box-shadow:0 10px 28px var(--shadow); backdrop-filter:blur(18px); overflow:hidden; }
 .asset-nav { display:flex; flex-direction:column; }
 .asset-content,.asset-detail { display:flex; flex-direction:column; }
@@ -106,8 +113,47 @@ button { border:0; cursor:pointer; }
 .storage-category-usage-title { margin-bottom:10px; color:var(--text); font-size:12px; font-weight:850; }
 .tree-branch { display:flex; flex-direction:column; gap:3px; }
 .tree-row { width:100%; min-height:34px; border-radius:9px; border:1px solid transparent; background:transparent; color:var(--text); display:grid; align-items:center; gap:7px; text-align:left; }
-.tree-parent { grid-template-columns:18px minmax(0,1fr) auto; padding:6px 8px; font-weight:900; }
+.tree-parent { grid-template-columns:18px minmax(0,1fr) auto auto; padding:6px 8px; font-weight:900; }
 .tree-child { grid-template-columns:14px 16px minmax(0,1fr) auto; min-height:30px; padding:5px 7px 5px 12px; color:var(--muted); }
+/* 分组行（"全部提示词"/具体分组）多一列 tree-toggle 展开箭头：
+   elbow / toggle / icon / name / count / actions。见
+   renderPromptTreeCategoryBranch。 */
+.tree-category-branch > .tree-child { grid-template-columns:14px 16px 16px minmax(0,1fr) auto auto; }
+.tree-toggle { width:16px; height:16px; padding:0; border:0; border-radius:5px; background:transparent; color:var(--faint); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.tree-toggle:hover { color:var(--text); background:var(--soft-2); }
+.tree-toggle[aria-disabled="true"] { opacity:.3; cursor:default; pointer-events:none; }
+/* 库/分组的新增/重命名/删除按钮：不再单独占一行撑开树高度，改为行内
+   小图标，平时不显示（opacity:0），hover 或该行处于 active/焦点态时才
+   显现，点击即触发对应操作（见 static/js/asset-manager.js 的
+   data-prompt-cat-new-for/data-prompt-lib-rename-for 等事件绑定）。 */
+.tree-row-actions { display:flex; align-items:center; gap:2px; opacity:0; transition:opacity .12s ease; }
+.tree-row:hover .tree-row-actions,
+.tree-row.active .tree-row-actions,
+.tree-row.contains-active .tree-row-actions { opacity:1; }
+.tree-action-icon { width:20px; height:20px; padding:0; border:0; border-radius:6px; background:transparent; color:var(--faint); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.tree-action-icon:hover { color:var(--text); background:var(--soft-2); }
+.tree-action-icon.danger:hover { color:var(--danger); background:rgba(220,38,38,.1); }
+.tree-action-icon.danger.detail-confirm { color:var(--danger); background:rgba(220,38,38,.1); opacity:1; }
+.tree-action-icon.muted { color:var(--faint); cursor:default; opacity:.6; }
+.tree-action-icon svg { width:12px; height:12px; }
+/* 新分组/重命名提示词库等操作触发时，整行原地替换成一个输入框，跟
+   正常树行保持一致的高度和缩进，取代旧版单独插入一条操作条的做法。
+   见 renderPromptTreeInlineRow。 */
+.tree-inline-row { grid-template-columns:18px minmax(0,1fr) auto; padding:5px 8px; }
+.tree-inline-row.tree-child { grid-template-columns:14px minmax(0,1fr) auto; padding:5px 7px 5px 12px; }
+.tree-inline-row input { min-width:0; height:24px; border-radius:7px; border:1px solid var(--line-2); background:var(--card); color:var(--text); outline:none; padding:0 8px; font-size:11px; font-weight:800; }
+.tree-inline-row input:focus { box-shadow:0 0 0 3px rgba(148,163,184,.14); }
+.tree-inline-row .tree-row-actions { opacity:1; }
+.tree-toggle svg { width:12px; height:12px; }
+/* 条目叶子节点：elbow / checkbox / icon / name（无 count）。见
+   renderPromptTreeItem。checkbox 只在批量管理模式下显示，用 visibility
+   （而非 display:none）隐藏，确保它始终占据一个 grid 轨道，否则
+   grid-template-columns 里第 2 列会被跳过，name 列错位挤占本该属于
+   checkbox 的窄列，导致条目名称被截断成一两个字。 */
+.tree-item { grid-template-columns:14px 16px 16px minmax(0,1fr); min-height:28px; padding:4px 7px 4px 12px; color:var(--muted); }
+.tree-item-check { width:14px; height:14px; margin:0; accent-color:var(--strong); }
+.tree-items { margin-left:23px; padding-left:9px; }
+.prompt-tree-nav:not(.manage-on) .tree-item-check { visibility:hidden; pointer-events:none; }
 .tree-row:hover { background:var(--soft); border-color:var(--line); }
 .tree-parent.contains-active:not(.active) { color:var(--text); }
 .tree-parent.contains-active:not(.active) .tree-row-icon { color:var(--text); }
@@ -257,9 +303,15 @@ video.asset-lightbox-image { cursor:default; }
 .prompt-detail-head { display:flex; flex-direction:column; gap:8px; }
 .prompt-detail-title { color:var(--text); font-size:17px; line-height:1.25; font-weight:950; overflow-wrap:anywhere; }
 .prompt-detail-scene { color:var(--muted); font-size:12px; line-height:1.5; font-weight:650; }
-.prompt-block { border:1px solid var(--line); border-radius:13px; background:var(--card); overflow:hidden; }
-.prompt-block-head { min-height:34px; padding:8px 10px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:10.5px; font-weight:900; }
-.prompt-block-body { padding:10px; color:var(--text); font-size:12px; line-height:1.62; font-weight:520; white-space:pre-wrap; overflow-wrap:anywhere; max-height:260px; overflow:auto; scrollbar-width:thin; scrollbar-color:rgba(148,163,184,.42) transparent; }
+/* 提示词正文卡片：铺满详情面板剩余的所有可用高度，而不是固定死
+   260px 的小滚动框——两栏布局改造后右侧详情面板通常有大片空白，
+   固定高度会让长文本挤在一个小窗口里滚动，浪费了本可用的空间。
+   .prompt-block 用 flex:1 占据 .detail-scroll（flex 纵向布局）分配给
+   它的剩余空间，.prompt-block-body 再用 flex:1 撑满卡片内部剩余高度，
+   内容超出时在这个已经很大的区域内部滚动。 */
+.prompt-block { border:1px solid var(--line); border-radius:13px; background:var(--card); overflow:hidden; flex:1; min-height:200px; display:flex; flex-direction:column; }
+.prompt-block-head { flex:0 0 auto; min-height:34px; padding:8px 10px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:10.5px; font-weight:900; }
+.prompt-block-body { flex:1; padding:10px; color:var(--text); font-size:12px; line-height:1.62; font-weight:520; white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; scrollbar-width:thin; scrollbar-color:rgba(148,163,184,.42) transparent; }
 .prompt-block-body.negative { color:var(--muted); }
 .params-list { display:flex; flex-direction:column; gap:7px; }
 .param-row { border:1px solid var(--line); border-radius:11px; background:var(--card); padding:9px; }

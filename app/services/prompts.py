@@ -778,22 +778,39 @@ def load_system_prompt_libraries():
             if library_id in grouped and isinstance(row.get("payload_json"), dict):
                 grouped[library_id].append(row["payload_json"])
     seeds = {str(lib["id"]): lib for lib in builtin_system_prompt_libraries()}
+    # system_prompt_libraries 表持久化了每个保留库的完整快照（包括管理员
+    # 编辑保存的 name/categories），是分类信息的权威来源；条目内容仍以
+    # prompt_templates 表（上面已经查询到的 grouped）为准，二者分别持久化，
+    # 这里需要把两者合并，否则新建的分组（categories）在管理员之外的
+    # sync_global_reserved=False 路径下即使写库成功，下次加载也会被这里
+    # 硬编码的种子 categories 覆盖，造成“刷新后分组消失”。
+    stored_by_id = {str(record.get("id")): record.get("library_json") for record in get_system_prompt_library_records()
+                     if isinstance(record.get("library_json"), dict)}
     libraries = []
     for library_id, items in grouped.items():
         base = deepcopy(seeds.get(library_id) or {"id": library_id, "name": library_id, "type": "prompt", "categories": []})
+        stored = stored_by_id.get(library_id)
+        if isinstance(stored, dict):
+            if isinstance(stored.get("categories"), list):
+                base["categories"] = stored["categories"]
+            if stored.get("name"):
+                base["name"] = stored["name"]
         base["items"] = items
         libraries.append(base)
     return libraries or builtin_system_prompt_libraries()
 
 
 def defaultPromptTemplateCategories():
+    # "我的"(custom) 不是默认展示的分类：它只是未归类自建条目的兜底
+    # 容器 id，只有当该分类下实际存在条目时才应该出现在分类列表里
+    # （由调用方按需追加，见 normalize_prompt_template_categories 的
+    # include_custom_if_used 参数与前端 activePromptCategories）。
     return [
         {"id": "builtin", "name": "内置"},
-        {"id": "custom", "name": "我的"},
     ]
 
 
-def normalize_prompt_template_categories(*category_lists, include_defaults=True):
+def normalize_prompt_template_categories(*category_lists, include_defaults=True, used_category_ids=None):
     normalized = []
     seen = set()
 
@@ -802,6 +819,12 @@ def normalize_prompt_template_categories(*category_lists, include_defaults=True)
             return
         cat_id = normalize_prompt_category_id(category.get("id") or category.get("name") or "custom")
         if cat_id in seen:
+            return
+        # "我的"(custom) 不是恒定分类：不管它是通过 defaultPromptTemplateCategories
+        # 的默认值传入，还是调用方显式传入了历史存量数据里的 custom 分类，
+        # 都必须严格按"是否有条目实际使用"来决定是否保留，否则历史脏数据
+        # （旧版本写入的、包含 custom 的库快照）会绕过按需展示规则。
+        if cat_id == "custom" and include_defaults and not (used_category_ids and "custom" in used_category_ids):
             return
         seen.add(cat_id)
         name = "我的" if cat_id == "custom" else sanitize_asset_name(category.get("name") or cat_id, cat_id)
@@ -814,6 +837,10 @@ def normalize_prompt_template_categories(*category_lists, include_defaults=True)
         if isinstance(categories, list):
             for category in categories:
                 add_category(category)
+    # "我的"(custom) 只有在确实有条目落在这个分类下时才补入列表，
+    # 不作为恒定的默认分类展示。
+    if include_defaults and "custom" not in seen and used_category_ids and "custom" in used_category_ids:
+        add_category({"id": "custom", "name": "我的"})
     return normalized
 
 
@@ -863,7 +890,10 @@ def normalize_prompt_libraries(data):
             "type": "prompt",
             "readonly": is_system,
             "system": is_system,
-            "categories": normalize_prompt_template_categories(raw_categories, include_defaults=is_system),
+            "categories": normalize_prompt_template_categories(
+                raw_categories, include_defaults=is_system,
+                used_category_ids={str(item.get("category")) for item in items if isinstance(item, dict)},
+            ),
             "items": items,
         })
         for item in items:
@@ -940,9 +970,24 @@ def load_prompt_libraries():
                       if isinstance(item, dict) and str(item.get("id")) not in system_item_ids
                       and not str(item.get("id") or "").startswith("builtin_")]
             system_library["items"] = system_library.get("items", []) + extras
+            # 分类同理：system_library 的 categories 只包含全局共享的分组
+            # （内置 + 管理员编辑保存的），普通用户自建的分组（pcat_xxx）
+            # 只存在账户级 user_library.categories 里，必须在这里合并，
+            # 否则每次加载都会被系统库的分类列表直接覆盖，造成“新建分组
+            # 刷新后消失”。
+            system_category_ids = {str(cat.get("id")) for cat in system_library.get("categories", []) if isinstance(cat, dict)}
+            extra_categories = [cat for cat in (user_library.get("categories") or [])
+                                 if isinstance(cat, dict) and str(cat.get("id")) not in system_category_ids]
+            system_library["categories"] = system_library.get("categories", []) + extra_categories
             merged.append(system_library)
         merged.extend(lib for lib in normalized.get("libraries", []) if str(lib.get("id")) not in system_libraries)
         normalized["libraries"] = merged
+        # system_library["categories"] 直接来自 load_system_prompt_libraries()
+        # 的原始快照（可能包含历史遗留的、不该再默认展示的"我的"等分类），
+        # 还没有经过 normalize_prompt_template_categories 的"按需展示"过滤。
+        # 这里重新规范化一次，确保每次返回的分类列表都严格符合当前规则
+        # （只有当分类下确实存在条目时才保留"我的"），并顺带自愈历史脏数据。
+        normalized = normalize_prompt_libraries(normalized)
     migration_state = get_user_setting(user_id, "prompt_library_rule_migrations", {})
     migration_state = migration_state if isinstance(migration_state, dict) else {}
     migrated = False
@@ -994,17 +1039,25 @@ def save_prompt_libraries(data, sync_global_reserved=False):
             replace_global_library_prompt_templates(library_id, templates)
         system_ids = {str(lib.get("id")) for lib in load_system_prompt_libraries()}
     # Never write global system libraries back into an account record. Preserve
-    # only account-owned libraries and custom items in reserved libraries.
+    # only account-owned libraries and custom items/categories in reserved
+    # libraries.
     stored_libraries = []
     for library in data.get("libraries", []):
         library_id = str(library.get("id"))
         if library_id in system_ids:
-            system_items = {str(item.get("id")) for item in next(
+            system_library = next(
                 (lib for lib in load_system_prompt_libraries() if str(lib.get("id")) == library_id), {}
-            ).get("items", []) if isinstance(item, dict)}
+            )
+            system_items = {str(item.get("id")) for item in system_library.get("items", []) if isinstance(item, dict)}
             custom_items = [item for item in library.get("items", []) if str(item.get("id")) not in system_items]
-            if custom_items:
-                stored_libraries.append({**library, "items": custom_items})
+            system_categories = {str(cat.get("id")) for cat in system_library.get("categories", []) if isinstance(cat, dict)}
+            # 用户自建分组（不在全局共享分类集合里的）即使暂时是空分组
+            # （custom_items 不含其条目），也要保留，否则新建空分组后
+            # 不会写入账户设置，刷新即消失。
+            custom_categories = [cat for cat in (library.get("categories") or [])
+                                  if isinstance(cat, dict) and str(cat.get("id")) not in system_categories]
+            if custom_items or custom_categories:
+                stored_libraries.append({**library, "items": custom_items, "categories": custom_categories})
             continue
         stored_libraries.append(library)
     account_data = {**data, "libraries": stored_libraries}

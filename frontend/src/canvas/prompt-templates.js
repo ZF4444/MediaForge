@@ -110,15 +110,19 @@ function savePromptPresets(){
     localStorage.setItem(PROMPT_PRESETS_KEY, JSON.stringify(promptPresets));
 }
 function defaultPromptTemplateGroups(){
+    // "我的"(mine) 不是恒定展示的默认分组，只有当账户自建条目或本地
+    // 预设（promptPresets）中确实存在数据时才应该展示，由
+    // activePromptTemplateGroups 按需追加。
     return [
-        {id:'builtin', name:tr('smart.tplCatBuiltin')},
-        {id:'mine', name:tr('smart.tplCatMine')}
+        {id:'builtin', name:tr('smart.tplCatBuiltin')}
     ];
 }
 function loadPromptTemplateGroups(){
     try {
         const list = JSON.parse(localStorage.getItem(PROMPT_TEMPLATE_GROUPS_KEY) || '[]');
-        const valid = Array.isArray(list) ? list.filter(g => g?.id && g?.name) : [];
+        // "mine" 不再是恒定分组：即使历史 localStorage 数据里保存过它，
+        // 也不在这里直接恢复，交由 activePromptTemplateGroups 按需追加。
+        const valid = Array.isArray(list) ? list.filter(g => g?.id && g?.name && g.id !== 'mine') : [];
         const defaults = defaultPromptTemplateGroups();
         promptTemplateGroups = defaults.map(group => valid.find(g => g.id === group.id) || group);
         valid.filter(g => !promptTemplateGroups.some(x => x.id === g.id)).forEach(g => promptTemplateGroups.push(g));
@@ -228,7 +232,18 @@ function promptTemplateSearchText(template){
 }
 function activePromptTemplateGroups(){
     const lib = activePromptLibrary();
-    if(!lib || ['system', 'caption', 'expand'].includes(String(lib.id || '')) || lib.system || lib.readonly) return promptTemplateGroups;
+    if(!lib || ['system', 'caption', 'expand'].includes(String(lib.id || '')) || lib.system || lib.readonly){
+        // "我的"(mine) 只有当账户自建条目（category!=='builtin' 的
+        // 库内条目）或本地预设 promptPresets 中确实存在数据时才展示，
+        // 不作为恒定默认分组常驻。
+        const libraryItems = Array.isArray(lib?.items) ? lib.items : [];
+        const hasAccountItems = lib?.id === 'system' && libraryItems.some(t => t?.builtin === false);
+        const hasLocalPresets = lib?.id === 'system' && promptPresets.length > 0;
+        if((hasAccountItems || hasLocalPresets) && !promptTemplateGroups.some(g => g.id === 'mine')){
+            return [...promptTemplateGroups, {id:'mine', name:tr('smart.tplCatMine')}];
+        }
+        return promptTemplateGroups;
+    }
     return Array.isArray(lib.categories) ? lib.categories.filter(c => c?.id && c?.name) : [];
 }
 function promptTemplateCategoryLabel(category){

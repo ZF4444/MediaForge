@@ -18,7 +18,7 @@ let avatarBusyId = '';
 let activeAssetLibraryId = '';
 let activeAssetCategoryId = '';
 let activePromptLibraryId = '';
-let activePromptCategory = 'all';
+let activePromptCategory = '';
 let assetTreeFocus = 'category';
 let promptTreeFocus = 'category';
 let selectedAssetId = '';
@@ -40,6 +40,15 @@ let pendingBatchDelete = '';
 let assetTreeEdit = null;
 let promptTreeEdit = null;
 let pendingTreeDelete = '';
+// 树形结构直接展开到条目层级：记录哪些"库id:分组id"已展开显示其下的
+// 提示词叶子节点（key 格式 `${libId}::${categoryId}`）。默认只展开当前
+// 激活的库+分组（见 prompt-library.js 的 normalizePromptState），其余
+// 分组保持折叠，避免条目很多时树一次性铺得过长。
+let promptTreeExpandedCategories = new Set();
+// 记录上一次"激活库+分类"的 key，只有它发生变化时 normalizePromptState
+// 才会自动展开新的激活节点；用户手动点击折叠箭头后，只要激活项没变，
+// 折叠状态就不会被下一次 render() 覆盖。
+let promptTreeLastActiveKey = '';
 let marqueeState = null;
 let sharedFolders = [];
 let activeSharedFolderId = '';
@@ -228,6 +237,9 @@ function render(options){
     const preserveScroll = !!(options && options.preserveScroll);
     const scrollPositions = preserveScroll ? captureScrollPositions() : null;
     document.querySelectorAll('[data-tab]').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === activeTab));
+    // 提示词库改为两栏布局（左：树形结构直接展开到条目层级；右：详情），
+    // 只对这个 tab 生效；其它 tab 仍是"导航树/列表/详情"三栏。
+    root.classList.toggle('asset-manager-root-two-col', activeTab === 'prompts');
     if(activeTab === 'prompts') renderPromptManager();
     else if(activeTab === 'local') renderLocalManager();
     else if(activeTab === 'storage') renderStorageManager();
@@ -523,7 +535,7 @@ async function handleClick(event){
         render();
         return;
     }
-    if(target.closest?.('[data-prompt-select-all]')){ currentPromptItems().forEach(item => selectedPromptIds.add(item.id)); pendingBatchDelete = ''; render(); return; }
+    if(target.closest?.('[data-prompt-select-all]')){ currentPromptItems().filter(item => !isPromptItemReadonly(item)).forEach(item => selectedPromptIds.add(item.id)); pendingBatchDelete = ''; render(); return; }
     if(target.closest?.('[data-prompt-clear-selection]')){ selectedPromptIds.clear(); pendingBatchDelete = ''; render(); return; }
     const promptEdit = target.closest?.('[data-prompt-edit]');
     if(promptEdit){ await editPromptItem(promptEdit.dataset.promptEdit || ''); return; }
@@ -534,47 +546,92 @@ async function handleClick(event){
     if(promptNewBtn){
         const libId = promptNewBtn.dataset.libId || target.closest('[data-prompt-lib]')?.dataset.promptLib;
         const catRow = target.closest('[data-prompt-cat]');
-        if(libId){ activePromptLibraryId = libId; activePromptCategory = 'all'; }
+        if(libId){ activePromptLibraryId = libId; activePromptCategory = activePromptCategories()[0]?.id || ''; }
         if(catRow){ activePromptLibraryId = catRow.dataset.promptCatLib || activePromptLibraryId; activePromptCategory = catRow.dataset.promptCat || activePromptCategory; }
         promptCreateMode = true; promptEditMode = false; pendingDeletePromptId = ''; render(); return;
     }
-    if(target.closest?.('[data-prompt-lib-new]')){ promptTreeFocus = 'library'; promptTreeEdit = {kind:'library-new', value:'新提示词库', label:'提示词库名称'}; render(); return; }
-    if(target.closest?.('[data-prompt-cat-new]')){
-        const libRow = target.closest('[data-prompt-lib]');
-        if(libRow) activePromptLibraryId = libRow.dataset.promptLib || activePromptLibraryId;
-        promptTreeFocus = 'library';
+    if(target.closest?.('[data-prompt-lib-new]')){ promptTreeEdit = {kind:'library-new', value:'新提示词库', label:'提示词库名称'}; render(); return; }
+    const promptCatNewBtn = target.closest?.('[data-prompt-cat-new-for]');
+    if(promptCatNewBtn){
+        activePromptLibraryId = promptCatNewBtn.dataset.promptCatNewFor || activePromptLibraryId;
         promptTreeEdit = {kind:'category-new', value:'新分组', label:'分组名称'};
         pendingTreeDelete = '';
         render(); return;
     }
-    if(target.closest?.('[data-prompt-cat-rename]')){
-        promptTreeFocus = 'category';
-        const cat = activePromptCategories().find(c => c.id === activePromptCategory);
+    const promptCatRenameBtn = target.closest?.('[data-prompt-cat-rename-for]');
+    if(promptCatRenameBtn){
+        const catId = promptCatRenameBtn.dataset.promptCatRenameFor || '';
+        activePromptLibraryId = promptCatRenameBtn.dataset.promptCatRenameLib || activePromptLibraryId;
+        activePromptCategory = catId;
+        const cat = activePromptCategories().find(c => c.id === catId);
         promptTreeEdit = {kind:'category-rename', value:cat?.name || '', label:'分组名称'};
         pendingTreeDelete = '';
         render(); return;
     }
-    if(target.closest?.('[data-prompt-cat-delete]')){ await deletePromptCategory(); return; }
-    const promptLibRenameBtn = target.closest?.('[data-prompt-lib-rename]');
+    const promptCatDeleteBtn = target.closest?.('[data-prompt-cat-delete-for]');
+    if(promptCatDeleteBtn){
+        activePromptCategory = promptCatDeleteBtn.dataset.promptCatDeleteFor || activePromptCategory;
+        await deletePromptCategory(); return;
+    }
+    const promptLibRenameBtn = target.closest?.('[data-prompt-lib-rename-for]');
     if(promptLibRenameBtn){
-        const libRow = target.closest('[data-prompt-lib]');
-        if(promptLibRenameBtn.dataset.libId) activePromptLibraryId = promptLibRenameBtn.dataset.libId;
-        if(libRow) activePromptLibraryId = libRow.dataset.promptLib || activePromptLibraryId;
-        promptTreeFocus = 'library';
+        activePromptLibraryId = promptLibRenameBtn.dataset.promptLibRenameFor || activePromptLibraryId;
         promptTreeEdit = {kind:'library-rename', value:activePromptLibrary()?.name || '', label:'提示词库名称'};
         render(); return;
     }
-    const promptLibDeleteBtn = target.closest?.('[data-prompt-lib-delete]');
+    const promptLibDeleteBtn = target.closest?.('[data-prompt-lib-delete-for]');
     if(promptLibDeleteBtn){
-        if(promptLibDeleteBtn.dataset.libId) activePromptLibraryId = promptLibDeleteBtn.dataset.libId;
+        activePromptLibraryId = promptLibDeleteBtn.dataset.promptLibDeleteFor || activePromptLibraryId;
         await deletePromptLibrary(); return;
     }
     const promptLib = target.closest?.('[data-prompt-lib]');
-    if(promptLib){ activePromptLibraryId = promptLib.dataset.promptLib || ''; activePromptCategory = 'all'; promptTreeFocus = 'library'; selectedPromptId = ''; promptCreateMode = false; promptEditMode = false; selectedPromptIds.clear(); render(); return; }
+    if(promptLib){
+        activePromptLibraryId = promptLib.dataset.promptLib || '';
+        // "全部提示词"伪分组已移除，默认展开该库的第一个真实分类
+        // （通常是"内置"），而不是不再存在的 'all'，否则选中的条目
+        // 会落在一个没有对应树节点的分类上，导致树上找不到高亮项。
+        activePromptCategory = activePromptCategories()[0]?.id || 'builtin';
+        promptCreateMode = false; promptEditMode = false; render(); return;
+    }
+    const promptCatToggle = target.closest?.('[data-prompt-cat-toggle]');
+    if(promptCatToggle){
+        // .tree-toggle 现在是 <span role="button">（不能用原生 <button>，
+        // 否则会嵌套在分组行的 <button data-prompt-cat> 内部形成非法的
+        // button-in-button HTML，浏览器会自动截断其后的兄弟内容），
+        // 用 aria-disabled 代替原生 disabled 属性阻止无条目分组被展开。
+        if(promptCatToggle.getAttribute('aria-disabled') === 'true') return;
+        const key = promptCatToggle.dataset.promptCatToggle || '';
+        if(promptTreeExpandedCategories.has(key)) promptTreeExpandedCategories.delete(key);
+        else promptTreeExpandedCategories.add(key);
+        render();
+        return;
+    }
     const promptCat = target.closest?.('[data-prompt-cat]');
-    if(promptCat){ activePromptLibraryId = promptCat.dataset.promptCatLib || activePromptLibraryId; activePromptCategory = promptCat.dataset.promptCat || 'all'; promptTreeFocus = 'category'; selectedPromptId = ''; promptCreateMode = false; promptEditMode = false; selectedPromptIds.clear(); render(); return; }
+    if(promptCat){
+        activePromptLibraryId = promptCat.dataset.promptCatLib || activePromptLibraryId;
+        activePromptCategory = promptCat.dataset.promptCat || '';
+        promptTreeFocus = 'category';
+        promptCreateMode = false; promptEditMode = false;
+        // 点击分组名同时展开显示其条目叶子节点，不需要额外点击箭头；
+        // 不清空 selectedPromptId/selectedPromptIds，切换分组只是导航/
+        // 展开操作，右侧详情面板应该保持当前选中的提示词。
+        promptTreeExpandedCategories.add(promptTreeCategoryKey(activePromptLibraryId, activePromptCategory));
+        render();
+        return;
+    }
     const promptRow = target.closest?.('[data-prompt-row]');
-    if(promptRow){ selectedPromptId = promptRow.dataset.promptRow || ''; promptEditMode = false; promptCreateMode = false; pendingDeletePromptId = ''; render(); return; }
+    if(promptRow){
+        // 树形结构允许同时展开多个库的分组，用户可能在未切换
+        // activePromptLibraryId 的情况下直接点击别的库的条目，这里需要
+        // 同步切换，否则 selectedPrompt()/currentPromptItems() 基于
+        // activePromptLibrary() 的查找会找不到这个条目，导致选中状态
+        // 被 normalizePromptState 误清空。
+        if(promptRow.dataset.promptRowLib) activePromptLibraryId = promptRow.dataset.promptRowLib;
+        if(promptRow.dataset.promptRowCat) activePromptCategory = promptRow.dataset.promptRowCat;
+        selectedPromptId = promptRow.dataset.promptRow || '';
+        promptEditMode = false; promptCreateMode = false; pendingDeletePromptId = '';
+        render(); return;
+    }
 }
 // [asset-manager 迁移] openAssetItem/showDetailPreview/closeDetailPreview/
 // applyLightboxTransform/zoomDetailPreview/beginLightboxPan/updateLightboxPan/endLightboxPan/

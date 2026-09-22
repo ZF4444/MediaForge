@@ -99,7 +99,7 @@ describe('promptTemplateSearchText', () => {
 });
 
 describe('defaultPromptTemplateGroups', () => {
-    it('返回2个内置分组：builtin 与 mine', () => {
+    it('只返回1个内置分组：builtin（"我的"不再是恒定默认分组）', () => {
         const sandbox = createPromptTemplatesSandbox({
             trDict: {
                 'smart.tplCatBuiltin': '内置',
@@ -107,10 +107,9 @@ describe('defaultPromptTemplateGroups', () => {
             },
         });
         const groups = sandbox.defaultPromptTemplateGroups();
-        expect(groups.length).toBe(2);
-        expect(groups.map(g => g.id)).toEqual(['builtin', 'mine']);
+        expect(groups.length).toBe(1);
+        expect(groups.map(g => g.id)).toEqual(['builtin']);
         expect(groups.find(g => g.id === 'builtin').name).toBe('内置');
-        expect(groups.find(g => g.id === 'mine').name).toBe('我的');
     });
 });
 

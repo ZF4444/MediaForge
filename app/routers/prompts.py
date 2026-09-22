@@ -114,10 +114,18 @@ def add_prompt_library_item(payload: PromptLibraryItemRequest):
         raise HTTPException(status_code=404, detail="提示词库不存在")
     if not str(payload.prompt or "").strip():
         raise HTTPException(status_code=400, detail="提示词内容不能为空")
+    # "内置"(builtin) 分类代表全局共享内容：非管理员新增的条目即使显式
+    # 传了 category="builtin"，也要纠正为 "custom"，否则账户私有条目会
+    # 被误归类展示在"内置"分组下，造成语义混乱（该条目本身仍不会被标记
+    # builtin=True，只有系统种子数据才是真正的内置内容，但分类归属应
+    # 保持准确）。
+    category = payload.category
+    if str(category or "").strip() == "builtin" and not _current_user_is_admin():
+        category = "custom"
     item = normalize_prompt_library_item({
         "id": f"tpl_{uuid.uuid4().hex[:12]}",
         "name": payload.name,
-        "category": payload.category,
+        "category": category,
         "prompt": payload.prompt,
         "scene": payload.scene,
         "created_at": now_ms(),
@@ -137,10 +145,15 @@ def update_prompt_library_item(item_id: str, payload: PromptLibraryItemRequest):
             continue
         for index, item in enumerate(library.get("items", []) or []):
             if item.get("id") == item_id:
+                if item.get("builtin") and not _current_user_is_admin():
+                    raise HTTPException(status_code=403, detail="内置提示词不能编辑")
+                category = payload.category or item.get("category")
+                if str(category or "").strip() == "builtin" and not _current_user_is_admin():
+                    category = "custom"
                 next_item = normalize_prompt_library_item({
                     **item,
                     "name": payload.name or item.get("name"),
-                    "category": payload.category or item.get("category"),
+                    "category": category,
                     "prompt": payload.prompt or item.get("prompt"),
                     "scene": payload.scene,
                     "updated_at": now_ms(),
@@ -160,6 +173,8 @@ def delete_prompt_library_item(item_id: str):
         keep = []
         for item in library.get("items", []) or []:
             if item.get("id") == item_id:
+                if item.get("builtin") and not _current_user_is_admin():
+                    raise HTTPException(status_code=403, detail="内置提示词不能删除")
                 removed = item
                 removed_library_id = str(library.get("id") or "")
             else:
@@ -177,19 +192,25 @@ def batch_delete_prompt_library_items(payload: PromptLibraryBatchDeleteRequest):
     if not ids:
         raise HTTPException(status_code=400, detail="没有选择提示词")
     data = load_prompt_libraries()
+    is_admin_user = _current_user_is_admin()
     removed = 0
+    skipped_builtin = 0
     affected_library_ids = set()
     for library in data.get("libraries", []) or []:
         keep = []
         for item in library.get("items", []) or []:
             if item.get("id") in ids:
+                if item.get("builtin") and not is_admin_user:
+                    skipped_builtin += 1
+                    keep.append(item)
+                    continue
                 removed += 1
                 affected_library_ids.add(str(library.get("id") or ""))
             else:
                 keep.append(item)
         library["items"] = keep
     data = _save_prompt_libraries_for(data, affected_library_ids)
-    return {"library": public_prompt_libraries(data), "removed": removed}
+    return {"library": public_prompt_libraries(data), "removed": removed, "skipped_builtin": skipped_builtin}
 
 
 @router.post("/api/prompt-libraries/categories")
