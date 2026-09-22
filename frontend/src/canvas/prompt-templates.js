@@ -149,11 +149,11 @@ async function loadPromptTemplates(){
         promptLibraries = Array.isArray(data.library?.libraries) ? data.library.libraries : [];
         if(!promptLibraries.length) {
             const fallback = await fetch('/api/canvas/prompt-templates').then(r => r.ok ? r.json() : {templates:[]});
-            builtinPromptTemplates = Array.isArray(fallback.templates) ? fallback.templates.filter(t => t?.id && t?.positive) : [];
+            builtinPromptTemplates = Array.isArray(fallback.templates) ? fallback.templates.filter(t => t?.id && t?.prompt) : [];
             promptLibraries = [{id:'system', name:'系统提示词库', readonly:true, items:builtinPromptTemplates}];
         } else {
             const system = promptLibraries.find(lib => lib.id === 'system') || promptLibraries[0];
-            builtinPromptTemplates = Array.isArray(system?.items) ? system.items.filter(t => t?.id && t?.positive) : [];
+            builtinPromptTemplates = Array.isArray(system?.items) ? system.items.filter(t => t?.id && t?.prompt) : [];
         }
         if(!promptLibraries.some(lib => lib.id === activePromptLibraryId)) activePromptLibraryId = promptLibraries[0]?.id || 'system';
         renderPromptLibrarySelect();
@@ -173,7 +173,7 @@ function promptTemplateItems(){
     const activeLibrary = activePromptLibrary();
     const builtinLibrary = ['system', 'caption', 'expand'].includes(String(activeLibrary.id || '')) || activeLibrary.system || activeLibrary.readonly;
     if(!builtinLibrary){
-        return (activeLibrary.items || []).filter(t => t?.id && t?.positive).map(t => ({
+        return (activeLibrary.items || []).filter(t => t?.id && t?.prompt).map(t => ({
             ...t,
             sourceId:t.id,
             builtin:false,
@@ -186,7 +186,7 @@ function promptTemplateItems(){
     const builtins = libraryItems
         .filter(t => t?.builtin !== false)
         .filter(t => !hidden.has(t.id))
-        .filter(t => t?.id && t?.positive)
+        .filter(t => t?.id && t?.prompt)
         .map(t => ({...t, ...(activeLibrary.id === 'system' ? (promptTemplateOverrides.editedBuiltins?.[t.id] || {}) : {}), builtin:true, remote:true, libraryId:activeLibrary.id}));
     const accountItems = activeLibrary.id === 'system' ? libraryItems.filter(t => t?.builtin === false).map(t => ({
         ...t,
@@ -202,21 +202,14 @@ function promptTemplateItems(){
         name:p.name || tr('smart.promptPresetUnnamed'),
         category:p.category || 'mine',
         scene:'我的提示词预设',
-        positive:p.text || '',
-        negative:'',
+        prompt:p.text || '',
         params:{},
         builtin:false
     })) : [];
     return [...builtins, ...accountItems, ...mine];
 }
-function promptTemplateText(template, mode='positive'){
-    const positive = String(template?.positive || '').trim();
-    if(mode === 'positive' || !template?.builtin) return positive;
-    const negative = String(template?.negative || '').trim();
-    const params = Object.entries(template?.params || {})
-        .map(([key, value]) => `${key}: ${value}`)
-        .join('\n');
-    return [positive, negative ? `Negative prompt:\n${negative}` : '', params ? `Params:\n${params}` : ''].filter(Boolean).join('\n\n');
+function promptTemplateText(template){
+    return String(template?.prompt || '').trim();
 }
 function promptTemplateName(template){
     return template?.name || '';
@@ -230,8 +223,7 @@ function promptTemplateSearchText(template){
         template?.name_en,
         template?.scene,
         template?.scene_en,
-        template?.positive,
-        template?.negative
+        template?.prompt
     ].join(' ').toLowerCase();
 }
 function activePromptTemplateGroups(){
@@ -427,7 +419,7 @@ function renderPromptTemplatePanel(options={}){
     if(items.length && !items.some(item => item.id === promptTemplateSelectedId)) promptTemplateSelectedId = items[0].id;
     const selected = items.find(item => item.id === promptTemplateSelectedId) || items[0] || null;
     const selectedPreset = selected?.builtin || selected?.remote
-        ? {id:selected.id, name:selected.name || '', text:selected.positive || '', category:selected.category || 'builtin', builtin:Boolean(selected.builtin)}
+        ? {id:selected.id, name:selected.name || '', text:selected.prompt || '', category:selected.category || 'builtin', builtin:Boolean(selected.builtin)}
         : (selected ? currentPromptPreset(selected.sourceId) : null);
     const target = promptTemplatePanel.dataset.target || 'node';
     const node = nodes.find(n => n.id === promptTemplatePanel.dataset.nodeId);
@@ -445,8 +437,8 @@ function renderPromptTemplatePanel(options={}){
                     <span class="prompt-template-name">${escapeHtml(promptTemplateName(item))}</span>
                     <span class="prompt-template-source">${escapeHtml(item.builtin ? tr('smart.tplBuiltin') : tr('smart.tplMine'))}</span>
                 </span>
-                <span class="prompt-template-scene">${escapeHtml(promptTemplateScene(item) || item.positive || '')}</span>
-                <span class="prompt-template-tag">${escapeHtml(promptTemplateCategoryLabel(item.category || 'mine'))}</span>
+                <span class="prompt-template-scene">${escapeHtml(promptTemplateScene(item) || item.prompt || '')}</span>
+                ${['builtin', 'mine', ''].includes(item.category || 'mine') ? '' : `<span class="prompt-template-tag">${escapeHtml(promptTemplateCategoryLabel(item.category))}</span>`}
             </button>`).join('') : `<div class="prompt-template-list-empty">${escapeHtml(tr('smart.tplNoMatches'))}</div>`}
         </div>
         <div class="prompt-template-detail">
@@ -454,7 +446,7 @@ function renderPromptTemplatePanel(options={}){
                 <div class="prompt-template-detail-head">
                     <div>
                         <strong>${escapeHtml(promptTemplateName(selected) || '')}</strong>
-                        <span>${escapeHtml(promptTemplateCategoryLabel(selected.category || ''))} · ${escapeHtml(selected.builtin ? tr('smart.tplBuiltinTemplate') : tr('smart.tplMineTemplate'))}</span>
+                        <span>${selected.category === 'builtin' ? '' : `${escapeHtml(promptTemplateCategoryLabel(selected.category || ''))} · `}${escapeHtml(selected.builtin ? tr('smart.tplBuiltinTemplate') : tr('smart.tplMineTemplate'))}</span>
                     </div>
                     ${editMode ? '' : `
                         <div class="prompt-template-icon-actions">
@@ -477,13 +469,9 @@ function renderPromptTemplatePanel(options={}){
             ` : `
                 <div class="prompt-template-preview-content">
                 <div class="prompt-template-section">
-                    <label>${escapeHtml(tr('smart.tplPositive'))}</label>
-                    <p>${escapeHtml(selected?.positive || '')}</p>
+                    <label>${escapeHtml(tr('smart.tplContent'))}</label>
+                    <p>${escapeHtml(selected?.prompt || '')}</p>
                 </div>
-                ${selected?.negative ? `<div class="prompt-template-section">
-                    <label>${escapeHtml(tr('smart.tplNegative'))}</label>
-                    <p>${escapeHtml(selected.negative)}</p>
-                </div>` : ''}
                 ${Object.keys(selected?.params || {}).length ? `<div class="prompt-template-section">
                     <label>${escapeHtml(tr('smart.tplParams'))}</label>
                     <p>${escapeHtml(Object.entries(selected.params).map(([k,v]) => `${k}: ${v}`).join('\n'))}</p>
@@ -496,8 +484,7 @@ function renderPromptTemplatePanel(options={}){
                     <button type="button" class="danger" data-template-delete><i data-lucide="trash-2"></i><span>${escapeHtml(tr('common.delete'))}</span></button>
                     <button type="button" class="primary" data-template-edit-save><i data-lucide="save"></i><span>${escapeHtml(tr('common.save'))}</span></button>
                 ` : `
-                    <button type="button" data-template-apply="positive"><i data-lucide="corner-down-left"></i><span>${escapeHtml(tr('smart.tplApplyPositive'))}</span></button>
-                    <button type="button" class="primary" data-template-apply="full"><i data-lucide="wand-sparkles"></i><span>${escapeHtml(tr('smart.tplApplyFull'))}</span></button>
+                    <button type="button" class="primary" data-template-apply><i data-lucide="wand-sparkles"></i><span>${escapeHtml(tr('smart.tplApply'))}</span></button>
                 `}
             </div>
             ` : `<div class="prompt-template-empty">${escapeHtml(tr('smart.tplPickOrCreate'))}</div>`}
@@ -547,11 +534,11 @@ function closePromptTemplatePanel(){
     syncComposerTemplateButton();
     render();
 }
-function applyPromptTemplateToNode(mode='positive'){
+function applyPromptTemplateToNode(){
     const template = promptTemplateItems().find(item => item.id === promptTemplateSelectedId);
     if(!template) return;
     if(promptTemplatePanel?.dataset.target === 'composer'){
-        const text = promptTemplateText(template, mode);
+        const text = promptTemplateText(template);
         setPromptText(text);
         delete promptInput.dataset.preserveDraftOnce;
         savePromptDraftForCurrent();
@@ -563,7 +550,7 @@ function applyPromptTemplateToNode(mode='positive'){
     if(promptTemplatePanel?.dataset.target === 'prompt-composer'){
         const node = nodes.find(n => n.id === promptTemplatePanel.dataset.nodeId);
         if(!node) return;
-        node.llmInstruction = promptTemplateText(template, mode);
+        node.llmInstruction = promptTemplateText(template);
         closePromptTemplatePanel();
         renderPromptComposer(node);
         scheduleSave();
@@ -571,7 +558,7 @@ function applyPromptTemplateToNode(mode='positive'){
     }
     const node = nodes.find(n => n.id === promptTemplatePanel?.dataset.nodeId);
     if(!node) return;
-    node.text = promptTemplateText(template, mode);
+    node.text = promptTemplateText(template);
     node.promptPresetId = template.builtin ? '' : template.sourceId || '';
     closePromptTemplatePanel();
     render();
@@ -591,7 +578,7 @@ async function saveCurrentPromptAsTemplate(){
         const data = await fetch('/api/prompt-libraries/items', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({library_id:library.id, name:defaultPromptPresetName(text), category:promptTemplateCategory === 'all' ? 'mine' : promptTemplateCategory, positive:text, scene:'我的提示词预设'})
+            body:JSON.stringify({library_id:library.id, name:defaultPromptPresetName(text), category:promptTemplateCategory === 'all' ? 'mine' : promptTemplateCategory, prompt:text, scene:'我的提示词预设'})
         }).then(async r => {
             if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '保存失败');
             return r.json();
@@ -614,7 +601,7 @@ async function createBlankPromptTemplate(){
         const data = await fetch('/api/prompt-libraries/items', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({library_id:library.id, name:tr('smart.tplNewTemplateName'), category, positive:'新提示词', scene:'我的提示词预设'})
+            body:JSON.stringify({library_id:library.id, name:tr('smart.tplNewTemplateName'), category, prompt:'新提示词', scene:'我的提示词预设'})
         }).then(async r => {
             if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '创建失败');
             return r.json();
@@ -641,7 +628,7 @@ async function savePromptTemplateEdit(){
             const data = await fetch(`/api/prompt-libraries/items/${encodeURIComponent(item.id)}`, {
                 method:'PATCH',
                 headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({library_id:item.libraryId || activePromptLibrary().id, name, category, positive:text, scene:item.scene || '', negative:item.negative || ''})
+                body:JSON.stringify({library_id:item.libraryId || activePromptLibrary().id, name, category, prompt:text, scene:item.scene || ''})
             }).then(async r => {
                 if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '保存失败');
                 return r.json();
@@ -657,7 +644,7 @@ async function savePromptTemplateEdit(){
         promptTemplateOverrides.editedBuiltins[item.id] = {
             ...(promptTemplateOverrides.editedBuiltins[item.id] || {}),
             name,
-            positive:text,
+            prompt:text,
             category
         };
         savePromptTemplateOverrides();

@@ -31,3 +31,13 @@ frontend/src/api-settings/main.js
 frontend/src/asset-manager/main.js
 frontend/src/comfyui-settings/main.js
 frontend/src/index/main.js
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

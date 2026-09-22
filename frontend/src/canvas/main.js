@@ -4713,7 +4713,7 @@ promptTemplatePanel?.addEventListener('wheel', e => e.stopPropagation(), {passiv
 function promptTemplatePanelClickHandler(e){
     e.stopPropagation();
     const apply = e.target.closest('[data-template-apply]');
-    if(apply){ applyPromptTemplateToNode(apply.dataset.templateApply || 'positive'); return; }
+    if(apply){ applyPromptTemplateToNode(); return; }
     if(e.target.closest('[data-template-save-current]')){ saveCurrentPromptAsTemplate(); return; }
     if(e.target.closest('[data-template-new]')){ createBlankPromptTemplate(); return; }
     if(e.target.closest('[data-template-edit]')) { promptTemplateEditing = true; renderPromptTemplatePanel(); return; }

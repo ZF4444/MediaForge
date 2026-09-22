@@ -411,8 +411,7 @@ class PromptLibraryItemRequest(BaseModel):
     item_id: str = ""
     name: str = "提示词"
     category: str = "custom"
-    positive: str = ""
-    negative: str = ""
+    prompt: str = ""
     scene: str = ""
 
 

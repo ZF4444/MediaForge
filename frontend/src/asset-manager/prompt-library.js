@@ -64,7 +64,7 @@ function currentPromptItems(){
     return (lib?.items || []).filter(item => {
         if(activePromptCategory !== 'all' && (item.category || 'custom') !== activePromptCategory) return false;
         if(!query) return true;
-        return [item.name, item.scene, item.positive, item.negative, item.category].join(' ').toLowerCase().includes(query);
+        return [item.name, item.scene, item.prompt, item.category].join(' ').toLowerCase().includes(query);
     });
 }
 function findPromptItem(id){
@@ -217,9 +217,9 @@ function renderPromptRow(item, readonly){
     return `<article class="prompt-row ${item.id === selectedPromptId ? 'active' : ''}" data-prompt-row="${escapeAttr(item.id)}">
         <input class="prompt-row-check" type="checkbox" data-prompt-check="${escapeAttr(item.id)}" ${selectedPromptIds.has(item.id) ? 'checked' : ''} ${readonly ? 'disabled' : ''}>
         <div class="prompt-row-main">
-            <div class="prompt-row-title"><strong>${escapeHtml(item.name || '提示词')}</strong></div>
+            <div class="prompt-row-title"><strong>${escapeHtml(item.name || '提示词')}</strong><span class="prompt-tag">${escapeHtml(promptCategoryLabel(item.category || 'custom'))}</span></div>
             <div class="prompt-row-scene">${escapeHtml(item.scene || '未填写用途说明')}</div>
-            <div class="prompt-row-text">${escapeHtml(item.positive || '')}</div>
+            <div class="prompt-row-text">${escapeHtml(item.prompt || '')}</div>
         </div>
     </article>`;
 }
@@ -237,8 +237,7 @@ function renderPromptDetail(item, readonly){
                 <div class="inline-edit-form">
                     <label class="inline-edit-field"><span>名称</span><input id="promptEditName" type="text" value="" placeholder="提示词名称"></label>
                     <label class="inline-edit-field"><span>用途说明</span><textarea id="promptEditScene" placeholder="用途说明"></textarea></label>
-                    <label class="inline-edit-field"><span>正向提示词</span><textarea id="promptEditPositive" placeholder="正向提示词"></textarea></label>
-                    <label class="inline-edit-field"><span>负向提示词</span><textarea id="promptEditNegative" placeholder="负向提示词"></textarea></label>
+                    <label class="inline-edit-field"><span>提示词</span><textarea id="promptEditPrompt" placeholder="提示词内容"></textarea></label>
                 </div>
             </div>
         `;
@@ -257,8 +256,7 @@ function renderPromptDetail(item, readonly){
                 <div class="inline-edit-form">
                     <label class="inline-edit-field"><span>名称</span><input id="promptEditName" type="text" value="${escapeAttr(item.name || '')}" placeholder="提示词名称"></label>
                     <label class="inline-edit-field"><span>用途说明</span><textarea id="promptEditScene" placeholder="用途说明">${escapeHtml(item.scene || '')}</textarea></label>
-                    <label class="inline-edit-field"><span>正向提示词</span><textarea id="promptEditPositive" placeholder="正向提示词">${escapeHtml(item.positive || '')}</textarea></label>
-                    <label class="inline-edit-field"><span>负向提示词</span><textarea id="promptEditNegative" placeholder="负向提示词">${escapeHtml(item.negative || '')}</textarea></label>
+                    <label class="inline-edit-field"><span>提示词</span><textarea id="promptEditPrompt" placeholder="提示词内容">${escapeHtml(item.prompt || '')}</textarea></label>
                 </div>
             </div>
         `;
@@ -278,12 +276,8 @@ function renderPromptDetail(item, readonly){
                 <div class="prompt-detail-scene">${escapeHtml(item.scene || '未填写用途说明')}</div>
             </div>
             <section class="prompt-block">
-                <div class="prompt-block-head"><span>正向提示词</span><span>${String(item.positive || '').length} 字符</span></div>
-                <div class="prompt-block-body">${escapeHtml(item.positive || '未填写')}</div>
-            </section>
-            <section class="prompt-block">
-                <div class="prompt-block-head"><span>负向提示词</span><span>${String(item.negative || '').length} 字符</span></div>
-                <div class="prompt-block-body negative">${escapeHtml(item.negative || '未填写')}</div>
+                <div class="prompt-block-head"><span>提示词</span><span>${String(item.prompt || '').length} 字符</span></div>
+                <div class="prompt-block-body">${escapeHtml(item.prompt || '未填写')}</div>
             </section>
             ${params.length ? `<div class="params-list">${params.map(([key, value]) => `<div class="param-row"><strong>${escapeHtml(key)}</strong><span>${escapeHtml(value)}</span></div>`).join('')}</div>` : ''}
         </div>
@@ -391,11 +385,10 @@ async function createPromptItem(){
     const name = window.prompt('提示词名称', '新提示词');
     if(!String(name || '').trim()) return;
     const scene = window.prompt('用途说明', '') || '';
-    const positive = window.prompt('正向提示词内容', '');
-    if(!String(positive || '').trim()) return;
-    const negative = window.prompt('负向提示词内容', '') || '';
+    const prompt = window.prompt('提示词内容', '');
+    if(!String(prompt || '').trim()) return;
     const category = activePromptCategory === 'all' ? 'custom' : activePromptCategory;
-    const data = await apiJson('/api/prompt-libraries/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, positive, negative, category, scene})});
+    const data = await apiJson('/api/prompt-libraries/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, prompt, category, scene})});
     promptLibrary = data.library || promptLibrary;
     selectedPromptId = data.item?.id || selectedPromptId;
     render();
@@ -404,15 +397,14 @@ async function savePromptCreate(){
     const lib = activePromptLibrary();
     const name = document.getElementById('promptEditName')?.value || '';
     const scene = document.getElementById('promptEditScene')?.value || '';
-    const positive = document.getElementById('promptEditPositive')?.value || '';
-    const negative = document.getElementById('promptEditNegative')?.value || '';
+    const prompt = document.getElementById('promptEditPrompt')?.value || '';
     if(!lib) return;
-    if(!String(name || '').trim() || !String(positive || '').trim()){
-        setStatus('名称和正向提示词不能为空');
+    if(!String(name || '').trim() || !String(prompt || '').trim()){
+        setStatus('名称和提示词内容不能为空');
         return;
     }
     const category = activePromptCategory === 'all' ? 'custom' : activePromptCategory;
-    const data = await apiJson('/api/prompt-libraries/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, positive, negative, category, scene})});
+    const data = await apiJson('/api/prompt-libraries/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, prompt, category, scene})});
     promptLibrary = data.library || promptLibrary;
     selectedPromptId = data.item?.id || selectedPromptId;
     promptCreateMode = false;
@@ -426,10 +418,9 @@ async function editPromptItem(id){
     const name = window.prompt('提示词名称', item.name || '');
     if(!String(name || '').trim()) return;
     const scene = window.prompt('用途说明', item.scene || '') || '';
-    const positive = window.prompt('正向提示词内容', item.positive || '');
-    if(!String(positive || '').trim()) return;
-    const negative = window.prompt('负向提示词内容', item.negative || '') || '';
-    const data = await apiJson(`/api/prompt-libraries/items/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, positive, negative, category:item.category || 'custom', scene})});
+    const prompt = window.prompt('提示词内容', item.prompt || '');
+    if(!String(prompt || '').trim()) return;
+    const data = await apiJson(`/api/prompt-libraries/items/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, prompt, category:item.category || 'custom', scene})});
     promptLibrary = data.library || promptLibrary;
     selectedPromptId = id;
     render();
@@ -439,14 +430,13 @@ async function savePromptEdit(id){
     const lib = activePromptLibrary();
     const name = document.getElementById('promptEditName')?.value || '';
     const scene = document.getElementById('promptEditScene')?.value || '';
-    const positive = document.getElementById('promptEditPositive')?.value || '';
-    const negative = document.getElementById('promptEditNegative')?.value || '';
+    const prompt = document.getElementById('promptEditPrompt')?.value || '';
     if(!item || !lib) return;
-    if(!String(name || '').trim() || !String(positive || '').trim()){
-        setStatus('名称和正向提示词不能为空');
+    if(!String(name || '').trim() || !String(prompt || '').trim()){
+        setStatus('名称和提示词内容不能为空');
         return;
     }
-    const data = await apiJson(`/api/prompt-libraries/items/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, positive, negative, category:item.category || 'custom', scene})});
+    const data = await apiJson(`/api/prompt-libraries/items/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, prompt, category:item.category || 'custom', scene})});
     promptLibrary = data.library || promptLibrary;
     selectedPromptId = id;
     promptEditMode = false;

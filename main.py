@@ -5324,7 +5324,7 @@ def _legacy_rules_from_library(kind: str):
             "id": item.get("id"),
             "name": item.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
             "category": item.get("category") or "",
-            "content": item.get("positive") or "",
+            "content": item.get("prompt") or "",
         }
         if str(item.get("id") or "").startswith("builtin_"):
             rule["builtin"] = True
@@ -5344,8 +5344,8 @@ def _save_legacy_rules(kind: str, rules):
         "id": item.get("id") or f"legacy_{kind}_{uuid.uuid4().hex[:10]}",
         "name": item.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
         "category": item.get("category") or "custom",
-        "positive": item.get("content") or item.get("positive") or "",
-    }) for item in (rules if isinstance(rules, list) else []) if isinstance(item, dict) and str(item.get("content") or item.get("positive") or "").strip()]
+        "prompt": item.get("content") or item.get("prompt") or "",
+    }) for item in (rules if isinstance(rules, list) else []) if isinstance(item, dict) and str(item.get("content") or item.get("prompt") or "").strip()]
     library["items"] = builtin_items + custom_items
     save_prompt_libraries(data)
     # Keep the old setting as a migration/rollback source for older clients.

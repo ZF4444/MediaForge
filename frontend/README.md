@@ -886,8 +886,8 @@ M17 拆了 `prompt-templates.js`，共45个函数。
      加载，远程库为空时兜底到旧版 `/api/canvas/prompt-templates`）/
      `activePromptLibrary`/`renderPromptLibrarySelect`。
   3. 模板数据查询/格式化：`promptTemplateItems`（按当前库汇总内置
-     模板+个人预设+远程模板项）/`promptTemplateText`（拼接正向/负向/
-     参数文案）/`promptTemplateName`/`promptTemplateScene`（中英文
+     模板+个人预设+远程模板项）/`promptTemplateText`（返回模板的
+     提示词内容）/`promptTemplateName`/`promptTemplateScene`（中英文
      字段回退）/`promptTemplateSearchText`/`activePromptTemplateGroups`/
      `promptTemplateCategoryLabel`/`promptTemplateSelectedItem`/
      `defaultPromptTemplateGroups`。
@@ -932,8 +932,8 @@ M17 拆了 `prompt-templates.js`，共45个函数。
   本次不动。
 - **回归测试**：`frontend/test/prompt-templates.test.js`（18个测试），
   覆盖 `defaultPromptPresetName` 的首行截取/超长截断/空文本兜底、
-  `promptTemplateText` 在 builtin/非 builtin 模板和 positive/full
-  两种模式下的拼接行为、`promptTemplateName`/`promptTemplateScene`
+  `promptTemplateText` 返回模板提示词内容并去除首尾空白的行为、
+  `promptTemplateName`/`promptTemplateScene`
   的中英文字段回退逻辑、`promptTemplateSearchText` 的多字段拼接（含
   确认 `Array.join` 对缺失字段的行为是转空串而不是字面 `"undefined"`
   的踩坑记录）、`defaultPromptTemplateGroups` 的固定分组列表、

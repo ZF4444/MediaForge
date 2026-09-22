@@ -74,14 +74,15 @@ def normalize_prompt_library_item(item):
     if not isinstance(item, dict):
         item = {}
     name = sanitize_asset_name(item.get("name") or "提示词", "提示词")
-    positive = str(item.get("positive") or item.get("text") or "").strip()
+    # 兼容历史数据：曾经的 positive/negative 两字段合并为单一 prompt 字段，
+    # negative 的内容不再保留。
+    prompt = str(item.get("prompt") or item.get("positive") or item.get("text") or "").strip()
     return {
         "id": re.sub(r"[^A-Za-z0-9_-]+", "_", str(item.get("id") or item.get("item_id") or f"tpl_{uuid.uuid4().hex[:12]}"))[:60],
         "name": name,
         "category": normalize_prompt_category_id(item.get("category") or "custom"),
         "scene": str(item.get("scene") or "").strip()[:500],
-        "positive": positive,
-        "negative": str(item.get("negative") or "").strip(),
+        "prompt": prompt,
         "params": item.get("params") if isinstance(item.get("params"), dict) else {},
         "builtin": bool(item.get("builtin")),
         "created_at": int(item.get("created_at") or now_ms()),
@@ -380,7 +381,7 @@ def seed_caption_prompt_library():
             "name": rule["name"],
             "category": "builtin",
             "scene": "系统内置反推规则",
-            "positive": rule["content"],
+            "prompt": rule["content"],
             "builtin": True,
         }))
     return {
@@ -704,7 +705,7 @@ def seed_expand_prompt_library():
             "name": rule["name"],
             "category": "builtin",
             "scene": "系统内置扩写规则",
-            "positive": rule["content"],
+            "prompt": rule["content"],
             "builtin": True,
         }))
     return {
@@ -752,7 +753,7 @@ def sync_system_prompt_libraries():
         upsert_system_prompt_library(library["id"], library, checksum)
         template_type = {"system": "system", "caption": "reverse", "expand": "expand"}.get(library["id"], "system")
         for item in library.get("items", []):
-            if not isinstance(item, dict) or not str(item.get("positive") or "").strip():
+            if not isinstance(item, dict) or not str(item.get("prompt") or "").strip():
                 continue
             upsert_prompt_template(
                 str(item.get("id")), "", template_type, library["id"], item,
@@ -896,7 +897,7 @@ def _migrate_legacy_rules(data, kind, rules):
             "name": rule.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
             "category": "custom",
             "scene": "从旧画布旧规则迁移",
-            "positive": rule.get("content") or "",
+            "prompt": rule.get("content") or "",
         }))
         existing_ids.add(item_id)
         migrated = True

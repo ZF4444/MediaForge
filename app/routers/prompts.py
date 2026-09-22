@@ -112,14 +112,13 @@ def add_prompt_library_item(payload: PromptLibraryItemRequest):
     library = find_prompt_library(data, payload.library_id)
     if not library:
         raise HTTPException(status_code=404, detail="提示词库不存在")
-    if not str(payload.positive or "").strip():
+    if not str(payload.prompt or "").strip():
         raise HTTPException(status_code=400, detail="提示词内容不能为空")
     item = normalize_prompt_library_item({
         "id": f"tpl_{uuid.uuid4().hex[:12]}",
         "name": payload.name,
         "category": payload.category,
-        "positive": payload.positive,
-        "negative": payload.negative,
+        "prompt": payload.prompt,
         "scene": payload.scene,
         "created_at": now_ms(),
         "updated_at": now_ms(),
@@ -142,8 +141,7 @@ def update_prompt_library_item(item_id: str, payload: PromptLibraryItemRequest):
                     **item,
                     "name": payload.name or item.get("name"),
                     "category": payload.category or item.get("category"),
-                    "positive": payload.positive or item.get("positive"),
-                    "negative": payload.negative,
+                    "prompt": payload.prompt or item.get("prompt"),
                     "scene": payload.scene,
                     "updated_at": now_ms(),
                 })

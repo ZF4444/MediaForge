@@ -31,41 +31,27 @@ describe('defaultPromptPresetName', () => {
 });
 
 describe('promptTemplateText', () => {
-    it('mode=positive 时只返回正向提示词', () => {
+    it('返回模板的提示词内容', () => {
         const sandbox = createPromptTemplatesSandbox();
-        const template = { positive: '一只猫', negative: '模糊', builtin: true };
-        expect(sandbox.promptTemplateText(template, 'positive')).toBe('一只猫');
+        const template = { prompt: '一只猫', builtin: true };
+        expect(sandbox.promptTemplateText(template)).toBe('一只猫');
     });
 
-    it('非 builtin 模板即使 mode=full 也只返回正向提示词', () => {
+    it('非 builtin 模板同样只返回提示词内容', () => {
         const sandbox = createPromptTemplatesSandbox();
-        const template = { positive: '一只猫', negative: '模糊', builtin: false };
-        expect(sandbox.promptTemplateText(template, 'full')).toBe('一只猫');
+        const template = { prompt: '一只猫', builtin: false };
+        expect(sandbox.promptTemplateText(template)).toBe('一只猫');
     });
 
-    it('builtin 模板 mode=full 时拼接负向提示词和参数', () => {
+    it('会去除首尾空白', () => {
         const sandbox = createPromptTemplatesSandbox();
-        const template = {
-            positive: '一只猫',
-            negative: '模糊',
-            params: { steps: 20, cfg: 7 },
-            builtin: true,
-        };
-        const text = sandbox.promptTemplateText(template, 'full');
-        expect(text).toContain('一只猫');
-        expect(text).toContain('Negative prompt:\n模糊');
-        expect(text).toContain('Params:\nsteps: 20\ncfg: 7');
-    });
-
-    it('builtin 模板没有负向提示词/参数时只返回正向提示词', () => {
-        const sandbox = createPromptTemplatesSandbox();
-        const template = { positive: '一只猫', builtin: true };
-        expect(sandbox.promptTemplateText(template, 'full')).toBe('一只猫');
+        const template = { prompt: '  一只猫  ', builtin: true };
+        expect(sandbox.promptTemplateText(template)).toBe('一只猫');
     });
 
     it('模板为空时返回空字符串', () => {
         const sandbox = createPromptTemplatesSandbox();
-        expect(sandbox.promptTemplateText(null, 'positive')).toBe('');
+        expect(sandbox.promptTemplateText(null)).toBe('');
     });
 });
 
@@ -101,9 +87,9 @@ describe('promptTemplateName / promptTemplateScene', () => {
 describe('promptTemplateSearchText', () => {
     it('拼接所有可搜索字段并转小写（缺失字段被 join 转为空串，不是字面 "undefined"）', () => {
         const sandbox = createPromptTemplatesSandbox();
-        const template = { name: 'CAT', scene: 'Outdoor', positive: 'A Cat', negative: 'Blurry' };
+        const template = { name: 'CAT', scene: 'Outdoor', prompt: 'A Cat' };
         const text = sandbox.promptTemplateSearchText(template);
-        expect(text).toBe('cat  outdoor  a cat blurry');
+        expect(text).toBe('cat  outdoor  a cat');
     });
 
     it('字段缺失时用 undefined 占位（Array.join 行为），不抛错', () => {

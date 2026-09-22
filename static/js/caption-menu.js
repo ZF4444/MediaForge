@@ -15,13 +15,61 @@ const DEFAULT_RULES = [
     {id:'rule_video_zh', name:'图生视频提示词', category:'视频类', content:'描述这张图片的画面内容，并以动态镜头语言补充合理的运动趋势，生成适合用于图生视频的英文提示词。'}
 ];
 
-function loadRules(){ try { const d=JSON.parse(localStorage.getItem(CAPTION_RULES_KEY)); return Array.isArray(d)&&d.length?d:[...DEFAULT_RULES]; } catch(_){ return [...DEFAULT_RULES]; } }
-function saveRules(r){ localStorage.setItem(CAPTION_RULES_KEY, JSON.stringify(r)); }
+function localRules(){ try { const d=JSON.parse(localStorage.getItem(CAPTION_RULES_KEY)); return Array.isArray(d) ? d : []; } catch(_){ return []; } }
+let captionRules = [...DEFAULT_RULES];
+let builtinRuleIds = new Set();
+let rulesReady = false;
+let rulesLoadPromise = null;
+function userRules(){ return captionRules.filter(rule => !builtinRuleIds.has(String(rule?.id || ''))); }
+async function saveRules(){
+    const rules = userRules();
+    try {
+        const response = await fetch('/api/caption-rules', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({user_rules:rules})
+        });
+        if(!response.ok) throw new Error(`caption rules save failed: ${response.status}`);
+        localStorage.removeItem(CAPTION_RULES_KEY);
+    } catch(error) {
+        // Keep a local fallback when the account API is temporarily unavailable.
+        localStorage.setItem(CAPTION_RULES_KEY, JSON.stringify(rules));
+        console.warn('Unable to persist caption rules to account storage', error);
+    }
+}
+async function loadRules(){
+    if(rulesLoadPromise) return rulesLoadPromise;
+    rulesLoadPromise = fetch('/api/caption-rules').then(response => {
+        if(!response.ok) throw new Error(`caption rules load failed: ${response.status}`);
+        return response.json();
+    }).then(data => {
+        const builtin = Array.isArray(data?.builtin_rules) ? data.builtin_rules : [];
+        let user = Array.isArray(data?.user_rules) ? data.user_rules : [];
+        let migratedLegacy = false;
+        builtinRuleIds = new Set(builtin.map(rule => String(rule?.id || '')).filter(Boolean));
+        // One-time migration for rules created by older browser-only versions.
+        if(!user.length){
+            const builtinIds = new Set(DEFAULT_RULES.map(rule => String(rule.id || '')));
+            const legacy = localRules().filter(rule => rule && !builtinIds.has(String(rule.id || '')));
+            if(legacy.length){ user = legacy; migratedLegacy = true; }
+        }
+        captionRules = [...builtin, ...user];
+        rulesReady = true;
+        if(migratedLegacy) saveRules();
+        return captionRules;
+    }).catch(error => {
+        console.warn('Unable to load account caption rules; using local fallback', error);
+        const legacy = localRules();
+        captionRules = legacy.length ? legacy : [...DEFAULT_RULES];
+        rulesReady = true;
+        return captionRules;
+    });
+    return rulesLoadPromise;
+}
 function loadSettings(){ try { return JSON.parse(localStorage.getItem(CAPTION_SETTINGS_KEY)||'{}'); } catch(_){ return {}; } }
 function saveSettings(s){ localStorage.setItem(CAPTION_SETTINGS_KEY, JSON.stringify(s)); }
 
-let captionRules = loadRules();
 let captionCfg = loadSettings();
+loadRules();
 
 function esc(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function uid(){ return 'rule_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -48,7 +96,10 @@ function openCaptionMenu(e, ctx){
     container.className = 'caption-menu-container';
     container.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:99999;display:flex;align-items:flex-start;gap:4px`;
     document.body.appendChild(container);
-    showRootPanel();
+    if(!rulesReady){
+        createPanel(`<div class="ctx-empty">加载规则...</div>`, 0);
+        loadRules().then(() => { if(container) showRootPanel(); });
+    } else showRootPanel();
     requestAnimationFrame(()=>{
         const rect = container.getBoundingClientRect();
         if(rect.right > window.innerWidth-8) container.style.left = Math.max(8,window.innerWidth-rect.width-8)+'px';
@@ -158,14 +209,15 @@ function openRuleManager(ctx){
     const activeId = () => captionCfg.activeRuleId || captionRules[0]?.id || '';
 
     function renderList(){
-        const rows = captionRules.map((r,i) => {
-            const isActive = r.id === activeId();
-            const preview = r.content.length > 60 ? r.content.slice(0,60) + '...' : r.content;
-            return `<div class="crm-row" data-idx="${i}">
+            const rows = captionRules.map((r,i) => {
+                const isActive = r.id === activeId();
+            const isBuiltin = builtinRuleIds.has(String(r.id || ''));
+                const preview = r.content.length > 60 ? r.content.slice(0,60) + '...' : r.content;
+                return `<div class="crm-row" data-idx="${i}">
                 <div class="crm-col crm-col-status"><span class="crm-status ${isActive?'on':''}" data-action="activate" data-idx="${i}" title="${isActive?'当前使用中':'点击激活'}"></span></div>
                 <div class="crm-col crm-col-name" title="${esc(r.name)}">${esc(r.name)}${r.category?` <span class="crm-cat">[${esc(r.category)}]</span>`:''}</div>
                 <div class="crm-col crm-col-content" title="${esc(r.content)}">${esc(preview)}</div>
-                <div class="crm-col crm-col-actions"><button data-action="edit" data-idx="${i}" title="编辑">✏️</button><button data-action="del" data-idx="${i}" title="删除">🗑️</button></div>
+                <div class="crm-col crm-col-actions">${isBuiltin ? '<span class="crm-builtin-label">内置</span>' : `<button data-action="edit" data-idx="${i}" title="编辑">✏️</button><button data-action="del" data-idx="${i}" title="删除">🗑️</button>`}</div>
             </div>`;
         }).join('');
         modal.innerHTML = `<div class="caption-rule-modal">
@@ -208,9 +260,9 @@ function openRuleManager(ctx){
         if(a === 'close') modal.remove();
         else if(a === 'add') renderEditor(null);
         else if(a === 'edit') renderEditor(captionRules[idx]);
-        else if(a === 'del'){ captionRules.splice(idx, 1); saveRules(captionRules); renderList(); }
+        else if(a === 'del'){ if(!builtinRuleIds.has(String(captionRules[idx]?.id || ''))){ captionRules.splice(idx, 1); saveRules(); renderList(); } }
         else if(a === 'activate'){ captionCfg.activeRuleId = captionRules[idx]?.id || ''; saveSettings(captionCfg); renderList(); }
-        else if(a === 'reset'){ captionRules = [...DEFAULT_RULES]; saveRules(captionRules); renderList(); }
+        else if(a === 'reset'){ captionRules = captionRules.filter(rule => builtinRuleIds.has(String(rule?.id || ''))); saveRules(); renderList(); }
         else if(a === 'back') renderList();
         else if(a === 'save'){
             const btn = ev.target.closest('[data-action="save"]');
@@ -221,7 +273,7 @@ function openRuleManager(ctx){
             if(!name || !cont){ ctx.toast(ctx.tr('caption.ruleNeedFields')); return; }
             if(isNew) captionRules.push({id, name, category:cat, content:cont});
             else { const ex = captionRules.find(r => r.id === id); if(ex){ ex.name=name; ex.category=cat; ex.content=cont; } }
-            saveRules(captionRules); renderList();
+            saveRules(); renderList();
         }
     });
     modal.addEventListener('mousedown', ev => { if(ev.target === modal) modal.remove(); });

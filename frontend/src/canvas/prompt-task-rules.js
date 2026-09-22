@@ -7,7 +7,7 @@
 function smartRuleTemplateItems(libraryId){
     const hidden = new Set(promptTemplateOverrides.hiddenBuiltinIds || []);
     return promptLibraries.filter(library => library.id === libraryId).flatMap(library => (library.items || [])
-        .filter(template => template?.id && template?.positive && !(library.id === 'system' && hidden.has(template.id)))
+        .filter(template => template?.id && template?.prompt && !(library.id === 'system' && hidden.has(template.id)))
         .map(template => ({
             ...template,
             ...(library.id === 'system' ? (promptTemplateOverrides.editedBuiltins?.[template.id] || {}) : {}),
@@ -24,5 +24,5 @@ function smartRuleTemplateOptions(libraryId, selectedKey){
 
 function smartRuleTemplateContent(libraryId, selectedKey, fallback){
     const templates = smartRuleTemplateItems(libraryId);
-    return (templates.find(template => template.key === selectedKey) || templates[0])?.positive || fallback;
+    return (templates.find(template => template.key === selectedKey) || templates[0])?.prompt || fallback;
 }
