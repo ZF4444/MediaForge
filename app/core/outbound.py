@@ -32,7 +32,12 @@ def resolve_public_host_addresses(hostname: str, port: int) -> tuple[str, ...]:
     return tuple(str(address) for address in sorted(addresses, key=str))
 
 
-def validate_public_http_url(value: str, *, label: str = "请求地址") -> str:
+def validate_public_http_url(
+    value: str,
+    *,
+    label: str = "请求地址",
+    allow_query: bool = False,
+) -> str:
     """Return a normalized HTTP(S) URL only when it resolves to public IPs.
 
     Provider endpoints receive long-lived credentials. Rejecting private and
@@ -43,7 +48,7 @@ def validate_public_http_url(value: str, *, label: str = "请求地址") -> str:
     parsed = urlsplit(text)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(status_code=400, detail=f"{label}必须是完整的 http:// 或 https:// 地址")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+    if parsed.username or parsed.password or parsed.fragment or (parsed.query and not allow_query):
         raise HTTPException(status_code=400, detail=f"{label}不能包含用户名、密码、查询参数或片段")
     try:
         port = parsed.port
@@ -60,6 +65,11 @@ def validate_public_http_url(value: str, *, label: str = "请求地址") -> str:
     return text
 
 
-def validate_external_http_url(value: str, *, label: str = "外部地址") -> str:
+def validate_external_http_url(
+    value: str,
+    *,
+    label: str = "外部地址",
+    allow_query: bool = False,
+) -> str:
     """Validate a user- or upstream-supplied media URL without intranet exceptions."""
-    return validate_public_http_url(value, label=label)
+    return validate_public_http_url(value, label=label, allow_query=allow_query)

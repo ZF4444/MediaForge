@@ -260,7 +260,12 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
     try:
         timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
         async with shared_http_client(timeout=timeout) as client:
-            response = await client.get(validate_external_http_url(value, label="生成结果地址"))
+            # Providers commonly return signed URLs whose query carries the
+            # temporary download credential. Keep SSRF/credential/fragment
+            # checks, while allowing that query only for this fetched result.
+            response = await client.get(
+                validate_external_http_url(value, label="生成结果地址", allow_query=True)
+            )
             response.raise_for_status()
             content_type = response.headers.get("Content-Type", "")
             if "jpeg" in content_type or "jpg" in content_type:

@@ -41,3 +41,18 @@ def test_external_media_url_never_uses_provider_internal_allowlist(monkeypatch):
 
     with pytest.raises(HTTPException, match="内网"):
         outbound.validate_external_http_url("https://ai.internal.example/file.png")
+
+
+def test_external_media_url_allows_signed_query_but_rejects_fragment(monkeypatch):
+    monkeypatch.setattr(outbound.socket, "getaddrinfo", lambda *_args, **_kwargs: _address("8.8.8.8"))
+
+    assert outbound.validate_external_http_url(
+        "https://cdn.example.test/file.png?signature=abc&expires=123",
+        allow_query=True,
+    ).endswith("?signature=abc&expires=123")
+
+    with pytest.raises(HTTPException, match="查询参数或片段"):
+        outbound.validate_external_http_url(
+            "https://cdn.example.test/file.png?signature=abc#preview",
+            allow_query=True,
+        )
