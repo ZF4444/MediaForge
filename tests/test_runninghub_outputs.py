@@ -18,6 +18,19 @@ def test_runninghub_app_headers_do_not_override_request_host(monkeypatch):
     assert headers["Content-Type"] == "application/json"
 
 
+def test_runninghub_endpoint_defers_dns_validation_to_pinned_transport(monkeypatch):
+    from app.core import outbound
+
+    def unexpected_dns(*_args, **_kwargs):
+        raise AssertionError("DNS should be resolved by the outbound transport")
+
+    monkeypatch.setattr(outbound.socket, "getaddrinfo", unexpected_dns)
+
+    assert main.runninghub_endpoint_url(
+        {"endpoint": "https://www.runninghub.cn"}, "/task/openapi/outputs",
+    ) == "https://www.runninghub.cn/task/openapi/outputs"
+
+
 def test_runninghub_extract_outputs_nested_urls():
     payload = {
         "outputs": [

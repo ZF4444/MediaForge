@@ -37,12 +37,15 @@ def validate_public_http_url(
     *,
     label: str = "请求地址",
     allow_query: bool = False,
+    resolve_host: bool = True,
 ) -> str:
-    """Return a normalized HTTP(S) URL only when it resolves to public IPs.
+    """Return a normalized HTTP(S) URL, optionally checking its DNS answers.
 
     Provider endpoints receive long-lived credentials. Rejecting private and
     special-use addresses prevents the provider configuration UI from becoming
-    an internal-network request primitive.
+    an internal-network request primitive. Runtime callers may defer DNS
+    validation to the pinned outbound transport, which validates the exact IP
+    used for each new connection.
     """
     text = str(value or "").strip().rstrip("/")
     parsed = urlsplit(text)
@@ -58,10 +61,11 @@ def validate_public_http_url(
         raise HTTPException(status_code=400, detail=f"{label}端口不合法")
 
     hostname = parsed.hostname.lower().rstrip(".")
-    try:
-        resolve_public_host_addresses(hostname, port or (443 if parsed.scheme == "https" else 80))
-    except OutboundAddressError as exc:
-        raise HTTPException(status_code=400, detail=f"{label}{exc}") from exc
+    if resolve_host:
+        try:
+            resolve_public_host_addresses(hostname, port or (443 if parsed.scheme == "https" else 80))
+        except OutboundAddressError as exc:
+            raise HTTPException(status_code=400, detail=f"{label}{exc}") from exc
     return text
 
 

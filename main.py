@@ -682,7 +682,9 @@ def is_cloudwise_connection(provider) -> bool:
 def runninghub_endpoint_url(provider, path):
     from app.ai.transport import endpoint_for_connection
     base_url = endpoint_for_connection(provider, "endpoint", "", fallback_base=RUNNINGHUB_DEFAULT_BASE_URL).rstrip("/")
-    return runninghub_protocol_endpoint(validate_public_http_url(base_url, label="Connection Base URL"), path)
+    # The outbound HTTP transport resolves and pins a public IP per connection.
+    # Avoid an extra synchronous DNS lookup while constructing every poll URL.
+    return runninghub_protocol_endpoint(validate_public_http_url(base_url, label="Connection Base URL", resolve_host=False), path)
 
 import app.core.access_control as access_control
 
@@ -4373,6 +4375,7 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
         await release_canvas_task_claim(task_id, lease_token)
         return
     lease_heartbeat = asyncio.create_task(canvas_task_lease_heartbeat(task_id, lease_token))
+    upstream_task_id = existing_upstream_task_id
     try:
         from app.ai.database_repository import DatabaseAIRepository
         from app.ai.adapters.runninghub_transport import RunningHubTransport
@@ -4394,7 +4397,6 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
         api_key = await runninghub_api_key_async(provider)
         transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=120.0, pool=20.0))
 
-        upstream_task_id = existing_upstream_task_id
         # Only submit when this run has no upstream task yet. A recovered run
         # already carries the upstream id and resumes at the polling stage.
         if not upstream_task_id:
@@ -4427,11 +4429,40 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
         urls: list[str] = []
         media_items: list[dict] = []
         seen_remote_outputs: set[str] = set()
+        query_retry_delay = CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS
         while time.monotonic() < deadline:
             if not await refresh_canvas_task_lease(task_id, lease_token):
                 # Lost the lease; a recovered worker owns this task now.
                 return
-            raw = await transport.query(provider, api_key, str(upstream_task_id))
+            try:
+                raw = await transport.query(provider, api_key, str(upstream_task_id))
+                query_retry_delay = CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS
+            except (httpx.TransportError, asyncio.TimeoutError) as exc:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"RunningHub 查询暂时失败，任务等待超时：{upstream_task_id}") from exc
+                retry_wait = min(query_retry_delay, remaining)
+                task_logger.warning(
+                    "temporary RunningHub query transport failure; retrying",
+                    extra={"event": "query_retry", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "upstream_task_id": str(upstream_task_id), "retry_in_seconds": round(retry_wait, 2), "error_type": type(exc).__name__},
+                )
+                await asyncio.sleep(retry_wait)
+                query_retry_delay = min(max(CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS, query_retry_delay * 2), 30.0)
+                continue
+            except HTTPException as exc:
+                if exc.status_code < 500:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"RunningHub 查询暂时失败，任务等待超时：{upstream_task_id}") from exc
+                retry_wait = min(query_retry_delay, remaining)
+                task_logger.warning(
+                    "temporary RunningHub query server failure; retrying",
+                    extra={"event": "query_retry", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "upstream_task_id": str(upstream_task_id), "retry_in_seconds": round(retry_wait, 2), "status_code": exc.status_code},
+                )
+                await asyncio.sleep(retry_wait)
+                query_retry_delay = min(max(CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS, query_retry_delay * 2), 30.0)
+                continue
             code = raw.get("code") if isinstance(raw, dict) else None
             current_outputs = runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw)
             new_outputs = [remote for remote in current_outputs if remote not in seen_remote_outputs]
@@ -4486,7 +4517,7 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
         status_code = getattr(exc, "status_code", 500)
         await update_claimed_canvas_task(
             task_id, lease_token, status="failed", error=str(detail),
-            status_code=status_code, upstream_task_id=str(existing_upstream_task_id or ""), updated_at=time.time(),
+            status_code=status_code, upstream_task_id=str(upstream_task_id or existing_upstream_task_id or ""), updated_at=time.time(),
         )
         task_logger.exception(
             "canvas RunningHub task failed",

@@ -27,6 +27,17 @@ def test_provider_endpoint_allows_public_address(monkeypatch):
     assert outbound.validate_public_http_url("https://api.example.test/v1/") == "https://api.example.test/v1"
 
 
+def test_provider_endpoint_can_defer_dns_to_pinned_transport(monkeypatch):
+    def unexpected_dns(*_args, **_kwargs):
+        raise AssertionError("DNS should be resolved by the outbound transport")
+
+    monkeypatch.setattr(outbound.socket, "getaddrinfo", unexpected_dns)
+
+    assert outbound.validate_public_http_url(
+        "https://api.example.test/v1/", resolve_host=False,
+    ) == "https://api.example.test/v1"
+
+
 def test_private_provider_is_rejected_even_when_legacy_allowlist_is_set(monkeypatch):
     monkeypatch.setattr(outbound.socket, "getaddrinfo", lambda *_args, **_kwargs: _address("10.0.0.8"))
     monkeypatch.setenv("AI_PROVIDER_ALLOWED_HOSTS", "ai.internal.example")
