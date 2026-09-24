@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/images/logo.png" type="image/png">
+    <title>AI Studio</title>
+    <script type="module" src="../../pages/login/main.js"></script>
+</head>
+
+<body>
+    <div class="card">
+        <div class="brand">
+            <img src="/images/logo.png" alt="AI Studio">
+            <div class="name">AI Studio</div>
+            <div class="sub">你的画布、历史、素材库将与用户名绑定并独立隔离。</div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" id="tabLogin" data-mode="login">登录</div>
+            <div class="tab disabled" id="tabRegister" aria-disabled="true" title="暂不开放注册">注册</div>
+        </div>
+
+        <form id="authForm" autocomplete="on">
+            <label for="username">用户名</label>
+            <input id="username" name="username" type="text" placeholder="例如：zhangsan" maxlength="60" autofocus autocomplete="username">
+            <button id="submitBtn" type="submit">登录</button>
+        </form>
+        <div class="msg" id="msg" role="status" aria-live="polite"></div>
+        <div class="hint" id="hint">登录已注册的用户名。无需密码，同一台电脑下次访问会自动保持登录。</div>
+    </div>
+</body>
+
+</html>

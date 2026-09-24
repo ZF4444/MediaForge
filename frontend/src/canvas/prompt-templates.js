@@ -149,10 +149,11 @@ function savePromptTemplateOverrides(){
 }
 async function loadPromptTemplates(){
     try {
-        const data = await fetch('/api/prompt-libraries').then(r => r.ok ? r.json() : {library:{libraries:[]}});
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const data = apiJson ? await apiJson('/api/prompt-libraries', {allowErrorResponse:true}) : await fetch('/api/prompt-libraries').then(r => r.ok ? r.json() : {library:{libraries:[]}});
         promptLibraries = Array.isArray(data.library?.libraries) ? data.library.libraries : [];
         if(!promptLibraries.length) {
-            const fallback = await fetch('/api/canvas/prompt-templates').then(r => r.ok ? r.json() : {templates:[]});
+            const fallback = apiJson ? await apiJson('/api/canvas/prompt-templates', {allowErrorResponse:true}) : await fetch('/api/canvas/prompt-templates').then(r => r.ok ? r.json() : {templates:[]});
             builtinPromptTemplates = Array.isArray(fallback.templates) ? fallback.templates.filter(t => t?.id && t?.prompt) : [];
             promptLibraries = [{id:'system', name:'系统提示词库', readonly:true, items:builtinPromptTemplates}];
         } else {
@@ -590,14 +591,13 @@ async function saveCurrentPromptAsTemplate(){
         : String(nodes.find(n => n.id === promptTemplatePanel?.dataset.nodeId)?.text || '').trim();
     if(!text){ toast(tr('smart.promptPresetEmpty')); return; }
     try {
-        const data = await fetch('/api/prompt-libraries/items', {
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const payload = {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({library_id:library.id, name:defaultPromptPresetName(text), category:promptTemplateCategory === 'all' ? 'mine' : promptTemplateCategory, prompt:text, scene:'我的提示词预设'})
-        }).then(async r => {
-            if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '保存失败');
-            return r.json();
-        });
+        };
+        const data = apiJson ? await apiJson('/api/prompt-libraries/items', payload) : await fetch('/api/prompt-libraries/items', payload).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '保存失败'); return r.json(); });
         promptLibraries = data.library?.libraries || promptLibraries;
         activePromptLibraryId = library.id;
         promptTemplateCategory = data.item?.category || 'mine';
@@ -613,14 +613,13 @@ async function createBlankPromptTemplate(){
     if(library.id === 'system' || library.readonly){ toast('请选择可编辑的提示词库'); return; }
     const category = promptTemplateCategory && promptTemplateCategory !== 'all' ? promptTemplateCategory : 'mine';
     try {
-        const data = await fetch('/api/prompt-libraries/items', {
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const payload = {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({library_id:library.id, name:tr('smart.tplNewTemplateName'), category, prompt:'新提示词', scene:'我的提示词预设'})
-        }).then(async r => {
-            if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '创建失败');
-            return r.json();
-        });
+        };
+        const data = apiJson ? await apiJson('/api/prompt-libraries/items', payload) : await fetch('/api/prompt-libraries/items', payload).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '创建失败'); return r.json(); });
         promptLibraries = data.library?.libraries || promptLibraries;
         activePromptLibraryId = library.id;
         promptTemplateCategory = category;
@@ -640,14 +639,13 @@ async function savePromptTemplateEdit(){
     if(!name || !text){ toast(tr('smart.tplRequired')); return; }
     if(item.remote){
         try {
-            const data = await fetch(`/api/prompt-libraries/items/${encodeURIComponent(item.id)}`, {
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const payload = {
                 method:'PATCH',
                 headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({library_id:item.libraryId || activePromptLibrary().id, name, category, prompt:text, scene:item.scene || ''})
-            }).then(async r => {
-                if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '保存失败');
-                return r.json();
-            });
+            };
+            const data = apiJson ? await apiJson(`/api/prompt-libraries/items/${encodeURIComponent(item.id)}`, payload) : await fetch(`/api/prompt-libraries/items/${encodeURIComponent(item.id)}`, payload).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '保存失败'); return r.json(); });
             promptLibraries = data.library?.libraries || promptLibraries;
             promptTemplateSelectedId = data.item?.id || item.id;
         } catch(err) {
@@ -681,10 +679,8 @@ async function deletePromptTemplate(){
     if(!item) return;
     if(item.remote){
         try {
-            const data = await fetch(`/api/prompt-libraries/items/${encodeURIComponent(item.id)}`, {method:'DELETE'}).then(async r => {
-                if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '删除失败');
-                return r.json();
-            });
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const data = apiJson ? await apiJson(`/api/prompt-libraries/items/${encodeURIComponent(item.id)}`, {method:'DELETE'}) : await fetch(`/api/prompt-libraries/items/${encodeURIComponent(item.id)}`, {method:'DELETE'}).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '删除失败'); return r.json(); });
             promptLibraries = data.library?.libraries || promptLibraries;
         } catch(err) {
             toast(err.message || '删除失败');
@@ -705,15 +701,18 @@ async function deletePromptTemplate(){
     scheduleSave();
 }
 async function createPromptTemplateGroup(){
-    const name = window.prompt(tr('smart.tplNewGroupPrompt'), tr('smart.tplNewGroupDefault'));
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn(tr('smart.tplNewGroupPrompt'), tr('smart.tplNewGroupDefault'));
     if(!String(name || '').trim()) return;
     const lib = activePromptLibrary();
     if(lib && lib.id !== 'system'){
         try {
-            const data = await fetch('/api/prompt-libraries/categories', {
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const payload = {
                 method:'POST', headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({name:String(name).trim().slice(0, 24), library_id:lib.id})
-            }).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '新增分组失败'); return r.json(); });
+            };
+            const data = apiJson ? await apiJson('/api/prompt-libraries/categories', payload) : await fetch('/api/prompt-libraries/categories', payload).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '新增分组失败'); return r.json(); });
             promptLibraries = data.library?.libraries || promptLibraries;
             promptTemplateCategory = data.category?.id || promptTemplateCategory;
             renderPromptTemplatePanel({preserveScroll:false});
@@ -730,14 +729,17 @@ async function renamePromptTemplateGroup(groupId){
     const lib = activePromptLibrary();
     const group = activePromptTemplateGroups().find(g => g.id === groupId);
     if(!group) return;
-    const name = window.prompt(tr('smart.tplGroupNamePrompt'), group.name || '');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn(tr('smart.tplGroupNamePrompt'), group.name || '');
     if(!String(name || '').trim()) return;
     if(lib && lib.id !== 'system'){
         try {
-            const data = await fetch(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, {
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const payload = {
                 method:'PATCH', headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({name:String(name).trim().slice(0, 24), library_id:lib.id})
-            }).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '重命名失败'); return r.json(); });
+            };
+            const data = apiJson ? await apiJson(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, payload) : await fetch(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, payload).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '重命名失败'); return r.json(); });
             promptLibraries = data.library?.libraries || promptLibraries;
             renderPromptTemplatePanel();
         } catch(err){ if(typeof setStatus === 'function') setStatus(err.message || '重命名失败'); }
@@ -750,10 +752,11 @@ async function renamePromptTemplateGroup(groupId){
 async function deletePromptTemplateGroup(groupId){
     const lib = activePromptLibrary();
     if(lib && lib.id !== 'system'){
-        if(!window.confirm(tr('smart.tplDeleteGroupConfirm'))) return;
+        const confirmFn = globalThis.__MediaForgeRuntimeServices?.apiConfirm || (message => globalThis.confirm?.(message));
+        if(!(await confirmFn(tr('smart.tplDeleteGroupConfirm')))) return;
         try {
-            const data = await fetch(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, {method:'DELETE'})
-                .then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '删除失败'); return r.json(); });
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const data = apiJson ? await apiJson(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, {method:'DELETE'}) : await fetch(`/api/prompt-libraries/categories/${encodeURIComponent(groupId)}`, {method:'DELETE'}).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '删除失败'); return r.json(); });
             promptLibraries = data.library?.libraries || promptLibraries;
             if(promptTemplateCategory === groupId) promptTemplateCategory = 'all';
             renderPromptTemplatePanel({preserveScroll:false});
@@ -764,7 +767,8 @@ async function deletePromptTemplateGroup(groupId){
         renamePromptTemplateGroup(groupId);
         return;
     }
-    if(!window.confirm(tr('smart.tplDeleteGroupConfirm'))) return;
+    const confirmFn = globalThis.__MediaForgeRuntimeServices?.apiConfirm || (message => globalThis.confirm?.(message));
+    if(!(await confirmFn(tr('smart.tplDeleteGroupConfirm')))) return;
     promptTemplateGroups = promptTemplateGroups.filter(g => g.id !== groupId);
     promptPresets = promptPresets.map(p => p.category === groupId ? {...p, category:'mine'} : p);
     Object.entries(promptTemplateOverrides.editedBuiltins || {}).forEach(([id, item]) => {

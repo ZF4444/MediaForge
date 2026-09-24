@@ -9,7 +9,7 @@
 // 下的核心可视化组件，跟"画布测试模式"下的 mini-canvas.js 是并列的
 // 两种工作区视图。
 //
-// 经典 <script>，非 ES module，原因同 comfy-instances.js。
+// 作为共享词法作用域的一部分，由 ComfyUI 页面的虚拟 ESM 入口组装。
 //
 // 依赖 main.js 保留的核心状态和函数：currentWorkflow/currentConfig
 // （当前编辑的工作流数据）、graphView/graphContentSize/panState/
@@ -111,7 +111,7 @@ function renderGraph(){
         const truncLabel = label.length > 12 ? label.slice(0,12) + '…' : label;
         const truncSub = sub.length > 16 ? sub.slice(0,16) + '…' : sub;
         return `
-            <g class="gnode cat-${cat} ${exposedClass}" data-node-id="${escapeAttr(id)}" transform="translate(${pos.x},${pos.y})" onclick="openNodePopup('${escapeAttr(id)}', this)">
+            <g class="gnode cat-${cat} ${exposedClass}" data-node-id="${escapeAttr(id)}" transform="translate(${pos.x},${pos.y})" data-action="openNodePopup" data-action-args='${escapeAttr(JSON.stringify([id]))}' data-action-target="true">
                 <rect width="${NODE_W}" height="${NODE_H}" rx="8"></rect>
                 <text class="gn-icon" x="10" y="20" font-size="14">${icon}</text>
                 <text class="gn-title" x="28" y="20">${escapeHtml(truncLabel)}</text>
@@ -205,6 +205,7 @@ function attachPanZoom(svg, wrap){
     });
 }
 let popupNodeId = null;
+let popupWheelHandler = null;
 
 function openNodePopup(nodeId, gEl){
     popupNodeId = nodeId;
@@ -226,7 +227,7 @@ function openNodePopup(nodeId, gEl){
                 <div class="popup-title">${escapeHtml(label)}</div>
                 <div class="popup-sub">${escapeHtml(sub)} · #${escapeHtml(nodeId)}</div>
             </div>
-            <div class="popup-close" onclick="closeNodePopup()"><i data-lucide="x" class="w-4 h-4"></i></div>
+            <div class="popup-close" data-action="closeNodePopup"><i data-lucide="x" class="w-4 h-4"></i></div>
         </div>
         <div class="popup-body">
             ${inputs.length === 0
@@ -240,8 +241,10 @@ function openNodePopup(nodeId, gEl){
     const gRect = gEl.getBoundingClientRect();
     const POP_W = 380;
     const POP_H_MAX = Math.min(wrap.clientHeight - 40, window.innerHeight * 0.7);
-    backdrop.style.display = 'block';
-    popup.style.display = 'flex';
+    backdrop.classList.add('is-visible');
+    backdrop.classList.remove('page-display-none');
+    popup.classList.add('is-visible');
+    popup.classList.remove('page-display-none');
     popup.style.maxHeight = POP_H_MAX + 'px';
     // 相对 wrap 的坐标（含滚动）
     let left = gRect.right - wrapRect.left + wrap.scrollLeft + 12;
@@ -256,7 +259,9 @@ function openNodePopup(nodeId, gEl){
     if(top > maxTop) top = Math.max(wrap.scrollTop + 8, maxTop);
     popup.style.left = left + 'px';
     popup.style.top = top + 'px';
-    popup.onwheel = e => e.stopPropagation();
+    if(popupWheelHandler) popup.removeEventListener('wheel', popupWheelHandler);
+    popupWheelHandler = e => e.stopPropagation();
+    popup.addEventListener('wheel', popupWheelHandler);
     popup.querySelector('.popup-body')?.addEventListener('wheel', e => e.stopPropagation(), { passive:true });
     refreshIcons();
 }
@@ -264,8 +269,10 @@ function openNodePopup(nodeId, gEl){
 function closeNodePopup(){
     popupNodeId = null;
     document.querySelectorAll('.gnode').forEach(g => g.classList.remove('is-active'));
-    document.getElementById('nodePopup').style.display = 'none';
-    document.getElementById('popupBackdrop').style.display = 'none';
+    document.getElementById('nodePopup').classList.remove('is-visible');
+    document.getElementById('nodePopup').classList.add('page-display-none');
+    document.getElementById('popupBackdrop').classList.remove('is-visible');
+    document.getElementById('popupBackdrop').classList.add('page-display-none');
 }
 
 function toggleNodeList(){

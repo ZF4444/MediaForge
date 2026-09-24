@@ -1,0 +1,1219 @@
+import RunningHubClient from '../shared/runninghub-client.js';
+import SPLAT from '../vendor/gsplat-bundle.js';
+import PreciseOrbitControls from './precise-orbit-controls.js';
+
+        // DOM 元素
+        const canvas = document.getElementById('canvas');
+        const errorEl = document.getElementById('error');
+        const loadingEl = document.getElementById('loading');
+        const dropHint = document.getElementById('dropHint');
+        const infoPanel = document.getElementById('infoPanel');
+        const infoContent = document.getElementById('infoContent');
+        const cropFrame = document.getElementById('cropFrame');
+        const fileNameEl = document.getElementById('fileName');
+
+        // gsplat.js 组件
+        let scene = null;
+        let camera = null;
+        let renderer = null;
+        let controls = null;
+        let animationId = null;
+        let currentSplat = null;
+        let originalScales = null;
+        let cachedSplatData = null;
+        let baseFocalLength = null;
+        let baseFocalY = null;
+        let nativeAspect = null;
+        let nativeImageWidth = null;
+        let nativeImageHeight = null;
+        let lastCameraTarget = null;
+        let lastSceneCenter = null;
+        let lastSceneSize = null;
+
+        const DEFAULT_FOCAL_LENGTH = 30;
+        const FOCAL_UI_OFFSET = 0.2;
+        const SCALE_DENSITY_BOOST = 3.0;
+
+        // 独立页默认相机内外参：本地/拖拽/URL 加载时未提供参数则用这组，
+        // 与 ComfyUI GaussianViewer 节点的默认输入对齐，避免画面过小。
+        const DEFAULT_EXTRINSICS = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
+        const DEFAULT_INTRINSICS = [[874.9588235678999,0,408],[0,874.9588235678999,408],[0,0,1]];
+
+        // 固定视场角（度）：由上传图像的宽高 + 该 FOV 计算 intrinsics
+        const DEFAULT_FOV_DEG = 50;
+        // 生成工作流：图像最长边超过该值会等比缩放后再生成 PLY，
+        // 因此计算内参也须按缩放后的宽高，保持与 PLY 坐标系一致。
+        const GEN_MAX_EDGE = 2048;
+        // 当前使用的内参：上传图像后会按其宽高重新计算；未上传时用默认值
+        let currentIntrinsics = DEFAULT_INTRINSICS;
+
+        // 由图像宽高 + FOV 计算 3x3 内参矩阵（先套用生成端的最长边缩放）
+        function computeIntrinsicsFromImage(width, height, fovDeg = DEFAULT_FOV_DEG) {
+            // 与生成 AI 应用一致：最长边 > GEN_MAX_EDGE 时等比缩放到 GEN_MAX_EDGE
+            const longEdge = Math.max(width, height);
+            if (longEdge > GEN_MAX_EDGE) {
+                const scale = GEN_MAX_EDGE / longEdge;
+                width = Math.round(width * scale);
+                height = Math.round(height * scale);
+            }
+            const cx = width / 2;
+            const cy = height / 2;
+            // 以较短边对应给定 FOV，保证横竖图都不会过度拉伸
+            const halfFov = (fovDeg * Math.PI / 180) / 2;
+            const f = (Math.min(width, height) / 2) / Math.tan(halfFov);
+            return [[f, 0, cx], [0, f, cy], [0, 0, 1]];
+        }
+
+        const computeScaleCompensation = (imageWidth, containerWidth) => {
+            if (!imageWidth || !containerWidth) return 1.0;
+            const ratio = imageWidth / containerWidth;
+            return ratio * SCALE_DENSITY_BOOST;
+        };
+
+        function initViewer() {
+            try {
+                scene = new SPLAT.Scene();
+                camera = new SPLAT.Camera();
+                renderer = new SPLAT.WebGLRenderer(canvas);
+                controls = new PreciseOrbitControls(SPLAT, camera, canvas);
+
+                controls.minZoom = 0.001;
+                controls.maxZoom = 100;
+
+                camera.data.fx = DEFAULT_FOCAL_LENGTH;
+                camera.data.fy = DEFAULT_FOCAL_LENGTH;
+                baseFocalLength = camera.data.fx;
+                baseFocalY = camera.data.fy;
+
+                const resize = () => {
+                    if (!isResolutionLocked) {
+                        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+                        nativeAspect = (canvas.clientWidth || 1) / (canvas.clientHeight || 1);
+                    }
+                    scheduleFrameLayoutUpdate();
+                };
+                window.addEventListener('resize', resize);
+                resize();
+                scheduleFrameLayoutUpdate();
+
+                const frame = () => {
+                    controls.update();
+                    updateCameraInfoDisplay();
+                    renderer.render(scene, camera);
+                    animationId = requestAnimationFrame(frame);
+                };
+                frame();
+
+                canvas.addEventListener('wheel', (event) => {
+                    const target = getCameraTarget();
+                    let distance = null;
+                    if (camera && target) {
+                        const dx = camera.position.x - target.x;
+                        const dy = camera.position.y - target.y;
+                        const dz = camera.position.z - target.z;
+                        distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    }
+                    if (event.deltaY < 0 && camera && target && distance !== null) {
+                        const minZoom = controls?.minZoom ?? 0;
+                        const dollyThreshold = minZoom + 0.5;
+                        if (distance <= dollyThreshold) {
+                            const dx = target.x - camera.position.x;
+                            const dy = target.y - camera.position.y;
+                            const dz = target.z - camera.position.z;
+                            const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+                            const stepBase = lastSceneSize ? Math.max(lastSceneSize.z, lastSceneSize.x, lastSceneSize.y) : 1;
+                            const step = Math.max(0.05, stepBase * 0.01);
+                            const dirX = dx / len;
+                            const dirY = dy / len;
+                            const dirZ = dz / len;
+                            camera.position.x += dirX * step;
+                            camera.position.y += dirY * step;
+                            camera.position.z += dirZ * step;
+                            const nextTarget = new SPLAT.Vector3(
+                                target.x + dirX * step,
+                                target.y + dirY * step,
+                                target.z + dirZ * step
+                            );
+                            if (controls?.setCameraTarget) {
+                                controls.setCameraTarget(nextTarget);
+                            }
+                        }
+                    }
+                }, { passive: true });
+
+            } catch (err) {
+                console.error('[GaussianViewer] Init error:', err);
+                showError('初始化 WebGL 查看器失败: ' + err.message);
+            }
+        }
+
+        function showError(message) {
+            errorEl.textContent = message;
+            errorEl.classList.remove('hidden');
+        }
+        function clearError() {
+            errorEl.classList.add('hidden');
+        }
+
+        let initialCameraData = null;
+        let lastMeshSignature = null;
+        let isResolutionLocked = false;
+        let gaussianScaleCompensation = 1.0;
+        let outputSettings = {
+            resolution: 2048,
+            aspectRatio: "source"
+        };
+
+        const CAMERA_PRESET_STORAGE_KEY = 'geompack_camera_presets_v1';
+        let currentMeshKey = null;
+        let presetOptionMap = new Map();
+
+        // 页面内确认对话框（替代原 window.parent.postMessage PRESET_CONFIRM_REQUEST）
+        const confirmOverlay = document.getElementById('confirmOverlay');
+        const confirmTitle = document.getElementById('confirmTitle');
+        const confirmMessage = document.getElementById('confirmMessage');
+        const confirmOkBtn = document.getElementById('confirmOk');
+        const confirmCancelBtn = document.getElementById('confirmCancel');
+        let confirmResolver = null;
+
+        function closeConfirm(value) {
+            confirmOverlay.classList.remove('show');
+            const fn = confirmResolver;
+            confirmResolver = null;
+            if (fn) fn(!!value);
+        }
+        confirmOkBtn.addEventListener('click', () => closeConfirm(true));
+        confirmCancelBtn.addEventListener('click', () => closeConfirm(false));
+        confirmOverlay.addEventListener('click', (e) => { if (e.target === confirmOverlay) closeConfirm(false); });
+
+        function requestPresetConfirm(options = {}) {
+            confirmTitle.textContent = options.title || '确认';
+            confirmMessage.textContent = options.message || '请确认此操作。';
+            confirmOkBtn.textContent = options.confirmText || '确认';
+            confirmCancelBtn.textContent = options.cancelText || '取消';
+            if (options.level === 'danger') {
+                confirmOkBtn.style.background = '#c74646';
+                confirmOkBtn.style.borderColor = '#c74646';
+            } else if (options.level === 'warning') {
+                confirmOkBtn.style.background = '#b87922';
+                confirmOkBtn.style.borderColor = '#b87922';
+            } else {
+                confirmOkBtn.style.background = '#4f6bd6';
+                confirmOkBtn.style.borderColor = '#4f6bd6';
+            }
+            confirmOverlay.classList.add('show');
+            return new Promise((resolve) => { confirmResolver = resolve; });
+        }
+
+        function resumeAnimationLoop() {
+            const frame = () => {
+                controls.update();
+                updateCameraInfoDisplay();
+                renderer.render(scene, camera);
+                animationId = requestAnimationFrame(frame);
+            };
+            frame();
+        }
+
+        function setCameraFromExtrinsics(extrinsics, intrinsics, splat) {
+            if (!camera || !controls) return;
+            let camPosX = 0, camPosY = 0, camPosZ = 0;
+            if (extrinsics && Array.isArray(extrinsics) && extrinsics.length === 4) {
+                const R = [
+                    [extrinsics[0][0], extrinsics[0][1], extrinsics[0][2]],
+                    [extrinsics[1][0], extrinsics[1][1], extrinsics[1][2]],
+                    [extrinsics[2][0], extrinsics[2][1], extrinsics[2][2]]
+                ];
+                const t = [extrinsics[0][3], extrinsics[1][3], extrinsics[2][3]];
+                camPosX = -(R[0][0] * t[0] + R[1][0] * t[1] + R[2][0] * t[2]);
+                camPosY = -(R[0][1] * t[0] + R[1][1] * t[1] + R[2][1] * t[2]);
+                camPosZ = -(R[0][2] * t[0] + R[1][2] * t[1] + R[2][2] * t[2]);
+            }
+
+            let targetZ = 2;
+            if (intrinsics && Array.isArray(intrinsics) && intrinsics.length >= 2) {
+                const fx = intrinsics[0][0];
+                const fy = intrinsics[1][1];
+                const cx = intrinsics[0][2];
+                const cy = intrinsics[1][2];
+                const imageWidth = cx * 2;
+                const imageHeight = cy * 2;
+                isResolutionLocked = true;
+                const containerWidth = canvas.clientWidth || 512;
+                renderer.setSize(imageWidth, imageHeight);
+                nativeAspect = imageWidth / imageHeight;
+                updateCanvasDisplaySize();
+                camera.data.fx = fx;
+                camera.data.fy = fy;
+                baseFocalLength = fx;
+                baseFocalY = fy;
+                gaussianScaleCompensation = computeScaleCompensation(imageWidth, containerWidth);
+                targetZ = Math.max(1, fy / imageHeight * 2);
+            }
+
+            let targetX = 0, targetY = 0;
+            let orbitZ = targetZ;
+            if (splat && splat.bounds) {
+                const center = splat.bounds.center();
+                const size = splat.bounds.size();
+                targetZ = center.z;
+                const minZ = center.z - size.z / 2;
+                orbitZ = minZ * 1.5;
+                lastSceneCenter = center;
+                lastSceneSize = size;
+            }
+
+            camPosY = -camPosY;
+            const camPos = new SPLAT.Vector3(camPosX, camPosY, camPosZ);
+            const targetPos = new SPLAT.Vector3(targetX, targetY, orbitZ);
+            initialCameraData = {
+                position: camPos,
+                target: targetPos,
+                fx: camera.data.fx,
+                fy: camera.data.fy
+            };
+            camera.position.x = camPosX;
+            camera.position.y = camPosY;
+            camera.position.z = camPosZ;
+            controls.setCameraTarget(targetPos);
+        }
+
+        function buildMeshSignature(filename, intrinsics) {
+            const intrinsicKey = intrinsics ? JSON.stringify(intrinsics) : "none";
+            return `${filename || "unknown"}::${intrinsicKey}`;
+        }
+
+        async function loadPLYFromData(arrayBuffer, filename, extrinsics, intrinsics) {
+            clearError();
+            loadingEl.classList.remove('hidden');
+            dropHint.classList.add('hidden');
+            try {
+                const meshSignature = buildMeshSignature(filename, intrinsics);
+                const isNewMesh = meshSignature !== lastMeshSignature;
+                if (isNewMesh) {
+                    initialCameraData = null;
+                    baseFocalLength = null;
+                    baseFocalY = null;
+                    nativeImageWidth = null;
+                    nativeImageHeight = null;
+                    cachedSplatData = null;
+                    lastMeshSignature = meshSignature;
+                    currentScale = 8.0;
+                    lastScaleValue = 8.0;
+                    if (scaleInput) scaleInput.value = 8;
+                    if (scaleDisplay) scaleDisplay.textContent = '8';
+                }
+
+                const hasIntrinsics = Array.isArray(intrinsics) && intrinsics.length >= 2;
+                if (!hasIntrinsics) {
+                    isResolutionLocked = false;
+                } else {
+                    const cx = intrinsics[0][2];
+                    const cy = intrinsics[1][2];
+                    nativeImageWidth = cx * 2;
+                    nativeImageHeight = cy * 2;
+                    isResolutionLocked = true;
+                    renderer.setSize(nativeImageWidth, nativeImageHeight);
+                    nativeAspect = nativeImageWidth / nativeImageHeight;
+                    updateCanvasDisplaySize();
+                }
+
+                if (scene.objects && scene.objects.length > 0) {
+                    while (scene.objects.length > 0) {
+                        scene.removeObject(scene.objects[0]);
+                    }
+                }
+                currentSplat = null;
+
+                gaussianScaleCompensation = 1.0;
+                if (intrinsics && Array.isArray(intrinsics) && intrinsics.length >= 2) {
+                    const cx = intrinsics[0][2];
+                    const imageWidth = cx * 2;
+                    const containerWidth = canvas.clientWidth || 512;
+                    gaussianScaleCompensation = computeScaleCompensation(imageWidth, containerWidth);
+                }
+
+                const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
+                const blobUrl = URL.createObjectURL(blob);
+                try {
+                    await SPLAT.PLYLoader.LoadAsync(blobUrl, scene);
+                } finally {
+                    setTimeout(() => { URL.revokeObjectURL(blobUrl); }, 30000);
+                }
+
+                if (scene.objects && scene.objects.length > 0) {
+                    currentSplat = scene.objects[scene.objects.length - 1];
+
+                    if (currentSplat.data && currentSplat.data.positions && currentSplat.data.rotations && currentSplat.data.colors && currentSplat.data.selection) {
+                        cachedSplatData = {
+                            positions: new Float32Array(currentSplat.data.positions),
+                            rotations: new Float32Array(currentSplat.data.rotations),
+                            colors: new Uint8Array(currentSplat.data.colors),
+                            selection: new Uint8Array(currentSplat.data.selection)
+                        };
+                    } else {
+                        cachedSplatData = null;
+                    }
+
+                    if (currentSplat.data && currentSplat.data.scales) {
+                        const scales = currentSplat.data.scales;
+                        originalScales = new Float32Array(scales.length);
+                        for (let i = 0; i < scales.length; i++) {
+                            originalScales[i] = scales[i] * gaussianScaleCompensation;
+                        }
+                        for (let i = 0; i < scales.length; i++) {
+                            scales[i] = originalScales[i] * currentScale;
+                        }
+                        currentSplat.data.changed = true;
+                    } else {
+                        originalScales = null;
+                    }
+                }
+
+                if ((extrinsics || intrinsics) && !initialCameraData) {
+                    setCameraFromExtrinsics(extrinsics, intrinsics, currentSplat);
+                    if (controls) controls.update();
+                } else if (!intrinsics && !extrinsics && !initialCameraData) {
+                    camera.data.fx = DEFAULT_FOCAL_LENGTH;
+                    camera.data.fy = DEFAULT_FOCAL_LENGTH;
+                    baseFocalLength = camera.data.fx;
+                    baseFocalY = camera.data.fy;
+                    // 没有外参时，根据点云包围盒自动取一个合适的初始视角
+                    if (currentSplat && currentSplat.bounds) {
+                        const center = currentSplat.bounds.center();
+                        const size = currentSplat.bounds.size();
+                        lastSceneCenter = center;
+                        lastSceneSize = size;
+                        const radius = Math.max(size.x, size.y, size.z) || 2;
+                        const camPos = new SPLAT.Vector3(center.x, center.y, center.z - radius * 2.2);
+                        const targetPos = new SPLAT.Vector3(center.x, center.y, center.z);
+                        initialCameraData = { position: camPos, target: targetPos, fx: camera.data.fx, fy: camera.data.fy };
+                        camera.position.x = camPos.x;
+                        camera.position.y = camPos.y;
+                        camera.position.z = camPos.z;
+                        controls.setCameraTarget(targetPos);
+                        controls.update();
+                    }
+                }
+
+                infoPanel.classList.remove('hidden');
+                infoContent.innerHTML = `<span style="color:#6cc;">高斯泼溅已加载</span><br><span style="color:#888;">${filename}</span>`;
+                fileNameEl.textContent = filename;
+                loadingEl.classList.add('hidden');
+                try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'PLY_LOADED', filename }, '*'); } catch (e) {}
+            } catch (err) {
+                console.error('[GaussianViewer] Load error:', err);
+                loadingEl.classList.add('hidden');
+                showError('加载 PLY 失败: ' + err.message);
+                try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'PLY_LOAD_ERROR', error: err.message }, '*'); } catch (e) {}
+            }
+        }
+
+        function resetCamera() {
+            if (camera && controls) {
+                if (initialCameraData) {
+                    const pos = initialCameraData.position;
+                    camera.position.x = pos.x;
+                    camera.position.y = pos.y;
+                    camera.position.z = pos.z;
+                    if (initialCameraData.fx) { camera.data.fx = initialCameraData.fx; baseFocalLength = initialCameraData.fx; }
+                    if (initialCameraData.fy) { camera.data.fy = initialCameraData.fy; baseFocalY = initialCameraData.fy; }
+                    if (initialCameraData.target) { controls.setCameraTarget(initialCameraData.target); }
+                    if (controls.resetRoll) { controls.resetRoll(); }
+                } else {
+                    camera.position.x = 0;
+                    camera.position.y = 0;
+                    camera.position.z = 5;
+                    if (controls.resetRoll) { controls.resetRoll(); }
+                }
+                controls.update();
+                focalScaleInput.value = 1.9;
+                focalScaleValue.value = 1.9;
+                applyFocalScale(1.9);
+                scheduleFrameLayoutUpdate();
+            }
+        }
+
+        function getCanvasWithBlackBackground(sourceCanvas) {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = sourceCanvas.width;
+            tempCanvas.height = sourceCanvas.height;
+            const ctx = tempCanvas.getContext('2d');
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            ctx.drawImage(sourceCanvas, 0, 0);
+            return tempCanvas;
+        }
+
+        function updateOutputSettings(resolution, aspectRatio) {
+            if (resolution) { outputSettings.resolution = resolution; }
+            if (aspectRatio && aspectRatio !== "source") { outputSettings.aspectRatio = aspectRatio; }
+            updateCropFrame();
+        }
+
+        // 独立页：导出当前视角为 PNG 下载（替代原 RENDER_RESULT postMessage）
+        function exportCurrentView() {
+            if (!renderer || !renderer.canvas) { showError('渲染器未就绪'); return; }
+            if (!currentSplat) { showError('请先加载 PLY 文件'); return; }
+            try {
+                if (animationId) cancelAnimationFrame(animationId);
+                if (scene && camera) { controls.update(); renderer.render(scene, camera); }
+                const outputCanvas = createOutputCanvas() || getCanvasWithBlackBackground(renderer.canvas);
+                const dataUrl = outputCanvas.toDataURL('image/png');
+                const a = document.createElement('a');
+                const base = (fileNameEl.textContent || 'gaussian').replace(/\.[^.]+$/, '');
+                const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                a.href = dataUrl;
+                a.download = `gaussian-${base}-${ts}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                resumeAnimationLoop();
+            } catch (err) {
+                console.error('[GaussianViewer] Export error:', err);
+                showError('导出失败: ' + err.message);
+                resumeAnimationLoop();
+            }
+        }
+
+        function parseAspectRatio(value, fallbackWidth, fallbackHeight) {
+            if (!value || value === "source") {
+                const sourceWidth = nativeImageWidth || (Array.isArray(currentIntrinsics) ? Number(currentIntrinsics[0]?.[2]) * 2 : 0) || fallbackWidth;
+                const sourceHeight = nativeImageHeight || (Array.isArray(currentIntrinsics) ? Number(currentIntrinsics[1]?.[2]) * 2 : 0) || fallbackHeight;
+                return sourceWidth > 0 && sourceHeight > 0 ? sourceWidth / sourceHeight : 1.0;
+            }
+            if (value.includes(":")) {
+                const parts = value.split(":");
+                const w = parseFloat(parts[0]);
+                const h = parseFloat(parts[1]);
+                if (w > 0 && h > 0) { return w / h; }
+            }
+            return 1.0;
+        }
+
+        function updateCropFrame() {
+            const wrapper = document.getElementById('canvasWrapper');
+            const wrapperRect = wrapper.getBoundingClientRect();
+            const canvasRect = canvas.getBoundingClientRect();
+            const rect = {
+                width: canvasRect.width,
+                height: canvasRect.height,
+                left: canvasRect.left - wrapperRect.left,
+                top: canvasRect.top - wrapperRect.top
+            };
+            const aspect = parseAspectRatio(outputSettings.aspectRatio, rect.width, rect.height);
+            if (!aspect || rect.width <= 0 || rect.height <= 0) { cropFrame.style.display = 'none'; return; }
+
+            let frameWidth = rect.width;
+            let frameHeight = rect.width / aspect;
+            if (frameHeight > rect.height) { frameHeight = rect.height; frameWidth = rect.height * aspect; }
+            const left = (rect.width - frameWidth) / 2;
+            const top = (rect.height - frameHeight) / 2;
+            cropFrame.style.display = 'block';
+            cropFrame.style.left = `${rect.left + left}px`;
+            cropFrame.style.top = `${rect.top + top}px`;
+            cropFrame.style.width = `${frameWidth}px`;
+            cropFrame.style.height = `${frameHeight}px`;
+        }
+
+        function updateCanvasDisplaySize() {
+            const container = document.getElementById('viewerContainer');
+            const rect = container.getBoundingClientRect();
+            const aspect = nativeAspect || ((renderer?.canvas?.width || 1) / (renderer?.canvas?.height || 1));
+            if (!aspect || rect.width <= 0 || rect.height <= 0) { return; }
+            let displayWidth = rect.width;
+            let displayHeight = rect.width / aspect;
+            if (displayHeight > rect.height) { displayHeight = rect.height; displayWidth = rect.height * aspect; }
+            canvas.style.width = `${displayWidth}px`;
+            canvas.style.height = `${displayHeight}px`;
+            const overlayImage = document.getElementById('overlayImage');
+            if (overlayImage) {
+                overlayImage.style.width = canvas.style.width;
+                overlayImage.style.height = canvas.style.height;
+            }
+        }
+
+        function scheduleFrameLayoutUpdate() {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    updateCanvasDisplaySize();
+                    updateCropFrame();
+                });
+            });
+        }
+
+        function getOutputDimensions() {
+            const c = renderer?.canvas;
+            const fallbackWidth = c?.width || 1;
+            const fallbackHeight = c?.height || 1;
+            const aspect = parseAspectRatio(outputSettings.aspectRatio, fallbackWidth, fallbackHeight);
+            const resolution = Math.max(1, parseInt(outputSettings.resolution, 10) || fallbackWidth);
+            let width, height;
+            if (aspect >= 1.0) {
+                width = resolution;
+                height = Math.max(1, Math.round(resolution / aspect));
+            } else {
+                height = resolution;
+                width = Math.max(1, Math.round(resolution * aspect));
+            }
+            return { width, height, aspect };
+        }
+
+        function createOutputCanvas() {
+            const c = renderer?.canvas;
+            if (!c) return null;
+            const sourceCanvas = getCanvasWithBlackBackground(c);
+            const { width: targetWidth, height: targetHeight, aspect: targetAspect } = getOutputDimensions();
+            const outputCanvas = document.createElement('canvas');
+            outputCanvas.width = targetWidth;
+            outputCanvas.height = targetHeight;
+            const ctx = outputCanvas.getContext('2d');
+            const sourceWidth = sourceCanvas.width;
+            const sourceHeight = sourceCanvas.height;
+            const sourceAspect = sourceWidth / sourceHeight;
+            let sx = 0, sy = 0, sWidth = sourceWidth, sHeight = sourceHeight;
+            if (Math.abs(sourceAspect - targetAspect) > 1e-4) {
+                if (sourceAspect > targetAspect) {
+                    sWidth = Math.round(sourceHeight * targetAspect);
+                    sx = Math.round((sourceWidth - sWidth) / 2);
+                } else {
+                    sHeight = Math.round(sourceWidth / targetAspect);
+                    sy = Math.round((sourceHeight - sHeight) / 2);
+                }
+            }
+            ctx.drawImage(sourceCanvas, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
+            return outputCanvas;
+        }
+
+        function getCameraTarget() {
+            if (!controls) return null;
+            if (typeof controls.getCameraTarget === 'function') { return controls.getCameraTarget(); }
+            return lastCameraTarget || controls.target || controls._target || controls.cameraTarget || null;
+        }
+
+        function toSplatVector3(v, fallback = null) {
+            if (!v || typeof v !== 'object') return fallback;
+            const x = Number(v.x);
+            const y = Number(v.y);
+            const z = Number(v.z);
+            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) { return fallback; }
+            return new SPLAT.Vector3(x, y, z);
+        }
+
+        function showPresetStatus(text, isError = false) {
+            if (!presetStatusEl) return;
+            presetStatusEl.textContent = text || '';
+            presetStatusEl.style.color = isError ? '#ff8a8a' : '#9ad';
+            if (showPresetStatus._timer) { clearTimeout(showPresetStatus._timer); }
+            if (text) {
+                showPresetStatus._timer = setTimeout(() => { presetStatusEl.textContent = ''; }, 2200);
+            }
+        }
+
+        function loadPresetStore() {
+            try {
+                const raw = localStorage.getItem(CAMERA_PRESET_STORAGE_KEY);
+                if (!raw) { return { version: 1, global: [], by_mesh: {} }; }
+                const parsed = JSON.parse(raw);
+                return {
+                    version: 1,
+                    global: Array.isArray(parsed.global) ? parsed.global : [],
+                    by_mesh: parsed.by_mesh && typeof parsed.by_mesh === 'object' ? parsed.by_mesh : {}
+                };
+            } catch (err) {
+                console.warn('[GaussianViewer] Failed to parse preset store:', err);
+                return { version: 1, global: [], by_mesh: {} };
+            }
+        }
+
+        function savePresetStore(store) {
+            localStorage.setItem(CAMERA_PRESET_STORAGE_KEY, JSON.stringify(store));
+        }
+
+        function getPresetBucket(store, scope, createIfMissing = false) {
+            if (scope === 'mesh') {
+                if (!currentMeshKey) return null;
+                if (!Array.isArray(store.by_mesh[currentMeshKey])) {
+                    if (!createIfMissing) return null;
+                    store.by_mesh[currentMeshKey] = [];
+                }
+                return store.by_mesh[currentMeshKey];
+            }
+            if (!Array.isArray(store.global)) { store.global = []; }
+            return store.global;
+        }
+
+        function getCurrentCameraStateSnapshot() {
+            if (!camera || !controls) return null;
+            const target = getCameraTarget();
+            const canvasRef = renderer?.canvas;
+            return {
+                position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                target: target ? { x: target.x, y: target.y, z: target.z } : null,
+                fx: camera.data?.fx || null,
+                fy: camera.data?.fy || null,
+                roll: Number.isFinite(controls.currentRoll) ? controls.currentRoll : 0,
+                image_width: nativeImageWidth || canvasRef?.width || null,
+                image_height: nativeImageHeight || canvasRef?.height || null,
+                scale: currentScale || 4.0,
+                scale_compensation: gaussianScaleCompensation || null
+            };
+        }
+
+        function refreshPresetOptions(preferredValue = null) {
+            if (!presetSelectEl) return;
+            const store = loadPresetStore();
+            const globalPresets = Array.isArray(store.global) ? store.global : [];
+            const meshPresets = currentMeshKey && Array.isArray(store.by_mesh[currentMeshKey])
+                ? store.by_mesh[currentMeshKey] : [];
+            presetOptionMap = new Map();
+            presetSelectEl.innerHTML = '';
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.textContent = '（无预设）';
+            presetSelectEl.appendChild(empty);
+            let i = 1;
+            for (const p of globalPresets) {
+                const value = `g:${i++}`;
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = `[全局] ${p.name || '未命名'}`;
+                presetOptionMap.set(value, { scope: 'global', preset: p });
+                presetSelectEl.appendChild(opt);
+            }
+            for (const p of meshPresets) {
+                const value = `m:${i++}`;
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = `[模型] ${p.name || '未命名'}`;
+                presetOptionMap.set(value, { scope: 'mesh', preset: p });
+                presetSelectEl.appendChild(opt);
+            }
+            if (preferredValue && presetOptionMap.has(preferredValue)) {
+                presetSelectEl.value = preferredValue;
+            } else {
+                presetSelectEl.value = '';
+            }
+        }
+
+        async function saveCurrentPreset() {
+            const presetName = (presetNameEl?.value || '').trim();
+            const scope = presetScopeEl?.value || 'global';
+            if (!presetName) { showPresetStatus('请输入预设名称', true); return; }
+            if (scope === 'mesh' && !currentMeshKey) { showPresetStatus('请先加载模型', true); return; }
+            const cameraState = getCurrentCameraStateSnapshot();
+            if (!cameraState) { showPresetStatus('相机未就绪', true); return; }
+            const store = loadPresetStore();
+            const bucket = getPresetBucket(store, scope, true);
+            if (!bucket) { showPresetStatus('预设容器不可用', true); return; }
+            const existingIndex = bucket.findIndex(p => p?.name === presetName);
+            const now = Date.now();
+            const preset = {
+                name: presetName,
+                scope,
+                meshKey: scope === 'mesh' ? currentMeshKey : null,
+                camera_state: cameraState,
+                created_at: existingIndex >= 0 ? (bucket[existingIndex].created_at || now) : now,
+                updated_at: now
+            };
+            if (existingIndex >= 0) {
+                const ok = await requestPresetConfirm({
+                    title: '覆盖预设',
+                    message: `预设 "${presetName}" 已存在，是否覆盖？`,
+                    confirmText: '覆盖',
+                    cancelText: '取消',
+                    level: 'warning'
+                });
+                if (!ok) { showPresetStatus('已取消'); return; }
+                bucket[existingIndex] = preset;
+            } else {
+                bucket.push(preset);
+            }
+            savePresetStore(store);
+            refreshPresetOptions();
+            const selected = [...presetOptionMap.entries()].find(([, v]) => v.preset.name === presetName && v.scope === scope);
+            if (selected) { presetSelectEl.value = selected[0]; }
+            showPresetStatus('预设已保存');
+        }
+
+        function applySelectedPreset() {
+            const selectedKey = presetSelectEl?.value;
+            if (!selectedKey || !presetOptionMap.has(selectedKey)) { showPresetStatus('请先选择预设', true); return; }
+            const selected = presetOptionMap.get(selectedKey);
+            const cameraState = selected?.preset?.camera_state;
+            if (!cameraState) { showPresetStatus('预设相机数据无效', true); return; }
+            applyCameraState(JSON.parse(JSON.stringify(cameraState)));
+            if (presetNameEl) { presetNameEl.value = selected.preset.name || ''; }
+            showPresetStatus('预设已应用');
+        }
+
+        async function deleteSelectedPreset() {
+            const selectedKey = presetSelectEl?.value;
+            if (!selectedKey || !presetOptionMap.has(selectedKey)) { showPresetStatus('请先选择预设', true); return; }
+            const selected = presetOptionMap.get(selectedKey);
+            const presetName = selected?.preset?.name || '未命名';
+            const ok = await requestPresetConfirm({
+                title: '删除预设',
+                message: `确定删除预设 "${presetName}"？此操作不可撤销。`,
+                confirmText: '删除',
+                cancelText: '取消',
+                level: 'danger'
+            });
+            if (!ok) return;
+            const store = loadPresetStore();
+            const bucket = getPresetBucket(store, selected.scope, false);
+            if (!bucket) { showPresetStatus('预设容器丢失', true); return; }
+            const idx = bucket.findIndex(p => p?.name === presetName);
+            if (idx < 0) { showPresetStatus('未找到预设', true); return; }
+            bucket.splice(idx, 1);
+            savePresetStore(store);
+            refreshPresetOptions();
+            showPresetStatus('预设已删除');
+        }
+
+        function applyCameraState(cameraState) {
+            if (!camera || !controls || !cameraState) return;
+            const position = toSplatVector3(cameraState.position, null);
+            const target = toSplatVector3(cameraState.target, null);
+            const fx = cameraState.fx;
+            const fy = cameraState.fy;
+            const roll = Number(cameraState.roll);
+            const scale = cameraState.scale;
+            if (fx) { camera.data.fx = fx; baseFocalLength = fx; }
+            if (fy) { camera.data.fy = fy; baseFocalY = fy; }
+            if (position) { camera.position.x = position.x; camera.position.y = position.y; camera.position.z = position.z; }
+            if (target && controls.setCameraTarget) { controls.setCameraTarget(target); }
+            if (Number.isFinite(roll)) { controls.currentRoll = roll; controls.targetRoll = roll; }
+            if (scale) { updateGaussianScale(scale); }
+            if (focalScaleInput) focalScaleInput.value = 1.9;
+            if (focalScaleValue) focalScaleValue.value = 1.9;
+            controls.update();
+            scheduleFrameLayoutUpdate();
+        }
+
+        // --- 实时高斯尺寸控制 ---
+        const scaleInput = document.getElementById('gaussianScaleValue');
+        const scaleDisplay = document.getElementById('gaussianScaleDisplay');
+        const autoScaleBtn = document.getElementById('autoScaleBtn');
+        let currentScale = 4.0;
+        let lastScaleValue = -1;
+
+        function updateGaussianScale(newScale) {
+            newScale = Math.max(1, Math.min(30, Math.round(parseFloat(newScale) || 4)));
+            if (newScale === lastScaleValue) return;
+            currentScale = newScale;
+            lastScaleValue = newScale;
+            if (scaleInput) scaleInput.value = newScale;
+            if (scaleDisplay) scaleDisplay.textContent = newScale;
+            if (currentSplat && currentSplat.data && currentSplat.data.scales && originalScales) {
+                const data = currentSplat.data;
+                let scales = data.scales;
+                const detached = data.detached || !scales || scales.buffer.byteLength === 0;
+                if (detached) {
+                    if (!cachedSplatData) return;
+                    const newScales = new Float32Array(originalScales.length);
+                    for (let i = 0; i < newScales.length; i++) { newScales[i] = originalScales[i] * newScale; }
+                    const positions = new Float32Array(cachedSplatData.positions);
+                    const rotations = new Float32Array(cachedSplatData.rotations);
+                    const colors = new Uint8Array(cachedSplatData.colors);
+                    const selection = new Uint8Array(cachedSplatData.selection);
+                    data.reattach(positions.buffer, rotations.buffer, newScales.buffer, colors.buffer, selection.buffer);
+                    scales = data.scales;
+                } else {
+                    for (let i = 0; i < scales.length; i++) { scales[i] = originalScales[i] * newScale; }
+                }
+                data.changed = true;
+                data.detached = false;
+                const renderData = renderer._renderData || renderer.renderData;
+                if (renderData && renderData.markDirty) { renderData.markDirty(currentSplat); renderData.dataChanged = true; }
+                if (currentSplat.dispatchEvent && currentSplat._changeEvent) { currentSplat.dispatchEvent(currentSplat._changeEvent); }
+            }
+        }
+
+        if (scaleInput) {
+            scaleInput.addEventListener('input', (e) => {
+                updateGaussianScale(e.target.value);
+            });
+        }
+
+        const setAutoScale = () => {
+            updateGaussianScale(4);
+        };
+        if (autoScaleBtn) autoScaleBtn.addEventListener('click', setAutoScale);
+
+        const focalScaleInput = document.getElementById('focalScale');
+        const focalScaleValue = document.getElementById('focalScaleValue');
+
+        function applyFocalScale(value) {
+            const scale = Math.max(0.2, Math.min(3.0, parseFloat(value) || 1.0));
+            focalScaleInput.value = scale;
+            focalScaleValue.value = scale;
+            const baseFx = baseFocalLength || camera?.data?.fx || DEFAULT_FOCAL_LENGTH;
+            const baseFy = baseFocalY || camera?.data?.fy || DEFAULT_FOCAL_LENGTH;
+            if (camera?.data) { camera.data.fx = baseFx * (scale + FOCAL_UI_OFFSET); camera.data.fy = baseFy * (scale + FOCAL_UI_OFFSET); }
+        }
+
+        focalScaleInput.addEventListener('input', (e) => applyFocalScale(e.target.value));
+        focalScaleValue.addEventListener('change', (e) => applyFocalScale(e.target.value));
+
+        const ratioSelect = document.getElementById('ratioSelect');
+        const presetScopeEl = document.getElementById('presetScope');
+        const presetNameEl = document.getElementById('presetName');
+        const presetSelectEl = document.getElementById('presetSelect');
+        const savePresetBtn = document.getElementById('savePreset');
+        const applyPresetBtn = document.getElementById('applyPreset');
+        const deletePresetBtn = document.getElementById('deletePreset');
+        const presetStatusEl = document.getElementById('presetStatus');
+
+        function setAspectRatio(value) {
+            outputSettings.aspectRatio = value || "source";
+            if (ratioSelect) { ratioSelect.value = outputSettings.aspectRatio; }
+            scheduleFrameLayoutUpdate();
+        }
+
+        function updateCameraInfoDisplay() {
+            const cameraInfoContent = document.getElementById('cameraInfoContent');
+            if (!cameraInfoContent || !camera || !controls) return;
+            const pos = camera.position;
+            const toDeg = (rad) => (rad * 180 / Math.PI).toFixed(2);
+            let pitch = 0, yaw = 0, roll = 0;
+            if (controls.currentAlpha !== undefined) {
+                pitch = -controls.currentBeta;
+                yaw = -controls.currentAlpha;
+                roll = controls.currentRoll;
+            }
+            cameraInfoContent.innerHTML = `
+                <div style="color: #6cc; margin-bottom: 2px; font-weight: bold;">相机状态</div>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;">
+                    <span style="color: #888;">位置:</span>
+                    <span>${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}</span>
+                    <span style="color: #888;">旋转:</span>
+                    <span>俯:${toDeg(pitch)}° 偏:${toDeg(yaw)}° 滚:${toDeg(roll)}°</span>
+                </div>
+            `;
+        }
+
+        if (ratioSelect) { ratioSelect.addEventListener('change', (e) => { setAspectRatio(e.target.value); }); }
+        if (savePresetBtn) savePresetBtn.addEventListener('click', saveCurrentPreset);
+        if (applyPresetBtn) applyPresetBtn.addEventListener('click', applySelectedPreset);
+        if (deletePresetBtn) deletePresetBtn.addEventListener('click', deleteSelectedPreset);
+        if (presetSelectEl) {
+            presetSelectEl.addEventListener('change', () => {
+                const selected = presetOptionMap.get(presetSelectEl.value);
+                if (selected && presetNameEl) { presetNameEl.value = selected.preset.name || ''; }
+            });
+        }
+
+        refreshPresetOptions();
+
+        document.getElementById('resetCamera').addEventListener('click', resetCamera);
+
+        const helpPanel = document.getElementById('helpPanel');
+        const toggleHelpBtn = document.getElementById('toggleHelp');
+        const closeHelpBtn = document.getElementById('closeHelp');
+        if (toggleHelpBtn && helpPanel) toggleHelpBtn.addEventListener('click', () => helpPanel.classList.toggle('hidden'));
+        if (closeHelpBtn && helpPanel) closeHelpBtn.addEventListener('click', () => helpPanel.classList.add('hidden'));
+
+        const overlayAlphaInput = document.getElementById('overlayAlpha');
+        const overlayAlphaValue = document.getElementById('overlayAlphaValue');
+        function applyOverlayAlpha(value) {
+            const alpha = Math.max(0, Math.min(1, parseFloat(value) || 0));
+            if (overlayAlphaInput) overlayAlphaInput.value = alpha;
+            if (overlayAlphaValue) overlayAlphaValue.value = alpha;
+            const overlayImage = document.getElementById('overlayImage');
+            if (overlayImage) { overlayImage.style.opacity = alpha; }
+        }
+        if (overlayAlphaInput) overlayAlphaInput.addEventListener('input', (e) => applyOverlayAlpha(e.target.value));
+        if (overlayAlphaValue) overlayAlphaValue.addEventListener('change', (e) => applyOverlayAlpha(e.target.value));
+
+        // ===== 独立页：本地文件 / 拖拽 / URL 加载（替代 ComfyUI LOAD_MESH_DATA postMessage）=====
+        async function handlePLYFile(file) {
+            if (!file) return;
+            const name = file.name || 'gaussian.ply';
+            if (!/\.ply$/i.test(name)) { showError('请选择 .ply 文件'); return; }
+            currentMeshKey = name;
+            refreshPresetOptions();
+            const arrayBuffer = await file.arrayBuffer();
+            lastPlyBuffer = arrayBuffer.slice(0);
+            lastPlyName = name;
+            await loadPLYFromData(arrayBuffer, name, DEFAULT_EXTRINSICS, currentIntrinsics);
+            applyFocalScale(focalScaleInput.value);
+            scheduleFrameLayoutUpdate();
+            setTimeout(() => { setAutoScale(); }, 500);
+        }
+
+        async function loadFromUrl(url) {
+            if (!url) return;
+            clearError();
+            loadingEl.classList.remove('hidden');
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const arrayBuffer = await resp.arrayBuffer();
+                const name = (url.split('/').pop() || 'gaussian.ply').split('?')[0];
+                lastPlyBuffer = arrayBuffer.slice(0);
+                lastPlyName = name;
+                currentMeshKey = name;
+                refreshPresetOptions();
+                await loadPLYFromData(arrayBuffer, name, DEFAULT_EXTRINSICS, currentIntrinsics);
+                applyFocalScale(focalScaleInput.value);
+                scheduleFrameLayoutUpdate();
+                setTimeout(() => { setAutoScale(); }, 500);
+            } catch (err) {
+                loadingEl.classList.add('hidden');
+                showError('从链接加载失败: ' + err.message);
+            }
+        }
+
+        const plyFileInput = document.getElementById('plyFileInput');
+        const plyUrlInput = document.getElementById('plyUrlInput');
+        const loadUrlBtn = document.getElementById('loadUrlBtn');
+        const exportBtn = document.getElementById('exportBtn');
+
+        plyFileInput.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (file) handlePLYFile(file);
+        });
+        loadUrlBtn.addEventListener('click', () => loadFromUrl(plyUrlInput.value.trim()));
+        plyUrlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadFromUrl(plyUrlInput.value.trim()); });
+
+        // ===== 接入 RunningHub「3D高斯泼溅修复」AI 应用 =====
+        const RH_WEBAPP_ID = "2062741736430063617";  // AI 应用 ID
+        const RH_NODE_GAUSSIAN = "38";   // GaussianImage（渲染图）
+        const RH_NODE_SOURCE = "40";     // SourceImage（左栏上传图）
+
+        const repairBtn = document.getElementById('repairBtn');
+        const repairStatusEl = document.getElementById('repairStatus');
+        const repairProgressWrap = document.getElementById('repairProgressWrap');
+        const repairProgressBar = document.getElementById('repairProgressBar');
+        const repairResultZone = document.getElementById('repairResultZone');
+        const repairResultImg = document.getElementById('repairResultImg');
+        const repairResultLink = document.getElementById('repairResultLink');
+        const repairDownloadBtn = document.getElementById('repairDownloadBtn');
+
+        function setRepairStatus(text, isError = false) {
+            repairStatusEl.textContent = text || '';
+            repairStatusEl.style.color = isError ? '#ff8a8a' : '#9ad';
+        }
+        function setRepairProgress(pct) {
+            if (pct == null) { repairProgressWrap.style.display = 'none'; return; }
+            repairProgressWrap.style.display = 'block';
+            repairProgressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+        }
+
+        // 把当前视角渲染为 PNG Blob（GaussianImage）
+        function renderViewToBlob() {
+            return new Promise((resolve, reject) => {
+                if (!renderer || !renderer.canvas) { reject(new Error('渲染器未就绪')); return; }
+                if (!currentSplat) { reject(new Error('请先加载 PLY 文件')); return; }
+                try {
+                    if (animationId) cancelAnimationFrame(animationId);
+                    if (scene && camera) { controls.update(); renderer.render(scene, camera); }
+                    const outputCanvas = createOutputCanvas() || getCanvasWithBlackBackground(renderer.canvas);
+                    resumeAnimationLoop();
+                    outputCanvas.toBlob((blob) => {
+                        if (blob) resolve(blob); else reject(new Error('渲染图生成失败'));
+                    }, 'image/png');
+                } catch (err) {
+                    resumeAnimationLoop();
+                    reject(err);
+                }
+            });
+        }
+
+        async function startRepair() {
+            if (!currentSplat) { setRepairStatus('请先加载 PLY 文件', true); return; }
+            if (!sourceImageFile) { setRepairStatus('请先在左栏上传参考图像（SourceImage）', true); return; }
+
+            repairBtn.disabled = true;
+            const originalText = repairBtn.textContent;
+            repairBtn.textContent = '修复中…';
+            repairResultZone.style.display = 'none';
+            clearError();
+
+            try {
+                // 1. 渲染当前视角 -> 上传得到 GaussianImage 的 RunningHub fileName
+                setRepairStatus('正在渲染当前视角…');
+                setRepairProgress(10);
+                const gaussianBlob = await renderViewToBlob();
+                setRepairStatus('上传渲染图到 RunningHub…');
+                setRepairProgress(25);
+                const gaussianFileName = await RunningHubClient.uploadFile(gaussianBlob, 'gaussian_render.png');
+
+                // 2. 上传左栏源图 -> SourceImage 的 RunningHub fileName
+                setRepairStatus('上传参考图到 RunningHub…');
+                setRepairProgress(40);
+                const sourceFileName = await RunningHubClient.uploadFile(sourceImageFile, sourceImageFile.name || 'source.png');
+
+                // 3. 提交 AI 应用任务
+                setRepairStatus('提交修复任务…');
+                setRepairProgress(55);
+                const taskId = await RunningHubClient.submitTask({
+                    webappId: RH_WEBAPP_ID,
+                    nodeInfoList: [
+                        { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
+                        { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
+                    ],
+                    instanceType: 'default'
+                });
+
+                setRepairStatus('修复任务排队/运行中…');
+                const data = await RunningHubClient.pollTask(taskId, {
+                    onUpdate(task) {
+                        if (task.status === 'QUEUED') { setRepairStatus('排队中…'); setRepairProgress(60); }
+                        else if (task.status === 'RUNNING') { setRepairStatus('修复生成中…'); setRepairProgress(80); }
+                    }
+                });
+                const urls = data.urls || [];
+                if (!urls.length) throw new Error('修复输出为空');
+                setRepairProgress(100);
+                setRepairStatus('修复完成');
+                const out = urls[0];
+                repairResultImg.src = out;
+                repairResultLink.href = out;
+                repairDownloadBtn.href = out;
+                repairDownloadBtn.download = `gaussian-repair-${Date.now()}.png`;
+                repairResultZone.style.display = 'flex';
+                setTimeout(() => setRepairProgress(null), 1500);
+                return;
+            } catch (err) {
+                console.error('[GaussianRepair] error:', err);
+                setRepairStatus('修复失败: ' + err.message, true);
+                setRepairProgress(null);
+            } finally {
+                repairBtn.disabled = false;
+                repairBtn.textContent = originalText;
+            }
+        }
+
+        if (repairBtn) repairBtn.addEventListener('click', startRepair);
+
+        // ===== 左栏：上传图像 -> 按宽高 + FOV 计算 intrinsics =====
+        const imgFileInput = document.getElementById('imgFileInput');
+        const imgPreview = document.getElementById('imgPreview');
+        const imgDropZone = document.getElementById('imgDropZone');
+        const imgDropHint = document.getElementById('imgDropHint');
+        const imgInfo = document.getElementById('imgInfo');
+        let lastPlyBuffer = null;   // 记住已加载的 PLY，便于换图后用新内参重渲染
+        let lastPlyName = null;
+        let sourceImageFile = null; // 左栏上传的源图(File)，作为 SourceImage
+
+        function applyImageIntrinsics(width, height) {
+            currentIntrinsics = computeIntrinsicsFromImage(width, height, DEFAULT_FOV_DEG);
+            const fx = currentIntrinsics[0][0];
+            if (imgInfo) imgInfo.textContent =
+                `图像尺寸: ${width} × ${height}\n` +
+                `FOV: ${DEFAULT_FOV_DEG}°\n` +
+                `fx = fy = ${fx.toFixed(2)}\n` +
+                `cx = ${(width/2).toFixed(1)}, cy = ${(height/2).toFixed(1)}`;
+        }
+
+        async function handleImageFile(file) {
+            if (!file || !/^image\//.test(file.type)) { showError('请选择图像文件'); return; }
+            sourceImageFile = file;   // 记住源图，修复时作为 SourceImage 上传
+            const url = URL.createObjectURL(file);
+            const img = new Image();
+            img.addEventListener('load', async () => {
+                const w = img.naturalWidth;
+                const h = img.naturalHeight;
+                imgPreview.src = url;
+                imgPreview.style.display = 'block';
+                if (imgDropHint) imgDropHint.style.display = 'none';
+                applyImageIntrinsics(w, h);
+                // 若已加载过 PLY，则用新内参立即重渲染（强制视为新 mesh）
+                if (lastPlyBuffer) {
+                    lastMeshSignature = null;
+                    await loadPLYFromData(lastPlyBuffer.slice(0), lastPlyName || 'gaussian.ply', DEFAULT_EXTRINSICS, currentIntrinsics);
+                    applyFocalScale(focalScaleInput.value);
+                    scheduleFrameLayoutUpdate();
+                    setTimeout(() => { setAutoScale(); }, 500);
+                }
+            });
+            img.addEventListener('error', () => { showError('图像读取失败'); URL.revokeObjectURL(url); });
+            img.src = url;
+        }
+
+        if (imgFileInput) imgFileInput.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (file) handleImageFile(file);
+        });
+        if (imgDropZone) {
+        ['dragenter', 'dragover'].forEach(evt => {
+            imgDropZone.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); imgDropZone.classList.add('dragover'); });
+        });
+        ['dragleave', 'drop'].forEach(evt => {
+            imgDropZone.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); imgDropZone.classList.remove('dragover'); });
+        });
+        imgDropZone.addEventListener('drop', (e) => {
+            const file = e.dataTransfer?.files && e.dataTransfer.files[0];
+            if (file) handleImageFile(file);
+        });
+        }
+
+        // 拖拽加载
+        const viewerContainer = document.getElementById('viewerContainer');
+        ['dragenter', 'dragover'].forEach(evt => {
+            viewerContainer.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); viewerContainer.classList.add('dragover'); });
+        });
+        ['dragleave', 'drop'].forEach(evt => {
+            viewerContainer.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); viewerContainer.classList.remove('dragover'); });
+        });
+        viewerContainer.addEventListener('drop', (e) => {
+            const file = e.dataTransfer?.files && e.dataTransfer.files[0];
+            if (file) handlePLYFile(file);
+        });
+
+        // 支持 ?ply=URL 自动加载
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const plyParam = params.get('ply');
+            if (plyParam) { plyUrlInput.value = plyParam; loadFromUrl(plyParam); }
+        } catch (e) {}
+
+        // 初始化
+        initViewer();
+
+        const updateUIScale = () => {
+            const width = window.innerWidth;
+            const scale = Math.max(0.7, Math.min(1.8, 1.0 + (width - 512) / 1000));
+            document.documentElement.style.setProperty('--ui-scale', scale);
+        };
+        new ResizeObserver(updateUIScale).observe(document.body);
+        updateUIScale();
+
+        console.log('[GaussianViewer] 独立页就绪 - 等待加载 PLY');
+
+        // ===== 父页面(嵌入式)桥接：供高斯修复 angle 风格页面驱动查看器 =====
+        // 接收：SET_SOURCE_INTRINSICS(按图像宽高算内参)、REQUEST_RENDER(请求当前视角PNG)
+        // 回传：VIEWER_READY、RENDER_RESULT(dataURL)、RENDER_ERROR
+        window.addEventListener('message', async (event) => {
+            const msg = event.data || {};
+            if (msg.type === 'LOAD_PLY_URL' && msg.url) {
+                if (plyUrlInput) plyUrlInput.value = msg.url;
+                loadFromUrl(msg.url);
+            } else if (msg.type === 'SET_SOURCE_INTRINSICS' && msg.width && msg.height) {
+                applyImageIntrinsics(msg.width, msg.height);
+                if (lastPlyBuffer) {
+                    lastMeshSignature = null;
+                    await loadPLYFromData(lastPlyBuffer.slice(0), lastPlyName || 'gaussian.ply', DEFAULT_EXTRINSICS, currentIntrinsics);
+                    applyFocalScale(focalScaleInput.value);
+                    scheduleFrameLayoutUpdate();
+                    setTimeout(() => { setAutoScale(); }, 500);
+                }
+            } else if (msg.type === 'REQUEST_RENDER') {
+                try {
+                    if (!currentSplat) throw new Error('尚未加载 PLY 模型');
+                    if (animationId) cancelAnimationFrame(animationId);
+                    if (scene && camera) { controls.update(); renderer.render(scene, camera); }
+                    const outputCanvas = createOutputCanvas() || getCanvasWithBlackBackground(renderer.canvas);
+                    const dataUrl = outputCanvas.toDataURL('image/png');
+                    resumeAnimationLoop();
+                    (event.source || window.parent)?.postMessage({ type: 'RENDER_RESULT', request_id: msg.request_id, image: dataUrl }, '*');
+                } catch (err) {
+                    resumeAnimationLoop();
+                    (event.source || window.parent)?.postMessage({ type: 'RENDER_ERROR', request_id: msg.request_id, error: err.message }, '*');
+                }
+            }
+        });
+        // 告知父页面查看器已就绪
+        try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'VIEWER_READY' }, '*'); } catch (e) {}

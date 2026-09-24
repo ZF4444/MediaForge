@@ -1,0 +1,54 @@
+import { apiJson } from '../services/http.js';
+import { createIcons } from 'lucide/dist/esm/lucide.mjs';
+import RefreshCw from 'lucide/dist/esm/icons/refresh-cw.mjs';
+import LogOut from 'lucide/dist/esm/icons/log-out.mjs';
+import FolderOpen from 'lucide/dist/esm/icons/folder-open.mjs';
+import { applyStoredTheme } from '../shared/theme-bootstrap.js';
+
+applyStoredTheme();
+
+    (() => {
+        const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+        const money = value => `$${Number(value || 0).toFixed(4)}`;
+        const bytes = value => { const size=Number(value || 0); if(size < 1024) return `${size} B`; const units=['KB','MB','GB','TB']; let amount=size; let index=-1; do { amount/=1024; index++; } while(amount >= 1024 && index < units.length - 1); return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[index]}`; };
+        const timestamp = value => value ? new Date(Number(value)).toLocaleString('zh-CN', {hour12:false}) : '—';
+        function render(data){
+            const profile = data.account?.profile || {};
+            const spending = data.account?.spending || {};
+            const organization = data.account?.organization;
+            const storage = data.storage || {};
+            const name = profile.username || profile.user_id || '当前用户';
+            const budget = Number(spending.monthly_budget_usd || 0);
+            const spent = Number(spending.total_usd || 0);
+            const pct = budget > 0 ? Math.min(100, spent / budget * 100) : 0;
+            document.getElementById('period').textContent = `${data.account?.month || ''} 账户概览`;
+            document.getElementById('profile').innerHTML = `<div class="avatar">${esc(name.slice(0, 1).toUpperCase())}</div><div><div class="profile-name">${esc(name)}</div><div class="profile-meta">${esc(profile.user_id || '')} · ${esc(profile.organization_name || '未分配组织')}</div></div>`;
+            const records = data.account?.records || [];
+            const organizationCard = organization ? `<article class="metric"><div class="metric-label">组织本月总消耗</div><div class="metric-value">${money(organization.total_usd)}</div><div class="metric-detail">${esc(organization.name)} · ${Number(organization.task_count || 0)} 个任务 · ${Number(organization.request_count || 0)} 次请求</div></article>` : '';
+            const budgetCard = spending.budget_enabled && budget > 0 ? `<article class="metric"><div class="metric-label">个人预算</div><div class="metric-value">${money(budget)}</div><div class="metric-detail">已使用 ${money(spent)} · 剩余 ${money(Math.max(0, budget - spent))}</div><div class="bar"><i style="width:${pct}%"></i></div></article>` : '';
+            document.getElementById('content').innerHTML = `<section class="metrics"><article class="metric"><div class="metric-label">本月消耗</div><div class="metric-value">${money(spent)}</div><div class="metric-detail">RunningHub ${money(spending.runninghub_usd)} · Omnilojo ${money(spending.omnilojo_usd)}</div></article><article class="metric"><div class="metric-label">我的存储</div><div class="metric-value">${bytes(storage.used_bytes)}</div><div class="metric-detail">${storage.quota_bytes > 0 ? `剩余 ${bytes(storage.remaining_bytes)} · ` : ''}${Number(storage.total_files || 0)} 个文件</div><div class="bar"><i style="width:${storage.quota_bytes > 0 ? Math.min(100, Number(storage.used_bytes || 0) / Number(storage.quota_bytes) * 100) : 0}%"></i></div></article><article class="metric"><div class="metric-label">本月活动</div><div class="metric-value">${Number(spending.task_count || 0) + Number(spending.request_count || 0)}</div><div class="metric-detail">${Number(spending.task_count || 0)} 个生成任务 · ${Number(spending.request_count || 0)} 次模型请求<br>${Number(spending.runninghub_coins || 0).toFixed(2)} RH币</div></article>${organizationCard}${budgetCard}</section><section class="section"><div class="section-head"><div><div class="section-title">近期使用记录</div><div class="section-note">仅展示当前账户的使用情况</div></div><button id="openStorage" class="action" type="button"><i data-lucide="folder-open"></i>查看我的文件</button></div><div class="table"><div class="line header"><div>来源 / 任务</div><div>连接 / 模型 / 资源</div><div>状态</div><div>消耗</div><div>时间</div></div>${records.map(item => `<div class="line"><div><strong>${esc(item.source)}</strong><div class="reference">${esc(item.reference || item.model || '—')}</div></div><div><strong>${esc(item.connection_name || '未指定连接')}</strong><div class="detail">模型：${esc(item.model_name || item.model || '—')}${item.model_id ? ` · ${esc(item.model_id)}` : ''}</div>${item.resource_name || item.resource_id ? `<div class="detail">资源：${esc(item.resource_name || item.resource_id)}</div>` : ''}</div><div class="status ${esc(item.status || '')}">${esc(item.status || '—')}</div><div>${money(item.cost_usd)}</div><div>${timestamp(item.timestamp)}</div></div>`).join('') || '<div class="empty">本月还没有使用记录</div>'}</div></section>`;
+            document.getElementById('openStorage').addEventListener('click', () => parent.postMessage({type:'studio-open-asset-storage'}, location.origin));
+            createIcons({icons:{refreshCw:RefreshCw,logOut:LogOut,folderOpen:FolderOpen}});
+        }
+        async function load(){
+            const content = document.getElementById('content');
+            content.className = 'skeleton'; content.textContent = '正在读取账户信息...';
+            try {
+                const [account, storage] = await Promise.all([apiJson('/api/account/overview'), apiJson('/api/storage/usage')]);
+                content.className = ''; render({account, storage});
+            } catch(error) { content.className = 'error'; content.textContent = error.message || '账户信息加载失败'; }
+        }
+        document.getElementById('refresh').addEventListener('click', load);
+        document.getElementById('logout').addEventListener('click', async () => {
+            const button = document.getElementById('logout');
+            button.disabled = true;
+            button.querySelector('span').textContent = '正在登出';
+            try { await apiJson('/auth/logout', { method: 'POST' }); } catch (error) {}
+            window.top.location.href = '/login';
+        });
+        window.addEventListener('message', event => {
+            if (event.origin !== location.origin || event.data?.type !== 'account-focus') return;
+            load();
+        });
+        load(); createIcons({icons:{refreshCw:RefreshCw,logOut:LogOut,folderOpen:FolderOpen}});
+    })();

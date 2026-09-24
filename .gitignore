@@ -25,12 +25,9 @@ scripts/sync_to_remote.sh
 static/dist/
 frontend/node_modules/
 frontend/dist/
-# M0 阶段的生成文件（构建时从 static/js/<page>.js 复制而来，不是源码）
+# 已迁移页面的入口源码位于 frontend/src，由构建脚本生成 static/dist。
 frontend/src/smart-canvas/main.js
 frontend/src/api-settings/main.js
-frontend/src/asset-manager/main.js
-frontend/src/comfyui-settings/main.js
-frontend/src/index/main.js
 
 # Playwright
 node_modules/

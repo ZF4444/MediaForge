@@ -156,9 +156,9 @@ npm ci
 npm run build
 ```
 
-`npm run build` 会一次性构建 `canvas`、`api-settings`、`asset-manager`、`comfyui-settings` 和 `index` 五个页面。
+`npm run build` 会一次性构建页面注册表中的全部前端页面（当前共 23 个页面）及共享运行时模块。
 
-修改 `frontend/src/` 下的模块，或对应的 `static/js/<page>.js` 后，都要重新执行 `npm run build`。否则页面可能继续加载旧的 `static/dist/` 文件。
+修改 `frontend/src/` 下的模块后，都要重新执行 `npm run build`。否则页面可能继续加载旧的 `static/dist/` 文件。
 
 构建完成后可运行前端测试：
 

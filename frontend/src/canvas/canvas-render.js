@@ -390,10 +390,10 @@ function pickMediaForSmartNode(nodeId){
     input.type = 'file';
     input.accept = 'image/*,video/*,audio/*';
     input.multiple = true;
-    input.onchange = () => {
+    input.addEventListener('change', () => {
         if(input.files?.length) handleFiles(input.files, nodeId);
         input.remove();
-    };
+    });
     input.style.position = 'fixed';
     input.style.left = '-9999px';
     input.style.top = '-9999px';
@@ -479,8 +479,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 if(e.button !== 0 || !nodeForControls || nodeForControls.type !== 'smart-prompt') return;
                 e.preventDefault();
                 e.stopPropagation();
-                selectedId = nodeForControls.id;
-                selectedIds = [];
+                setCanvasSelection({id:nodeForControls.id, ids:[]});
                 capturePendingUndo();
                 promptNodeResizeState = {
                     nodeId:nodeForControls.id,
@@ -510,9 +509,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             // Preserve an existing multi-selection (e.g. after a box-select) so dragging
             // still moves the whole group; only collapse to single-select otherwise.
             if(!selectedIds.includes(id)){
-                selectedId = id;
-                selectedIds = [];
-                selectedImage = {nodeId:'', index:-1};
+                setCanvasSelection({id, ids:[], image:{nodeId:'', index:-1}});
                 suppressComposerForCandidateNodeId = '';
                 if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
                 syncSelectionUi();
@@ -520,27 +517,25 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             updateComposer();
             if(timerHidden) render();
         }, true);
-        el.onclick = e => {
+        el.addEventListener('click', e => {
             e.stopPropagation();
             // 名称栏：单击不重渲染，避免打断双击进入编辑态；编辑态更不处理。
             if(e.target.closest('.node-title')) return;
             if(Date.now() < suppressNodeClickUntil) return;
             const node = nodes.find(n => n.id === id);
             hideRunTimerForNode(node);
-            selectedId = id;
-            selectedIds = [];
-            selectedImage = {nodeId:'', index:-1};
+            setCanvasSelection({id, ids:[], image:{nodeId:'', index:-1}});
             suppressComposerForCandidateNodeId = '';
         if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
             render();
-        };
-        el.ondblclick = e => {
+        });
+        el.addEventListener('dblclick', e => {
             e.stopPropagation();
             if(e.target.closest('.node-title')) return;
             if(nodeForControls?.type === 'smart-group' && !e.target.closest('.thumb-item,.image-wrap,.mini-x,.node-port')){
                 openCreateMenu(e);
             }
-        };
+        });
         bindNodeTitleEditing(el, id);
         const uploadTrigger = el.querySelector('.generation-node-main');
         uploadTrigger?.addEventListener('mousedown', e => {
@@ -551,8 +546,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
         uploadTrigger?.addEventListener('click', e => {
             e.preventDefault(); e.stopPropagation();
             hideRunTimerForNode(nodes.find(n => n.id === id));
-            selectedId = id;
-            selectedIds = [];
+            setCanvasSelection({id, ids:[]});
             selectedImage = {nodeId:'', index:-1};
             suppressComposerForCandidateNodeId = '';
             pendingGroupUploadPoint = null;
@@ -568,8 +562,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 const node = nodes.find(n => n.id === id);
                 const count = candidateCountForNode(node);
                 if(count <= 1) return;
-                selectedId = id;
-                selectedIds = [];
+                setCanvasSelection({id, ids:[]});
                 selectedImage = {nodeId:'', index:-1};
                 suppressComposerForCandidateNodeId = id;
                 if(candidatePanelNodeId === id){
@@ -592,7 +585,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 clearImageClickTimer();
                 suppressImageClickUntil = Date.now() + 260;
                 const candidateIndex = Number(panel.dataset.candidateIndex) || 0;
-                selectedIds = [];
+                setCanvasSelection({ids:[]});
                 openImagePreview(id, candidateIndex, {source:'candidates'});
             });
         });
@@ -620,8 +613,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 pushUndo();
                 candidatePanelIndex = candidatePreviewIndexForNode(node, count);
                 setNodeMainCandidate(node, candidatePanelIndex);
-                selectedId = id;
-                selectedIds = [];
+                setCanvasSelection({id, ids:[]});
                 selectedImage = {nodeId:'', index:-1};
                 closeCandidatePanel({suppressComposer:false});
                 suppressComposerForCandidateNodeId = '';
@@ -710,9 +702,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 suppressImageClickUntil = Date.now() + 260;
                 const refNodeId = item.dataset.refNodeId || id;
                 const refIndex = Number(item.dataset.refImageIndex ?? item.dataset.imageIndex ?? 0);
-                selectedId = id;
-                selectedIds = [];
-                selectedImage = {nodeId:refNodeId, index:refIndex};
+                setCanvasSelection({id, ids:[], image:{nodeId:refNodeId, index:refIndex}});
                 openImagePreview(refNodeId, refIndex);
             }, true);
             item.addEventListener('click', e => {
@@ -727,9 +717,8 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 if(e.detail >= 2){
                     clearImageClickTimer();
                     suppressImageClickUntil = Date.now() + 260;
-                    selectedId = id;
-                    selectedIds = [];
-                    selectedImage = {nodeId:refNodeId, index:refIndex};
+                    setCanvasSelection({id, ids:[]});
+                    setCanvasSelection({image:{nodeId:refNodeId, index:refIndex}});
                     openImagePreview(refNodeId, refIndex);
                     return;
                 }
@@ -740,15 +729,14 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 hideRunTimerForNode(owner);
                 const isGroupOwner = (owner?.images || []).length > 1 || isSmartGroupNode(owner);
                 const isUploadOnlyOwner = isUploadedImageOnlyNode(owner);
-                selectedId = id;
-                selectedIds = [];
+                setCanvasSelection({id, ids:[]});
                 // 分组节点：单击具体图片时选中该图片（出现按图片的快捷栏）；
                 // 非分组的上传单图节点仍保持节点级（不穿透）。
-                selectedImage = isGroupOwner
+                setCanvasSelection({image: isGroupOwner
                     ? {nodeId:refNodeId, index:refIndex}
                     : (isUploadOnlyOwner
                         ? {nodeId:'', index:-1}
-                        : {nodeId:id, index:imageIndex});
+                        : {nodeId:id, index:imageIndex})});
                     suppressComposerForCandidateNodeId = '';
                     if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
                     syncSelectionUi();
@@ -764,9 +752,8 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             suppressImageClickUntil = Date.now() + 260;
             const refNodeId = item.dataset.refNodeId || id;
             const refIndex = Number(item.dataset.refImageIndex ?? item.dataset.imageIndex ?? 0);
-            selectedId = id;
-            selectedIds = [];
-            selectedImage = {nodeId:refNodeId, index:refIndex};
+            setCanvasSelection({id, ids:[]});
+            setCanvasSelection({image:{nodeId:refNodeId, index:refIndex}});
             openImagePreview(refNodeId, refIndex);
         }, true);
         });
@@ -835,21 +822,21 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             e.stopPropagation();
             openNodeContextMenu(id, e);
         });
-        el.onmousedown = beginNodeDrag;
+        el.addEventListener('mousedown', beginNodeDrag);
         if(nodeForControls?.type === 'smart-prompt'){
             const promptText = el.querySelector('.prompt-node-text');
             promptText?.addEventListener('mousedown', e => {
                 if(promptText.readOnly) beginNodeDrag(e);
             }, true);
         }
-        el.ondragover = e => setSmartDropCopyEffect(e);
-        el.ondrop = async e => {
+        el.addEventListener('dragover', e => setSmartDropCopyEffect(e));
+        el.addEventListener('drop', async e => {
             e.preventDefault();
             e.stopPropagation();
             const payload = await resolveSmartImageDropPayload(e.dataTransfer);
             if(payload.type === 'none') return;
             await handleSmartImageDropPayload(payload, id);
-        };
+        });
     });
 }
 function rectOverlapNode(draggedId, x, y, w, h, excludeIds=[]){
@@ -1096,8 +1083,8 @@ function handleWindowMouseMove(e){
                         inheritNodeMetaFromImage(source);
                     }
                     const point = screenToWorld(e);
-                    selectedId = '';
-                    selectedImage = {nodeId:'', index:-1};
+                    setCanvasSelection({id:'', ids:[]});
+                    setCanvasSelection({image:{nodeId:'', index:-1}});
                     const newNode = createImageNodeAt(point, [img], {type:'smart-asset-image', select:false, skipUndo:true});
                     undoSuppressed = false;
                     dragState = {id:newNode.id, startX:e.clientX, startY:e.clientY, ox:newNode.x, oy:newNode.y, thumbDetached:true};
@@ -1113,8 +1100,7 @@ function handleWindowMouseMove(e){
         const dx = e.clientX - panState.startX;
         const dy = e.clientY - panState.startY;
         if(Math.abs(dx) + Math.abs(dy) > 3) didPan = true;
-        viewport.x = panState.ox + dx;
-        viewport.y = panState.oy + dy;
+        updateCanvasViewport({x:panState.ox + dx, y:panState.oy + dy});
         applyViewport();
         return;
     }
@@ -1140,7 +1126,7 @@ function handleWindowMouseMove(e){
     moveNodeElementsDuringDrag();
     updateLoopInsertPreview();
 }
-window.onmousemove = handleWindowMouseMove;
+window.addEventListener('mousemove', handleWindowMouseMove);
 function finishCanvasRightClick(e){
     if(e.button !== 2 || !rightMouseDownPoint) return;
     const moved = panState?.button === 2;
@@ -1279,4 +1265,4 @@ function handleWindowMouseUp(e){
         refreshConnectionLayer();
     }
 }
-window.onmouseup = handleWindowMouseUp;
+window.addEventListener('mouseup', handleWindowMouseUp);

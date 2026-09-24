@@ -461,7 +461,6 @@ let panoramaState = {
     loadedSrc:'',
     loadToken:0
 };
-window.__canvasPanoramaState = panoramaState;
 let settings = {
     engine:'api',
     apiKind:'image',
@@ -1003,9 +1002,7 @@ document.addEventListener('click', event => {
 function selectedNode(){ return nodes.find(n => n.id === selectedId) || null; }
 function clearSelection(){
     savePromptDraftForCurrent();
-    selectedId = '';
-    selectedIds = [];
-    selectedImage = {nodeId:'', index:-1};
+    setCanvasSelection({id:'', ids:[], image:{nodeId:'', index:-1}});
     candidatePanelNodeId = '';
     candidatePanelIndex = 0;
     suppressComposerForCandidateNodeId = '';
@@ -1328,24 +1325,23 @@ function minimapEventToWorld(event){
     };
 }
 function centerViewportOnWorldPoint(point){
-    viewport.x = shell.clientWidth / 2 - point.x * viewport.scale;
-    viewport.y = shell.clientHeight / 2 - point.y * viewport.scale;
+    updateCanvasViewport({
+        x:shell.clientWidth / 2 - point.x * viewport.scale,
+        y:shell.clientHeight / 2 - point.y * viewport.scale
+    });
     applyViewport();
     scheduleSave();
 }
 function focusCanvasNode(nodeId){
     const node = nodes.find(item => String(item?.id || '') === String(nodeId || ''));
     if(!node) return false;
-    selectedId = node.id;
-    selectedIds = [];
-    selectedImage = {nodeId:'', index:-1};
+    setCanvasSelection({id:node.id, ids:[], image:{nodeId:'', index:-1}});
     render();
     const rect = nodeRect(node);
     centerViewportOnWorldPoint({x:rect.x + rect.width / 2, y:rect.y + rect.height / 2});
     syncSelectionUi();
     return true;
 }
-window.focusCanvasNode = focusCanvasNode;
 function flushDeferredViewportRendering(){
     viewportInteractionActive = false;
     if(pendingMinimapRefreshAfterInteraction){
@@ -1355,9 +1351,7 @@ function flushDeferredViewportRendering(){
 }
 function fitAllNodesViewport(){
     if(!nodes.length){
-        viewport.scale = 0.45;
-        viewport.x = shell.clientWidth / 2;
-        viewport.y = shell.clientHeight / 2;
+        updateCanvasViewport({scale:0.45, x:shell.clientWidth / 2, y:shell.clientHeight / 2});
         applyViewport();
         scheduleSave();
         return;
@@ -1373,9 +1367,11 @@ function fitAllNodesViewport(){
     const nextScale = Math.max(0.06, Math.min(0.82, (shell.clientWidth - 80) / width, (shell.clientHeight - 80) / height));
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
-    viewport.scale = nextScale;
-    viewport.x = shell.clientWidth / 2 - cx * viewport.scale;
-    viewport.y = shell.clientHeight / 2 - cy * viewport.scale;
+    updateCanvasViewport({
+        scale:nextScale,
+        x:shell.clientWidth / 2 - cx * nextScale,
+        y:shell.clientHeight / 2 - cy * nextScale
+    });
     applyViewport();
     scheduleSave();
 }
@@ -1391,13 +1387,14 @@ function exitZoomPreview(point=null){
     const prev = zoomPreviewState;
     zoomPreviewState = null;
     shell.classList.remove('zoom-preview');
-    viewport.scale = prev.scale;
+    updateCanvasViewport({scale:prev.scale});
     if(point){
-        viewport.x = shell.clientWidth / 2 - point.x * viewport.scale;
-        viewport.y = shell.clientHeight / 2 - point.y * viewport.scale;
+        updateCanvasViewport({
+            x:shell.clientWidth / 2 - point.x * viewport.scale,
+            y:shell.clientHeight / 2 - point.y * viewport.scale
+        });
     } else {
-        viewport.x = prev.x;
-        viewport.y = prev.y;
+        updateCanvasViewport({x:prev.x, y:prev.y});
     }
     applyViewport();
     scheduleSave();
@@ -1419,9 +1416,12 @@ function exitZoomPreviewToNode(nodeId){
     const readableScale = Math.min(1.15, Math.max(0.72, fitScale));
     zoomPreviewState = null;
     shell.classList.remove('zoom-preview');
-    viewport.scale = Math.max(safeScale(prev.scale), readableScale);
-    viewport.x = shell.clientWidth / 2 - cx * viewport.scale;
-    viewport.y = shell.clientHeight / 2 - cy * viewport.scale;
+    const nextScale = Math.max(safeScale(prev.scale), readableScale);
+    updateCanvasViewport({
+        scale:nextScale,
+        x:shell.clientWidth / 2 - cx * nextScale,
+        y:shell.clientHeight / 2 - cy * nextScale
+    });
     applyViewport();
     scheduleSave();
     return true;
@@ -1489,45 +1489,12 @@ let canvasMetaPollTimer = null;
 // mergeReloadCanvasNow / scheduleCanvasMergeReload / handleCanvasUpdatedMessage /
 // startCanvasMetaPoll 已迁移到 frontend/src/canvas/canvas-sync.js
 // （经典 <script>，非 ES module，原因同 M1-M15）。
+// M23 拆分：connectAssetLibrarySyncSocket 已迁移到
+// frontend/src/canvas/canvas-sync-socket.js。
 // smartClientId 常量及 canvasSyncInFlight/canvasSaveDirty/canvasSaveAgain/
 // canvasSyncTimer/canvasMetaPollTimer 这几个可变状态变量刻意留在这里
 // （被 scheduleSave/saveCanvas 共享读写，原因同 state.js 的顾虑），
 // canvas-sync.js 通过共享脚本作用域访问。
-function connectAssetLibrarySyncSocket(){
-    const host = window.location.host;
-    if(!host) return;
-    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-    const clientId = smartClientId;
-    let socket;
-    let retryTimer = null;
-    const connect = () => {
-        try {
-            socket = new WebSocket(`${protocol}://${host}/ws/stats?client_id=${clientId}`);
-        } catch(e) {
-            retryTimer = setTimeout(connect, 3000);
-            return;
-        }
-        socket.onmessage = event => {
-            try {
-                const data = JSON.parse(event.data);
-                if(data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(data);
-                if(data?.type === 'canvas_updated') handleCanvasUpdatedMessage(data);
-                if((data?.type === 'agent.event' || data?.type?.startsWith('agent.')) && window.canvasAgentHandleEvent) window.canvasAgentHandleEvent(data);
-            } catch(e) {}
-        };
-        socket.onclose = () => {
-            retryTimer = setTimeout(connect, 3000);
-        };
-        socket.onerror = () => {
-            try { socket.close(); } catch(e) {}
-        };
-    };
-    window.addEventListener('beforeunload', () => {
-        clearTimeout(retryTimer);
-        try { socket?.close(); } catch(e) {}
-    });
-    connect();
-}
 // M9 拆分：setAssetLibraryFromResponse / toggleAssetLibrary / assetCategoryForMention /
 // assetMediaKind / assetThumbHtml / renderAssetLibrary / openAssetNameDialog /
 // positionAssetHoverPreview / showAssetHoverPreview / hideAssetHoverPreview /
@@ -1537,14 +1504,14 @@ function connectAssetLibrarySyncSocket(){
 // 原因同 M1-M8）。
 async function loadCanvas({renderCanvas=true}={}){
     try {
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const canvasApi = globalThis.__MediaForgeRuntimeServices?.canvasApi;
         if(!canvasId){
-            const response = await fetch('/api/canvases', {
+            const data = canvasApi ? await canvasApi.create({title:tr('canvas.title'), icon:'sparkles'}) : apiJson ? await apiJson('/api/canvases', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:tr('canvas.title'), icon:'sparkles'})}) : await fetch('/api/canvases', {
                 method:'POST',
                 headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({title:tr('canvas.title'), icon:'sparkles'})
-            });
-            if(!response.ok) throw new Error(await smartResponseErrorMessage(response, tr('canvas.toastLoadFail')));
-            const data = await response.json();
+            }).then(async response => { if(!response.ok) throw new Error(await smartResponseErrorMessage(response, tr('canvas.toastLoadFail'))); return response.json(); });
             canvasId = data.canvas?.id || '';
             if(!canvasId) throw new Error(tr('canvas.toastLoadFail'));
             history.replaceState(null, '', `/static/canvas.html?id=${encodeURIComponent(canvasId)}`);
@@ -1552,9 +1519,7 @@ async function loadCanvas({renderCanvas=true}={}){
         clearTimeout(suppressAutoSaveReleaseTimer);
         suppressAutoSave = true;
         deferredAutoSaveNeeded = false;
-        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
-        if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('canvas.toastLoadFail')));
-        const data = await res.json();
+        const data = canvasApi ? await canvasApi.load(canvasId) : apiJson ? await apiJson(`/api/canvases/${encodeURIComponent(canvasId)}`) : await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`).then(async res => { if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('canvas.toastLoadFail'))); return res.json(); });
         canvas = data.canvas;
         document.title = canvas.title || tr('canvas.title');
         document.getElementById('canvasTitle').textContent = canvas.title || tr('canvas.title');
@@ -1667,7 +1632,7 @@ async function saveCanvas(){
     canvasSyncInFlight = true;
     canvasSaveAgain = false;
     try {
-        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`, {
+        const payload = {
             method:'PUT',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
@@ -1681,13 +1646,15 @@ async function saveCanvas(){
                 base_updated_at:storageCanvas.updated_at || canvas.updated_at || 0,
                 client_id:smartClientId
             })
-        });
-        if(res.ok){
-            const data = await res.json();
+        };
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const result = apiJson ? {ok:true, status:200, data:await apiJson(`/api/canvases/${encodeURIComponent(canvasId)}`, {...payload, allowErrorResponse:true})} : await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`, payload).then(async res => ({ok:res.ok, status:res.status, data:await res.json().catch(() => ({}))}));
+        if(result.ok){
+            const data = result.data;
             if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
             canvasSaveDirty = Boolean(canvasSaveAgain);
-        } else if(res.status === 409) {
-            const data = await res.json().catch(() => ({}));
+        } else if(result.status === 409) {
+            const data = result.data;
             const serverCanvas = data.detail?.canvas;
             const remoteUpdatedAt = Number(data.detail?.updated_at || serverCanvas?.updated_at || 0);
             if(canvasSaveDirty || canvasSaveAgain){
@@ -2041,7 +2008,7 @@ function renderCanvasLog(){
         </div>`;
     }).join('') : `<div class="log-empty">${escapeHtml(tr('canvas.noLogs'))}</div>`;
     canvasLogList.querySelectorAll('[data-url]').forEach(el => {
-        el.onclick = e => {
+        el.addEventListener('click', e => {
             e.stopPropagation();
             jumpToCanvasLogOutput({
                 url:el.dataset.url,
@@ -2050,10 +2017,10 @@ function renderCanvasLog(){
                 kind:el.dataset.kind || 'image',
                 poster_url:el.dataset.poster || ''
             });
-        };
+        });
     });
     canvasLogList.querySelectorAll('[data-prompt]').forEach(el => {
-        el.onclick = e => {
+        el.addEventListener('click', e => {
             e.stopPropagation();
             const text = el.dataset.prompt || '';
             if(text) navigator.clipboard?.writeText(text).catch(() => {});
@@ -2064,10 +2031,10 @@ function renderCanvasLog(){
                 el.textContent = oldText;
                 el.classList.remove('copied');
             }, 900);
-        };
+        });
     });
     canvasLogList.querySelectorAll('[data-log-expand]').forEach(btn => {
-        btn.onclick = e => {
+        btn.addEventListener('click', e => {
             e.stopPropagation();
             const item = btn.closest('.log-item');
             if(!item) return;
@@ -2080,7 +2047,7 @@ function renderCanvasLog(){
                 icon.setAttribute('data-lucide', expanded ? 'chevron-up' : 'chevron-down');
                 refreshIcons();
             }
-        };
+        });
     });
     refreshIcons();
 }
@@ -2125,7 +2092,7 @@ function bindPromptNodeControls(el, node){
     const textEl = el.querySelector('.prompt-node-text');
     if(textEl) {
         bindScrollableText(textEl);
-        textEl.oninput = e => { node.text = e.target.value; scheduleSave(); };
+        textEl.addEventListener('input', e => { node.text = e.target.value; scheduleSave(); });
         // 单击只选中节点（打开配置框），双击才进入编辑态。
         textEl.addEventListener('click', e => {
             e.stopPropagation();
@@ -2477,7 +2444,7 @@ function checkQuotaWarningFromResult(data){
     const warning = data.quota_warning;
     if(warning && warning.quota_exceeded){
         try {
-            window.MediaForgeUpload?.showQuotaDialog?.({
+            MediaForgeUpload?.showQuotaDialog?.({
                 quota_bytes: warning.quota_bytes,
                 used_bytes: warning.used_bytes,
                 incoming_bytes: warning.incoming_bytes,
@@ -2486,13 +2453,14 @@ function checkQuotaWarningFromResult(data){
         return;
     }
     // No inline warning — check server quota asynchronously.
-    fetch('/api/storage/usage').then(r => r.ok ? r.json() : null).then(usage => {
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    (apiJson ? apiJson('/api/storage/usage', {allowErrorResponse:true}) : fetch('/api/storage/usage').then(r => r.ok ? r.json() : null)).then(usage => {
         if(!usage) return;
         const quota = Number(usage.quota_bytes || 0);
         const used = Number(usage.used_bytes || 0);
         if(quota > 0 && used >= quota){
             try {
-                window.MediaForgeUpload?.showQuotaDialog?.({quota_bytes:quota, used_bytes:used});
+                MediaForgeUpload?.showQuotaDialog?.({quota_bytes:quota, used_bytes:used});
             } catch(_) {}
         }
     }).catch(() => {});
@@ -3429,10 +3397,8 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     const imageRefs = imageRefsOnly(allRefs);
     const workflowName = runSettings.comfyWorkflow || comfyWorkflows[0]?.name || '';
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
-    const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
-        if(!r.ok) throw await smartResponseError(r);
-        return r.json();
-    });
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    const wf = apiJson ? await apiJson(`/api/workflows/${encodeURIComponent(workflowName)}`) : await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => { if(!r.ok) throw await smartResponseError(r); return r.json(); });
     const fields = wf.config?.fields || [];
     const values = {};
     fields.filter(f => comfyFieldKind(f) === 'prompt').forEach((field, index) => {
@@ -3505,7 +3471,9 @@ async function runPromptLLMNode(nodeId){
             : '';
         const requestImages = task === 'expand' ? [] : images;
         const requestVideos = task === 'llm' ? videos : [];
-        const result = await fetch('/api/canvas-llm', {
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const canvasApi = globalThis.__MediaForgeRuntimeServices?.canvasApi;
+        const payload = {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
@@ -3517,10 +3485,9 @@ async function runPromptLLMNode(nodeId){
                 model_id:stable.model_id,
                 system_prompt:systemPrompt
             })
-        }).then(async r => {
-            if(!r.ok) throw await smartResponseError(r);
-            return r.json();
-        });
+        };
+        const llmPayload = JSON.parse(payload.body);
+        const result = canvasApi ? await canvasApi.llm(llmPayload) : apiJson ? await apiJson('/api/canvas-llm', payload) : await fetch('/api/canvas-llm', payload).then(async r => { if(!r.ok) throw await smartResponseError(r); return r.json(); });
         node.text = (result.text || '').trim();
         node.llmConnectionId = stable.connection_id;
         node.llmModelId = stable.model_id;
@@ -3579,7 +3546,7 @@ function extractUpstreamTaskId(text){
 function handleStorageQuotaSignal(e){
     if(!(e && e.storageQuotaExceeded)) return false;
     try {
-        window.MediaForgeUpload?.showQuotaDialog?.({
+        MediaForgeUpload?.showQuotaDialog?.({
             quota_bytes:e.quota_bytes,
             used_bytes:e.used_bytes,
             incoming_bytes:e.incoming_bytes,
@@ -3593,7 +3560,7 @@ function handleStorageQuotaSignal(e){
 function handleUsageBudgetSignal(e){
     if(!(e && e.usageBudgetExceeded)) return false;
     try {
-        window.MediaForgeUpload?.showBudgetDialog?.({message:e.message});
+        MediaForgeUpload?.showBudgetDialog?.({message:e.message});
     } catch(_) {
         toast((e.message || '本月使用预算已用尽，请联系管理员(@飞帆)。').slice(0, 160));
     }
@@ -3603,14 +3570,13 @@ function handleTaskLimitSignal(e){
     return handleStorageQuotaSignal(e) || handleUsageBudgetSignal(e);
 }
 async function fetchImageTaskQuery(taskId, task={}){
-    return fetch('/api/image-task-query', {
+    const payload = {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({connection_id:task.connectionId || task.connection_id || '', resource_id:task.resourceId || task.resource_id || '', task_id:taskId, source:'canvas'})
-    }).then(async r => {
-        if(!r.ok) throw new Error(await smartResponseErrorMessage(r, '查询失败'));
-        return r.json();
-    });
+    };
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    return apiJson ? apiJson('/api/image-task-query', payload) : fetch('/api/image-task-query', payload).then(async r => { if(!r.ok) throw new Error(await smartResponseErrorMessage(r, '查询失败')); return r.json(); });
 }
 async function querySmartImageTaskNow(nodeId, localTaskId){
     const node = nodes.find(n => n.id === nodeId);
@@ -3658,10 +3624,8 @@ async function pollCanvasTask(taskId){
     const promise = (async () => {
         for(let i = 0; i < 900; i++){
             await new Promise(resolve => setTimeout(resolve, 2000));
-            const task = await fetch(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`).then(async r => {
-                if(!r.ok) throw await smartResponseError(r);
-                return r.json();
-            });
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const task = apiJson ? await apiJson(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`) : await fetch(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`).then(async r => { if(!r.ok) throw await smartResponseError(r); return r.json(); });
             if(task.status === 'succeeded'){
                 checkQuotaWarningFromResult(task);
                 return task.result || {};
@@ -3690,10 +3654,8 @@ async function pollCanvasComfyTask(taskId){
     const promise = (async () => {
         for(let i = 0; i < 900; i++){
             await new Promise(resolve => setTimeout(resolve, 2000));
-            const task = await fetch(`/api/canvas-comfy-tasks/${encodeURIComponent(taskId)}`).then(async r => {
-                if(!r.ok) throw await smartResponseError(r);
-                return r.json();
-            });
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const task = apiJson ? await apiJson(`/api/canvas-comfy-tasks/${encodeURIComponent(taskId)}`) : await fetch(`/api/canvas-comfy-tasks/${encodeURIComponent(taskId)}`).then(async r => { if(!r.ok) throw await smartResponseError(r); return r.json(); });
             if(task.status === 'succeeded'){
                 checkQuotaWarningFromResult(task);
                 return task.result || {};
@@ -3951,7 +3913,8 @@ async function downloadSelectedNodesImages(){
     if(items.length === 1){ downloadPreviewFile(items[0]); return; }
     try {
         const filename = safeExportFileName('canvas-selection.zip', 'canvas-selection.zip');
-        const response = await fetch('/api/canvas-assets/download', {
+        const apiBlob = globalThis.__MediaForgeRuntimeServices?.apiBlob;
+        const payload = {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
@@ -3959,9 +3922,8 @@ async function downloadSelectedNodesImages(){
                 urls:items.map(item => fileDownloadUrl(item) || item.url).filter(Boolean),
                 items:items.map((item, index) => ({url:fileDownloadUrl(item) || item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))
             })
-        });
-        if(!response.ok) throw new Error((await response.text()) || '批量下载失败');
-        const blob = await response.blob();
+        };
+        const blob = apiBlob ? await apiBlob('/api/canvas-assets/download', payload) : await fetch('/api/canvas-assets/download', payload).then(async response => { if(!response.ok) throw new Error((await response.text()) || '批量下载失败'); return response.blob(); });
         const href = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = href;
@@ -4264,21 +4226,21 @@ function shellMousedownHandler3(e){
         return;
     }
 }
-shell.onmousedown = shellMousedownHandler3;
+shell.addEventListener('mousedown', shellMousedownHandler3);
 function shellContextmenuHandler(e){
     if(e.target.closest('.image-node,.composer,.asset-panel,.asset-toggle,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-usage-toggle,.canvas-usage-panel,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-minimap,.selection-actions')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
 }
-shell.oncontextmenu = shellContextmenuHandler;
+shell.addEventListener('contextmenu', shellContextmenuHandler);
 function shellDblclickHandler(e){
     if(didPan || e.target.closest('.image-node,.composer,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-usage-toggle,.canvas-usage-panel,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     openCreateMenu(e);
 }
-shell.ondblclick = shellDblclickHandler;
+shell.addEventListener('dblclick', shellDblclickHandler);
 function shellClickHandler2(e){
     if(selectionJustFinished) return;
     if(didPan || e.target.closest('.image-node,.composer,.canvas-agent-panel,.canvas-agent-toggle,.canvas-manager-btn,.canvas-log-toggle,.canvas-shortcut-toggle,.canvas-usage-toggle,.canvas-usage-panel,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
@@ -4287,7 +4249,7 @@ function shellClickHandler2(e){
     clearSelection();
     render();
 }
-shell.onclick = shellClickHandler2;
+shell.addEventListener('click', shellClickHandler2);
 function minimapMousedownHandler(e){
     if(e.button !== 0) return;
     e.preventDefault();
@@ -4313,8 +4275,10 @@ function updateCanvasRightPan(e){
         shell.classList.add('panning');
     }
     if(panState?.button !== 2) return false;
-    viewport.x = panState.ox + e.clientX - panState.startX;
-    viewport.y = panState.oy + e.clientY - panState.startY;
+    updateCanvasViewport({
+        x:panState.ox + e.clientX - panState.startX,
+        y:panState.oy + e.clientY - panState.startY
+    });
     applyViewport();
     return true;
 }
@@ -4356,9 +4320,12 @@ function shellWheelHandler(e){
     const sy = e.clientY - rect.top;
     const before = {x:(sx - viewport.x) / viewport.scale, y:(sy - viewport.y) / viewport.scale};
     const factor = Math.exp(-e.deltaY * 0.001);
-    viewport.scale = safeScale(viewport.scale * factor);
-    viewport.x = sx - before.x * viewport.scale;
-    viewport.y = sy - before.y * viewport.scale;
+    const nextScale = safeScale(viewport.scale * factor);
+    updateCanvasViewport({
+        scale:nextScale,
+        x:sx - before.x * nextScale,
+        y:sy - before.y * nextScale
+    });
     applyViewport();
     clearTimeout(viewportInteractionReleaseTimer);
     viewportInteractionReleaseTimer = setTimeout(() => {
@@ -4368,7 +4335,7 @@ function shellWheelHandler(e){
     scheduleSave(1200);
 }
 shell.addEventListener('wheel', shellWheelHandler, {passive:false});
-shell.ondragover = e => setSmartDropCopyEffect(e, true);
+shell.addEventListener('dragover', e => setSmartDropCopyEffect(e, true));
 async function shellDropHandler(e){
     e.preventDefault();
     if(e.target.closest('.image-node')) return;
@@ -4388,7 +4355,7 @@ async function shellDropHandler(e){
     if(payload.type === 'none') return;
     await handleSmartImageDropPayload(payload, '', {point:p, forceNew:true});
 }
-shell.ondrop = shellDropHandler;
+shell.addEventListener('drop', shellDropHandler);
 function windowPasteHandler(e){
     if(isBootLoadingActive()){
         e.preventDefault();
@@ -4558,7 +4525,7 @@ function engineSelectChangeHandler(){
     persistActiveSmartSettings();
     scheduleSave();
 }
-engineSelect.onchange = engineSelectChangeHandler;
+engineSelect.addEventListener('change', engineSelectChangeHandler);
 let promptResizeState = null;
 let promptNodeResizeState = null;
 const promptResize = document.getElementById('promptResize');
@@ -4572,7 +4539,7 @@ if(promptResize){
         };
     });
 }
-runBtn.onclick = runGeneration;
+runBtn.addEventListener('click', runGeneration);
 function cascadeRunBtnClickHandler(){
     const node = selectedNode();
     const loopId = resolveSmartCascadeLoop(node?.id)?.node?.id || '';
@@ -4582,7 +4549,7 @@ function cascadeRunBtnClickHandler(){
     }
     runSmartCascade();
 }
-cascadeRunBtn.onclick = cascadeRunBtnClickHandler;
+cascadeRunBtn.addEventListener('click', cascadeRunBtnClickHandler);
 function fileInputChangeHandler(){
     const groupPoint = pendingGroupUploadPoint;
     if(!fileInput.files?.length){
@@ -4596,15 +4563,15 @@ function fileInputChangeHandler(){
     uploadTargetId = '';
     fileInput.value = '';
 }
-fileInput.onchange = fileInputChangeHandler;
-if(assetToggle) assetToggle.onclick = () => toggleAssetLibrary();
-if(assetCloseBtn) assetCloseBtn.onclick = () => toggleAssetLibrary(false);
-if(canvasWorkflowToggle) canvasWorkflowToggle.onclick = event => {
+fileInput.addEventListener('change', fileInputChangeHandler);
+if(assetToggle) assetToggle.addEventListener('click', () => toggleAssetLibrary());
+if(assetCloseBtn) assetCloseBtn.addEventListener('click', () => toggleAssetLibrary(false));
+if(canvasWorkflowToggle) canvasWorkflowToggle.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();
     if(canvasWorkflowTransferModal?.classList.contains('open')) closeCanvasWorkflowTransferModal();
     else openCanvasWorkflowTransferModal();
-};
+});
 function renderCanvasUsage(data){
     const s = data?.spending || {}, money = `$${Number(s.total_usd || 0).toFixed(2)}`;
     const set = (id, value) => { const el = document.getElementById(id); if(el) el.textContent = Number(value || 0).toLocaleString(); };
@@ -4612,7 +4579,7 @@ function renderCanvasUsage(data){
     document.getElementById('canvasUsagePanelTotal')?.replaceChildren(money);
     set('canvasUsageRequests', s.request_count); set('canvasUsageTokens', s.total_tokens); set('canvasUsageText', s.prompt_tokens); set('canvasUsageImage', s.image_input_tokens); set('canvasUsageOutput', s.completion_tokens);
 }
-async function loadCanvasUsage(){ try { const r = await fetch('/api/account/overview?limit=1'); if(!r.ok) throw new Error('usage'); renderCanvasUsage(await r.json()); } catch(_) { renderCanvasUsage({}); } }
+async function loadCanvasUsage(){ try { const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson; const data = apiJson ? await apiJson('/api/account/overview?limit=1') : await fetch('/api/account/overview?limit=1').then(async r => { if(!r.ok) throw new Error('usage'); return r.json(); }); renderCanvasUsage(data); } catch(_) { renderCanvasUsage({}); } }
 canvasUsageToggle?.addEventListener('click', e => { e.stopPropagation(); canvasUsagePanel.hidden = !canvasUsagePanel.hidden; canvasUsageToggle.classList.toggle('active', !canvasUsagePanel.hidden); });
 canvasUsageClose?.addEventListener('click', () => { canvasUsagePanel.hidden = true; canvasUsageToggle?.classList.remove('active'); });
 canvasUsageDetails?.addEventListener('click', event => {
@@ -4754,16 +4721,16 @@ function promptTemplatePanelClickHandler(e){
     }
 }
 promptTemplatePanel?.addEventListener('click', promptTemplatePanelClickHandler);
-if(promptPresetClose) promptPresetClose.onclick = closePromptPresetPanel;
-if(promptTemplateClose) promptTemplateClose.onclick = closePromptTemplatePanel;
-if(promptTemplateSearch) promptTemplateSearch.oninput = () => renderPromptTemplatePanel({preserveScroll:false});
-if(promptTemplateLibrarySelect) promptTemplateLibrarySelect.onchange = () => {
+if(promptPresetClose) promptPresetClose.addEventListener('click', closePromptPresetPanel);
+if(promptTemplateClose) promptTemplateClose.addEventListener('click', closePromptTemplatePanel);
+if(promptTemplateSearch) promptTemplateSearch.addEventListener('input', () => renderPromptTemplatePanel({preserveScroll:false}));
+if(promptTemplateLibrarySelect) promptTemplateLibrarySelect.addEventListener('change', () => {
     activePromptLibraryId = promptTemplateLibrarySelect.value || 'system';
     promptTemplateSelectedId = '';
     promptTemplateEditing = false;
     renderPromptTemplatePanel({preserveScroll:false});
-};
-if(composerTemplateBtn) composerTemplateBtn.onclick = event => {
+});
+if(composerTemplateBtn) composerTemplateBtn.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();
     if(promptTemplatePanel?.classList?.contains('open') && promptTemplatePanel.dataset.target === 'composer'){
@@ -4771,9 +4738,9 @@ if(composerTemplateBtn) composerTemplateBtn.onclick = event => {
         return;
     }
     openPromptTemplatePanel(activeComposerNode()?.id || selectedNode()?.id || '', promptTemplateSelectedId, {target:'composer'});
-};
+});
 const promptComposerTemplateBtn = document.getElementById('promptComposerTemplateBtn');
-if(promptComposerTemplateBtn) promptComposerTemplateBtn.onclick = event => {
+if(promptComposerTemplateBtn) promptComposerTemplateBtn.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();
     if(promptTemplatePanel?.classList?.contains('open') && promptTemplatePanel.dataset.target === 'prompt-composer'){
@@ -4781,15 +4748,15 @@ if(promptComposerTemplateBtn) promptComposerTemplateBtn.onclick = event => {
         return;
     }
     openPromptTemplatePanel(selectedNode()?.id || '', promptTemplateSelectedId, {target:'prompt-composer'});
-};
-if(promptPresetSelect) promptPresetSelect.onchange = () => renderPromptPresetPanel(promptPresetSelect.value);
+});
+if(promptPresetSelect) promptPresetSelect.addEventListener('change', () => renderPromptPresetPanel(promptPresetSelect.value));
 [promptPresetName, promptPresetText].forEach(input => {
     input?.addEventListener('input', () => {
         resetPromptPresetDeleteState();
         setPromptPresetStatus(tr('smart.promptPresetEditing'));
     });
 });
-if(promptPresetApply) promptPresetApply.onclick = () => {
+if(promptPresetApply) promptPresetApply.addEventListener('click', () => {
     const preset = currentPromptPreset(promptPresetSelect.value);
     const node = promptPresetPanelNode();
     if(!preset || !node) return;
@@ -4798,8 +4765,8 @@ if(promptPresetApply) promptPresetApply.onclick = () => {
     closePromptPresetPanel();
     render();
     scheduleSave();
-};
-if(promptPresetSave) promptPresetSave.onclick = () => {
+});
+if(promptPresetSave) promptPresetSave.addEventListener('click', () => {
     const preset = currentPromptPreset(promptPresetSelect.value);
     if(!preset) return;
     const name = promptPresetName.value.trim();
@@ -4814,8 +4781,8 @@ if(promptPresetSave) promptPresetSave.onclick = () => {
     setPromptPresetStatus(tr('smart.promptPresetSaved'), 'ok');
     render();
     scheduleSave();
-};
-if(promptPresetNew) promptPresetNew.onclick = () => {
+});
+if(promptPresetNew) promptPresetNew.addEventListener('click', () => {
     const node = promptPresetPanelNode();
     const preset = createPromptPresetFromNode(node, {openPanel:false});
     if(!preset) return;
@@ -4823,8 +4790,8 @@ if(promptPresetNew) promptPresetNew.onclick = () => {
     setPromptPresetStatus(tr('smart.promptPresetSavedNew'), 'ok');
     promptPresetName?.focus();
     promptPresetName?.select();
-};
-if(promptPresetDelete) promptPresetDelete.onclick = () => {
+});
+if(promptPresetDelete) promptPresetDelete.addEventListener('click', () => {
     const preset = currentPromptPreset(promptPresetSelect.value);
     if(!preset) return;
     if(!promptPresetDeleteArmed){
@@ -4841,34 +4808,36 @@ if(promptPresetDelete) promptPresetDelete.onclick = () => {
     setPromptPresetStatus(tr('smart.promptPresetDeleted'), 'ok');
     render();
     scheduleSave();
-};
-document.querySelectorAll('[data-asset-tab]').forEach(btn => {
-    btn.onclick = () => { assetTab = btn.dataset.assetTab; renderAssetLibrary(); };
 });
-if(assetLibrarySelect) assetLibrarySelect.onchange = () => {
+document.querySelectorAll('[data-asset-tab]').forEach(btn => {
+    btn.addEventListener('click', () => { assetTab = btn.dataset.assetTab; renderAssetLibrary(); });
+});
+if(assetLibrarySelect) assetLibrarySelect.addEventListener('change', () => {
     activeAssetLibraryId = assetLibrarySelect.value || '';
     activeAssetCategoryId = '';
     mentionAssetCategoryId = '';
     renderAssetLibrary();
-};
-if(assetCategorySelect) assetCategorySelect.onchange = () => { activeAssetCategoryId = assetCategorySelect.value; renderAssetLibrary(); };
+});
+if(assetCategorySelect) assetCategorySelect.addEventListener('change', () => { activeAssetCategoryId = assetCategorySelect.value; renderAssetLibrary(); });
 const assetAddCategoryBtn = document.getElementById('assetAddCategoryBtn');
-if(assetAddCategoryBtn) assetAddCategoryBtn.onclick = async () => {
+if(assetAddCategoryBtn) assetAddCategoryBtn.addEventListener('click', async () => {
     const name = await openAssetNameDialog({title:tr('smart.assetNewFolder'), value:tr('smart.assetFolder'), placeholder:tr('smart.assetFolder')});
     if(!name) return;
-    const data = await fetch('/api/asset-library/categories', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:activeAssetLibraryId, name, type:'image'})}).then(r => r.json());
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    const data = apiJson ? await apiJson('/api/asset-library/categories', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:activeAssetLibraryId, name, type:'image'})}) : await fetch('/api/asset-library/categories', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:activeAssetLibraryId, name, type:'image'})}).then(r => r.json());
     activeAssetCategoryId = data.category?.id || activeAssetCategoryId;
     setAssetLibraryFromResponse(data);
-};
+});
 const assetRenameCategoryBtn = document.getElementById('assetRenameCategoryBtn');
-if(assetRenameCategoryBtn) assetRenameCategoryBtn.onclick = async () => {
+if(assetRenameCategoryBtn) assetRenameCategoryBtn.addEventListener('click', async () => {
     const cat = activeAssetCategory();
     if(!cat) return;
     const name = await openAssetNameDialog({title:tr('smart.assetRenameFolder'), value:cat.name || '', placeholder:tr('smart.assetFolder')});
     if(!name) return;
-    const data = await fetch(`/api/asset-library/categories/${encodeURIComponent(cat.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}).then(r => r.json());
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    const data = apiJson ? await apiJson(`/api/asset-library/categories/${encodeURIComponent(cat.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}) : await fetch(`/api/asset-library/categories/${encodeURIComponent(cat.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}).then(r => r.json());
     setAssetLibraryFromResponse(data);
-};
+});
 function hasCanvasImageDrag(event){
     return Array.from(event.dataTransfer?.types || []).includes('application/x-canvas-image');
 }
@@ -4975,14 +4944,13 @@ async function nodeAssetSaveNewFolderClickHandler(){
     const name = await openAssetNameDialog({title:'新建文件夹', value:'', placeholder:'输入文件夹名称', cancelValue:''});
     if(!String(name || '').trim()) return;
     try {
-        const data = await fetch('/api/asset-library/categories', {
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const payload = {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({library_id:libraryId, name:String(name).trim(), type:'image'})
-        }).then(async r => {
-            if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '新建文件夹失败');
-            return r.json();
-        });
+        };
+        const data = apiJson ? await apiJson('/api/asset-library/categories', payload) : await fetch('/api/asset-library/categories', payload).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '新建文件夹失败'); return r.json(); });
         nodeAssetSaveState.libraryId = libraryId;
         nodeAssetSaveState.categoryId = data.category?.id || nodeAssetSaveState.categoryId;
         setAssetLibraryFromResponse(data);
@@ -5365,13 +5333,13 @@ window.addEventListener('resize', windowResizeHandler);
 window.addEventListener('studio-theme-change', event => applyTheme(event.detail?.theme || 'light'));
 try {
     const apiChannel = new BroadcastChannel('studio-api');
-    apiChannel.onmessage = async event => {
+    apiChannel.addEventListener('message', async event => {
         if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed'){
             await refreshSmartConfigFromSettings({invalidateParameterSchemas:event.data?.type === 'providers-changed'});
         }
         if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
         if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
-    };
+    });
 } catch(e) {}
 function windowFocusHandler(){
     if(Date.now() - lastConfigRefreshAt > 1200) refreshSmartConfigFromSettings();
@@ -5434,7 +5402,7 @@ async function windowLoadHandler(){
         else setTimeout(finishBootEnhancements, 0);
     }));
 }
-window.onload = windowLoadHandler;
+window.addEventListener('load', windowLoadHandler, { once: true });
 canvasManagerBtn?.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();

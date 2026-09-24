@@ -234,33 +234,33 @@ function bindLoopNodeControls(el, node){
         else syncLoopNumberUi(source, key, value);
     };
     el.querySelectorAll('[data-loop-number]').forEach(btn => {
-        btn.onclick = e => {
+        btn.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
             setLoopNumber(btn.dataset.loopNumber, btn.dataset.loopValue, true);
-        };
+        });
     });
     el.querySelectorAll('[data-loop-number-input]').forEach(input => {
-        input.oninput = e => {
+        input.addEventListener('input', e => {
             e.stopPropagation();
             setLoopNumber(input.dataset.loopNumberInput, input.value, false, input);
-        };
-        input.onchange = e => {
+        });
+        input.addEventListener('change', e => {
             e.stopPropagation();
             setLoopNumber(input.dataset.loopNumberInput, input.value, true);
-        };
+        });
     });
     el.querySelectorAll('[data-loop-mode]').forEach(btn => {
-        btn.onclick = e => {
+        btn.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
             node.mode = btn.dataset.loopMode === 'parallel' ? 'parallel' : 'serial';
             render();
             scheduleSave();
-        };
+        });
     });
     el.querySelectorAll('[data-loop-toggle]').forEach(btn => {
-        btn.onclick = e => {
+        btn.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
             if(btn.dataset.loopToggle === 'image') node.imageInput = !node.imageInput;
@@ -271,7 +271,7 @@ function bindLoopNodeControls(el, node){
             fitSmartLoopNode(node);
             render();
             scheduleSave();
-        };
+        });
     });
     const syncPromptFieldsFromDom = () => {
         const values = [...el.querySelectorAll('[data-loop-prompt-index]')]
@@ -282,8 +282,8 @@ function bindLoopNodeControls(el, node){
     let activePromptEditor = null;
     el.querySelectorAll('.loop-smart-text').forEach(text => {
         bindScrollableText(text);
-        text.onfocus = () => { activePromptEditor = text; };
-        text.oninput = () => { syncPromptFieldsFromDom(); scheduleSave(); };
+        text.addEventListener('focus', () => { activePromptEditor = text; });
+        text.addEventListener('input', () => { syncPromptFieldsFromDom(); scheduleSave(); });
         text.addEventListener('click', e => {
             const remove = e.target.closest?.('.loop-smart-token-chip button');
             if(!remove) return;
@@ -295,7 +295,7 @@ function bindLoopNodeControls(el, node){
         });
     });
     el.querySelectorAll('[data-loop-prompt-add]').forEach(btn => {
-        btn.onclick = e => {
+        btn.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
             syncPromptFieldsFromDom();
@@ -304,10 +304,10 @@ function bindLoopNodeControls(el, node){
             fitSmartLoopNode(node);
             render();
             scheduleSave();
-        };
+        });
     });
     el.querySelectorAll('[data-loop-prompt-delete]').forEach(btn => {
-        btn.onclick = e => {
+        btn.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
             syncPromptFieldsFromDom();
@@ -319,12 +319,12 @@ function bindLoopNodeControls(el, node){
             fitSmartLoopNode(node);
             render();
             scheduleSave();
-        };
+        });
     });
     const firstText = el.querySelector('.loop-smart-text');
     const targetPromptEditor = () => activePromptEditor && el.contains(activePromptEditor) ? activePromptEditor : firstText;
     el.querySelectorAll('[data-loop-token]').forEach(btn => {
-        btn.onclick = e => {
+        btn.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
             const text = targetPromptEditor();
@@ -333,10 +333,10 @@ function bindLoopNodeControls(el, node){
             insertSmartLoopToken(text, token);
             syncPromptFieldsFromDom();
             scheduleSave();
-        };
+        });
     });
     el.querySelectorAll('[data-loop-run]').forEach(btn => {
-        btn.onclick = e => {
+        btn.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
             const loopId = btn.dataset.loopRun || node.id;
@@ -345,7 +345,7 @@ function bindLoopNodeControls(el, node){
                 return;
             }
             runSmartCascadeFromLoop(loopId);
-        };
+        });
     });
 }
 function insertLoopNodeIntoConnection(loopNode, hit){

@@ -25,7 +25,7 @@ function createProjector({ fetch = () => ({ catch: () => {} }), warn = () => {} 
     };
     vm.createContext(context);
     vm.runInContext(source, context, { filename: 'agent-event-projector.js' });
-    return context.window.CanvasAgentEventProjector;
+    return context.CanvasAgentEventProjector || context.window.CanvasAgentEventProjector;
 }
 
 describe('CanvasAgentEventProjector', () => {

@@ -42,6 +42,25 @@ function smartCascadeAbortError(){
     err.smartCascadeStopped = true;
     return err;
 }
+function canvasApiJson(url, options = {}){
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    if(apiJson) return apiJson(url, options);
+    return fetch(url, options).then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if(!response.ok) throw new Error(data.detail || data.message || '请求失败');
+        return data;
+    });
+}
+function canvasApiForm(url, formData, options = {}){
+    const apiForm = globalThis.__MediaForgeRuntimeServices?.apiForm;
+    if(apiForm) return apiForm(url, formData, options);
+    return canvasApiJson(url, {...options, method:options.method || 'POST', body:formData});
+}
+function canvasApiBlob(url, options = {}){
+    const apiBlob = globalThis.__MediaForgeRuntimeServices?.apiBlob;
+    if(apiBlob) return apiBlob(url, options);
+    return fetch(url, options).then(async response => { if(!response.ok) throw new Error((await response.text()) || '请求失败'); return response.blob(); });
+}
 function throwIfSmartCascadeStopRequested(runState=null){
     if(runState?.stopRequested || (!runState && smartCascadeStopRequested)) throw smartCascadeAbortError();
 }
@@ -142,13 +161,9 @@ async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runSt
 //   随机参数：comfyRandomEnabledField, smartComfyRandomActive, smartComfyRandomValue
 
 async function createSmartComfyTask(payload){
-    const res = await fetch('/api/canvas-comfy-tasks', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(payload)
-    });
-    if(!res.ok) throw await smartResponseError(res, tr('smart.errRunFailed'));
-    return res.json();
+    const data = await canvasApiJson('/api/canvas-comfy-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if(data?.ok === false) throw new Error(data.detail || tr('smart.errRunFailed'));
+    return data;
 }
 function comfyParamsFromWorkflowValues(config, values={}){
     const params = {};
@@ -181,10 +196,7 @@ async function runApiGeneration(prompt, refs, runSettings=settings){
     // Keep the canvas contract intact. Provider-specific field mapping belongs
     // to the backend, where it is shared by direct runs and Agent executions.
     const payload = {prompt, run_settings:canonicalRunSettings(runSettings), reference_images:imageRefsOnly(refs), connection_id:runSettings.connection_id, model_id:runSettings.model_id, resource_id:runSettings.resource_id || ''};
-    const task = await fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
-        if(!r.ok) throw await smartResponseError(r);
-        return r.json();
-    });
+    const task = await canvasApiJson('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     const taskIds = Array.isArray(task?.child_task_ids) && task.child_task_ids.length
         ? task.child_task_ids
         : (task?.task_id ? [task.task_id] : []);
@@ -202,16 +214,9 @@ async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const body = {webappId:ref.id, nodeInfoList, instanceType:runSettings.rhInstanceType || '', connection_id:stable.connection_id, resource_id:stable.resource_id};
     // Canvas RunningHub apps run as canvas tasks (worker submits + polls the
     // upstream). We only receive the local task_id here and poll it locally.
-    const submit = await fetch('/api/canvas-runninghub-tasks', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(body)
-    }).then(async r => {
-        if(!r.ok) throw await smartResponseError(r, tr('smart.rhFailed'));
-        const data = await r.json();
-        if(data.success === false) throw new Error(data.detail || data.error || tr('smart.rhFailed'));
-        return data.data || data;
-    });
+    const response = await canvasApiJson('/api/canvas-runninghub-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if(response.success === false) throw new Error(response.detail || response.error || tr('smart.rhFailed'));
+    const submit = response.data || response;
     const taskId = submit.task_id;
     if(!taskId) throw new Error(tr('smart.rhNoTaskId'));
     return {
@@ -228,10 +233,7 @@ async function pollRunningHubTask(taskId, target={}){
     const promise = (async () => {
         for(let i = 0; i < 720; i++){
             await sleep(5000);
-            const task = await fetch(`/api/canvas-runninghub-tasks/${encodeURIComponent(taskId)}`).then(async r => {
-                if(!r.ok) throw await smartResponseError(r, tr('smart.rhFailed'));
-                return r.json();
-            });
+            const task = await canvasApiJson(`/api/canvas-runninghub-tasks/${encodeURIComponent(taskId)}`);
             if(task.status === 'succeeded'){
                 const result = task.result || {};
                 const outputs = resultMediaUrls(result);
@@ -273,11 +275,7 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
         videos: useReferences ? videoRefsOnly(refs).map(ref => ref.url).filter(Boolean) : [],
         audios: useReferences ? audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3) : []
     };
-    const result = await fetch('/api/canvas-video', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(payload)
-    }).then(async r => { if(!r.ok) throw await smartResponseError(r, tr('smart.errRunFailed')); return r.json(); });
+    const result = await canvasApiJson('/api/canvas-video', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     // count>1: backend fans out N online-video child tasks onto the Redis
     // queue and returns their ids. The caller polls them into the candidate
     // pool, exactly like the image batch path.
@@ -309,13 +307,11 @@ async function urlToBase64(itemOrUrl){
     const target = typeof itemOrUrl === 'string'
         ? String(itemOrUrl || '')
         : (fileDownloadUrl(itemOrUrl) || filePreviewUrl(itemOrUrl) || itemOrUrl?.url || '');
-    const res = await fetch(target);
-    if(!res.ok) throw new Error(tr('smart.errImageRead'));
-    const blob = await res.blob();
+    const blob = await canvasApiBlob(target);
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
+        reader.addEventListener('load', () => resolve(reader.result), {once:true});
+        reader.addEventListener('error', reject, {once:true});
         reader.readAsDataURL(blob);
     });
 }
@@ -325,10 +321,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     refs = imageRefsOnly(allRefs);
     const workflowName = settings.comfyWorkflow || comfyWorkflows[0]?.name || '';
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
-    const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
-        if(!r.ok) throw await smartResponseError(r);
-        return r.json();
-    });
+    const wf = await canvasApiJson(`/api/workflows/${encodeURIComponent(workflowName)}`);
     const fields = wf.config?.fields || [];
     const values = {};
     fields.filter(f => comfyFieldKind(f) === 'prompt').forEach(field => {
@@ -388,15 +381,11 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
 }
 async function comfyNameForRef(ref){
     if(ref.comfy_name) return ref.comfy_name;
-    const response = await fetch(ref.url);
-    if(!response.ok) return ref.name || ref.url;
-    const blob = await response.blob();
+    const blob = await canvasApiBlob(ref.url).catch(() => null);
+    if(!blob) return ref.name || ref.url;
     const form = new FormData();
     form.append('files', blob, ref.name || 'smart-ref.png');
-    const data = await fetch('/api/upload', {method:'POST', body:form}).then(async r => {
-        if(!r.ok) throw await smartResponseError(r);
-        return r.json();
-    });
+    const data = await canvasApiForm('/api/upload', form);
     const name = data.files?.[0]?.comfy_name || ref.name || ref.url;
     const node = selectedNode();
     const image = node?.images?.find(img => img.url === ref.url);

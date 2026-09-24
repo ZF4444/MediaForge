@@ -37,7 +37,7 @@
 //      navigatePreviewImage / applyImageEdit（编辑模式分发入口）
 //
 // three.js 依赖说明：ensurePanoramaRenderer 里用的是运行时动态
-// import('/static/vendor/js/three-0.160.0.module.js?...')，不是静态
+// Three.js is provided by the Canvas Vite bundle; no runtime vendor URL is used.
 // import 声明。动态 import() 在经典 <script> 里同样可用，不受本文件是否为
 // ES module 影响，物理搬移后无需任何改动。
 //
@@ -54,6 +54,24 @@
 //     panoramaState 等模块状态变量在文件更早处声明（~L341-366），作为
 //     跨文件共享全局保留在 main.js，不随本次搬移（与 M4 的
 //     portDragState/dragState 同一处理方式）。
+
+const imageEditorEventHandlers = new WeakMap();
+function setImageEditorListener(target, type, handler){
+    if(!target) return;
+    let handlers = imageEditorEventHandlers.get(target);
+    if(!handlers){
+        handlers = new Map();
+        imageEditorEventHandlers.set(target, handlers);
+    }
+    const previous = handlers.get(type);
+    if(previous) target.removeEventListener(type, previous);
+    if(handler){
+        target.addEventListener(type, handler);
+        handlers.set(type, handler);
+    } else {
+        handlers.delete(type);
+    }
+}
 
 function currentEditImage(){
     const node = nodes.find(n => n.id === cropState?.nodeId);
@@ -554,10 +572,7 @@ async function ensurePanoramaRenderer(){
     const canvas = document.getElementById('panoramaCanvas');
     if(!canvas) return false;
     if(!panoramaState.three){
-        const script = Array.from(document.scripts).find(item => item.src.includes('/static/dist/canvas/image-editor.js'));
-        const version = script?.src.match(/[?&]v=([^&]+)/)?.[1] || '';
-        const suffix = version ? `?v=${encodeURIComponent(version)}` : '';
-        panoramaState.threeLoadPromise = panoramaState.threeLoadPromise || import(`/static/vendor/js/three-0.160.0.module.js${suffix}`);
+        panoramaState.threeLoadPromise = panoramaState.threeLoadPromise || Promise.resolve(window.THREE);
         panoramaState.three = await panoramaState.threeLoadPromise;
     }
     const THREE = panoramaState.three;
@@ -723,8 +738,8 @@ async function loadPanoramaTexture(src, allowFallback=true){
         stage?.classList.add('ready');
         toast(tr('smart.panoramaLoadFailed'));
     };
-    img.onload = done;
-    img.onerror = fail;
+    setImageEditorListener(img, 'load', done);
+    setImageEditorListener(img, 'error', fail);
     img.src = src;
     if(img.complete && img.naturalWidth) done();
 }
@@ -915,9 +930,9 @@ async function hydratePreviewFileMeta(image){
     const fileId = String(image?.file_id || image?.fileId || fileIdFromUrl(image?.url || image?.preview_url || image?.download_url || '') || '').trim();
     if(!fileId) return;
     try {
-        const response = await fetch(`/api/files/${encodeURIComponent(fileId)}`);
-        if(!response.ok) return;
-        const data = await response.json();
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const data = apiJson ? await apiJson(`/api/files/${encodeURIComponent(fileId)}`, {allowErrorResponse:true}) : await fetch(`/api/files/${encodeURIComponent(fileId)}`).then(async response => response.ok ? response.json() : null);
+        if(!data) return;
         const current = currentEditImage().image;
         if(current !== image) return;
         if(Number(data?.size) > 0) image.size = Number(data.size);
@@ -995,8 +1010,8 @@ function refreshComparePanel(){
         panoramaToggle.classList.toggle('active', panoramaState.enabled);
     }
     if(panoramaState.enabled && !isVideoPreview){
-        currentImg.onload = null;
-        currentImg.onerror = null;
+        setImageEditorListener(currentImg, 'load', null);
+        setImageEditorListener(currentImg, 'error', null);
         currentImg.style.display = 'none';
         stage?.classList.remove('compare-on');
         if(compareLayer) compareLayer.style.display = 'none';
@@ -1012,15 +1027,15 @@ function refreshComparePanel(){
         updatePreviewMetaHint();
     };
     if(isVideoPreview){
-        currentImg.onload = null;
-        currentImg.onerror = null;
+        setImageEditorListener(currentImg, 'load', null);
+        setImageEditorListener(currentImg, 'error', null);
         currentImg.removeAttribute('src');
         currentImg.style.display = 'none';
         if(currentVideo){
             const previewSrc = displayMediaUrl(editing.image || curUrl);
             currentVideo.style.display = 'block';
-            currentVideo.onloadedmetadata = onCurrentLoaded;
-            currentVideo.onloadeddata = onCurrentLoaded;
+            setImageEditorListener(currentVideo, 'loadedmetadata', onCurrentLoaded);
+            setImageEditorListener(currentVideo, 'loadeddata', onCurrentLoaded);
             if(currentVideo.getAttribute('src') !== previewSrc){
                 currentVideo.src = previewSrc;
                 currentVideo.load?.();
@@ -1045,21 +1060,21 @@ function refreshComparePanel(){
     }
     if(currentVideo){
         currentVideo.pause?.();
-        currentVideo.onloadedmetadata = null;
-        currentVideo.onloadeddata = null;
+        setImageEditorListener(currentVideo, 'loadedmetadata', null);
+        setImageEditorListener(currentVideo, 'loadeddata', null);
         currentVideo.removeAttribute('src');
         currentVideo.load?.();
         currentVideo.style.display = 'none';
     }
     currentImg.style.display = 'block';
-    currentImg.onload = onCurrentLoaded;
-    currentImg.onerror = () => {
+    setImageEditorListener(currentImg, 'load', onCurrentLoaded);
+    setImageEditorListener(currentImg, 'error', () => {
         if(currentImg.dataset.proxyFallbackTried === '1') return;
         const fallback = proxiedMediaUrl(editing.image || curUrl);
         if(!fallback || fallback === currentImg.getAttribute('src')) return;
         currentImg.dataset.proxyFallbackTried = '1';
         currentImg.src = fallback;
-    };
+    });
     const previewSrc = displayMediaUrl(editing.image || curUrl);
     if(currentImg.getAttribute('src') !== previewSrc) {
         currentImg.dataset.proxyFallbackTried = '';
@@ -1088,7 +1103,7 @@ function refreshComparePanel(){
     if(sliderActive){
         const src = sources[previewCompareIndex];
         compareImg.src = src?.url || '';
-        compareImg.onload = syncPreviewFrameSize;
+        setImageEditorListener(compareImg, 'load', syncPreviewFrameSize);
         syncPreviewFrameSize();
         stage.classList.add('compare-on');
         if(compareLayer) compareLayer.style.display = '';
@@ -1102,12 +1117,12 @@ function refreshComparePanel(){
         thumbsEl.style.display = 'inline-flex';
         thumbsEl.innerHTML = sources.map((s, i) => `<button type="button" class="compare-thumb ${i === previewCompareIndex ? 'active' : ''}" data-compare-idx="${i}" title="${escapeHtml(i === previewCompareIndex ? tr('smart.compareCancelTip') : tr('smart.compareUseTip'))}"><img src="${escapeHtml(s.url)}"></button>`).join('');
         thumbsEl.querySelectorAll('[data-compare-idx]').forEach(btn => {
-            btn.onclick = e => {
+            btn.addEventListener('click', e => {
                 e.preventDefault(); e.stopPropagation();
                 const idx = Number(btn.dataset.compareIdx);
                 previewCompareIndex = (previewCompareIndex === idx) ? -1 : idx;
                 refreshComparePanel();
-            };
+            });
         });
     } else {
         thumbsEl.style.display = 'none';
@@ -1946,18 +1961,18 @@ function renderGridJoinPreview(){
         img.style.height = `${Math.round(item.h)}px`;
         img.alt = entry.item.name || `image-${item.index + 1}`;
         img.crossOrigin = 'anonymous';
-        img.onload = () => {
+        setImageEditorListener(img, 'load', () => {
             gridJoinImageCache.set(item.index, img);
             if(!entry.source.natural_w && img.naturalWidth) entry.source.natural_w = img.naturalWidth;
             if(!entry.source.natural_h && img.naturalHeight) entry.source.natural_h = img.naturalHeight;
-        };
-        img.onerror = () => {
+        });
+        setImageEditorListener(img, 'error', () => {
             if(img.dataset.proxyFallbackTried === '1') return;
             const fallback = proxiedMediaUrl(entry.item);
             if(!fallback || fallback === img.getAttribute('src')) return;
             img.dataset.proxyFallbackTried = '1';
             img.src = fallback;
-        };
+        });
         img.src = displayMediaUrl(entry.item);
         host.appendChild(img);
     });
@@ -2156,8 +2171,8 @@ function openImageEditor(nodeId, imageIndex=0, options={}){
     disposePanoramaPreview();
     resetPreviewTransform();
     if(kind === 'video'){
-        img.onload = null;
-        img.onerror = null;
+        setImageEditorListener(img, 'load', null);
+        setImageEditorListener(img, 'error', null);
         img.removeAttribute('src');
         delete img.dataset.proxyFallbackTried;
         setImageEditMode('preview');
@@ -2165,7 +2180,7 @@ function openImageEditor(nodeId, imageIndex=0, options={}){
         refreshIcons();
         return;
     }
-    img.onload = () => {
+    setImageEditorListener(img, 'load', () => {
         const targetImage = currentEditImage().image;
         if(targetImage && img.naturalWidth && img.naturalHeight && (Number(targetImage.natural_w || 0) !== img.naturalWidth || Number(targetImage.natural_h || 0) !== img.naturalHeight)){
             targetImage.natural_w = img.naturalWidth;
@@ -2179,14 +2194,14 @@ function openImageEditor(nodeId, imageIndex=0, options={}){
         else refreshComparePanel();
         if(!panoramaState.enabled) updatePreviewMetaHint();
         syncImageEditOverflow(); refreshIcons();
-    };
-    img.onerror = () => {
+    });
+    setImageEditorListener(img, 'error', () => {
         if(img.dataset.proxyFallbackTried === '1') return;
         const fallback = proxiedMediaUrl(image);
         if(!fallback || fallback === img.getAttribute('src')) return;
         img.dataset.proxyFallbackTried = '1';
         img.src = fallback;
-    };
+    });
     img.dataset.proxyFallbackTried = '';
     img.crossOrigin = 'anonymous';
     img.src = displayMediaUrl(image);
@@ -2200,12 +2215,12 @@ function closeImageEditor(){
     document.querySelector('.image-edit-panel')?.classList.remove('video-preview-mode');
     const img = document.getElementById('cropImage');
     const previewVideo = document.getElementById('previewCurrentVideo');
-    img.onload = null; img.onerror = null; img.removeAttribute('src'); delete img.dataset.proxyFallbackTried; img.style.width = ''; img.style.height = ''; img.style.maxWidth = ''; img.style.maxHeight = '';
+    setImageEditorListener(img, 'load', null); setImageEditorListener(img, 'error', null); img.removeAttribute('src'); delete img.dataset.proxyFallbackTried; img.style.width = ''; img.style.height = ''; img.style.maxWidth = ''; img.style.maxHeight = '';
     img.style.position = ''; img.style.left = ''; img.style.top = '';
     if(previewVideo){
         previewVideo.pause?.();
-        previewVideo.onloadedmetadata = null;
-        previewVideo.onloadeddata = null;
+        setImageEditorListener(previewVideo, 'loadedmetadata', null);
+        setImageEditorListener(previewVideo, 'loadeddata', null);
         previewVideo.removeAttribute('src');
         previewVideo.load?.();
         previewVideo.style.display = 'none';
@@ -2261,13 +2276,13 @@ function resizeOutpaintFromDrag(dx, dy){
 async function uploadCroppedBlob(blob, name){
     const form = new FormData();
     form.append('files', blob, name);
-    const data = await window.MediaForgeUpload.upload(form);
+    const data = await MediaForgeUpload.upload(form);
     return data.files?.[0];
 }
 async function uploadImageBlobs(blobs){
     const form = new FormData();
     blobs.forEach(item => form.append('files', item.blob, item.name));
-    const data = await window.MediaForgeUpload.upload(form);
+    const data = await MediaForgeUpload.upload(form);
     return data.files || [];
 }
 function replaceEditedImage(file){
@@ -2481,11 +2496,11 @@ function loadGridJoinImage(entry){
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
-        img.onload = () => {
+        setImageEditorListener(img, 'load', () => {
             gridJoinImageCache.set(entry.index, img);
             resolve(img);
-        };
-        img.onerror = () => {
+        });
+        setImageEditorListener(img, 'error', () => {
             if(img.dataset.proxyFallbackTried === '1'){
                 reject(new Error('图片加载失败'));
                 return;
@@ -2497,7 +2512,7 @@ function loadGridJoinImage(entry){
             }
             img.dataset.proxyFallbackTried = '1';
             img.src = fallback;
-        };
+        });
         img.src = displayMediaUrl(entry.item);
     });
 }

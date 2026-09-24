@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反馈管理</title>
+    <link rel="stylesheet" href="/src/styles/theme.css">
+    <link rel="stylesheet" href="/src/pages/feedback-admin/page.css">
+</head>
+<body>
+    <div class="fb-wrap" id="fbRoot">
+        <div class="fb-head">
+            <div>
+                <div class="fb-title">反馈管理</div>
+                <div class="fb-sub">查看用户提交的反馈，更新处理状态并记录管理员备注。</div>
+            </div>
+            <div id="fbStatus" class="fb-status"></div>
+        </div>
+
+        <div id="fbMain">
+            <div class="fb-toolbar">
+                <select id="fbStatusFilter" class="fb-select">
+                    <option value="">全部状态</option>
+                    <option value="open">未处理</option>
+                    <option value="reviewing">处理中</option>
+                    <option value="resolved">已解决</option>
+                    <option value="ignored">已关闭</option>
+                </select>
+                <select id="fbTypeFilter" class="fb-select">
+                    <option value="">全部类型</option>
+                    <option value="issue">问题反馈</option>
+                    <option value="idea">功能建议</option>
+                    <option value="question">使用疑问</option>
+                    <option value="other">其他</option>
+                </select>
+                <input id="fbSearch" class="fb-input" type="search" placeholder="搜索内容、用户或页面">
+                <button id="fbRefreshBtn" class="fb-btn" type="button">刷新</button>
+            </div>
+
+            <div class="fb-layout">
+                <div class="fb-card">
+                    <div id="fbList" class="fb-list"></div>
+                </div>
+                <div class="fb-card" id="fbDetail">
+                    <div class="fb-empty">从左侧选择一条反馈。</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="fbForbidden" class="fb-forbidden">需要“反馈管理”页面权限才能访问此页面。</div>
+    </div>
+
+    <script type="module" src="/src/pages/feedback-admin/main.js"></script>
+</body>
+</html>

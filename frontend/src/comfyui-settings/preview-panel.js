@@ -10,7 +10,7 @@
 // 字段的运行时取值（setPreviewValue）、整个预览面板的渲染入口
 // （renderPreview）。
 //
-// 经典 <script>，非 ES module，原因同 comfy-instances.js。
+// 作为共享词法作用域的一部分，由 ComfyUI 页面的虚拟 ESM 入口组装。
 //
 // 依赖 main.js 保留的核心状态和函数：currentConfig/previewValues/
 // previewRandomActive/previewImageUrls/runResult（预览面板的全部可变
@@ -56,7 +56,7 @@ function randomButtonHtml(f){
     if(!fieldSupportsRandom(f)) return '';
     const active = isPreviewRandomActive(f.id);
     const title = active ? '随机已开启，点击关闭' : '随机已关闭，点击开启';
-    return `<button class="random-btn ${active ? 'active' : ''}" type="button" onclick="togglePreviewRandom('${f.id}')" title="${title}"><i data-lucide="dice-5" class="w-4 h-4"></i></button>`;
+    return `<button class="random-btn ${active ? 'active' : ''}" type="button" data-action="togglePreviewRandom" data-action-arg="${escapeAttr(f.id)}" title="${title}"><i data-lucide="dice-5" class="w-4 h-4"></i></button>`;
 }
 
 function togglePreviewRandom(fieldId){
@@ -102,9 +102,9 @@ function renderPreview(){
     }
     const fieldsHtml = fields.map(f => renderPreviewField(f)).join('');
     const resultHtml = runResult
-        ? `<div class="run-result"><img src="${escapeAttr(runResult)}" onclick="openImagePreview('${escapeAttr(runResult)}')"><div class="run-status">${tr('comfy.runSuccess')}</div></div>`
+        ? `<div class="run-result"><img src="${escapeAttr(runResult)}" data-action="openImagePreview" data-action-args='${escapeAttr(JSON.stringify([runResult]))}'><div class="run-status">${tr('comfy.runSuccess')}</div></div>`
         : '';
-    const runButton = `<button id="runBtn" class="run-btn" type="button" onclick="onRun()">
+    const runButton = `<button id="runBtn" class="run-btn" type="button" data-action="onRun">
             <i data-lucide="play" class="w-4 h-4"></i><span>${tr('comfy.runTest')}</span>
         </button>`;
     previewCard.innerHTML = `
@@ -119,36 +119,36 @@ function renderPreviewField(f){
     const label = `<div class="pfield-label">${escapeHtml(f.name || f.input)}</div>`;
     const v = previewValues[f.id] ?? f.default ?? (f.type==='boolean'?false:(f.type==='number'||f.type==='slider'?0:''));
     if(fieldKind(f) === 'prompt'){
-        return `<div class="pfield">${label}<textarea class="pfield-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
+        return `<div class="pfield">${label}<textarea class="pfield-textarea" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true">${escapeHtml(v)}</textarea></div>`;
     }
     if(f.type === 'number'){
         const randomBtn = randomButtonHtml(f);
-        return `<div class="pfield">${label}<div class="pfield-random-row" style="${randomBtn ? '' : 'grid-template-columns:1fr'}"><input class="pfield-input" type="number" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value)||0)">${randomBtn}</div></div>`;
+        return `<div class="pfield">${label}<div class="pfield-random-row" style="${randomBtn ? '' : 'grid-template-columns:1fr'}"><input class="pfield-input" type="number" value="${escapeAttr(v)}" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true" data-action-value-type="float">${randomBtn}</div></div>`;
     }
     if(f.type === 'slider'){
         const min = f.min ?? 0, max = f.max ?? 10, step = f.step ?? 1;
         return `<div class="pfield">${label}<div class="pfield-random-row" style="grid-template-columns:1fr"><div class="pfield-slider">
-            <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value))">
+            <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(v)}" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true" data-action-value-type="float">
             <span class="pfield-slider-val" data-slider-val="${f.id}">${v}</span>
         </div></div></div>`;
     }
     if(f.type === 'dropdown'){
         const opts = (f.options || []).map(o => `<option value="${escapeAttr(o)}" ${String(v)===String(o)?'selected':''}>${escapeHtml(o)}</option>`).join('');
-        return `<div class="pfield">${label}<select class="pfield-select" onchange="setPreviewValue('${f.id}',this.value)">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
+        return `<div class="pfield">${label}<select class="pfield-select" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
     }
     if(isMediaField(f)){
         // 浏览器显示用本地 blob URL；如果没有就尝试用 /output/ 之类的可访问 URL；都没有显示占位文字
         const displayUrl = previewImageUrls[f.id] || (typeof v === 'string' && /^(\/|https?:|blob:|data:)/.test(v) ? v : '');
-        return `<div class="pfield">${label}<div class="pfield-image-drop ${displayUrl?'has-image':''}" onclick="pickImage('${f.id}')">
+        return `<div class="pfield">${label}<div class="pfield-image-drop ${displayUrl?'has-image':''}" data-action="pickImage" data-action-arg="${escapeAttr(f.id)}">
             ${mediaPreviewHtml(fieldKind(f), displayUrl, v)}
         </div></div>`;
     }
     if(f.type === 'boolean'){
         return `<div class="pfield">${label}<div class="pfield-bool">
-            <div class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!${!!v});this.classList.toggle('on')">
+            <div class="pfield-bool-track ${v?'on':''}" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id, !v]))}'>
                 <div class="pfield-bool-thumb"></div>
             </div>
         </div></div>`;
     }
-    return `<div class="pfield">${label}<input class="pfield-input" type="text" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',this.value)"></div>`;
+    return `<div class="pfield">${label}<input class="pfield-input" type="text" value="${escapeAttr(v)}" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true"></div>`;
 }

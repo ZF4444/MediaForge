@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/images/logo.png" type="image/png">
+    <title>Pose Studio | 姿势编辑</title>
+    <link rel="stylesheet" href="../../styles/theme.css">
+    <link rel="stylesheet" href="../../styles/fonts.css">
+    <link rel="stylesheet" href="./page.css">
+    <script type="module" src="../../pose-studio/main.js"></script>
+</head>
+
+<body class="selection:bg-black selection:text-white">
+    <div class="container-box">
+        <header class="flex flex-col md:flex-row justify-between items-end mb-12 gap-6">
+            <div class="space-y-1">
+                <h1 class="text-4xl font-extrabold flex items-center">
+                    POSE STUDIO<span class="text-base mt-3 ml-1">®</span>
+                </h1>
+                <p class="text-[10px] font-bold uppercase tracking-[0.5em] text-gray-400">Image/FBX to Rigged Pose Editing</p>
+            </div>
+            <div id="pageStatus" class="status-pill">
+                <i data-lucide="circle" class="w-3 h-3"></i>
+                <span>Ready</span>
+            </div>
+        </header>
+
+        <main class="pose-workspace">
+            <section class="workspace-row media-row">
+                <div class="column-card group">
+                    <div class="column-card-head">
+                        <h3 class="stage-label">输入图</h3>
+                    </div>
+                    <div class="column-card-body">
+                        <div id="dropzone" class="upload-item media-tile flex flex-col items-center justify-center cursor-pointer">
+                            <input type="file" id="fileInput" class="hidden" accept="image/*,.fbx">
+                            <div id="uploadContent" class="text-center space-y-4">
+                                <div class="w-14 h-14 rounded-full border border-gray-200 bg-white flex items-center justify-center mx-auto group-hover:bg-black group-hover:text-white group-hover:border-black transition-all duration-500">
+                                    <i data-lucide="arrow-up" class="w-5 h-5"></i>
+                                </div>
+                                <p class="text-[11px] font-bold uppercase tracking-tight">Drop image or FBX here</p>
+                            </div>
+                            <img id="previewImg" class="hidden absolute inset-0 w-full h-full object-cover" alt="Input preview">
+                            <div id="changeOverlay" class="hidden absolute inset-0 bg-black/10 backdrop-blur-sm items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                                <span class="bg-white px-5 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest shadow-2xl text-black">Change</span>
+                            </div>
+                        </div>
+                        <button id="generateModelBtn" data-pose-action="generate-fbx" disabled class="glass-btn w-full mt-4 py-4 rounded-xl font-bold text-[10px] uppercase tracking-[0.18em] flex items-center justify-center gap-2 shadow-xl shadow-black/10">
+                            <i data-lucide="cuboid" class="w-4 h-4 text-yellow-400"></i>
+                            <span>生成模型</span>
+                        </button>
+                    </div>
+                </div>
+
+                <aside class="studio-side">
+                    <div class="column-card">
+                        <div class="column-card-head">
+                            <h3 class="stage-label">姿势图</h3>
+                        </div>
+                        <div class="column-card-body">
+                            <div class="media-tile">
+                                <img id="posePreviewImg" class="media-preview hidden" alt="Pose preview">
+                                <div id="posePreviewEmpty" class="media-empty">
+                                    <i data-lucide="image" class="w-9 h-9 stroke-[1px]"></i>
+                                    <p class="text-[10px] font-bold uppercase tracking-[0.26em]">导出姿势后显示</p>
+                                </div>
+                            </div>
+                            <button id="exportPoseBtn" type="button" data-pose-action="export" class="glass-btn w-full mt-4 py-4 rounded-xl text-[10px] font-black uppercase tracking-[0.18em] flex items-center justify-center gap-2">
+                                <i data-lucide="save" class="w-4 h-4 text-yellow-400"></i><span>导出姿势</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="media-actions">
+                        <section class="control-panel">
+                            <div class="control-label">
+                                <i data-lucide="terminal" class="w-3.5 h-3.5"></i>
+                                <span>提示词</span>
+                            </div>
+                            <textarea id="poseTransferPrompt" class="transfer-prompt" rows="4">将图1人物的姿势调整为图2的样式，保持图1人物一致性</textarea>
+                        </section>
+
+                        <section class="tool-panel">
+                            <div class="control-label">
+                                <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i>
+                                <span>模型</span>
+                                <span id="providerModeBadge" class="mode-badge" hidden></span>
+                            </div>
+                            <div class="size-row">
+                                <label class="size-field">
+                                    <select id="providerSelect" class="size-select"></select>
+                                </label>
+                                <label class="size-field">
+                                    <select id="modelSelect" class="size-select"></select>
+                                </label>
+                            </div>
+                            <div class="control-label mt-1">
+                                <i data-lucide="ruler" class="w-3.5 h-3.5"></i>
+                                <span>尺寸</span>
+                            </div>
+                            <div class="size-row">
+                                <label class="size-field">
+                                    <select id="transferResolutionSelect" class="size-select" title="分辨率">
+                                        <option value="1k" selected>1K</option>
+                                        <option value="2k">2K</option>
+                                        <option value="4k">4K</option>
+                                    </select>
+                                </label>
+                                <label class="size-field">
+                                    <select id="transferRatioSelect" class="size-select" title="比例">
+                                        <option value="square" selected>1:1 方图</option>
+                                        <option value="portrait">2:3 竖图</option>
+                                        <option value="portrait43">3:4 竖图</option>
+                                        <option value="story">9:16 竖屏</option>
+                                        <option value="landscape">3:2 横图</option>
+                                        <option value="landscape43">4:3 横图</option>
+                                        <option value="wide">16:9 宽屏</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </section>
+
+                    </div>
+
+                    <div class="column-card">
+                        <div class="column-card-head">
+                            <h3 class="stage-label">输出图</h3>
+                        </div>
+                        <div class="column-card-body">
+                            <div class="media-tile">
+                                <img id="outputPreviewImg" class="media-preview hidden" alt="Output preview">
+                                <div id="outputPreviewEmpty" class="media-empty">
+                                    <i data-lucide="sparkles" class="w-9 h-9 stroke-[1px]"></i>
+                                    <p class="text-[10px] font-bold uppercase tracking-[0.26em]">等待姿势迁移</p>
+                                </div>
+                            </div>
+                            <button id="poseTransferBtn" type="button" data-pose-action="transfer" disabled class="glass-btn w-full mt-4 py-4 rounded-xl text-[10px] font-black uppercase tracking-[0.18em] flex items-center justify-center gap-2">
+                                <i data-lucide="wand-sparkles" class="w-4 h-4 text-yellow-400"></i><span>姿势迁移</span>
+                            </button>
+                        </div>
+                    </div>
+                </aside>
+            </section>
+
+            <section id="poseEditorSection" class="workspace-row studio-row">
+                <div class="space-y-3">
+                    <h3 class="stage-label">Pose Studio</h3>
+                    <div class="panel overflow-hidden">
+                        <iframe id="poseFrame" class="pose-frame" src="/static/vnccs-pose-studio-embed.html" title="VNCCS 姿势工作室"></iframe>
+                    </div>
+                </div>
+            </section>
+
+            <div class="hidden" aria-hidden="true">
+                <div id="modelState"></div>
+                <span id="modelFileName">-</span>
+                <span id="modelMeshInfo">-</span>
+                <span id="modelOutputInfo">Waiting</span>
+                <a id="downloadModelBtn" href="#" download class="hidden"></a>
+                <button id="focusEditorBtn" type="button" data-pose-action="focus-editor" class="hidden"></button>
+                <div id="poseExportStatus">编辑器加载后可导出当前姿势</div>
+                <a id="downloadPoseJson" href="#" download class="hidden"></a>
+                <a id="downloadPosePng" href="#" download class="hidden"></a>
+                <div id="poseTransferStatus">等待输入图和姿势图</div>
+            </div>
+        </main>
+    </div>
+
+</body>
+</html>

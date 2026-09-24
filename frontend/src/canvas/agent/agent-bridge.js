@@ -4,7 +4,7 @@
   const selectedNodeIds = () => Array.from(document.querySelectorAll('.image-node.selected[data-id]')).map(el => el.dataset.id).filter(Boolean);
   const nodeLabel = id => document.querySelector(`.image-node[data-id="${CSS.escape(id)}"]`)?.querySelector('.node-title,.smart-node-title')?.textContent?.trim() || id;
   const nodeMentionCandidates = () => Array.from(document.querySelectorAll('.image-node[data-id]')).map(el => ({id:el.dataset.id || '', label:el.querySelector('.node-title,.smart-node-title')?.textContent?.trim() || el.dataset.id || ''})).filter(item => item.id && item.label);
-  const focusNode = id => Boolean(window.focusCanvasNode?.(id));
+  const focusNode = id => Boolean(focusCanvasNode?.(id));
   let referencePicking = false;
   let referencePicked = null;
   let referenceNotice = null;
@@ -62,5 +62,5 @@
       return await window.loadCanvas?.({renderCanvas:true});
     });
   }
-  window.CanvasAgentBridge = { canvasId, selectedNodeIds, nodeLabel, nodeMentionCandidates, canvasMaterialReferences, focusNode, beginReferencePicking, endReferencePicking, refreshCanvas };
+  CanvasAgentBridge = { canvasId, selectedNodeIds, nodeLabel, nodeMentionCandidates, canvasMaterialReferences, focusNode, beginReferencePicking, endReferencePicking, refreshCanvas };
 })();

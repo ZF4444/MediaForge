@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的账户</title>
+    <link rel="stylesheet" href="/static/dist/styles/theme.css">
+    <link rel="stylesheet" href="./account.css">
+</head>
+<body>
+    <main class="account">
+        <section class="account-hero"><div class="topline"><div class="title-block"><div class="account-eyebrow">ACCOUNT / OVERVIEW</div><div class="title">我的账户</div><div class="subtitle" id="period">本月账户概览</div></div><div class="account-actions"><button id="refresh" class="refresh" type="button" title="刷新"><i data-lucide="refresh-cw"></i></button><button id="logout" class="account-action logout" type="button"><i data-lucide="log-out"></i><span>登出</span></button></div></div><section id="profile" class="profile"><div class="avatar">...</div><div><div class="profile-name">加载中...</div></div></section></section>
+        <div id="content" class="skeleton">正在读取账户信息...</div>
+    </main>
+    <script type="module" src="../../my-account/main.js"></script>
+</body>
+</html>

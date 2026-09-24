@@ -163,7 +163,7 @@
     const capability=String(node.capability||((node.semantic_type==='prompt'||node.semantic_type==='smart-prompt')?'prompt.generate':(engine==='comfy'?`comfyui.workflow.${kind}`:(engine==='runninghub'||isRunningHubTarget(settings)?`runninghub.app.${kind}`:(kind==='video'?'video.text_to_video':'image.text_to_image')))));
     if(!capability){fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));return;}
     try{
-      const response=await fetch(schemaUrl(capability,settings),{credentials:'same-origin'});if(!response.ok)throw new Error();const schema=await response.json();if((request!==schemaRequest&&!history)||!card.isConnected)return;
+      const apiJson=globalThis.__MediaForgeRuntimeServices?.apiJson;const schema=apiJson ? await apiJson(schemaUrl(capability,settings),{credentials:'same-origin'}) : await fetch(schemaUrl(capability,settings),{credentials:'same-origin'}).then(async response=>{if(!response.ok)throw new Error();return response.json();});if((request!==schemaRequest&&!history)||!card.isConnected)return;
       const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');
       // A RunningHub app exposes its prompt through a prompt-role field. Mirror
       // the canvas node: surface that text in the top prompt box (and write it
@@ -205,5 +205,5 @@
     window.lucide?.createIcons();
   }
   const collectOverrides=()=>[...document.querySelectorAll('#canvasAgentPlan .canvas-agent-node-config')].map(card=>card._override?.()).filter(Boolean);
-  window.CanvasAgentPlan={render,collectOverrides};
+  CanvasAgentPlan={render,collectOverrides};
 })();

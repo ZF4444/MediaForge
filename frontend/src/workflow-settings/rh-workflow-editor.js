@@ -31,6 +31,21 @@
 // rhWorkflowEditorGraphWrap/rhAppsList/rhAppsCount/rhPasteInput）同样是
 // main.js 顶部 const 声明的共享 DOM 引用，不重复声明。
 
+function rhRuntimeApiJson(url, options = {}){
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    if(apiJson) return apiJson(url, options);
+    return fetch(url, options).then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if(!response.ok) throw new Error(data.detail || data.error || '请求失败');
+        return data;
+    });
+}
+function rhRuntimeApiForm(url, formData, options = {}){
+    const apiForm = globalThis.__MediaForgeRuntimeServices?.apiForm;
+    if(apiForm) return apiForm(url, formData, options);
+    return rhRuntimeApiJson(url, {...options, method:options.method || 'POST', body:formData});
+}
+
 function rhEditorSideScrollEl(){
     return rhWorkflowEditorNodeList?.closest?.('.rh-workflow-editor-side') || rhWorkflowEditorNodeList;
 }
@@ -270,16 +285,16 @@ function removeRhEntry(kind, index){
 function readFileAsDataUrl(file){
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(reader.error || new Error('读取图片失败'));
+        reader.addEventListener('load', () => resolve(String(reader.result || '')), {once:true});
+        reader.addEventListener('error', () => reject(reader.error || new Error('读取图片失败')), {once:true});
         reader.readAsDataURL(file);
     });
 }
 function loadImageForThumbnail(src){
     return new Promise((resolve, reject) => {
         const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('图片解析失败'));
+        img.addEventListener('load', () => resolve(img), {once:true});
+        img.addEventListener('error', () => reject(new Error('图片解析失败')), {once:true});
         img.src = src;
     });
 }
@@ -307,7 +322,7 @@ function pickRhThumbnail(kind, index){
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.onchange = async () => {
+    input.addEventListener('change', async () => {
         const file = input.files?.[0];
         if(!file) return;
         try {
@@ -318,7 +333,7 @@ function pickRhThumbnail(kind, index){
         } catch(e) {
             alert(e.message || '上传缩略图失败');
         }
-    };
+    });
     input.click();
 }
 async function openRhAppEditor(index){
@@ -454,9 +469,8 @@ async function fetchRhAppEditor(force=false){
     const appId = String(entry?.appId || entry?.id || '').trim();
     if(!appId) throw new Error('appId 为空');
     if(force) renderRhWorkflowEditorLoading('正在重新拉取...');
-    const res = await fetch(`/api/runninghub/app-info?webappId=${encodeURIComponent(appId)}`);
-    const data = await res.json();
-    if(!res.ok || data.success === false) throw new Error(data.detail || '拉取应用参数失败');
+    const data = await rhRuntimeApiJson(`/api/runninghub/app-info?webappId=${encodeURIComponent(appId)}`);
+    if(data.success === false) throw new Error(data.detail || '拉取应用参数失败');
     const fields = rhAppFieldSourceList(data).map(normalizeFetchedRhAppField);
     const platformTitle = String(data.data?.webappName || data.data?.name || data.data?.title || data.webappName || data.name || data.title || '').trim();
     const fallbackTitle = `AI 应用 ${appId.slice(-6)}`;
@@ -572,7 +586,7 @@ function exportRhWorkflowJson(){
 function importRhWorkflowJson(file){
     if(!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.addEventListener('load', () => {
         try {
             const config = rhWorkflowEditorState.config;
             if(!config) throw new Error('请先加载应用参数');
@@ -592,11 +606,11 @@ function importRhWorkflowJson(file){
             setStatus(`导入失败：${error.message || 'JSON 格式无效'}`);
             alert(error.message || '参数 JSON 导入失败');
         }
-    };
-    reader.onerror = () => {
+    }, {once:true});
+    reader.addEventListener('error', () => {
         setStatus('导入失败：无法读取文件');
         alert('参数 JSON 导入失败：无法读取文件');
-    };
+    }, {once:true});
     reader.readAsText(file);
 }
 async function saveRhWorkflowEditor(){
@@ -693,7 +707,7 @@ function renderRhMappedPreviewHtml(config){
                 <span>参数 ${settingCount}</span>
             </div>
             <div class="rh-preview-fields">${fieldsHtml}</div>
-            <button class="rh-preview-run ${rhWorkflowEditorState.previewRunning ? 'running' : ''}" type="button" onclick="testRhMappedPreview()" ${rhWorkflowEditorState.previewRunning ? 'disabled' : ''}><i data-lucide="${rhWorkflowEditorState.previewRunning ? 'loader-2' : 'play'}" class="w-3.5 h-3.5 ${rhWorkflowEditorState.previewRunning ? 'spin-icon' : ''}"></i><span>${rhWorkflowEditorState.previewRunning ? '测试中...' : '测试'}</span></button>
+            <button class="rh-preview-run ${rhWorkflowEditorState.previewRunning ? 'running' : ''}" type="button" data-action="testRhMappedPreview" ${rhWorkflowEditorState.previewRunning ? 'disabled' : ''}><i data-lucide="${rhWorkflowEditorState.previewRunning ? 'loader-2' : 'play'}" class="w-3.5 h-3.5 ${rhWorkflowEditorState.previewRunning ? 'spin-icon' : ''}"></i><span>${rhWorkflowEditorState.previewRunning ? '测试中...' : '测试'}</span></button>
             ${statusHtml}
             ${outputsHtml}
         </div>
@@ -721,30 +735,30 @@ function renderRhPreviewControl(field){
         const media = previewState.url
             ? renderRhPreviewMedia(previewState.url, kind, previewState.name || value)
             : `<i data-lucide="${icon}" class="w-5 h-5"></i><span>点击上传</span>`;
-        return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><button class="rh-preview-media ${previewState.url ? 'has-media' : ''}" type="button" onclick="pickRhPreviewMedia('${escapeAttr(key)}','${kind}')">${media}</button></div>`;
+        return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><button class="rh-preview-media ${previewState.url ? 'has-media' : ''}" type="button" data-action="pickRhPreviewMedia" data-action-args='${escapeAttr(JSON.stringify([key, kind]))}'>${media}</button></div>`;
     }
     if(kind === 'BOOLEAN'){
         const on = String(value).toLowerCase() === 'true';
-        return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><div class="rh-preview-switch ${on ? 'on' : ''}"><span></span></div></div>`;
+        return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><div class="rh-preview-switch ${on ? 'on' : ''}" data-action="updateRhPreviewValue" data-action-args='${escapeAttr(JSON.stringify([key, !on]))}'><span></span></div></div>`;
     }
     if(kind === 'SLIDER'){
         const min = Number.isFinite(Number(field.min)) ? Number(field.min) : 0;
         const max = Number.isFinite(Number(field.max)) && Number(field.max) > min ? Number(field.max) : 1;
         const step = Number.isFinite(Number(field.step)) && Number(field.step) > 0 ? Number(field.step) : 0.01;
         const numericValue = Number.isFinite(Number(value)) ? Number(value) : min;
-        return `<div class="rh-preview-field"><div class="rh-preview-label"><span>${label}</span><span class="rh-preview-slider-val">${escapeHtml(numericValue)}</span></div><input class="rh-preview-slider" type="range" min="${escapeAttr(min)}" max="${escapeAttr(max)}" step="${escapeAttr(step)}" value="${escapeAttr(numericValue)}" oninput="updateRhPreviewValue('${escapeAttr(key)}', this.value); const val=this.closest('.rh-preview-field')?.querySelector('.rh-preview-slider-val'); if(val) val.textContent=this.value;"></div>`;
+        return `<div class="rh-preview-field"><div class="rh-preview-label"><span>${label}</span><span class="rh-preview-slider-val">${escapeHtml(numericValue)}</span></div><input class="rh-preview-slider" type="range" min="${escapeAttr(min)}" max="${escapeAttr(max)}" step="${escapeAttr(step)}" value="${escapeAttr(numericValue)}" data-action="updateRhPreviewValue" data-action-args='${escapeAttr(JSON.stringify([key]))}' data-action-value="true" data-action-value-type="float"></div>`;
     }
     if(kind === 'PROMPT'){
-        return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><textarea oninput="updateRhPreviewValue('${escapeAttr(key)}', this.value)">${escapeHtml(value)}</textarea></div>`;
+        return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><textarea data-action="updateRhPreviewValue" data-action-args='${escapeAttr(JSON.stringify([key]))}' data-action-value="true">${escapeHtml(value)}</textarea></div>`;
     }
     if(options.length || kind === 'SELECT'){
         return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><select disabled>${(options.length ? options : [value || '选项']).map(option => `<option>${escapeHtml(option)}</option>`).join('')}</select></div>`;
     }
     const randomButton = kind === 'NUMBER' && field.random_enabled
-        ? `<button class="random-btn rh-preview-random-btn ${randomActive ? 'active' : ''}" type="button" onclick="toggleRhPreviewRandom('${escapeAttr(key)}')" title="${randomActive ? '使用随机数' : '使用固定数'}"><i data-lucide="dice-5" class="w-4 h-4"></i></button>`
+        ? `<button class="random-btn rh-preview-random-btn ${randomActive ? 'active' : ''}" type="button" data-action="toggleRhPreviewRandom" data-action-arg="${escapeAttr(key)}" title="${randomActive ? '使用随机数' : '使用固定数'}"><i data-lucide="dice-5" class="w-4 h-4"></i></button>`
         : '';
     const readonly = randomActive ? 'disabled' : '';
-    return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><div class="rh-preview-random-row" style="${randomButton ? '' : 'grid-template-columns:1fr'}"><input ${readonly} type="${kind === 'NUMBER' ? 'number' : 'text'}" value="${escapeAttr(value)}" placeholder="${kind === 'NUMBER' && randomActive ? '随机数' : ''}" oninput="updateRhPreviewValue('${escapeAttr(key)}', this.value)">${randomButton}</div></div>`;
+    return `<div class="rh-preview-field"><div class="rh-preview-label">${label}</div><div class="rh-preview-random-row" style="${randomButton ? '' : 'grid-template-columns:1fr'}"><input ${readonly} type="${kind === 'NUMBER' ? 'number' : 'text'}" value="${escapeAttr(value)}" placeholder="${kind === 'NUMBER' && randomActive ? '随机数' : ''}" data-action="updateRhPreviewValue" data-action-args='${escapeAttr(JSON.stringify([key]))}' data-action-value="true" data-action-value-type="${kind === 'NUMBER' ? 'float' : 'text'}">${randomButton}</div></div>`;
 }
 function renderRhPreviewMedia(url, kind, name=''){
     const safe = escapeAttr(url || '');
@@ -761,7 +775,7 @@ async function pickRhPreviewMedia(key, kind){
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = mediaAcceptForRhKind(kind);
-    input.onchange = async () => {
+    input.addEventListener('change', async () => {
         const file = input.files?.[0];
         if(!file) return;
         const localUrl = URL.createObjectURL(file);
@@ -770,7 +784,7 @@ async function pickRhPreviewMedia(key, kind){
         const form = new FormData();
         form.append('files', file);
         try {
-            const data = await window.MediaForgeUpload.upload(form);
+            const data = await MediaForgeUpload.upload(form);
             const uploaded = data.files?.[0];
             rhWorkflowEditorState.previewParams[key] = {
                 ...(rhWorkflowEditorState.previewParams[key] || {}),
@@ -785,7 +799,7 @@ async function pickRhPreviewMedia(key, kind){
             withRhEditorScrollPreserved(() => renderRhMappedPreview());
             alert(err.message || '上传失败');
         }
-    };
+    });
     input.click();
 }
 function toggleRhPreviewRandom(key){
@@ -821,13 +835,11 @@ async function rhPreviewUploadValueIfNeeded(value){
     const text = String(value || '').trim();
     if(!text) return '';
     if(!/^https?:\/\//i.test(text) && !text.startsWith('/output/') && !text.startsWith('/assets/')) return text;
-    const res = await fetch('/api/runninghub/upload-asset', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
+    const data = await rhRuntimeApiJson('/api/runninghub/upload-asset', {
+        method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({url:text, connection_id:rhWorkflowEditorState.connectionId || '', resource_id:rhWorkflowEditorState.resourceId || ''})
     });
-    const data = await res.json();
-    if(!res.ok || data.success === false) throw new Error(data.detail || data.error || 'RunningHub 素材上传失败');
+    if(data.success === false) throw new Error(data.detail || data.error || 'RunningHub 素材上传失败');
     return data.data?.fileName || text;
 }
 async function buildRhPreviewNodeInfoList(){
@@ -863,27 +875,23 @@ async function testRhMappedPreview(){
         const nodeInfoList = await buildRhPreviewNodeInfoList();
         const body = {webappId:String(config.appId || '').trim(), nodeInfoList};
         if(!body.webappId) throw new Error('webappId 为空');
-        const submit = await fetch('/api/runninghub/submit', {
+        const submit = await rhRuntimeApiJson('/api/runninghub/submit', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(body)
-        }).then(async r => {
-            const data = await r.json();
-            if(!r.ok || data.success === false) throw new Error(data.detail || data.error || 'RunningHub 提交失败');
-            return data.data || data;
         });
-        const taskId = submit.taskId;
+        if(submit.success === false) throw new Error(submit.detail || submit.error || 'RunningHub 提交失败');
+        const submitData = submit.data || submit;
+        const taskId = submitData.taskId;
         if(!taskId) throw new Error('RunningHub 没有返回 taskId');
         rhWorkflowEditorState.previewStatus = `任务已提交：${taskId}`;
         renderRhMappedPreview();
         let result = null;
         for(let i = 0; i < 720; i++){
             await new Promise(resolve => setTimeout(resolve, 2500));
-            const data = await fetch(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`).then(async r => {
-                const json = await r.json();
-                if(!r.ok || json.success === false) throw new Error(json.detail || json.error || 'RunningHub 查询失败');
-                return json.data || json;
-            });
+            const response = await rhRuntimeApiJson(`/api/runninghub/query?taskId=${encodeURIComponent(taskId)}`);
+            if(response.success === false) throw new Error(response.detail || response.error || 'RunningHub 查询失败');
+            const data = response.data || response;
             if(data.status === 'SUCCESS'){
                 result = data;
                 break;
@@ -929,27 +937,27 @@ function renderRhWorkflowEditorField(field){
     const keepOriginal = field.sourceFromUpstream === false;
     return `
         <div class="rh-editor-field-row ${checked ? 'active' : ''}">
-            <button class="rh-editor-check ${checked ? 'checked' : ''}" type="button" onclick="toggleRhWorkflowEditorField('${escapeAttr(key)}')">${checked ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}</button>
+            <button class="rh-editor-check ${checked ? 'checked' : ''}" type="button" data-action="toggleRhWorkflowEditorField" data-action-arg="${escapeAttr(key)}">${checked ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}</button>
             <div class="rh-editor-field-main">
                 <div class="rh-editor-field-name">${escapeHtml(field.label || field.fieldName)}</div>
                 <div class="rh-editor-field-meta">${escapeHtml(field.fieldName)} · ${escapeHtml(type)}</div>
-                <button class="rh-editor-keep ${keepOriginal ? 'active' : ''}" type="button" onclick="updateRhWorkflowEditorField('${escapeAttr(key)}','sourceFromUpstream',${keepOriginal ? 'true' : 'false'})">
+                <button class="rh-editor-keep ${keepOriginal ? 'active' : ''}" type="button" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'sourceFromUpstream', !keepOriginal]))}'>
                     <span class="check-dot"></span>${keepOriginal ? '保留应用原设置' : '暴露并覆盖参数'}
                 </button>
                 <div class="rh-editor-field-controls">
-                    <input type="text" value="${escapeAttr(field.label || '')}" placeholder="显示名称" oninput="updateRhWorkflowEditorField('${escapeAttr(key)}','label',this.value)">
-                    <select onchange="updateRhWorkflowEditorField('${escapeAttr(key)}','fieldType',this.value)">
+                    <input type="text" value="${escapeAttr(field.label || '')}" placeholder="显示名称" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'label']))}' data-action-value="true">
+                    <select data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'fieldType']))}' data-action-value="true">
                         ${['TEXT','PROMPT','NUMBER','SLIDER','BOOLEAN','SELECT','IMAGE','VIDEO','AUDIO'].map(option => `<option value="${option}" ${String(field.fieldType || type).toUpperCase() === option ? 'selected' : ''}>${rhWorkflowFieldTypeLabel(option)}</option>`).join('')}
                     </select>
                 </div>
                 <div class="rh-editor-field-controls rh-editor-wide-controls">
-                    <textarea placeholder="下拉选项：每行一个，例如 1024x1024" oninput="updateRhWorkflowEditorField('${escapeAttr(key)}','options',this.value)">${escapeHtml(optionsText)}</textarea>
+                    <textarea placeholder="下拉选项：每行一个，例如 1024x1024" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'options']))}' data-action-value="true">${escapeHtml(optionsText)}</textarea>
                 </div>
                 <div class="rh-editor-random-row">
-                    <button class="rh-editor-random ${randomOn ? 'active' : ''}" type="button" onclick="updateRhWorkflowEditorField('${escapeAttr(key)}','random_enabled',${randomOn ? 'false' : 'true'})"><i data-lucide="dice-5" class="w-3.5 h-3.5"></i><span>随机数</span></button>
-                    <input type="number" value="${escapeAttr(field.min ?? '')}" placeholder="最小" oninput="updateRhWorkflowEditorField('${escapeAttr(key)}','min',this.value)">
-                    <input type="number" value="${escapeAttr(field.max ?? '')}" placeholder="最大" oninput="updateRhWorkflowEditorField('${escapeAttr(key)}','max',this.value)">
-                    <input type="number" value="${escapeAttr(field.step ?? '')}" placeholder="步长" oninput="updateRhWorkflowEditorField('${escapeAttr(key)}','step',this.value)">
+                    <button class="rh-editor-random ${randomOn ? 'active' : ''}" type="button" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'random_enabled', !randomOn]))}'><i data-lucide="dice-5" class="w-3.5 h-3.5"></i><span>随机数</span></button>
+                    <input type="number" value="${escapeAttr(field.min ?? '')}" placeholder="最小" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'min']))}' data-action-value="true" data-action-value-type="float">
+                    <input type="number" value="${escapeAttr(field.max ?? '')}" placeholder="最大" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'max']))}' data-action-value="true" data-action-value-type="float">
+                    <input type="number" value="${escapeAttr(field.step ?? '')}" placeholder="步长" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'step']))}' data-action-value="true" data-action-value-type="float">
                 </div>
             </div>
         </div>
@@ -973,8 +981,8 @@ function renderRhAppFieldCard(field){
     const key = rhWorkflowFieldKey(field);
     const checked = field.enabled === true;
     return `
-        <div class="rh-app-field-card ${checked ? 'active' : ''}" data-field-key="${escapeAttr(key)}" onclick="openRhAppFieldPopover('${escapeAttr(key)}', this)">
-            <button class="rh-editor-check ${checked ? 'checked' : ''}" type="button" onclick="event.stopPropagation();toggleRhWorkflowEditorField('${escapeAttr(key)}')">${checked ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}</button>
+        <div class="rh-app-field-card ${checked ? 'active' : ''}" data-field-key="${escapeAttr(key)}" data-action="openRhAppFieldPopover" data-action-arg="${escapeAttr(key)}" data-action-target="true">
+            <button class="rh-editor-check ${checked ? 'checked' : ''}" type="button" data-stop-propagation data-action="toggleRhWorkflowEditorField" data-action-arg="${escapeAttr(key)}">${checked ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}</button>
             <div>
                 <strong>${escapeHtml(field.label || field.fieldName)}</strong>
                 <span>${escapeHtml(field.fieldName)} · ${escapeHtml(rhWorkflowFieldKind(field))}</span>
@@ -998,7 +1006,7 @@ function openRhAppFieldPopover(key, anchorEl){
                 <strong>${escapeHtml(field.label || field.fieldName)}</strong>
                 <span>${escapeHtml(field.fieldName)}</span>
             </div>
-            <button type="button" onclick="closeRhNodePopover()"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+            <button type="button" data-action="closeRhNodePopover"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
         </div>
         <div class="rh-popover-body">${renderRhWorkflowEditorField(field)}</div>
     `;
@@ -1026,42 +1034,11 @@ function renderRunningHubCards(){
     renderRhEntryList(rhAppsList, apps, 'app');
     refreshIcons();
 }
-function rhEntryThumbnailCandidates(kind, entry){
-    const id = String(entry?.appId || entry?.id || '').trim().replace(/[^0-9A-Za-z_-]/g, '');
-    if(!id) return [];
-    const exts = ['jpg'];
-    const names = [`app-${id}`, id];
-    const roots = ['/static/runninghub/thumbnails', '/static/runninghub'];
-    const urls = [];
-    names.forEach(name => {
-        exts.forEach(ext => {
-            roots.forEach(root => urls.push(`${root}/${name}.${ext}`));
-        });
-    });
-    return urls;
-}
 function renderRhEntryThumbnail(kind, entry){
     const icon = 'sparkles';
-    const candidates = rhEntryThumbnailCandidates(kind, entry);
     const thumbnail = String(entry?.thumbnail || '').trim();
-    const src = thumbnail;
-    if(!src) return `<i data-lucide="${icon}" class="w-5 h-5"></i>`;
-    const fallbacks = candidates;
-    return `<img src="${escapeAttr(src)}" alt="" data-rh-thumb-fallbacks="${escapeAttr(fallbacks.join('|'))}" onerror="fallbackRhEntryThumbnail(this,'${icon}')">`;
-}
-function fallbackRhEntryThumbnail(img, icon){
-    const fallbacks = String(img?.dataset?.rhThumbFallbacks || '').split('|').filter(Boolean);
-    const next = fallbacks.shift();
-    if(next){
-        img.dataset.rhThumbFallbacks = fallbacks.join('|');
-        img.src = next;
-        return;
-    }
-    const parent = img?.parentElement;
-    if(parent){
-        parent.innerHTML = `<i data-lucide="sparkles" class="w-5 h-5"></i>`;
-        refreshIcons();
-    }
+    if(!thumbnail) return `<i data-lucide="${icon}" class="w-5 h-5"></i>`;
+    return `<img src="${escapeAttr(thumbnail)}" alt="">`;
 }
 function renderRhEntryList(target, list, kind){
     if(!target) return;
@@ -1071,21 +1048,21 @@ function renderRhEntryList(target, list, kind){
     }
     target.innerHTML = list.map((entry, index) => `
         <div class="rh-config-card">
-            <button class="rh-thumb" type="button" onclick="pickRhThumbnail('${kind}', ${entry._rhIndex ?? index})" title="上传缩略图">
+            <button class="rh-thumb" type="button" data-action="pickRhThumbnail" data-action-args='${escapeAttr(JSON.stringify([kind, entry._rhIndex ?? index]))}' title="上传缩略图">
                 ${renderRhEntryThumbnail(kind, entry)}
             </button>
             <div class="rh-card-main">
                 <label class="rh-card-title-field">
                     <span>名称</span>
-                    <input type="text" value="${escapeAttr(entry.title || '')}" oninput="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'title', this.value)" placeholder="AI 应用名称">
+                    <input type="text" value="${escapeAttr(entry.title || '')}" data-action="updateRhEntry" data-action-args='${escapeAttr(JSON.stringify([kind, entry._rhIndex ?? index, 'title']))}' data-action-value="true" placeholder="AI 应用名称">
                 </label>
                 <div class="rh-id-line"><i data-lucide="hash" class="w-3 h-3"></i><span>/run/ai-app/${escapeHtml(entry.id)}</span></div>
-                <label class="model-enabled-toggle" onclick="event.stopPropagation()"><input type="checkbox" ${entry.enabled !== false ? 'checked' : ''} onchange="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'enabled', this.checked)"><span>启用</span></label>
-                <textarea oninput="updateRhEntry('${kind}', ${entry._rhIndex ?? index}, 'note', this.value)" placeholder="备注、用途、参数说明">${escapeHtml(entry.note || '')}</textarea>
+                <label class="model-enabled-toggle" data-stop-propagation><input type="checkbox" ${entry.enabled !== false ? 'checked' : ''} data-action="updateRhEntry" data-action-args='${escapeAttr(JSON.stringify([kind, entry._rhIndex ?? index, 'enabled']))}' data-action-value="true"><span>启用</span></label>
+                <textarea data-action="updateRhEntry" data-action-args='${escapeAttr(JSON.stringify([kind, entry._rhIndex ?? index, 'note']))}' data-action-value="true" placeholder="备注、用途、参数说明">${escapeHtml(entry.note || '')}</textarea>
             </div>
             <div class="rh-card-actions">
-                <button class="rh-card-action" type="button" onclick="openRhAppEditor(${entry._rhIndex ?? index})" title="编辑应用参数"><i data-lucide="settings-2" class="w-3.5 h-3.5"></i></button>
-                <button class="rh-card-action danger" type="button" onclick="removeRhEntry('${kind}', ${entry._rhIndex ?? index})" title="删除"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                <button class="rh-card-action" type="button" data-action="openRhAppEditor" data-action-arg="${entry._rhIndex ?? index}" title="编辑应用参数"><i data-lucide="settings-2" class="w-3.5 h-3.5"></i></button>
+                <button class="rh-card-action danger" type="button" data-action="removeRhEntry" data-action-args='${escapeAttr(JSON.stringify([kind, entry._rhIndex ?? index]))}' title="删除"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
             </div>
         </div>
     `).join('');

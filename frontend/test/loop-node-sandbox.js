@@ -45,6 +45,7 @@ export function createLoopNodeSandbox(overrides = {}) {
     };
 
     const sandbox = {
+        StudioI18n: { t: key => key },
         window: {
             StudioI18n: null, // tr() 会走 fallback（原样返回 key）
             lucide: null,

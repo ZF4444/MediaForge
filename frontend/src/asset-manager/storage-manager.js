@@ -161,7 +161,8 @@ async function deleteAllMatchingStorageEntries(){
         storageCreatedBefore ? `${storageDateInputValue()} 之前` : '',
         storageUnreferencedOnly ? '仅未被引用文件' : '',
     ].filter(Boolean).join('、') || '当前全部文件';
-    if(!window.confirm(`确定删除符合“${scope}”的全部 ${totalMatches} 个文件？此操作不可恢复。`)) return;
+    const confirmFn = globalThis.__MediaForgeRuntimeServices?.apiConfirm || (message => globalThis.confirm?.(message));
+    if(!(await confirmFn(`确定删除符合“${scope}”的全部 ${totalMatches} 个文件？此操作不可恢复。`))) return;
     setStatus(`正在删除 ${totalMatches} 个符合条件的文件...`);
     const result = await apiJson('/api/storage/delete', {
         method:'POST',

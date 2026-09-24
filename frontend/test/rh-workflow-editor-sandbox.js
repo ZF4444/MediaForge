@@ -24,6 +24,7 @@ const RH_WORKFLOW_EDITOR_SRC = fs.readFileSync(
 export function createRhWorkflowEditorSandbox(overrides = {}) {
     const sandbox = {
         window: {...(overrides.window ?? {}), dispatchEvent: overrides.window?.dispatchEvent || (() => {})},
+        MediaForgeUpload: overrides.mediaForgeUpload || null,
         location: { origin: 'http://test.local' },
         Event: class Event { constructor(type) { this.type = type; } },
         console, Date, Math, Array, Object, Number, String, Boolean, Set, Map, Promise, RegExp, JSON,

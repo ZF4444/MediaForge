@@ -89,10 +89,10 @@
     window.CanvasAgentPanel.clearRun();
     await recover();
   }
-  window.canvasAgentHandleEvent = message => {
+  canvasAgentHandleEvent = message => {
     const event = message?.type === 'agent.event' ? message.data : {sequence:message?.sequence,type:message?.type,data:message?.data,run_id:message?.run_id};
     if (event?.run_id === state.runId) applyEvent(event);
   };
   window.addEventListener('online', recover); document.addEventListener('visibilitychange', () => { if (!document.hidden) recover(); });
-  window.CanvasAgentEvents = { applyEvent, catchUp, recover, start, stop, saveRun, removeRun, switchRun };
+  CanvasAgentEvents = { applyEvent, catchUp, recover, start, stop, saveRun, removeRun, switchRun };
 })();

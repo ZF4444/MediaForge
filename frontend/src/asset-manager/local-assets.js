@@ -101,7 +101,8 @@ async function loadLocalAssets(){
 }
 async function registerSharedFolder(){
     const tip = '请输入要登记的共享文件夹路径（必须位于项目目录内，例如 assets\\library 或 output）：';
-    const path = window.prompt(tip, '');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const path = await promptFn(tip, '');
     if(!String(path || '').trim()) return;
     try {
         setStatus('正在登记共享文件夹...');
@@ -383,5 +384,6 @@ function openLocalItem(id){
     const item = findLocalItem(id);
     if(!item) return;
     const url = localObjectUrl(item);
-    if(url) window.open(url, '_blank', 'noopener');
+    const openExternalFn = globalThis.__MediaForgeRuntimeServices?.openExternal || ((targetUrl, target, features) => globalThis.open?.(targetUrl, target, features));
+    if(url) openExternalFn(url, '_blank', 'noopener');
 }

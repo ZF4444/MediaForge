@@ -5,11 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/images/logo.png" type="image/png">
     <title>画布管理</title>
-    <script>(function(){try{if((localStorage.getItem('studio_theme')||localStorage.getItem('canvas_theme'))==='dark')document.documentElement.classList.add('theme-dark')}catch(e){}})();</script>
-    <script src="/static/vendor/js/lucide.js"></script>
-    <script src="/static/js/theme.js"></script>
-    <link rel="stylesheet" href="/static/css/theme.css">
-    <link rel="stylesheet" href="/static/css/canvas-manager.css">
+  <script type="module" crossorigin src="/static/dist/canvas-manager/main.js"></script>
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/modulepreload-polyfill-B5Qt9EMX.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/http-ImYglq-n.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/refresh-cw-c2tlqd9O.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/lucide-BkStV3v0.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/plus-tks1q2ic.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/pencil-Bn2y_lpe.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/trash-Cx7YPRpD.js">
+  <link rel="stylesheet" crossorigin href="/static/dist/assets/canvas-manager-DOomPCl2.css">
 </head>
 <body>
     <div class="workspace-shell">
@@ -46,6 +50,5 @@
         <section id="canvasList" class="canvas-list" aria-live="polite"></section>
       </main>
     </div>
-    <script src="/static/js/canvas-manager.js"></script>
 </body>
 </html>

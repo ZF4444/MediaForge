@@ -28,7 +28,8 @@
 
 function openAssetItem(id){
     const item = findAssetItem(id);
-    if(item?.url) window.open(item.url, '_blank', 'noopener');
+    const openExternalFn = globalThis.__MediaForgeRuntimeServices?.openExternal || ((url, target, features) => globalThis.open?.(url, target, features));
+    if(item?.url) openExternalFn(item.url, '_blank', 'noopener');
 }
 function showDetailPreview(source, id){
     const item = source === 'local'

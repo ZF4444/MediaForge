@@ -166,13 +166,15 @@ async function exportSelectedCanvasWorkflow(includeResources=false){
             canvasWorkflowExportMeta.textContent = '正在打包资源...';
         }
         const filename = canvasWorkflowFilename('zip');
-        const res = await fetch('/api/canvas-workflows/export', {
+        const apiBlob = globalThis.__MediaForgeRuntimeServices?.apiBlob;
+        const response = apiBlob ? await apiBlob('/api/canvas-workflows/export', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({...payload, include_resources:true, filename})
-        });
-        if(!res.ok) throw new Error(await responseErrorMessage(res, '导出模板失败'));
-        downloadBlob(await res.blob(), filename);
+        }) : await fetch('/api/canvas-workflows/export', {
+            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload, include_resources:true, filename})
+        }).then(async res => { if(!res.ok) throw new Error(await responseErrorMessage(res, '导出模板失败')); return res.blob(); });
+        downloadBlob(response, filename);
         if(canvasWorkflowExportMeta){
             canvasWorkflowExportMeta.classList.remove('busy');
             canvasWorkflowExportMeta.classList.add('success');
@@ -227,9 +229,9 @@ async function importCanvasWorkflowFile(file){
         if(canvasWorkflowTransferSub) canvasWorkflowTransferSub.textContent = '正在导入模板...';
         const form = new FormData();
         form.append('file', file);
-        const res = await fetch('/api/canvas-workflows/import', {method:'POST', body:form});
-        if(!res.ok) throw new Error(await responseErrorMessage(res, '导入模板失败'));
-        const data = await res.json();
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const apiForm = globalThis.__MediaForgeRuntimeServices?.apiForm;
+        const data = apiForm ? await apiForm('/api/canvas-workflows/import', form) : apiJson ? await apiJson('/api/canvas-workflows/import', {method:'POST', body:form}) : await fetch('/api/canvas-workflows/import', {method:'POST', body:form}).then(async res => { if(!res.ok) throw new Error(await responseErrorMessage(res, '导入模板失败')); return res.json(); });
         insertCanvasWorkflowIntoCanvas(normalizeImportedCanvasWorkflow(data));
         closeCanvasWorkflowTransferModal();
     } catch(err) {

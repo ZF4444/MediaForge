@@ -43,8 +43,7 @@
 //     render, scheduleSave, pushUndo, toast
 //   媒体判断：mediaKindForFile, mediaKindForItem
 //   上传进度 UI：showUploadProgress, updateUploadProgress, hideUploadProgress
-//   外部全局对象：window.MediaForgeUpload（由 /static/js/upload-quota-dialog.js
-//     提供，upload() 方法实际发起上传请求并展示进度/配额弹窗）
+//   runtime 注入的 MediaForgeUpload 兼容对象，upload() 方法实际发起上传请求并展示进度/配额弹窗
 //   常量（M3 已确认留在 main.js）：MEDIA_NODE_DEFAULT_SCALE,
 //     MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE, MEDIA_GROUP_DEFAULT_SCALE
 
@@ -230,7 +229,7 @@ async function uploadFiles(files){
     supported.forEach(file => form.append('files', file, file.name || 'media'));
     showUploadProgress(supported.length);
     try {
-        const data = await window.MediaForgeUpload.upload(form, (loaded, total) => updateUploadProgress(loaded, total, supported.length));
+        const data = await MediaForgeUpload.upload(form, (loaded, total) => updateUploadProgress(loaded, total, supported.length));
         return (data.files || []).map((file, index) => ({
             ...file,
             kind:file.kind || mediaKindForFile(supported[index])
@@ -327,13 +326,8 @@ async function createPromptNodesFromTextFiles(textFiles, opts={}){
 }
 async function importSmartLocalImages(paths){
     if(!paths?.length) return [];
-    const response = await fetch('/api/ai/import-local-image', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({paths})
-    });
-    if(!response.ok) throw new Error(await smartResponseErrorMessage(response, tr('smart.toastUploadFail')));
-    const data = await response.json();
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    const data = apiJson ? await apiJson('/api/ai/import-local-image', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({paths})}) : await fetch('/api/ai/import-local-image', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({paths})}).then(async response => { if(!response.ok) throw new Error(await smartResponseErrorMessage(response, tr('smart.toastUploadFail'))); return response.json(); });
     return data.files || [];
 }
 async function handleSmartImageDropPayload(payload, targetId='', opts={}){

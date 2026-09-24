@@ -170,18 +170,18 @@ function hydrateAssetDetailMetadata(item){
     };
     const mediaKind = assetKind(item);
     const metadataPromise = fileId
-        ? fetch(`/api/files/${encodeURIComponent(fileId)}`).then(response => response.ok ? response.json() : null).catch(() => null)
+        ? getFileMetadata(fileId).catch(() => null)
         : Promise.resolve(null);
     if(mediaKind === 'video'){
         const probe = document.createElement('video');
         probe.preload = 'metadata';
-        probe.onloadedmetadata = () => metadataPromise.then(meta => finish(probe.videoWidth, probe.videoHeight, meta));
-        probe.onerror = () => metadataPromise.then(meta => finish(0, 0, meta));
+        probe.addEventListener('loadedmetadata', () => metadataPromise.then(meta => finish(probe.videoWidth, probe.videoHeight, meta)));
+        probe.addEventListener('error', () => metadataPromise.then(meta => finish(0, 0, meta)));
         probe.src = item.url || (fileId ? `/api/files/${encodeURIComponent(fileId)}/preview` : '');
     } else if(mediaKind === 'image'){
         const probe = new Image();
-        probe.onload = () => metadataPromise.then(meta => finish(probe.naturalWidth, probe.naturalHeight, meta));
-        probe.onerror = () => metadataPromise.then(meta => finish(0, 0, meta));
+        probe.addEventListener('load', () => metadataPromise.then(meta => finish(probe.naturalWidth, probe.naturalHeight, meta)));
+        probe.addEventListener('error', () => metadataPromise.then(meta => finish(0, 0, meta)));
         probe.src = item.url || (fileId ? `/api/files/${encodeURIComponent(fileId)}/preview` : '');
     } else {
         metadataPromise.then(meta => finish(0, 0, meta));
@@ -332,7 +332,7 @@ async function uploadFiles(files){
     if(!cat) throw new Error('请先创建图片分组');
     const form = new FormData();
     [...files].forEach(file => form.append('files', file));
-    const uploaded = await window.MediaForgeUpload.upload(form);
+    const uploaded = await upload(form);
     if(uploaded.quota_exceeded){
         setStatus('存储空间不足');
         return;
@@ -357,7 +357,8 @@ async function uploadFiles(files){
     return {count:items.length, items:data.items || []};
 }
 async function createAssetLibrary(){
-    const name = window.prompt('资产库名称', '新资产库');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('资产库名称', '新资产库');
     if(!String(name || '').trim()) return;
     const data = await apiJson('/api/asset-library/libraries', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
     assetLibrary = data.library || assetLibrary;
@@ -404,7 +405,8 @@ async function saveAssetTreeEdit(){
 }
 async function renameAssetLibrary(){
     const lib = activeAssetLibrary();
-    const name = window.prompt('资产库名称', lib?.name || '');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('资产库名称', lib?.name || '');
     if(!lib || !String(name || '').trim()) return;
     const data = await apiJson(`/api/asset-library/libraries/${encodeURIComponent(lib.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
     assetLibrary = data.library || assetLibrary;
@@ -431,7 +433,8 @@ async function deleteAssetLibrary(){
     render();
 }
 async function createAssetCategory(){
-    const name = window.prompt('分组名称', '新分组');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('分组名称', '新分组');
     if(!String(name || '').trim()) return;
     const data = await apiJson('/api/asset-library/categories', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:activeAssetLibraryId, name, type:'image'})});
     assetLibrary = data.library || assetLibrary;
@@ -441,7 +444,8 @@ async function createAssetCategory(){
 }
 async function renameAssetCategory(){
     const cat = activeAssetCategory();
-    const name = window.prompt('分组名称', cat?.name || '');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('分组名称', cat?.name || '');
     if(!cat || !String(name || '').trim()) return;
     const data = await apiJson(`/api/asset-library/categories/${encodeURIComponent(cat.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
     assetLibrary = data.library || assetLibrary;
@@ -468,7 +472,8 @@ async function deleteAssetCategory(){
 }
 async function renameAssetItem(id){
     const item = findAssetItem(id);
-    const name = window.prompt('素材名称', item?.name || '');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('素材名称', item?.name || '');
     if(!item || !String(name || '').trim()) return;
     const data = await apiJson(`/api/asset-library/items/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
     assetLibrary = data.library || assetLibrary;

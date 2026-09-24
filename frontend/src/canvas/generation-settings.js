@@ -516,9 +516,9 @@ async function refreshCanvasParameterSchema(kind, providerId, model){
     try {
     const query = new URLSearchParams({capability:kind === 'video' ? 'video.text_to_video' : 'image.text_to_image', connection_id:target.connection_id || '', model_id:target.model_id || '', resource_id:target.resource_id || ''});
     if(!target.connection_id && !target.model_id && !target.resource_id && model) query.set('model', model);
-        const response = await fetch(`/api/canvas/capability-parameters?${query.toString()}`, {credentials:'same-origin'});
-        if(!response.ok) return;
-        const schema = await response.json();
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const schema = apiJson ? await apiJson(`/api/canvas/capability-parameters?${query.toString()}`, {credentials:'same-origin', allowErrorResponse:true}) : await fetch(`/api/canvas/capability-parameters?${query.toString()}`, {credentials:'same-origin'}).then(async response => response.ok ? response.json() : null);
+        if(!schema) return;
         canvasParameterSchemaCache.set(key, schema);
         activate(schema);
     } catch (_) { /* Keep the backend-compatible default schema on network failure. */ }
@@ -552,7 +552,8 @@ async function ensureComfyWorkflow(name){
     // response that predates a settings change; loadConfig clears this cache
     // when the workflow list is refreshed.
     if(comfyWorkflowCache[name]) return comfyWorkflowCache[name];
-    const data = await fetch(`/api/workflows/${encodeURIComponent(name)}`).then(r => r.ok ? r.json() : null).catch(() => null);
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    const data = await (apiJson ? apiJson(`/api/workflows/${encodeURIComponent(name)}`, {allowErrorResponse:true}) : fetch(`/api/workflows/${encodeURIComponent(name)}`).then(r => r.ok ? r.json() : null)).catch(() => null);
     if(data) comfyWorkflowCache[name] = data;
     return data;
 }
@@ -1495,13 +1496,14 @@ async function rhUploadValueIfNeeded(value, sourceSettings=settings){
     // Uploads precede submitRunningHubGeneration(). Resolve here as well so
     // persisted API settings from an earlier engine cannot reach the RH API.
     const target = runningHubTarget(selectedRunningHubRef(sourceSettings), sourceSettings);
-    const res = await fetch('/api/runninghub/upload-asset', {
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    const payload = {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({url:text, connection_id:target.connection_id, resource_id:target.resource_id})
-    });
-    const data = await res.json();
-    if(!res.ok || data.success === false) throw new Error(data.detail || data.error || tr('smart.rhUploadFailed'));
+    };
+    const data = await (apiJson ? apiJson('/api/runninghub/upload-asset', payload) : fetch('/api/runninghub/upload-asset', payload).then(async res => { const body = await res.json(); if(!res.ok) throw new Error(body.detail || body.error || tr('smart.rhUploadFailed')); return body; }));
+    if(data.success === false) throw new Error(data.detail || data.error || tr('smart.rhUploadFailed'));
     return data.data?.fileName || text;
 }
 async function rhBuildNodeInfoList(media, sourceSettings=settings, randomValues=smartRhRandomValues){
@@ -1678,7 +1680,7 @@ function bindDynamicParams(){
     const queryAll = selector => smartParamRoots().flatMap(root => Array.from(root.querySelectorAll(selector)));
     bindWorkflowCoverFlyouts();
     queryAll('.smart-control > .smart-pill').forEach(pill => {
-        pill.onclick = event => {
+        pill.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             const ctrl = pill.parentElement;
@@ -1686,10 +1688,10 @@ function bindDynamicParams(){
             closeAllSmartPopovers();
             if(!wasPinned) ctrl.classList.add('pinned');
             else pill.blur();
-        };
+        });
     });
     queryAll('[data-smart-param]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             if(btn.classList.contains('is-locked')){
@@ -1700,19 +1702,21 @@ function bindDynamicParams(){
             else if(btn.closest('.video-generation-control')) reopenVideoControlAfterRender = 'config';
             setDynamicSetting(btn.dataset.smartParam, btn.dataset.smartValue, btn.dataset.smartProviderId || '', btn.dataset.smartConnectionId || '', btn.dataset.smartModelId || '');
             if(btn.dataset.smartParam === 'videoDuration') renderDynamicParams();
-        };
+        });
     });
     queryAll('[data-param]').forEach(input => {
-        input.onclick = event => event.stopPropagation();
-        input.oninput = input.onchange = event => {
+        input.addEventListener('click', event => event.stopPropagation());
+        const handleInput = event => {
             event?.stopPropagation?.();
             if(event?.type === 'change' && input.closest('.video-generation-control')) reopenVideoControlAfterRender = 'config';
             setDynamicSetting(input.dataset.param, input.value);
             if(input.dataset.param === 'videoDuration' && event?.type === 'change') renderDynamicParams();
         };
+        input.addEventListener('input', handleInput);
+        input.addEventListener('change', handleInput);
     });
     queryAll('[data-video-audio]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             settings.videoGenerateAudio = btn.dataset.videoAudio === 'on';
@@ -1720,10 +1724,10 @@ function bindDynamicParams(){
             persistActiveSmartSettings();
             renderDynamicParams();
             scheduleSave();
-        };
+        });
     });
     queryAll('[data-video-mode]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             const mode = btn.dataset.videoMode;
@@ -1732,10 +1736,10 @@ function bindDynamicParams(){
             persistActiveSmartSettings();
             renderDynamicParams();
             scheduleSave();
-        };
+        });
     });
     queryAll('[data-toggle-param]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             if(btn.closest('.video-generation-control')) reopenVideoControlAfterRender = 'config';
@@ -1745,10 +1749,10 @@ function bindDynamicParams(){
             persistActiveSmartSettings();
             renderDynamicParams();
             scheduleSave();
-        };
+        });
     });
     queryAll('[data-comfy-bool]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             settings.comfyParams = settings.comfyParams || {};
@@ -1758,11 +1762,11 @@ function bindDynamicParams(){
             persistActiveSmartSettings();
             renderDynamicParams();
             scheduleSave();
-        };
+        });
     });
     queryAll('[data-comfy-param]').forEach(input => {
-        input.onclick = event => event.stopPropagation();
-        input.oninput = input.onchange = event => {
+        input.addEventListener('click', event => event.stopPropagation());
+        const handleComfyInput = event => {
             event?.stopPropagation?.();
             settings.comfyParams = settings.comfyParams || {};
             const field = currentComfyFields().find(f => f.id === input.dataset.comfyParam);
@@ -1771,9 +1775,11 @@ function bindDynamicParams(){
             persistActiveSmartSettings();
             scheduleSave();
         };
+        input.addEventListener('input', handleComfyInput);
+        input.addEventListener('change', handleComfyInput);
     });
     queryAll('[data-comfy-pick]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             settings.comfyParams = settings.comfyParams || {};
@@ -1790,17 +1796,17 @@ function bindDynamicParams(){
             closeAllSmartPopovers();
             persistActiveSmartSettings();
             scheduleSave();
-        };
+        });
     });
     queryAll('[data-comfy-random]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             toggleSmartComfyRandom(btn.dataset.comfyRandom);
-        };
+        });
     });
     queryAll('[data-rh-bool]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             settings.rhParams = settings.rhParams || {};
@@ -1812,11 +1818,11 @@ function bindDynamicParams(){
             persistActiveSmartSettings();
             renderDynamicParams();
             scheduleSave();
-        };
+        });
     });
     queryAll('[data-rh-param]').forEach(input => {
-        input.onclick = event => event.stopPropagation();
-        input.oninput = input.onchange = event => {
+        input.addEventListener('click', event => event.stopPropagation());
+        const handleRhInput = event => {
             event?.stopPropagation?.();
             const key = input.dataset.rhParam;
             settings.rhParams = settings.rhParams || {};
@@ -1830,15 +1836,17 @@ function bindDynamicParams(){
             persistActiveSmartSettings();
             scheduleSave();
         };
+        input.addEventListener('input', handleRhInput);
+        input.addEventListener('change', handleRhInput);
         if(input.dataset.rhType === 'slider'){
-            input.onpointerup = () => input.blur();
-            input.onmouseleave = () => {
+            input.addEventListener('pointerup', () => input.blur());
+            input.addEventListener('mouseleave', () => {
                 if(!input.closest('.smart-control')?.matches(':hover')) input.blur();
-            };
+            });
         }
     });
     queryAll('[data-rh-pick]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             const key = btn.dataset.rhPick;
@@ -1858,14 +1866,14 @@ function bindDynamicParams(){
             closeAllSmartPopovers();
             persistActiveSmartSettings();
             scheduleSave();
-        };
+        });
     });
     queryAll('[data-rh-random]').forEach(btn => {
-        btn.onclick = event => {
+        btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             toggleSmartRhRandom(btn.dataset.rhRandom);
-        };
+        });
     });
 }
 let configRefreshPromise = null;
@@ -1877,9 +1885,8 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
         // Canvas users may not have the API settings management page permission.
         // Read the public, read-only resource projection instead of the protected
         // editing endpoint; management pages continue to use configuration.
-        const configurationResponse = await fetch('/api/ai/resources', {credentials:'same-origin'});
-        if(!configurationResponse.ok) throw new Error(`配置接口返回 ${configurationResponse.status}`);
-        stableCfg = await configurationResponse.json();
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        stableCfg = apiJson ? await apiJson('/api/ai/resources', {credentials:'same-origin'}) : await fetch('/api/ai/resources', {credentials:'same-origin'}).then(async response => { if(!response.ok) throw new Error(`配置接口返回 ${response.status}`); return response.json(); });
     } catch(e) {
         const key = String(e?.message || e);
         console.error('[canvas] API settings request failed', e);
@@ -1926,9 +1933,9 @@ async function loadConfigOnce({invalidateParameterSchemas=false}={}){
         // 提供商配置就绪后立即刷新参数面板。
         sanitizeSmartApiSelection(settings);
         updateProviderModels();
-        const workflowResponse = await fetch('/api/workflows', {credentials:'same-origin'});
-        if(workflowResponse.ok){
-            const wf = await workflowResponse.json();
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const wf = apiJson ? await apiJson('/api/workflows', {credentials:'same-origin', allowErrorResponse:true}) : await fetch('/api/workflows', {credentials:'same-origin'}).then(async response => response.ok ? response.json() : null);
+        if(wf){
             const legacyWorkflows = Array.isArray(wf.workflows) ? wf.workflows : [];
             // /api/workflows is the authoritative list shown by Workflow Settings.
             // Do not merge legacy comfyui_workflow resources from AI configuration:

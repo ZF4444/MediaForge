@@ -10,6 +10,8 @@
     if (!target || presentationTargets.has(target) || reportedUnknownTargets.has(target)) return;
     reportedUnknownTargets.add(target);
     console.warn('[canvas-agent] unknown event presentation target', target);
+    const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+    if (apiJson) { apiJson('/api/canvas-agent/presentation-diagnostics', {method:'POST', credentials:'same-origin', headers:{'content-type':'application/json'}, body:JSON.stringify({target}), allowErrorResponse:true}).catch(() => {}); return; }
     if (typeof fetch !== 'function') return;
     fetch('/api/canvas-agent/presentation-diagnostics', {
       method: 'POST',
@@ -54,5 +56,5 @@
   function isConversationEvent(event) {
     return Boolean(project(typeof event === 'string' ? { type: event } : event).progress);
   }
-  window.CanvasAgentEventProjector = { normalizeType, payloadOf, project, isConversationEvent };
+  CanvasAgentEventProjector = { normalizeType, payloadOf, project, isConversationEvent };
 })();

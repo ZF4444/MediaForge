@@ -12,7 +12,7 @@
 // （pickMiniImage）、迷你画布的拖拽绑定（bindMiniCanvas，节点卡片可以
 // 拖拽移动位置）。
 //
-// 经典 <script>，非 ES module，原因同 comfy-instances.js。
+// 作为共享词法作用域的一部分，由 ComfyUI 页面的虚拟 ESM 入口组装。
 //
 // 依赖 main.js 保留的核心状态和函数：currentConfig/miniView/miniCards/
 // miniTestNodes/miniDrag（迷你画布的全部可变状态）、fieldKind/
@@ -21,6 +21,11 @@
 // renderWorkspaceView（main.js 保留的工作区视图切换入口，本模块的
 // renderMiniCanvasPreview 只负责渲染画布本身，切换逻辑留在 main.js）、
 // escapeHtml/escapeAttr/tr/tf（通用工具）。
+let miniCanvasMoveHandler = null;
+let miniCanvasUpHandler = null;
+let miniCanvasElement = null;
+let miniCanvasWheelHandler = null;
+let miniCanvasMouseDownHandler = null;
 
 function defaultMiniCards(){
     return {
@@ -64,16 +69,16 @@ function renderMiniCanvasPreview(target = previewCard, large = false){
     const comfy = miniTestNodes.find(n => n.type === 'comfy') || defaultMiniTestNodes().find(n => n.type === 'comfy');
     const output = miniTestNodes.find(n => n.type === 'output') || defaultMiniTestNodes().find(n => n.type === 'output');
     const resultHtml = runResult
-        ? `<div class="mini-result"><img src="${escapeAttr(runResult)}" onclick="openImagePreview('${escapeAttr(runResult)}')"><div class="run-status">${tr('comfy.runSuccess')}</div></div>`
+        ? `<div class="mini-result"><img src="${escapeAttr(runResult)}" data-action="openImagePreview" data-action-args='${escapeAttr(JSON.stringify([runResult]))}'><div class="run-status">${tr('comfy.runSuccess')}</div></div>`
         : `<div class="preview-empty" style="padding:18px 10px">${tr('comfy.resultHere')}</div>`;
     target.style.display = 'block';
     target.innerHTML = `
         <div id="miniCanvas" class="mini-canvas ${large ? 'large' : ''}">
             <div class="mini-toolbar">
-                <button class="mini-tool" type="button" onclick="addMiniNode('prompt')"><i data-lucide="text-cursor-input" class="w-3.5 h-3.5"></i>${tr('comfy.addPrompt')}</button>
-                <button class="mini-tool" type="button" onclick="addMiniNode('image')"><i data-lucide="image-plus" class="w-3.5 h-3.5"></i>${tr('comfy.addImage')}</button>
-                <button class="mini-tool" type="button" onclick="addMiniNode('video')"><i data-lucide="file-video" class="w-3.5 h-3.5"></i>${typeLabel('video')}</button>
-                <button class="mini-tool" type="button" onclick="addMiniNode('audio')"><i data-lucide="file-audio" class="w-3.5 h-3.5"></i>${typeLabel('audio')}</button>
+                <button class="mini-tool" type="button" data-action="addMiniNode" data-action-arg="prompt"><i data-lucide="text-cursor-input" class="w-3.5 h-3.5"></i>${tr('comfy.addPrompt')}</button>
+                <button class="mini-tool" type="button" data-action="addMiniNode" data-action-arg="image"><i data-lucide="image-plus" class="w-3.5 h-3.5"></i>${tr('comfy.addImage')}</button>
+                <button class="mini-tool" type="button" data-action="addMiniNode" data-action-arg="video"><i data-lucide="file-video" class="w-3.5 h-3.5"></i>${typeLabel('video')}</button>
+                <button class="mini-tool" type="button" data-action="addMiniNode" data-action-arg="audio"><i data-lucide="file-audio" class="w-3.5 h-3.5"></i>${typeLabel('audio')}</button>
             </div>
             <div id="miniWorld" class="mini-world" style="transform:translate(${miniView.x}px,${miniView.y}px) scale(${miniView.k})">
                 ${[...prompts, ...mediaNodes].map(n => miniLineBetween(n, comfy)).join('')}
@@ -82,13 +87,13 @@ function renderMiniCanvasPreview(target = previewCard, large = false){
                     <div class="mini-card" data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
                         <span class="mini-port out"></span>
                         <div class="mini-card-head"><i data-lucide="text-cursor-input" class="w-3.5 h-3.5"></i><span class="mini-node-title">${tr('comfy.promptNode')} ${i+1}</span>${miniDeleteButton(n)}</div>
-                        <div class="mini-card-body"><textarea class="mini-textarea" oninput="updateMiniNode('${n.id}','text',this.value)" placeholder="${escapeAttr(tr('comfy.promptPlaceholder'))}">${escapeHtml(n.text || '')}</textarea></div>
+                        <div class="mini-card-body"><textarea class="mini-textarea" data-action="updateMiniNode" data-action-args='${escapeAttr(JSON.stringify([n.id, 'text']))}' data-action-value="true" placeholder="${escapeAttr(tr('comfy.promptPlaceholder'))}">${escapeHtml(n.text || '')}</textarea></div>
                     </div>`).join('')}
                 ${mediaNodes.map((n,i) => `
                     <div class="mini-card" data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
                         <span class="mini-port out"></span>
                         <div class="mini-card-head"><i data-lucide="${n.type === 'video' ? 'file-video' : n.type === 'audio' ? 'file-audio' : 'image'}" class="w-3.5 h-3.5"></i><span class="mini-node-title">${typeLabel(n.type)} ${i+1}</span>${miniDeleteButton(n)}</div>
-                        <div class="mini-card-body"><div class="mini-image-drop" onclick="pickMiniImage('${n.id}')">${mediaPreviewHtml(n.type, n.url, n.name || n.value, true)}</div></div>
+                        <div class="mini-card-body"><div class="mini-image-drop" data-action="pickMiniImage" data-action-arg="${escapeAttr(n.id)}">${mediaPreviewHtml(n.type, n.url, n.name || n.value, true)}</div></div>
                     </div>`).join('')}
                 <div class="mini-card comfy-card" data-node="${comfy.id}" style="left:${comfy.x}px;top:${comfy.y}px">
                     <span class="mini-port in"></span><span class="mini-port out"></span>
@@ -101,7 +106,7 @@ function renderMiniCanvasPreview(target = previewCard, large = false){
                         <div class="mini-settings-list">
                             ${settingFields.length ? settingFields.map(f => renderMiniField(f)).join('') : `<div class="preview-empty" style="padding:16px 10px">${tr('comfy.otherParamsHere')}</div>`}
                         </div>
-                        <button id="runBtn" class="run-btn mini-run" type="button" onclick="onRun()">
+                        <button id="runBtn" class="run-btn mini-run" type="button" data-action="onRun">
                             <i data-lucide="play" class="w-4 h-4"></i><span>${tr('comfy.runTest')}</span>
                         </button>
                     </div>
@@ -123,34 +128,34 @@ function renderMiniField(f){
     const v = previewValues[f.id] ?? f.default ?? (f.type==='boolean'?false:(f.type==='number'||f.type==='slider'?0:''));
     if(isMediaField(f)){
         const displayUrl = previewImageUrls[f.id] || (typeof v === 'string' && /^(\/|https?:|blob:|data:)/.test(v) ? v : '');
-        return `<div class="pfield">${label}<div class="mini-image-drop" onclick="pickImage('${f.id}')">${mediaPreviewHtml(fieldKind(f), displayUrl, v, true)}</div></div>`;
+        return `<div class="pfield">${label}<div class="mini-image-drop" data-action="pickImage" data-action-arg="${escapeAttr(f.id)}">${mediaPreviewHtml(fieldKind(f), displayUrl, v, true)}</div></div>`;
     }
     if(fieldKind(f) === 'prompt'){
-        return `<div class="pfield">${label}<textarea class="mini-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
+        return `<div class="pfield">${label}<textarea class="mini-textarea" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true">${escapeHtml(v)}</textarea></div>`;
     }
     if(f.type === 'number'){
         const randomBtn = randomButtonHtml(f);
-        return `<div class="pfield">${label}<div class="pfield-random-row" style="${randomBtn ? '' : 'grid-template-columns:1fr'}"><input class="mini-input" type="number" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value)||0)">${randomBtn}</div></div>`;
+        return `<div class="pfield">${label}<div class="pfield-random-row" style="${randomBtn ? '' : 'grid-template-columns:1fr'}"><input class="mini-input" type="number" value="${escapeAttr(v)}" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true" data-action-value-type="float">${randomBtn}</div></div>`;
     }
     if(f.type === 'slider'){
         const min = f.min ?? 0, max = f.max ?? 10, step = f.step ?? 1;
         return `<div class="pfield">${label}<div class="pfield-random-row" style="grid-template-columns:1fr"><div class="pfield-slider">
-            <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value))">
+            <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(v)}" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true" data-action-value-type="float">
             <span class="pfield-slider-val" data-slider-val="${f.id}">${v}</span>
         </div></div></div>`;
     }
     if(f.type === 'dropdown'){
         const opts = (f.options || []).map(o => `<option value="${escapeAttr(o)}" ${String(v)===String(o)?'selected':''}>${escapeHtml(o)}</option>`).join('');
-        return `<div class="pfield">${label}<select class="pfield-select" onchange="setPreviewValue('${f.id}',this.value)">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
+        return `<div class="pfield">${label}<select class="pfield-select" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
     }
     if(f.type === 'boolean'){
-        return `<div class="pfield">${label}<div class="pfield-bool"><div class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!${!!v});this.classList.toggle('on')"><div class="pfield-bool-thumb"></div></div></div></div>`;
+        return `<div class="pfield">${label}<div class="pfield-bool"><div class="pfield-bool-track ${v?'on':''}" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id, !v]))}'><div class="pfield-bool-thumb"></div></div></div></div>`;
     }
-    return `<div class="pfield">${label}<input class="mini-input" type="text" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',this.value)"></div>`;
+    return `<div class="pfield">${label}<input class="mini-input" type="text" value="${escapeAttr(v)}" data-action="setPreviewValue" data-action-args='${escapeAttr(JSON.stringify([f.id]))}' data-action-value="true"></div>`;
 }
 
 function miniDeleteButton(node){
-    return ['prompt','image'].includes(node.type) ? `<button class="mini-delete" type="button" onclick="removeMiniNode('${node.id}')" title="${escapeAttr(tr('common.delete'))}"><i data-lucide="x" class="w-3 h-3"></i></button>` : '';
+    return ['prompt','image'].includes(node.type) ? `<button class="mini-delete" type="button" data-action="removeMiniNode" data-action-arg="${escapeAttr(node.id)}" title="${escapeAttr(tr('common.delete'))}"><i data-lucide="x" class="w-3 h-3"></i></button>` : '';
 }
 
 function miniLineBetween(a, b){
@@ -191,7 +196,7 @@ async function pickMiniImage(nodeId){
     input.type = 'file';
     const node = miniTestNodes.find(n => n.id === nodeId);
     input.accept = mediaAccept(node?.type || 'image');
-    input.onchange = async () => {
+    input.addEventListener('change', async () => {
         const file = input.files[0];
         if(!file) return;
         if(!node) return;
@@ -199,13 +204,11 @@ async function pickMiniImage(nodeId){
         node.url = URL.createObjectURL(file);
         node.name = file.name;
         renderWorkspaceView();
-        const form = new FormData();
-        form.append('files', file);
         try {
-            const data = await fetch('/api/upload', { method:'POST', body:form }).then(r=>r.json());
+            const data = await uploadWorkflowFile(file);
             node.value = data.files?.[0]?.comfy_name || data.files?.[0]?.filename || file.name;
         } catch(e){ alert(mediaUploadFailedText(node.type)); }
-    };
+    });
     input.click();
 }
 
@@ -213,8 +216,15 @@ function bindMiniCanvas(){
     const canvas = document.getElementById('miniCanvas');
     const world = document.getElementById('miniWorld');
     if(!canvas || !world) return;
+    if(miniCanvasElement){
+        miniCanvasElement.removeEventListener('wheel', miniCanvasWheelHandler);
+        miniCanvasElement.removeEventListener('mousedown', miniCanvasMouseDownHandler);
+    }
+    if(miniCanvasMoveHandler) window.removeEventListener('mousemove', miniCanvasMoveHandler);
+    if(miniCanvasUpHandler) window.removeEventListener('mouseup', miniCanvasUpHandler);
+    miniCanvasElement = canvas;
     const sync = () => { world.style.transform = `translate(${miniView.x}px,${miniView.y}px) scale(${miniView.k})`; };
-    canvas.onwheel = e => {
+    miniCanvasWheelHandler = e => {
         e.preventDefault();
         const old = miniView.k;
         const next = Math.max(0.45, Math.min(1.8, old * (e.deltaY > 0 ? 0.9 : 1.1)));
@@ -225,7 +235,7 @@ function bindMiniCanvas(){
         miniView.k = next;
         sync();
     };
-    canvas.onmousedown = e => {
+    miniCanvasMouseDownHandler = e => {
         if(e.target.closest('textarea,input,select,button,.mini-image-drop')) return;
         const card = e.target.closest('.mini-card');
         if(card && e.target.closest('.mini-card-head')){
@@ -238,7 +248,7 @@ function bindMiniCanvas(){
             canvas.classList.add('is-panning');
         }
     };
-    window.onmousemove = e => {
+    miniCanvasMoveHandler = e => {
         if(!miniDrag) return;
         if(miniDrag.type === 'pan'){
             miniView.x = miniDrag.ox + e.clientX - miniDrag.sx;
@@ -263,10 +273,14 @@ function bindMiniCanvas(){
             }
         }
     };
-    window.onmouseup = () => {
+    miniCanvasUpHandler = () => {
         if(miniDrag?.type === 'pan') canvas.classList.remove('is-panning');
         const shouldRefresh = miniDrag?.type === 'card';
         miniDrag = null;
         if(shouldRefresh) renderWorkspaceView();
     };
+    canvas.addEventListener('wheel', miniCanvasWheelHandler, { passive: false });
+    canvas.addEventListener('mousedown', miniCanvasMouseDownHandler);
+    window.addEventListener('mousemove', miniCanvasMoveHandler);
+    window.addEventListener('mouseup', miniCanvasUpHandler);
 }

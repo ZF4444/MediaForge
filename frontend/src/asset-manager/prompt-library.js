@@ -268,7 +268,7 @@ function renderPromptTreeItem(lib, item){
     const active = item.id === selectedPromptId && !promptCreateMode;
     return `<button class="tree-row tree-item ${active ? 'active' : ''}" type="button" data-prompt-row="${escapeAttr(item.id)}" data-prompt-row-lib="${escapeAttr(lib.id)}" data-prompt-row-cat="${escapeAttr(item.category || 'custom')}">
         <span class="tree-elbow"></span>
-        <input class="tree-item-check" type="checkbox" data-prompt-check="${escapeAttr(item.id)}" ${selectedPromptIds.has(item.id) ? 'checked' : ''} ${readonly ? 'disabled' : ''} onclick="event.stopPropagation()">
+        <input class="tree-item-check" type="checkbox" data-prompt-check="${escapeAttr(item.id)}" ${selectedPromptIds.has(item.id) ? 'checked' : ''} ${readonly ? 'disabled' : ''}>
         <span class="tree-row-icon"><i data-lucide="text-cursor-input"></i></span>
         <span class="tree-row-name">${escapeHtml(item.name || '提示词')}</span>
     </button>`;
@@ -349,7 +349,8 @@ function renderPromptDetail(item, readonly){
     `;
 }
 async function createPromptLibrary(){
-    const name = window.prompt('提示词库名称', '新提示词库');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('提示词库名称', '新提示词库');
     if(!String(name || '').trim()) return;
     const data = await apiJson('/api/prompt-libraries', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
     promptLibrary = data.library || promptLibrary;
@@ -423,7 +424,8 @@ async function deletePromptCategory(){
 }
 async function renamePromptLibrary(){
     const lib = activePromptLibrary();
-    const name = window.prompt('提示词库名称', lib?.name || '');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('提示词库名称', lib?.name || '');
     if(!lib || !String(name || '').trim()) return;
     const data = await apiJson(`/api/prompt-libraries/${encodeURIComponent(lib.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
     promptLibrary = data.library || promptLibrary;
@@ -456,10 +458,11 @@ async function deletePromptLibrary(){
 async function createPromptItem(){
     const lib = activePromptLibrary();
     if(!lib) return;
-    const name = window.prompt('提示词名称', '新提示词');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('提示词名称', '新提示词');
     if(!String(name || '').trim()) return;
-    const scene = window.prompt('用途说明', '') || '';
-    const prompt = window.prompt('提示词内容', '');
+    const scene = await promptFn('用途说明', '') || '';
+    const prompt = await promptFn('提示词内容', '');
     if(!String(prompt || '').trim()) return;
     const category = activePromptCategory || 'custom';
     const data = await apiJson('/api/prompt-libraries/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, prompt, category, scene})});
@@ -489,10 +492,11 @@ async function editPromptItem(id){
     const item = findPromptItem(id);
     const lib = activePromptLibrary();
     if(!item || !lib) return;
-    const name = window.prompt('提示词名称', item.name || '');
+    const promptFn = globalThis.__MediaForgeRuntimeServices?.apiPrompt || ((message, initial) => globalThis.prompt?.(message, initial));
+    const name = await promptFn('提示词名称', item.name || '');
     if(!String(name || '').trim()) return;
-    const scene = window.prompt('用途说明', item.scene || '') || '';
-    const prompt = window.prompt('提示词内容', item.prompt || '');
+    const scene = await promptFn('用途说明', item.scene || '') || '';
+    const prompt = await promptFn('提示词内容', item.prompt || '');
     if(!String(prompt || '').trim()) return;
     const data = await apiJson(`/api/prompt-libraries/items/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:lib.id, name, prompt, category:item.category || 'custom', scene})});
     promptLibrary = data.library || promptLibrary;

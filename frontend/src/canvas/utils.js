@@ -22,11 +22,9 @@
 // 独立的前端 JS 文件（canvas.js / asset-manager.js 等各自维护自己的
 // escapeHtml 等同名函数，互不共享）跨文件引用。
 //
-// tr() 依赖 window.StudioI18n（由 /static/js/i18n.js 提供的外部全局对象），
-// refreshIcons() 依赖 window.lucide（/static/vendor/js/lucide.js 提供），
-// 两者都保留原样的 window.xxx 访问方式，不做改动。
+// tr() 和 refreshIcons() 依赖 canvas runtime 注入的 ESM 兼容对象。
 
-function tr(key){ return window.StudioI18n?.t ? window.StudioI18n.t(key) : key; }
+function tr(key){ return StudioI18n?.t ? StudioI18n.t(key) : key; }
 
 function trf(key, values={}){
     return Object.entries(values).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), tr(key));

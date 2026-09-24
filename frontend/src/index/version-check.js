@@ -32,15 +32,13 @@
         }
 
         function showForceUpdateOverlay(){
-            document.getElementById('versionToast').style.display = 'none';
-            document.getElementById('versionForceOverlay').style.display = 'flex';
+            document.getElementById('versionToast').classList.remove('is-visible');
+            document.getElementById('versionForceOverlay').classList.add('is-visible');
         }
 
         async function checkVersion(){
             try{
-                var res = await fetch('/api/version?' + Date.now());
-                if(!res.ok) return;
-                var v = (await res.text()).trim();
+                var v = (await getVersion()).trim();
                 if(!v) return;
                 if(!initial){ initial = v; return; }
                 if(v === initial) return;
@@ -52,7 +50,7 @@
                     showForceUpdateOverlay();
                 } else {
                     // 仅 c 段变化（或版本号无法解析时兜底为热更新）：维持现有非强制提示。
-                    document.getElementById('versionToast').style.display = 'flex';
+                    document.getElementById('versionToast').classList.add('is-visible');
                 }
             }catch(e){}
         }

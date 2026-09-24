@@ -6,87 +6,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/images/logo.png" type="image/png">
     <title>Fine Angle | 视角微调</title>
-    <script>
-        (function(){
-            try {
-                var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'dark';
-                if(theme === 'dark') {
-                    document.documentElement.classList.add('studio-theme-dark');
-                    document.documentElement.classList.add('theme-dark');
-                }
-            } catch(e) {}
-        })();
-    </script>
-    <script src="/static/vendor/js/tailwindcss-cdn.js"></script>
-    <script src="/static/vendor/js/lucide.js"></script>
-    <script src="/static/js/theme.js"></script>
-    <script src="/static/js/i18n.js"></script>
-    <script src="/static/js/image-preview.js"></script>
-    <script src="/static/js/history-bulk-manager.js"></script>
-    <script src="/static/js/runninghub-client.js"></script>
-    <style>
-        @import url('/static/vendor/css/fonts.css');
-
-        :root {
-            --accent: #111827;
-            --bg: #f9fafb;
-            --card: #ffffff;
-            --easing: cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        *::-webkit-scrollbar { width: 10px !important; height: 10px !important; background: transparent !important; }
-        *::-webkit-scrollbar-track { background: transparent !important; border: none !important; }
-        *::-webkit-scrollbar-thumb {
-            background-color: #d8d8d8 !important;
-            border: 3px solid transparent !important;
-            border-right-width: 5px !important;
-            background-clip: padding-box !important;
-            border-radius: 10px !important;
-        }
-        *::-webkit-scrollbar-thumb:hover { background-color: #c0c0c0 !important; }
-        *::-webkit-scrollbar-corner { background: transparent !important; }
-        * { scrollbar-width: thin !important; scrollbar-color: #d8d8d8 transparent !important; }
-
-        body {
-            background-color: var(--bg);
-            font-family: 'Inter', -apple-system, sans-serif;
-            color: var(--accent);
-            -webkit-font-smoothing: antialiased;
-        }
-
-        .container-box { max-width: 1280px; margin: 0 auto; padding: 0 40px; margin-top: 50px; }
-
-        .glass-btn { background: #111827; transition: all 0.3s var(--easing); }
-        .glass-btn:hover { background: #000; transform: translateY(-1px); box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1); }
-        .glass-btn:active { transform: scale(0.98); }
-
-        .upload-item { background: var(--card); border: 1px dashed #e2e8f0; transition: all 0.4s var(--easing); }
-        .upload-item:hover { border-color: #000; background: #fff; transform: translateY(-2px); }
-
-        .result-frame { background: #ffffff; border-radius: 32px; border: 1px solid #f1f5f9; box-shadow: 0 2px 15px rgba(0, 0, 0, 0.02); }
-
-        .masonry-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem; }
-        @media (min-width: 768px) { .masonry-grid { grid-template-columns: repeat(4, 1fr); } }
-        .masonry-item {
-            aspect-ratio: 1 / 1; background: #fff; border: 1px solid #f1f5f9; border-radius: 24px;
-            overflow: hidden; transition: all 0.5s var(--easing); position: relative;
-        }
-        .masonry-item:hover { transform: translateY(-6px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08); }
-
-        .nano-input { background: #ffffff; border-radius: 16px; transition: all 0.3s ease; border: 1px solid #e5e7eb; }
-        .nano-input:focus { background: #ffffff; box-shadow: 0 0 0 2px #000; border-color: transparent; }
-
-        @keyframes b-loading {
-            0% { transform: scale(1); background: #000; }
-            50% { transform: scale(1.15); background: #444; }
-            100% { transform: scale(1); background: #000; }
-        }
-        .loading-box { width: 10px; height: 10px; animation: b-loading 1s infinite var(--easing); }
-
-        /* 查看器 iframe：填满 02 控制窗口 */
-        #viewerFrame { width: 100%; height: 100%; border: none; display: block; background: #1a1a1a; }
-    </style>
-    <link rel="stylesheet" href="/static/css/theme.css">
+  <script type="module" crossorigin src="/static/dist/gaussian/main.js"></script>
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/modulepreload-polyfill-B5Qt9EMX.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/createElement-Dtn2c4iX.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/lucide-ITmwDkJS.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/http-CEdM5kwk.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/runninghub-client-ehJ7xLZZ.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/_virtual_mediaforge-i18n-BvtUQ5qj.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/user-round-plus-DFSZQka-.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/sliders-horizontal-xxEqB7TQ.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/plug-zap-CNDGycrl.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/wallet-cards-BWpGpWFA.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/check-DJDPzImb.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/upload-CSw-jxW_.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/workflow-_-im3aHL.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/circle-check-Dr9Q9HjR.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/database-Dzkaz4gX.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/folder-open-DaF2CdWT.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/log-out-CeCu8YZV.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/pencil-Bn2y_lpe.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/plus-tks1q2ic.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/refresh-cw-Cl2IWWPq.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/save-D0MJUM0S.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/trash-Cx7YPRpD.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/x-D22GTngk.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/iconsAndAliases-XLlbv124.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/history-DOMi7dAM.js">
+  <link rel="modulepreload" crossorigin href="/static/dist/chunks/index.global-BQ-4UP8e.js">
+  <link rel="stylesheet" crossorigin href="/static/dist/assets/gaussian-DYJLIRbU.css">
+  <link rel="stylesheet" crossorigin href="/static/dist/assets/theme-C30F1HGx.css">
+  <link rel="stylesheet" crossorigin href="/static/dist/assets/fonts-DCnh4XxW.css">
 </head>
 
 <body class="selection:bg-black selection:text-white">
@@ -137,7 +86,7 @@
                         </div>
 
                         <!-- 3D 高斯生成（上） -->
-                        <button id="genGaussianBtn" onclick="handleGenerate()"
+                        <button id="genGaussianBtn" data-gaussian-action="generate"
                             class="glass-btn w-full py-5 text-white rounded-xl font-bold text-[11px] uppercase tracking-[0.4em] flex items-center justify-center gap-3 shadow-xl shadow-black/10 disabled:opacity-50 disabled:cursor-not-allowed">
                             <i data-lucide="sparkles" class="w-4 h-4 text-yellow-400"></i>
                             <span id="genBtnText">3D 高斯生成</span>
@@ -150,7 +99,7 @@
                                 <span id="gen-percent">0%</span>
                             </div>
                             <div class="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                                <div id="gen-progress-bar" class="bg-black h-full rounded-full transition-all duration-300" style="width: 0%"></div>
+                                <div id="gen-progress-bar" class="bg-black h-full rounded-full transition-all duration-300 gaussian-progress-bar"></div>
                             </div>
                         </div>
 
@@ -160,7 +109,7 @@
                         </div>
 
                         <!-- 生成新视角（下） -->
-                        <button id="genBtn" onclick="handleRepair()" disabled
+                        <button id="genBtn" data-gaussian-action="repair" disabled
                             class="glass-btn w-full py-5 text-white rounded-xl font-bold text-[11px] uppercase tracking-[0.4em] flex items-center justify-center gap-3 shadow-xl shadow-black/10 disabled:opacity-50 disabled:cursor-not-allowed">
                             <i data-lucide="zap" id="btnIcon" class="w-4 h-4 text-yellow-400"></i>
                             <span id="btnText">生成新视角</span>
@@ -196,14 +145,14 @@
                                     <span id="cloud-percent">0%</span>
                                 </div>
                                 <div class="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                                    <div id="cloud-progress-bar" class="bg-black h-full rounded-full transition-all duration-300" style="width: 0%"></div>
+                                    <div id="cloud-progress-bar" class="bg-black h-full rounded-full transition-all duration-300 gaussian-progress-bar"></div>
                                 </div>
                             </div>
                         </div>
 
                         <img id="outputImg"
                             class="hidden w-full h-full object-contain p-8 cursor-zoom-in transition-all duration-700 hover:scale-[1.02]"
-                            onclick="zoomImage()">
+                            data-gaussian-action="zoom-image">
 
                         <a id="downloadBtn" href="#" download
                             class="hidden absolute bottom-8 right-8 w-14 h-14 bg-white shadow-2xl rounded-2xl flex items-center justify-center hover:bg-black hover:text-white transition-all duration-500 border border-gray-100">
@@ -226,12 +175,12 @@
         </section>
     </div>
 
-    <div id="lightbox" onclick="handleOutsideClick(event)"
+    <div id="lightbox" data-gaussian-action="outside-click"
         class="hidden fixed inset-0 z-50 bg-white/95 backdrop-blur-3xl flex items-center justify-center p-8">
-        <button onclick="closeLightbox()" class="absolute top-10 right-10 p-2 hover:rotate-90 transition-transform duration-500">
+        <button data-gaussian-action="close-lightbox" class="absolute top-10 right-10 p-2 hover:rotate-90 transition-transform duration-500">
             <i data-lucide="x" class="w-8 h-8"></i>
         </button>
-        <div class="w-full h-full flex flex-col items-center justify-center" style="max-width:min(1280px, 92vw)">
+        <div class="w-full h-full flex flex-col items-center justify-center gaussian-lightbox-content">
             <div id="lightboxFrame" class="studio-preview-frame hidden">
                 <img id="lightboxImg" src="" class="studio-preview-img" alt="preview">
                 <div id="lightboxRes" data-no-pan
@@ -239,7 +188,7 @@
                 </div>
             </div>
             <div class="mt-8">
-                <button onclick="downloadLightboxImage()"
+                <button data-gaussian-action="download-lightbox"
                     class="px-10 py-4 bg-black text-white rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-3 shadow-xl">
                     <i data-lucide="save" class="w-4 h-4"></i> Save Master
                 </button>
@@ -247,490 +196,6 @@
         </div>
     </div>
 
-    <script>
-        // ===== RunningHub「3D高斯泼溅修复」配置 =====
-        const RH_WEBAPP_ID = "2062741736430063617";
-        const RH_NODE_GAUSSIAN = "38";   // GaussianImage（查看器渲染图）
-        const RH_NODE_SOURCE = "40";     // SourceImage（输入图）
-
-        // 3D高斯泼溅生成 AI 应用
-        const GEN_WEBAPP_ID = "2062753529172938753";
-        const GEN_NODE_IMAGE = "18";     // 输入图
-
-        const fileInput = document.getElementById('fileInput');
-        const dropzone = document.getElementById('dropzone');
-        const previewImg = document.getElementById('previewImg');
-        const viewerFrame = document.getElementById('viewerFrame');
-
-        let uploadedFile = null;     // 输入源图(File)
-        let currentResult = null;
-        let plyLoaded = false;       // 查看器是否已成功加载生成的 PLY（门控开始修复）
-
-        // 生成进度条
-        function updateGenProgress(data) {
-            const container = document.getElementById('gen-progress-container');
-            const statusText = document.getElementById('gen-status-text');
-            const bar = document.getElementById('gen-progress-bar');
-            const pct = document.getElementById('gen-percent');
-            if (!container) return;
-            container.classList.remove('hidden');
-            if (data.status) statusText.innerText = data.status;
-            if (typeof data.progress !== 'undefined') {
-                const p = Math.min(100, Math.round(data.progress));
-                bar.style.width = `${p}%`;
-                pct.innerText = `${p}%`;
-            }
-        }
-
-        // 进度条
-        function updateCloudProgress(data) {
-            const container = document.getElementById('cloud-progress-container');
-            const statusText = document.getElementById('cloud-status-text');
-            const progressBar = document.getElementById('cloud-progress-bar');
-            const percentText = document.getElementById('cloud-percent');
-            if (!container) return;
-            container.classList.remove('hidden');
-            if (data.status) statusText.innerText = data.status;
-            if (typeof data.progress !== 'undefined') {
-                const percent = Math.min(100, Math.round(data.progress));
-                progressBar.style.width = `${percent}%`;
-                percentText.innerText = `${percent}%`;
-            }
-        }
-
-        // ===== 输入图上传（与角度控制一致）=====
-        dropzone.addEventListener('click', () => fileInput.click());
-        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('border-black'); });
-        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-black'));
-        dropzone.addEventListener('drop', (e) => {
-            e.preventDefault(); dropzone.classList.remove('border-black');
-            const f = e.dataTransfer.files && e.dataTransfer.files[0];
-            if (f) handleFile(f);
-        });
-        fileInput.addEventListener('change', (e) => {
-            const f = e.target.files && e.target.files[0];
-            if (f) handleFile(f);
-        });
-
-        async function handleFile(file) {
-            if (!file || !/^image\//.test(file.type)) return;
-            uploadedFile = file;
-            refreshLeaveGuard();
-
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                previewImg.src = e.target.result;
-                previewImg.classList.remove('hidden');
-                document.getElementById('uploadContent').classList.add('opacity-0');
-                document.getElementById('changeOverlay').classList.replace('hidden', 'flex');
-                // 读取宽高 -> 通知查看器按其宽高 + FOV 计算 intrinsics
-                const probe = new Image();
-                probe.onload = () => {
-                    if (viewerFrame.contentWindow) {
-                        viewerFrame.contentWindow.postMessage({
-                            type: 'SET_SOURCE_INTRINSICS', width: probe.naturalWidth, height: probe.naturalHeight
-                        }, '*');
-                    }
-                };
-                probe.src = e.target.result;
-            };
-            reader.readAsDataURL(file);
-
-        }
-
-        // ===== 3D 高斯生成：输入图 -> 工作流 -> PLY URL -> 自动喂给查看器 =====
-        window.handleGenerate = async function handleGenerate() {
-            if (!uploadedFile) {
-                dropzone.style.transition = '0.2s';
-                dropzone.style.borderColor = '#ef4444';
-                setTimeout(() => { dropzone.style.borderColor = ''; }, 300);
-                return;
-            }
-            const btn = document.getElementById('genGaussianBtn');
-            const btnText = document.getElementById('genBtnText');
-            btn.disabled = true;
-            const original = btnText.innerText;
-            btnText.innerText = 'Generating';
-            // 生成新模型期间，先禁用开始修复
-            plyLoaded = false;
-            setRepairEnabled(false);
-            document.getElementById('gen-progress-container').classList.add('hidden');
-            document.getElementById('gen-progress-bar').style.width = '0%';
-            document.getElementById('gen-percent').innerText = '0%';
-
-            try {
-                // 解析 RunningHub 目标资源（connection_id / resource_id），
-                // 上传、提交、查询都必须携带，否则后端会拒绝素材上传。
-                const genTarget = await RunningHubClient.resolveTarget(GEN_WEBAPP_ID);
-
-                updateGenProgress({ status: '上传参考图...', progress: 10 });
-                const imageFileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'source.png', genTarget);
-
-                updateGenProgress({ status: 'Queueing...', progress: 30 });
-                const taskId = await RunningHubClient.submitTask({
-                    webappId: GEN_WEBAPP_ID,
-                    nodeInfoList: [
-                        { nodeId: GEN_NODE_IMAGE, fieldName: 'image', fieldValue: imageFileName, description: 'image' }
-                    ],
-                    instanceType: 'default',
-                    connection_id: genTarget.connection_id,
-                    resource_id: genTarget.resource_id
-                });
-
-                const data = await RunningHubClient.pollTask(taskId, {
-                    persistOutputs: false,
-                    connection_id: genTarget.connection_id,
-                    resource_id: genTarget.resource_id,
-                    onUpdate(task) {
-                        if (task.status === 'QUEUED') updateGenProgress({ status: 'Queueing...', progress: 45 });
-                        else if (task.status === 'RUNNING') updateGenProgress({ status: 'Generating...', progress: 70 });
-                    }
-                });
-                const urls = data.urls || [];
-                let plyUrl = urls.find(u => /\.ply(\?|$)/i.test(u)) || urls[0];
-                if (!plyUrl) throw new Error('生成输出为空');
-
-                updateGenProgress({ status: '加载到查看器...', progress: 95 });
-                // 把生成的 PLY URL 推送给查看器加载（成功后会回传 PLY_LOADED 解锁修复）
-                if (viewerFrame.contentWindow) {
-                    viewerFrame.contentWindow.postMessage({ type: 'LOAD_PLY_URL', url: plyUrl }, '*');
-                }
-                document.getElementById('genState').innerHTML =
-                    '<i data-lucide="check-circle" class="w-12 h-12 mx-auto stroke-[1px] text-green-500"></i>' +
-                    '<p class="text-[10px] font-bold uppercase tracking-[0.3em] mt-3">已生成，正在载入查看器…</p>';
-                if (window.lucide) lucide.createIcons();
-            } catch (err) {
-                console.error(err);
-                updateGenProgress({ status: '失败', progress: 0 });
-                if (!err.silent) alert(err.message);
-            } finally {
-                btn.disabled = false;
-                btnText.innerText = original;
-            }
-        };
-
-        // 启用/禁用「开始修复」按钮
-        function setRepairEnabled(enabled) {
-            const btn = document.getElementById('genBtn');
-            if (btn) btn.disabled = !enabled;
-        }
-
-        // 向宿主声明/取消"离开本页需确认"守卫
-        function setLeaveGuard(active) {
-            try { window.parent.postMessage({ type: 'page-guard', page: 'gaussian', active: !!active }, '*'); } catch (e) {}
-        }
-        // 根据当前是否有内容自动更新守卫
-        function refreshLeaveGuard() {
-            setLeaveGuard(!!(uploadedFile || plyLoaded || currentResult));
-        }
-
-        // ===== 向查看器请求当前视角渲染图（GaussianImage）=====
-        function requestViewerRender(timeout = 15000) {
-            return new Promise((resolve, reject) => {
-                if (!viewerFrame.contentWindow) { reject(new Error('查看器未就绪')); return; }
-                const reqId = 'r_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-                const onMsg = (event) => {
-                    const m = event.data || {};
-                    if (m.request_id !== reqId) return;
-                    window.removeEventListener('message', onMsg);
-                    clearTimeout(timer);
-                    if (m.type === 'RENDER_RESULT' && m.image) resolve(m.image);
-                    else reject(new Error(m.error || '渲染失败'));
-                };
-                const timer = setTimeout(() => { window.removeEventListener('message', onMsg); reject(new Error('渲染超时')); }, timeout);
-                window.addEventListener('message', onMsg);
-                viewerFrame.contentWindow.postMessage({ type: 'REQUEST_RENDER', request_id: reqId }, '*');
-            });
-        }
-
-        // dataURL -> Blob
-        function dataUrlToBlob(dataUrl) {
-            const [head, b64] = dataUrl.split(',');
-            const mime = (head.match(/data:(.*?);/) || [,'image/png'])[1];
-            const bin = atob(b64);
-            const arr = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-            return new Blob([arr], { type: mime });
-        }
-
-        async function runRepairTask() {
-            // 解析 RunningHub 目标资源（connection_id / resource_id），
-            // 上传、提交、查询都必须携带，否则后端会拒绝素材上传。
-            const repairTarget = await RunningHubClient.resolveTarget(RH_WEBAPP_ID);
-
-            // 1. 输入源图 -> SourceImage fileName
-            updateCloudProgress({ status: '上传参考图...', progress: 10 });
-            const sourceFileName = await RunningHubClient.uploadFile(uploadedFile, uploadedFile.name || 'source.png', repairTarget);
-
-            // 2. 查看器渲染图 -> GaussianImage fileName
-            updateCloudProgress({ status: '渲染高斯视角...', progress: 25 });
-            const renderDataUrl = await requestViewerRender();
-            updateCloudProgress({ status: '上传渲染图...', progress: 40 });
-            const gaussianFileName = await RunningHubClient.uploadFile(dataUrlToBlob(renderDataUrl), 'gaussian_render.png', repairTarget);
-
-            // 3. 提交任务
-            updateCloudProgress({ status: 'Queueing...', progress: 55 });
-            const taskId = await RunningHubClient.submitTask({
-                webappId: RH_WEBAPP_ID,
-                nodeInfoList: [
-                    { nodeId: RH_NODE_GAUSSIAN, fieldName: 'image', fieldValue: gaussianFileName, description: 'GaussianImage' },
-                    { nodeId: RH_NODE_SOURCE, fieldName: 'image', fieldValue: sourceFileName, description: 'SourceImage' }
-                ],
-                instanceType: 'default',
-                connection_id: repairTarget.connection_id,
-                resource_id: repairTarget.resource_id
-            });
-
-                const data = await RunningHubClient.pollTask(taskId, {
-                    persistOutputs: false,
-                    connection_id: repairTarget.connection_id,
-                    resource_id: repairTarget.resource_id,
-                    onUpdate(task) {
-                        if (task.status === 'QUEUED') updateCloudProgress({ status: 'Queueing...', progress: 60 });
-                        else if (task.status === 'RUNNING') updateCloudProgress({ status: 'Generating...', progress: 80 });
-                    }
-                });
-            const urls = data.urls || [];
-            if (!urls.length) throw new Error('修复输出为空');
-            updateCloudProgress({ status: 'Done', progress: 100 });
-            return { images: urls };
-        }
-
-        window.handleRepair = async function handleRepair() {
-            if (!uploadedFile) {
-                dropzone.style.transition = '0.2s';
-                dropzone.style.borderColor = '#ef4444';
-                dropzone.style.transform = 'scale(0.98)';
-                setTimeout(() => { dropzone.style.borderColor = ''; dropzone.style.transform = 'scale(1)'; }, 300);
-                return;
-            }
-            if (!plyLoaded) { alert('请先点击「3D 高斯生成」并等待模型载入查看器'); return; }
-
-            const btn = document.getElementById('genBtn');
-            btn.disabled = true;
-            btn.style.backgroundColor = '#333';
-            btn.innerHTML = `<i data-lucide="zap" class="w-4 h-4 text-yellow-400 fill-yellow-400 animate-pulse"></i><span class="tracking-[0.4em] text-[11px] uppercase">Processing</span>`;
-            lucide.createIcons();
-
-            document.getElementById('emptyState').classList.add('hidden');
-            document.getElementById('outputImg').classList.add('hidden');
-            document.getElementById('loadingState').classList.remove('hidden');
-            document.getElementById('cloud-progress-container').classList.add('hidden');
-            document.getElementById('cloud-progress-bar').style.width = '0%';
-            document.getElementById('cloud-percent').innerText = '0%';
-
-            try {
-                const data = await runRepairTask();
-                currentResult = data;
-                refreshLeaveGuard();
-                const outputImg = document.getElementById('outputImg');
-                const downloadBtn = document.getElementById('downloadBtn');
-                outputImg.src = data.images[0];
-                outputImg.classList.remove('hidden');
-                document.getElementById('loadingState').classList.add('hidden');
-                downloadBtn.href = data.images[0];
-                downloadBtn.classList.remove('hidden');
-                downloadBtn.download = `Gaussian-Repair-${Date.now()}.png`;
-                // 持久化到历史归档（type=gaussian），刷新后仍可见
-                try {
-                    await fetch('/api/history/save', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ images: data.images, type: 'gaussian', prompt: 'Gaussian Repair', is_cloud: true })
-                    });
-                } catch (e) { console.error('保存历史失败', e); }
-                loadHistory();
-            } catch (err) {
-                console.error(err);
-                document.getElementById('loadingState').classList.add('hidden');
-                document.getElementById('emptyState').classList.remove('hidden');
-                if (!err.silent) alert(err.message);
-            } finally {
-                btn.disabled = !plyLoaded;
-                btn.style.backgroundColor = '';
-                btn.innerHTML = `<i data-lucide="zap" id="btnIcon" class="w-4 h-4 text-yellow-400"></i><span id="btnText">生成新视角</span>`;
-                lucide.createIcons();
-            }
-        };
-
-        // ===== 结果放大/灯箱 =====
-        window.zoomImage = () => { const img = document.getElementById('outputImg'); if (img.src) openLightbox(img.src); };
-
-        // ===== 归档（沿用角度控制：type=gaussian）=====
-        let allHistory = [];
-        let currentIndex = 0;
-        const PAGE_SIZE = 12;
-
-        function renderImageCard(data, isNew = false) {
-            const masonry = document.getElementById('masonry');
-            const imgUrl = data.images ? data.images[0] : '';
-            if (!imgUrl) return;
-            const card = document.createElement('div');
-            card.className = 'masonry-item relative group cursor-pointer';
-            card.dataset.historyTs = data.timestamp;
-            card.id = 'history-' + data.timestamp;
-            card.onclick = () => { if (document.body.classList.contains('history-bulk-selecting')) return; openLightbox(imgUrl); };
-            const isCloud = data.is_cloud || (imgUrl && imgUrl.includes('runninghub'));
-            const badgeHtml = isCloud ? `<div class="absolute top-3 left-3 z-10"><img src="/static/images/RunningHub-B.png" class="h-4 w-auto object-contain bg-white/90 rounded-full p-0.5 shadow-sm"></div>` : '';
-            card.innerHTML = `
-                <img src="${imgUrl}" class="w-full h-full object-cover block transform group-hover:scale-105 transition-transform duration-[1.5s]">
-                ${badgeHtml}`;
-            if (isNew) masonry.prepend(card); else masonry.appendChild(card);
-        }
-
-        function loadNextPage() {
-            const batch = allHistory.slice(currentIndex, currentIndex + PAGE_SIZE);
-            if (!batch.length) return;
-            batch.forEach(item => renderImageCard(item));
-            currentIndex += PAGE_SIZE;
-        }
-
-        async function loadHistory() {
-            try {
-                const res = await fetch('/api/history?type=gaussian');
-                const history = await res.json();
-                if (Array.isArray(history)) {
-                    allHistory = history;
-                    document.getElementById('masonry').innerHTML = '';
-                    currentIndex = 0;
-                    loadNextPage();
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        // ===== 灯箱 =====
-        let lightboxPreview = null;
-        function ensureLightboxPreview() {
-            if (!lightboxPreview && window.StudioImagePreview) {
-                lightboxPreview = StudioImagePreview.attach(document.getElementById('lightboxFrame'));
-            }
-            return lightboxPreview;
-        }
-        function openLightbox(url) {
-            const frame = document.getElementById('lightboxFrame');
-            const img = document.getElementById('lightboxImg');
-            const resPill = document.getElementById('lightboxRes');
-            resPill.style.opacity = '0';
-            ensureLightboxPreview();
-            if (lightboxPreview) lightboxPreview.reset();
-            img.src = url;
-            const lb = document.getElementById('lightbox');
-            lb.classList.replace('hidden', 'flex');
-            frame.classList.remove('hidden');
-            document.body.style.overflow = 'hidden';
-            const updateRes = () => { if (img.naturalWidth) { resPill.innerText = `${img.naturalWidth} x ${img.naturalHeight}`; resPill.style.opacity = '1'; } };
-            img.onload = updateRes;
-            if (img.complete) updateRes();
-        }
-        window.closeLightbox = function () {
-            if (lightboxPreview) lightboxPreview.reset();
-            document.getElementById('lightbox').classList.replace('flex', 'hidden');
-            document.body.style.overflow = 'auto';
-        };
-        window.handleOutsideClick = (e) => { if (e.target.id === 'lightbox') window.closeLightbox(); };
-        window.downloadLightboxImage = function () {
-            const img = document.getElementById('lightboxImg');
-            if (!img.src) return;
-            const a = document.createElement('a');
-            a.href = img.src; a.download = `Gaussian-Repair-${Date.now()}.png`;
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        };
-
-        // ===== 监听查看器就绪 =====
-        window.addEventListener('message', (event) => {
-            const m = event.data || {};
-            // 宿主询问能否离开本页
-            if (m.type === 'page-leave-check' && m.from === 'gaussian') {
-                const hadContent = !!(uploadedFile || plyLoaded || currentResult);
-                if (hadContent) {
-                    const ok = confirm('确定离开「高斯修复」页面吗？\n当前的上传图、生成模型与修复结果将被清空。');
-                    if (!ok) return; // 用户取消：留在本页，不切换
-                }
-                // 允许离开：通知宿主切换到目标页，并重置本页
-                resetPage();
-                window.parent.postMessage({ type: 'page-leave-allow', from: 'gaussian', target: m.target }, '*');
-                return;
-            }
-            // 兜底：宿主直接要求隐藏/重置（force 切换路径）
-            if (m.type === 'page-hidden' && m.page === 'gaussian') { resetPage(); return; }
-            if (m.type === 'PLY_LOADED') {
-                plyLoaded = true;
-                refreshLeaveGuard();
-                setRepairEnabled(true);
-                updateGenProgress({ status: '已载入查看器', progress: 100 });
-                const genState = document.getElementById('genState');
-                if (genState) {
-                    genState.innerHTML =
-                        '<i data-lucide="check-circle" class="w-12 h-12 mx-auto stroke-[1px] text-green-500"></i>' +
-                        '<p class="text-[10px] font-bold uppercase tracking-[0.3em] mt-3">高斯模型已就绪，可开始修复</p>';
-                    if (window.lucide) lucide.createIcons();
-                }
-            }
-            else if (m.type === 'PLY_LOAD_ERROR') {
-                plyLoaded = false;
-                setRepairEnabled(false);
-                updateGenProgress({ status: '载入失败: ' + (m.error || ''), progress: 0 });
-            }
-        });
-
-        // ===== 切出本页时重置 =====
-        function resetPage() {
-            // 状态变量
-            uploadedFile = null;
-            plyLoaded = false;
-            currentResult = null;
-            setLeaveGuard(false);
-
-            // 01 输入图
-            if (fileInput) fileInput.value = '';
-            if (previewImg) { previewImg.removeAttribute('src'); previewImg.classList.add('hidden'); }
-            const uploadContent = document.getElementById('uploadContent');
-            if (uploadContent) uploadContent.classList.remove('opacity-0');
-            const changeOverlay = document.getElementById('changeOverlay');
-            if (changeOverlay) changeOverlay.classList.replace('flex', 'hidden');
-
-            // 02 生成状态/进度 + 修复按钮
-            const genState = document.getElementById('genState');
-            if (genState) {
-                genState.innerHTML =
-                    '<i data-lucide="box" class="w-10 h-10 mx-auto stroke-[1px]"></i>' +
-                    '<p class="text-[10px] font-bold uppercase tracking-[0.3em]">上传参考图后，点击生成 3D 高斯模型</p>';
-            }
-            const genProg = document.getElementById('gen-progress-container');
-            if (genProg) genProg.classList.add('hidden');
-            const genBar = document.getElementById('gen-progress-bar');
-            if (genBar) genBar.style.width = '0%';
-            const genPct = document.getElementById('gen-percent');
-            if (genPct) genPct.innerText = '0%';
-            const genBtnEl = document.getElementById('genGaussianBtn');
-            if (genBtnEl) genBtnEl.disabled = false;
-            setRepairEnabled(false);
-
-            // 03 查看器：重载 iframe 清空已加载的 PLY
-            if (viewerFrame) {
-                viewerFrame.src = '/static/gaussian-viewer.html?embed=1';
-            }
-
-            // 04 结果预览
-            const outputImg = document.getElementById('outputImg');
-            if (outputImg) { outputImg.removeAttribute('src'); outputImg.classList.add('hidden'); }
-            const downloadBtn = document.getElementById('downloadBtn');
-            if (downloadBtn) downloadBtn.classList.add('hidden');
-            const loadingState = document.getElementById('loadingState');
-            if (loadingState) loadingState.classList.add('hidden');
-            const emptyState = document.getElementById('emptyState');
-            if (emptyState) emptyState.classList.remove('hidden');
-            const cloudProg = document.getElementById('cloud-progress-container');
-            if (cloudProg) cloudProg.classList.add('hidden');
-
-            if (window.lucide) lucide.createIcons();
-        }
-
-        // 初始化
-        if (window.lucide) lucide.createIcons();
-        loadHistory();
-        // 归档批量管理（管理 / 多选 / 删除），与角度控制页一致
-        window.HistoryBulkManager?.attach({ masonry: '#masonry' });
-    </script>
 </body>
 
 </html>

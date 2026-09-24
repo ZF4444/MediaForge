@@ -685,7 +685,8 @@ async function downloadPreviewGroup(){
     if(!items.length) return;
     try {
         const filename = safeExportFileName(`${node?.title || 'image-group'}.zip`, 'image-group.zip');
-        const response = await fetch('/api/canvas-assets/download', {
+        const apiBlob = globalThis.__MediaForgeRuntimeServices?.apiBlob;
+        const response = apiBlob ? await apiBlob('/api/canvas-assets/download', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
@@ -693,9 +694,10 @@ async function downloadPreviewGroup(){
                 urls:items.map(item => fileDownloadUrl(item) || item.url).filter(Boolean),
                 items:items.map((item, index) => ({url:fileDownloadUrl(item) || item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))
             })
-        });
-        if(!response.ok) throw new Error((await response.text()) || '批量下载失败');
-        const blob = await response.blob();
+        }) : await fetch('/api/canvas-assets/download', {
+            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({filename, urls:items.map(item => fileDownloadUrl(item) || item.url).filter(Boolean), items:items.map((item, index) => ({url:fileDownloadUrl(item) || item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))})
+        }).then(async res => { if(!res.ok) throw new Error((await res.text()) || '批量下载失败'); return res.blob(); });
+        const blob = response;
         const href = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = href;
@@ -723,7 +725,8 @@ async function downloadGroupNodeImages(node){
     if(items.length === 1){ downloadPreviewFile(items[0]); return; }
     try {
         const filename = safeExportFileName(`${node.title || 'image-group'}.zip`, 'image-group.zip');
-        const response = await fetch('/api/canvas-assets/download', {
+        const apiBlob = globalThis.__MediaForgeRuntimeServices?.apiBlob;
+        const response = apiBlob ? await apiBlob('/api/canvas-assets/download', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
@@ -731,9 +734,8 @@ async function downloadGroupNodeImages(node){
                 urls:items.map(item => fileDownloadUrl(item) || item.url).filter(Boolean),
                 items:items.map((item, index) => ({url:fileDownloadUrl(item) || item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))
             })
-        });
-        if(!response.ok) throw new Error((await response.text()) || '批量下载失败');
-        const blob = await response.blob();
+        }) : await fetch('/api/canvas-assets/download', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({filename, urls:items.map(item => fileDownloadUrl(item) || item.url).filter(Boolean), items:items.map((item, index) => ({url:fileDownloadUrl(item) || item.url, name:downloadNameForMediaItem(item, `image-${String(index + 1).padStart(2, '0')}`)}))})}).then(async res => { if(!res.ok) throw new Error((await res.text()) || '批量下载失败'); return res.blob(); });
+        const blob = response;
         const href = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = href;

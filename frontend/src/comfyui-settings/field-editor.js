@@ -11,7 +11,7 @@
 // 弹层内容刷新（refreshPopupBody，跟 node-graph-editor.js 的
 // openNodePopup 配合使用）。
 //
-// 经典 <script>，非 ES module，原因同 comfy-instances.js。
+// 作为共享词法作用域的一部分，由 ComfyUI 页面的虚拟 ESM 入口组装。
 //
 // 依赖 main.js 保留的核心状态和函数：currentConfig（字段配置数组
 // currentConfig.fields 就是本模块主要操作的数据）、popupNodeId（当前
@@ -136,15 +136,15 @@ function renderInputRow(nodeId, inputKey, rawValue){
     const showOriginal = friendlyName !== inputKey;
     return `
         <div class="input-row ${active?'is-active':''} ${showExtras?'has-extras':''}">
-            <div class="check-toggle ${active?'checked':''}" onclick="toggleField('${escapeAttr(nodeId)}','${escapeAttr(inputKey)}')">
+            <div class="check-toggle ${active?'checked':''}" data-action="toggleField" data-action-args='${escapeAttr(JSON.stringify([nodeId, inputKey]))}'>
                 ${active ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}
             </div>
             <div class="input-info">
                 <div class="input-key">${escapeHtml(friendlyName)}${showOriginal ? ` <span style="font-size:10px;font-weight:600;color:var(--faint);margin-left:4px">${escapeHtml(inputKey)}</span>` : ''}</div>
                 <div class="input-orig">${tr('comfy.defaultValue')}${valueBadge}</div>
             </div>
-            <input class="small-input" type="text" placeholder="${tr('comfy.displayName')}" value="${active?escapeAttr(f.name):escapeAttr(friendlyName)}" ${active?'':'disabled'} oninput="updateField('${active?f.id:''}','name',this.value)">
-            <select class="small-select" ${active?'':'disabled'} onchange="updateField('${active?f.id:''}','type',this.value)">
+            <input class="small-input" type="text" placeholder="${tr('comfy.displayName')}" value="${active?escapeAttr(f.name):escapeAttr(friendlyName)}" ${active?'':'disabled'} data-action="updateField" data-action-args='${escapeAttr(JSON.stringify([active ? f.id : '', 'name']))}' data-action-value="true">
+            <select class="small-select" ${active?'':'disabled'} data-action="updateField" data-action-args='${escapeAttr(JSON.stringify([active ? f.id : '', 'type']))}' data-action-value="true">
                 ${TYPES.map(t=>`<option value="${t.v}" ${active && f.type===t.v?'selected':''}>${typeLabel(t.v)}</option>`).join('')}
             </select>
             ${active ? renderExtras(f) : ''}
@@ -155,13 +155,13 @@ function renderInputRow(nodeId, inputKey, rawValue){
 function renderExtras(f){
     if(f.type === 'slider' || f.type === 'number'){
         const randomToggle = f.type === 'number'
-            ? `<label class="random-toggle" onclick="event.stopPropagation()"><input type="checkbox" ${f.random_enabled === true ? 'checked' : ''} onchange="updateField('${f.id}','random_enabled',this.checked)">随机数</label>`
+            ? `<label class="random-toggle" data-stop-propagation><input type="checkbox" ${f.random_enabled === true ? 'checked' : ''} data-action="updateField" data-action-args='${escapeAttr(JSON.stringify([f.id, 'random_enabled']))}' data-action-value="true">随机数</label>`
             : '';
         return `<div class="extras-row">
-            <div class="extra-pair">min<input class="small-input" type="number" value="${f.min ?? ''}" oninput="updateField('${f.id}','min',this.value===''?null:parseFloat(this.value))"></div>
-            <div class="extra-pair">max<input class="small-input" type="number" value="${f.max ?? ''}" oninput="updateField('${f.id}','max',this.value===''?null:parseFloat(this.value))"></div>
-            <div class="extra-pair">step<input class="small-input" type="number" value="${f.step ?? ''}" oninput="updateField('${f.id}','step',this.value===''?null:parseFloat(this.value))"></div>
-            <div class="extra-pair">${tr('comfy.defaultValue')}<input class="small-input" type="number" value="${f.default ?? ''}" oninput="updateField('${f.id}','default',this.value===''?null:parseFloat(this.value))"></div>
+            <div class="extra-pair">min<input class="small-input" type="number" value="${f.min ?? ''}" data-action="updateField" data-action-args='${escapeAttr(JSON.stringify([f.id, 'min']))}' data-action-value="true" data-action-value-type="float"></div>
+            <div class="extra-pair">max<input class="small-input" type="number" value="${f.max ?? ''}" data-action="updateField" data-action-args='${escapeAttr(JSON.stringify([f.id, 'max']))}' data-action-value="true" data-action-value-type="float"></div>
+            <div class="extra-pair">step<input class="small-input" type="number" value="${f.step ?? ''}" data-action="updateField" data-action-args='${escapeAttr(JSON.stringify([f.id, 'step']))}' data-action-value="true" data-action-value-type="float"></div>
+            <div class="extra-pair">${tr('comfy.defaultValue')}<input class="small-input" type="number" value="${f.default ?? ''}" data-action="updateField" data-action-args='${escapeAttr(JSON.stringify([f.id, 'default']))}' data-action-value="true" data-action-value-type="float"></div>
             ${randomToggle}
         </div>`;
     }
@@ -177,10 +177,9 @@ function renderExtras(f){
                 <div class="dropdown-opt-row">
                     <span class="opt-index">${i + 1}</span>
                     <input class="small-input" type="text" placeholder="选项 ${i + 1}" value="${escapeAttr(o)}"
-                        onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"
-                        oninput="updateDropdownOption('${fid}', ${i}, this.value, this)">
+                        data-stop-propagation data-action="updateDropdownOption" data-action-args='${escapeAttr(JSON.stringify([f.id, i]))}' data-action-value="true" data-action-target="true">
                     ${tag}
-                    <button class="opt-del" type="button" onclick="event.stopPropagation();removeDropdownOption('${fid}', ${i})" title="删除"><i data-lucide="x" class="w-3 h-3"></i></button>
+                    <button class="opt-del" type="button" data-stop-propagation data-action="removeDropdownOption" data-action-args='${escapeAttr(JSON.stringify([f.id, i]))}' title="删除"><i data-lucide="x" class="w-3 h-3"></i></button>
                 </div>
             `;
         }).join('');
@@ -189,7 +188,7 @@ function renderExtras(f){
                 下拉选项 <span style="color:var(--faint)">· 数字形式自动作为数值传给 ComfyUI</span>
             </div>
             ${rows}
-            <button class="ghost-btn" type="button" onclick="event.stopPropagation();addDropdownOption('${fid}')" style="height:34px;padding:0 16px;font-size:12px;font-weight:800;align-self:flex-start;gap:6px"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>添加选项</span></button>
+            <button class="ghost-btn" type="button" data-stop-propagation data-action="addDropdownOption" data-action-arg="${fid}" style="height:34px;padding:0 16px;font-size:12px;font-weight:800;align-self:flex-start;gap:6px"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>添加选项</span></button>
         </div>`;
     }
     return '';

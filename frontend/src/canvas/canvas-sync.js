@@ -129,9 +129,9 @@ async function mergeReloadCanvasNow(){
         return;
     }
     try {
-        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
-        if(!res.ok) return;
-        const data = await res.json();
+        const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+        const data = apiJson ? await apiJson(`/api/canvases/${encodeURIComponent(canvasId)}`, {allowErrorResponse:true}) : await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`).then(async res => res.ok ? res.json() : null);
+        if(!data) return;
         if(data && data.canvas) applyMergedServerCanvas(data.canvas);
     } catch(e) {}
 }
@@ -155,9 +155,9 @@ function startCanvasMetaPoll(){
         if(!canvasId || !canvas) return;
         if(canvasSyncInFlight || dragState || selectionState) return;
         try {
-            const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}/meta`);
-            if(!res.ok) return;
-            const meta = await res.json();
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const meta = apiJson ? await apiJson(`/api/canvases/${encodeURIComponent(canvasId)}/meta`, {allowErrorResponse:true}) : await fetch(`/api/canvases/${encodeURIComponent(canvasId)}/meta`).then(async res => res.ok ? res.json() : null);
+            if(!meta) return;
             if(Number(meta.updated_at || 0) > Number(canvas.updated_at || 0)) mergeReloadCanvasNow();
         } catch(e) {}
     }, 8000);

@@ -1,5 +1,7 @@
-// index.html（应用外壳/app shell）—— 帮助面板 + 反馈组件 + 系统公告子系统
-// （拆分自 static/index.html 内联 <script>）。
+import { renderMarkdown } from '../shared/markdown.js';
+import { apiJson } from '../services/http.js';
+
+// Application shell help, feedback, and announcement widgets.
 //
 // 范围三块，物理上相邻、逻辑各自独立：
 // 1. 反馈组件（initFeedbackWidget IIFE）：用户提交反馈的弹层——打开/
@@ -14,26 +16,9 @@
 //    的公告检查 IIFE）：管理员可以推送全局公告，用户看过一次后不再
 //    弹出（用 localStorage 记录已读状态）。
 //
-// 三块都是经典 <script>（非 ES module，原因见 frontend/README.md），
-// 且前两块本身已经用 IIFE 包裹形成私有作用域（这是原作者就采用的写法，
-// 不是本次迁移引入的）——这意味着 initFeedbackWidget/initHelpDrawer
-// 内部的函数（openFeedback/closeHelp 等）不会污染全局作用域，物理搬移
-// 这两个 IIFE 到独立文件是本次会话里风险最低的一类拆分：整个 IIFE
-// 作为一个不可分割的单元搬移，内部实现完全不变。
-//
-// 跨模块桥接：initHelpDrawer 内部有一行 `window.closeHelpDrawer =
-// closeHelp;`（显式挂到 window），这是因为 main.js 保留的 switchUI
-// 函数需要在切换页面时调用 window.closeHelpDrawer()
-// 收起帮助面板——由于 closeHelp 本身是 IIFE 私有作用域里的函数，只能
-// 通过显式挂到 window 才能被外部访问，这行代码原样保留，未做任何改动。
-//
-// 依赖 main.js 保留的函数：无实质依赖（三块内部只用到 DOM/localStorage/
-// fetch/window.StudioI18n/window.StudioTheme 等浏览器和全局对象）。
-// main.js 里的 WebSocket 消息处理器（ws.onmessage）会调用本模块的
-// showAnnouncementModal（收到 `announcement` 类型消息时），是本模块被
-// main.js 反向调用的唯一入口。
+// Initialization is explicit so the workbench entry can own lifecycle order.
 
-        (function initFeedbackWidget(){
+        function initFeedbackWidget(){
             function activePageId() {
                 const frame = document.querySelector('.stage iframe.active');
                 return frame ? frame.id.replace('frame-', '') : '';
@@ -71,7 +56,7 @@
                 btn.disabled = true;
                 setFeedbackStatus('发送中...');
                 try {
-                    const res = await fetch('/api/feedback', {
+                    await apiJson('/api/feedback', {
                         method: 'POST',
                         credentials: 'same-origin',
                         headers: { 'Content-Type': 'application/json' },
@@ -82,8 +67,6 @@
                             user_agent: navigator.userAgent || ''
                         })
                     });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
                     if (content) content.value = '';
                     setFeedbackStatus('已提交。', 'ok');
                     window.setTimeout(closeFeedback, 700);
@@ -93,7 +76,7 @@
                     btn.disabled = false;
                 }
             }
-            document.addEventListener('DOMContentLoaded', function(){
+            const initializeFeedbackBindings = function(){
                 const openBtn = document.getElementById('feedbackOpenBtn');
                 const closeBtn = document.getElementById('feedbackCloseBtn');
                 const submitBtn = document.getElementById('feedbackSubmitBtn');
@@ -109,9 +92,11 @@
                 window.addEventListener('keydown', function(e){
                     if (e.key === 'Escape') closeFeedback();
                 });
-            }, { once:true });
-        })();
-        (function initHelpDrawer(){
+            };
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initializeFeedbackBindings, { once:true });
+            else initializeFeedbackBindings();
+        }
+        function initHelpDrawer(){
             // 帮助内容按「当前激活的功能页面」独立存储：index.html 是外壳，
             // 各功能模块（画布、视角粗调、视角微调等）以 iframe 形式加载，
             // 因此页面标识需要动态读取当前激活的 iframe（#frame-xxx），而非外壳自身的 URL。
@@ -121,10 +106,7 @@
                 return id || 'canvas';
             }
             function getHelpPageLabel(pageId) {
-                const expected = `switchUI(this, '${pageId}')`;
-                const trigger = Array.from(document.querySelectorAll('[onclick]')).find(el =>
-                    (el.getAttribute('onclick') || '').includes(expected)
-                );
+                const trigger = document.querySelector(`[data-page-id="${CSS.escape(pageId)}"]`);
                 const nav = trigger?.querySelector('.nav-text, .side-pill-text');
                 return nav ? nav.textContent.trim() : pageId;
             }
@@ -340,15 +322,15 @@
                 if (editor && mode === 'preview' && state.canEdit) state.content = editor.value;
                 if (preview) {
                     preview.innerHTML = renderMarkdown(state.content);
-                    preview.style.display = mode === 'preview' ? '' : 'none';
+                    preview.classList.toggle('is-hidden', mode !== 'preview');
                 }
                 if (editor) {
                     editor.value = state.content;
-                    editor.style.display = mode === 'edit' ? '' : 'none';
+                    editor.classList.toggle('is-hidden', mode !== 'edit');
                 }
                 if (previewBtn) previewBtn.classList.toggle('active', mode === 'preview');
                 if (editBtn) editBtn.classList.toggle('active', mode === 'edit');
-                if (saveBtn) saveBtn.style.display = state.canEdit ? '' : 'none';
+                if (saveBtn) saveBtn.classList.toggle('is-hidden', !state.canEdit);
             }
             async function loadHelp() {
                 state.page = getHelpPage();
@@ -356,18 +338,15 @@
                 if (titleEl) titleEl.textContent = '· ' + getHelpPageLabel(state.page);
                 setHelpStatus('加载中...');
                 try {
-                    const res = await fetch('/api/help?page=' + encodeURIComponent(state.page), { credentials:'same-origin' });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+                    const data = await apiJson('/api/help?page=' + encodeURIComponent(state.page), { credentials:'same-origin' });
                     state.loaded = true;
-                    const meRes = await fetch('/api/access-control/me', { credentials:'same-origin' });
-                    const me = meRes.ok ? await meRes.json().catch(() => ({})) : {};
+                    const me = await apiJson('/api/access-control/me', { credentials:'same-origin', allowErrorResponse:true });
                     state.canEdit = Array.isArray(me.pages) && me.pages.includes('user-management');
                     state.content = data.content || '';
                     const previewBtn = document.getElementById('helpPreviewBtn');
                     const editBtn = document.getElementById('helpEditBtn');
-                    if (previewBtn) previewBtn.style.display = state.canEdit ? '' : 'none';
-                    if (editBtn) editBtn.style.display = state.canEdit ? '' : 'none';
+                    if (previewBtn) previewBtn.classList.toggle('is-hidden', !state.canEdit);
+                    if (editBtn) editBtn.classList.toggle('is-hidden', !state.canEdit);
                     setMode(state.canEdit ? 'edit' : 'preview');
                     setHelpStatus(state.canEdit ? '当前用户类型可编辑帮助内容。' : '');
                 } catch(e) {
@@ -390,7 +369,6 @@
                 drawer.setAttribute('aria-hidden', 'true');
             }
             // 暴露给外部（如 switchUI 切换功能页时）调用，以便切换 tab 时自动收起帮助面板。
-            window.closeHelpDrawer = closeHelp;
             async function saveHelp() {
                 if (!state.canEdit) return;
                 const editor = document.getElementById('helpEditor');
@@ -399,14 +377,12 @@
                 btn.disabled = true;
                 setHelpStatus('保存中...');
                 try {
-                    const res = await fetch('/api/help', {
+                    const data = await apiJson('/api/help', {
                         method:'PUT',
                         credentials:'same-origin',
                         headers:{ 'Content-Type':'application/json' },
                         body: JSON.stringify({ content: state.content, page: state.page || getHelpPage() })
                     });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
                     state.content = data.content || '';
                     setMode(state.mode);
                     setHelpStatus('已保存。', 'ok');
@@ -416,7 +392,7 @@
                     btn.disabled = false;
                 }
             }
-            document.addEventListener('DOMContentLoaded', function(){
+            const initializeHelpBindings = function(){
                 const openBtn = document.getElementById('helpOpenBtn');
                 const closeBtn = document.getElementById('helpCloseBtn');
                 const previewBtn = document.getElementById('helpPreviewBtn');
@@ -430,12 +406,15 @@
                 if (editBtn) editBtn.addEventListener('click', () => setMode('edit'));
                 if (saveBtn) saveBtn.addEventListener('click', saveHelp);
                 if (editor) editor.addEventListener('input', () => { state.content = editor.value; });
-            }, { once:true });
-        })();
+            };
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initializeHelpBindings, { once:true });
+            else initializeHelpBindings();
+            return closeHelp;
+        }
         // --- 全局广播弹窗 ---
         function announcementSeenKey(id) { return 'studio_announcement_seen_' + id; }
 
-        function showAnnouncementModal(announcement) {
+        export function showAnnouncementModal(announcement) {
             if (!announcement || !announcement.id || !announcement.content) return;
             try {
                 if (localStorage.getItem(announcementSeenKey(announcement.id))) return;
@@ -456,7 +435,7 @@
             var body = document.createElement('div');
             body.className = 'markdown-content';
             body.style.cssText = 'min-height:0;max-height:60vh;overflow:auto;margin-bottom:18px;padding-right:4px;';
-            body.innerHTML = window.MediaForgeMarkdown.render(announcement.content, { emptyText: '暂无公告内容' });
+            body.innerHTML = renderMarkdown(announcement.content, { emptyText: '暂无公告内容' });
 
             var footer = document.createElement('div');
             footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;';
@@ -485,13 +464,18 @@
         }
 
         // 页面加载/刷新时补显示尚未手动关闭的最新公告
-        (async function checkLatestAnnouncementOnLoad() {
+        async function checkLatestAnnouncementOnLoad() {
             try {
-                const res = await fetch('/api/announcement/latest', { credentials: 'same-origin' });
-                if (!res.ok) return;
-                const data = await res.json();
+                const data = await apiJson('/api/announcement/latest', { credentials: 'same-origin', allowErrorResponse:true });
                 if (data && data.announcement) {
                     showAnnouncementModal(data.announcement);
                 }
             } catch (e) {}
-        })();
+        }
+
+        export function initializeIndexWidgets() {
+            initFeedbackWidget();
+            const closeHelpDrawer = initHelpDrawer();
+            checkLatestAnnouncementOnLoad();
+            return { closeHelpDrawer };
+        }

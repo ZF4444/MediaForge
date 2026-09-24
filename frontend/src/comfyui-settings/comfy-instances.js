@@ -7,16 +7,14 @@
 // （saveComfyInstances）。这是页面里唯一跟"工作流编辑"完全解耦的独立
 // 子系统，没有依赖 currentWorkflow/currentConfig 等工作流编辑状态。
 //
-// 经典 <script>，非 ES module：跟画布/api-settings/asset-manager
-// 同样的方法论（见 frontend/README.md），comfyui-settings.html 里的
-// 内联 onclick 依赖 window 全局函数自动挂载。
+// 作为共享词法作用域的一部分，由 ComfyUI 页面的虚拟 ESM 入口组装。
 //
 // 依赖 main.js 保留的核心状态和函数：comfyInstances（实例列表状态）、
 // tr/tf（i18n 文本）、setStatus/escapeHtml/escapeAttr（通用工具）。
 
 async function loadComfyInstances(){
     try {
-        const data = await fetch('/api/comfyui/instances').then(r => r.json());
+        const data = await listComfyInstances();
         comfyInstances = Array.isArray(data.instances) ? data.instances : [];
         renderComfyInstances();
     } catch(e){ console.error(e); }
@@ -27,8 +25,8 @@ function renderComfyInstances(){
     el.innerHTML = comfyInstances.map((addr, i) => `
         <div style="display:flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--line);border-radius:9px;background:var(--soft)">
             <span style="width:18px;text-align:center;font-size:10.5px;color:var(--faint);font-weight:800">${i + 1}</span>
-            <input class="small-input" type="text" value="${escapeAttr(addr)}" placeholder="host:port 或 https://host" oninput="updateComfyInstance(${i}, this.value)" style="flex:1;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:12px;font-family:ui-monospace,Menlo,monospace">
-            <button class="opt-del" type="button" onclick="removeComfyInstance(${i})" title="删除"><i data-lucide="x" class="w-3 h-3"></i></button>
+            <input class="small-input" type="text" value="${escapeAttr(addr)}" placeholder="host:port 或 https://host" data-action="updateComfyInstance" data-action-arg="${i}" data-action-value="true" style="flex:1;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:12px;font-family:ui-monospace,Menlo,monospace">
+            <button class="opt-del" type="button" data-action="removeComfyInstance" data-action-arg="${i}" title="删除"><i data-lucide="x" class="w-3 h-3"></i></button>
         </div>
     `).join('');
     refreshIcons();
@@ -38,9 +36,11 @@ function addComfyInstance(){
     renderComfyInstances();
 }
 function updateComfyInstance(index, value){
+    index = Number(index);
     comfyInstances[index] = value;
 }
 function removeComfyInstance(index){
+    index = Number(index);
     comfyInstances = comfyInstances.filter((_, i) => i !== index);
     renderComfyInstances();
 }
@@ -49,13 +49,7 @@ async function saveComfyInstances(){
     if(!cleaned.length){ alert('请至少填一个 ComfyUI 后端地址'); return; }
     setStatus('保存中...');
     try {
-        const res = await fetch('/api/comfyui/instances', {
-            method:'PUT',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ instances: cleaned })
-        });
-        if(!res.ok) throw new Error((await res.json()).detail || '保存失败');
-        const data = await res.json();
+        const data = await persistComfyInstances({ instances: cleaned });
         comfyInstances = data.instances || cleaned;
         renderComfyInstances();
         try { new BroadcastChannel('studio-api').postMessage({ type: 'comfy-instances-changed' }); } catch(e) {}

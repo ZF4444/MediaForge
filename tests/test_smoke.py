@@ -21,8 +21,132 @@ def test_login_page_public(client):
 
 def test_static_asset_public(client):
     """静态资源无需认证。"""
-    r = client.get("/static/js/theme.js")
+    r = client.get("/static/dist/shared/theme.js")
     assert r.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/images/logo.png",
+        "/static/images/zip-placeholder.svg",
+        "/static/dist/styles/fonts.css",
+    ],
+)
+def test_frontend_public_assets_keep_legacy_static_urls(client, path):
+    response = client.get(path)
+    assert response.status_code == 200
+
+
+def test_storage_quota_page_keeps_legacy_url_and_module_entry(client):
+    response = client.get("/static/storage-quota.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "onclick=" not in response.text
+    assert "<style>" not in response.text
+
+
+def test_workflow_config_page_keeps_legacy_url_and_module_entry(client):
+    response = client.get("/static/workflow-config.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "onclick=" not in response.text
+    assert "onchange=" not in response.text
+    assert "/static/dist/shared/theme.js" not in response.text
+    assert "theme.js" in response.text
+
+
+def test_workflow_settings_page_keeps_legacy_url_and_module_entry(client):
+    response = client.get("/static/workflow-settings.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "/static/vendor/js/lucide.js" not in response.text
+    assert "/static/dist/shared/theme.js" not in response.text
+
+
+def test_ai_connections_page_keeps_legacy_url_without_global_scripts(client):
+    response = client.get("/static/ai-connections.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "/static/vendor/js/lucide.js" not in response.text
+    assert "/static/dist/shared/theme.js" not in response.text
+
+
+def test_my_account_page_keeps_legacy_url_without_inline_css_or_global_scripts(client):
+    response = client.get("/static/my-account.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "<style>" not in response.text
+    assert "/static/vendor/js/lucide.js" not in response.text
+    assert "/static/dist/shared/theme.js" not in response.text
+
+
+def test_user_data_migration_page_keeps_legacy_url_without_inline_handlers(client):
+    response = client.get("/static/user-data-migration.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "onclick=" not in response.text
+    assert "onchange=" not in response.text
+    assert "/static/vendor/js/lucide.js" not in response.text
+
+
+def test_user_management_page_keeps_legacy_url_without_inline_css_or_global_scripts(client):
+    response = client.get("/static/user-management.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "<style>" not in response.text
+    assert "/static/vendor/js/lucide.js" not in response.text
+    assert "/static/dist/shared/theme.js" not in response.text
+
+
+def test_canvas_manager_page_keeps_legacy_url_without_inline_handlers_or_global_scripts(client):
+    response = client.get("/static/canvas-manager.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "onclick=" not in response.text
+    assert "onerror=" not in response.text
+    assert "/static/vendor/js/lucide.js" not in response.text
+    assert "/static/dist/shared/theme.js" not in response.text
+
+
+def test_access_control_page_keeps_legacy_url_without_inline_css_or_global_scripts(client):
+    response = client.get("/static/access-control.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "<style>" not in response.text
+    assert "/static/vendor/js/lucide.js" not in response.text
+    assert "/static/dist/shared/theme.js" not in response.text
+
+
+def test_feedback_admin_page_keeps_legacy_url_without_inline_css_or_global_scripts(client):
+    response = client.get("/static/feedback-admin.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "<style>" not in response.text
+    assert "onclick=" not in response.text
+    assert "/static/vendor/js/lucide.js" not in response.text
+    assert "/static/dist/shared/theme.js" not in response.text
+
+
+def test_broadcast_admin_page_keeps_legacy_url_without_inline_css_or_global_scripts(client):
+    response = client.get("/static/broadcast-admin.html")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert 'type="module"' in response.text
+    assert "<style>" not in response.text
+    assert "/static/vendor/js/marked-18.0.6.umd.js" not in response.text
+    assert "/static/vendor/js/dompurify-3.4.12.min.js" not in response.text
+    assert "/static/dist/shared/markdown-renderer.js" not in response.text
 
 
 def test_root_redirects_to_login_when_anonymous(client):

@@ -171,14 +171,13 @@ async function openSelectionAssetSaveModal(){
 async function saveFileToAssetLibrarySelection(fileId, name='', libraryId='', categoryId='', options={}){
     if(!fileId) throw new Error('缺少 file_id，无法保存到资产库');
     if(!libraryId || !categoryId) throw new Error('请选择资产库文件夹');
-    const data = await fetch('/api/asset-library/items', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({library_id:libraryId, category_id:categoryId, file_id:fileId, name})
-    }).then(async r => {
-        if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || tr('smart.assetAddFail'));
-        return r.json();
-    });
+    const services = globalThis.__MediaForgeRuntimeServices || {};
+    const apiJson = services.apiJson;
+    const data = services.canvasApi?.addAsset
+        ? await services.canvasApi.addAsset({library_id:libraryId, category_id:categoryId, file_id:fileId, name})
+        : apiJson
+        ? await apiJson('/api/asset-library/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:libraryId, category_id:categoryId, file_id:fileId, name})})
+        : await (services.apiJson ? services.apiJson('/api/asset-library/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:libraryId, category_id:categoryId, file_id:fileId, name})}) : fetch('/api/asset-library/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({library_id:libraryId, category_id:categoryId, file_id:fileId, name})}).then(async r => { if(!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || tr('smart.assetAddFail')); return r.json(); }));
     activeAssetLibraryId = libraryId;
     activeAssetCategoryId = categoryId;
     setAssetLibraryFromResponse(data);
@@ -188,7 +187,8 @@ async function saveFileToAssetLibrarySelection(fileId, name='', libraryId='', ca
 
 async function loadAssetLibrary(){
     try {
-        const data = await fetch('/api/asset-library').then(r => r.json());
+        const services = globalThis.__MediaForgeRuntimeServices || {};
+        const data = services.canvasApi?.assetLibrary ? await services.canvasApi.assetLibrary() : services.apiJson ? await services.apiJson('/api/asset-library') : await fetch('/api/asset-library').then(r => r.json());
         setAssetLibraryFromResponse(data, {render:false});
         renderAssetLibrary();
     } catch(e) {
@@ -295,27 +295,34 @@ function openAssetNameDialog({title='', value='', placeholder='', cancelValue=''
         assetDialogBackdrop.classList.add('open');
         assetDialogInput.focus();
         assetDialogInput.select();
-        const cleanup = result => {
-            assetDialogBackdrop.classList.remove('open');
-            assetDialogBackdrop.hidden = true;
-            assetDialogOk.onclick = null;
-            assetDialogCancel.onclick = null;
-            assetDialogInput.onkeydown = null;
-            assetDialogBackdrop.onmousedown = null;
-            assetDialogInput.classList.remove('is-multiline');
-            assetDialogInput.rows = 1;
-            resolve(result);
-        };
-        assetDialogOk.onclick = () => cleanup(assetDialogInput.value.trim());
-        assetDialogCancel.onclick = () => cleanup(cancelValue);
-        assetDialogInput.onkeydown = event => {
+        let settled = false;
+        const confirmHandler = () => cleanup(assetDialogInput.value.trim());
+        const cancelHandler = () => cleanup(cancelValue);
+        const keydownHandler = event => {
             if(event.key === 'Enter' && !multiline) cleanup(assetDialogInput.value.trim());
             if(event.key === 'Enter' && multiline && (event.ctrlKey || event.metaKey)) cleanup(assetDialogInput.value.trim());
             if(event.key === 'Escape') cleanup(cancelValue);
         };
-        assetDialogBackdrop.onmousedown = event => {
+        const backdropHandler = event => {
             if(event.target === assetDialogBackdrop) cleanup(cancelValue);
         };
+        const cleanup = result => {
+            if(settled) return;
+            settled = true;
+            assetDialogBackdrop.classList.remove('open');
+            assetDialogBackdrop.hidden = true;
+            assetDialogOk.removeEventListener('click', confirmHandler);
+            assetDialogCancel.removeEventListener('click', cancelHandler);
+            assetDialogInput.removeEventListener('keydown', keydownHandler);
+            assetDialogBackdrop.removeEventListener('mousedown', backdropHandler);
+            assetDialogInput.classList.remove('is-multiline');
+            assetDialogInput.rows = 1;
+            resolve(result);
+        };
+        assetDialogOk.addEventListener('click', confirmHandler);
+        assetDialogCancel.addEventListener('click', cancelHandler);
+        assetDialogInput.addEventListener('keydown', keydownHandler);
+        assetDialogBackdrop.addEventListener('mousedown', backdropHandler);
     });
 }
 function positionAssetHoverPreview(event){
@@ -402,7 +409,8 @@ function beginAssetInlineRename(assetId){
         }
         input.disabled = true;
         try {
-            const data = await fetch(`/api/asset-library/items/${encodeURIComponent(assetId)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}).then(r => r.json());
+            const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+            const data = apiJson ? await apiJson(`/api/asset-library/items/${encodeURIComponent(assetId)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}) : await fetch(`/api/asset-library/items/${encodeURIComponent(assetId)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}).then(r => r.json());
             setAssetLibraryFromResponse(data);
         } catch(err){
             restore();
@@ -438,23 +446,24 @@ function bindAssetItemEvents(){
         });
     });
     assetGrid.querySelectorAll('[data-rename-asset]').forEach(btn => {
-        btn.onclick = async e => {
+        btn.addEventListener('click', async e => {
             e.preventDefault(); e.stopPropagation();
             beginAssetInlineRename(btn.dataset.renameAsset);
-        };
+        });
     });
     assetGrid.querySelectorAll('[data-delete-asset]').forEach(btn => {
-        btn.onclick = async e => {
+        btn.addEventListener('click', async e => {
             e.preventDefault(); e.stopPropagation();
             btn.disabled = true;
             try {
-                const data = await fetch(`/api/asset-library/items/${encodeURIComponent(btn.dataset.deleteAsset)}`, {method:'DELETE'}).then(r => r.json());
+                const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
+                const data = apiJson ? await apiJson(`/api/asset-library/items/${encodeURIComponent(btn.dataset.deleteAsset)}`, {method:'DELETE'}) : await fetch(`/api/asset-library/items/${encodeURIComponent(btn.dataset.deleteAsset)}`, {method:'DELETE'}).then(r => r.json());
                 setAssetLibraryFromResponse(data);
             } catch(err){
                 btn.disabled = false;
                 toast(err.message || tr('smart.assetAddFail'));
             }
-        };
+        });
     });
 }
 async function addFileToAssetLibrary(fileId, name=''){

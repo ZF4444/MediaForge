@@ -2,19 +2,16 @@
 
 多个前端页面模块化重构的源码目录，对应 `docs/前端重构计划.md`。
 
-**范围**：目前覆盖五个页面——`canvas`（画布，M1-M22，见下方
-主体章节）、`api-settings`（API 设置页）、`asset-manager`（素材库管理
-页）、`comfyui-settings`（ComfyUI 设置页）、`index`（应用外壳，见文末
-对应章节）。**`frontend/src/canvas/main.js`（旧画布/无限画布）明确不在
-范围内**——已确认未来会弃用，只需保证能打开旧画布，不值得投入模块化
-重构的精力，保持现状手写单文件即可。`static/js/ltx-director-timeline.js`
+**范围**：页面运行时代码已统一迁移到 `frontend/src/<page>/`，由构建脚本
+生成 `static/dist/`。当前覆盖页面注册表中的全部页面；`static/js/` 仅保留
+暂不纳入本轮的第三方/自定义节点脚本。`static/js/ltx-director-timeline.js`
 （4111 行）也暂不纳入范围——这是一个 ComfyUI 自定义节点的前端 widget
 脚本，代码结构是单个 3363 行的 `TimelineEditor` class（通过
 `beforeRegisterNodeDef` 注册进 ComfyUI），跟其它几个页面"很多独立
 顶层函数"的结构完全不同，拆分一个 class 的方法需要更谨慎的方案（比如
 mixin 模式），风险收益比跟目前这几个页面不一样，值得单独评估。
 
-五个页面共用同一套构建基础设施（`frontend/scripts/build-pages.mjs`，
+所有页面共用同一套构建基础设施（`frontend/scripts/build-pages.mjs`，
 一个脚本通过页面注册表驱动全部页面的构建），但各自的模块拆分是独立
 进行的，互不依赖。
 
@@ -1418,113 +1415,54 @@ ComfyUI workflow JSON，把某些节点输入暴露成可配置字段，在画�
 
 ## 应用外壳（index）
 
-`static/index.html` 是承载全部其它页面的"外壳"——每个功能页面（画布/
-API 设置/素材库/ComfyUI 设置等）都以 `<iframe>` 形式挂载在这个页面
-里，侧边栏导航负责切换哪个 iframe 是 active。这跟前四次迁移的性质
-不同：前四次是**独立页面**，出问题最多影响那一个页面；这次是**全局
-外壳**，出问题可能影响整个应用的导航——所以这次额外做了更谨慎的
-风险分级，只搬移了两类低风险内容，核心调度逻辑（`switchUI`）刻意
-不拆。
+主工作台 HTML 的权威源码是 `frontend/src/pages/index/index.html`，页面样式在同目录的 `index.css`；`static/index.html` 是 Vite 构建产物。入口由 `frontend/src/index/main.js` 作为 ESM 管理，侧栏页面与控制动作通过 `data-page-id` / `data-studio-action` 委托处理，不依赖内联 `onclick`。
 
-**这是本次会话第一次把"内联 `<script>`"变成独立外部文件**——前四个
-页面本来就已经是外部 `.js` 文件，这次是先把 `static/index.html` 内联
-的 800 行主脚本块 + 40 行独立的版本检测脚本块，原样搬到新建的
-`static/js/index.js`，再套用同一套模块拆分方法论。
+`main.js` 负责 iframe 导航、离开守卫、权限裁剪、跨 iframe 消息及 `/ws/stats`；帮助/反馈/公告由 `help-feedback.js` 初始化，主题同步由 `theme-lang-sync.js` 提供显式导出，版本轮询以 ESM 副作用模块加载。Markdown 使用 npm 的 `marked` 和 `dompurify` 封装，Tailwind 浏览器运行时也从 npm 包导入。共享 i18n 暂沿用兼容加载器，后续仍可继续模块化。
 
-- **拆出 3 个模块**（`frontend/src/index/`）：
-  - `help-feedback.js`（491 行）：帮助面板 + 反馈组件 + 系统公告，
-    三块物理相邻。其中反馈组件（`initFeedbackWidget`）和帮助面板
-    （`initHelpDrawer`，含一个手写的极简 Markdown 渲染器
-    `renderMarkdown`，不依赖第三方库）**本来就是用 IIFE 包裹的**
-    （`(function xxx(){...})()`，原作者的写法，不是本次迁移引入的）
-    ——这是这次会话里风险最低的一类拆分：整个 IIFE 作为不可分割的
-    单元物理搬移，内部实现一行不改。系统公告部分
-    （`showAnnouncementModal` 等）不在 IIFE 里，但同样只依赖
-    DOM/localStorage，没有跨模块状态耦合。
-  - `theme-lang-sync.js`（108 行）：外壳自身的主题/语言切换按钮 +
-    把切换结果广播给全部子页面 iframe（`broadcastTheme`/
-    `broadcastLanguage`，通过 `postMessage` 通知每个 iframe）。
-  - `version-check.js`（61 行）：定期轮询 `/api/version`，检测到不
-    兼容更新时展示强制刷新弹窗，检测到补丁更新时展示可关闭提示条。
-    本来就是一个完全独立自包含的 IIFE，跟主体代码零函数级依赖，只
-    共享两个 DOM 元素 id——是这次拆分里耦合度最低的一块。
-- **留在 `static/js/index.js`**（300 行）：唯一客户端 id 生成
-  （`generateUUID`/`CID`）、侧边栏固定/收起状态、本地功能分组折叠
-  状态、**核心的 iframe 切换调度 `switchUI`**（处理"离开确认"页面
-  守卫消息、通知被切走的页面、切换 active 类名、恢复本地导航折叠
-  状态——这是整个外壳唯一真正意义上的调度中枢，跟 asset-manager 的
-  `handleClick`、api-settings 的 `syncEditor`/`renderEditor` 是完全
-  相同的角色，判断为不拆）、跨 iframe 广播供应商/工作流变更消息
-  （`forwardStudioApiChange`）、刷新后恢复上次激活页面
-  （`restoreActivePage`）、按用户权限裁剪侧边栏入口
-  （`applyAccessControl`）、到 `/ws/stats` 的 WebSocket 连接（在线
-  人数/云端状态/画布更新/资产库更新等消息的接收和跨 iframe 转发）。
-- **跨模块桥接**：`initHelpDrawer` IIFE 内部有一行
-  `window.closeHelpDrawer = closeHelp;`（显式挂到 window，因为
-  `closeHelp` 本身是 IIFE 私有作用域函数，只能这样才能被外部访问）
-  ——main.js 保留的 `switchUI` 切换页面时会调用
-  `window.closeHelpDrawer()` 收起帮助面板。这行代码原样保留未改动，
-  vm 交叉模拟专门验证过这个桥接在物理拆分成不同文件后依然工作
-  正常（`typeof window.closeHelpDrawer === 'function'`）。
-- **本次迁移顺带修复的一个既存 bug**：`toggleLanguage()` 原来还调用
-  了三个全项目里都没有定义的函数——`updateProjectUpdateTitle()`/
-  `refreshUpdateButtonText()`/`refreshProjectUpdateModalText()`（应该
-  是某个"检测项目更新"相关功能被删除后遗留的死代码引用）。每次点击
-  语言切换按钮都会在语言实际切换成功之后抛出 `ReferenceError`（语言
-  切换本身不受影响，因为崩溃前的代码已经执行完，但控制台会有一个
-  未捕获异常）。这跟模块拆分无关，是读代码时顺带发现并清理的，删除
-  前明确跟用户确认过。
-- **验证**：语法检查、`git diff` 精确核对 `static/index.html` 删除了
-  840 行、vm 交叉模拟验证 2 个模块 + main.js 加载零 `ReferenceError`
-  （含专门验证 `window.closeHelpDrawer` 跨文件桥接、内联 onclick
-  依赖的 `switchUI`/`toggleTheme`/`toggleLanguage` 等函数全部可访问）、
-  `version-check.js` 独立验证零依赖加载、434 前端测试 + 4 后端测试
-  保持不受影响（本次没有新增单元测试——`help-feedback.js`/
-  `theme-lang-sync.js`/`version-check.js` 的可测函数基本都被 IIFE
-  私有作用域包裹，不修改源码结构就无法从外部访问，判断为不值得为了
-  测试而改变现有的封装设计）。
-- **一次真实的事故记录（HTML 文件损坏，已修复）**：用 Python 脚本
-  批量删除两处区间（版本检测脚本块 + 主脚本块）并插入替换内容时，
-  文件末尾残留了一段孤立的旧代码片段（从 `else {` 的后半段
-  `lse {` 开始，一直到重复的 `})();`/`</script>`/`</body>`/`</html>`），
-  导致 `<script>`/`</script>` 标签数量不匹配（12 开 13 闭）、
-  `</body>`/`</html>` 各出现了两次。这是本次会话第一次在 **HTML 文件**
-  （而不是纯 JS 文件）上做批量区间删除，而 HTML 文件的收尾标签
-  （`</body></html>`）离最后一个删除区间非常近，一旦删除区间的边界
-  计算有任何偏差，残留的尾部内容会跟收尾标签"重叠"从而不容易通过
-  单纯看 diff 摘要发现（`git diff --stat` 的行数统计当时看起来正常，
-  真正暴露问题的是显式检查 `<script>`/`</script>`/`</body>`/`</html>`
-  这几个标签的出现次数是否配对——这是本次事故里最终用来定位问题的
-  方法，后续在 HTML 文件上做批量删除时会预先做这个检查，不能只看
-  `git diff --stat` 的行数摘要）。修复方式是直接删除残留片段。这次
-  事故发生在 vm 交叉模拟（验证的是拆出去的 3 个 JS 模块本身，不检查
-  `index.html` 的 HTML 结构）已经全部通过之后，说明"JS 模块本身没问题"
-  和"HTML 引用它们的宿主文件没有被搞坏"是两件需要分别验证的事，缺一
-  不可。
+回归覆盖位于 `frontend/test/index-page.test.js`。最近一次验证：517 项 Vitest
+测试通过，`npm run build` 成功；index 与 feedback-admin 均有覆盖开发态和构建
+静态产物的 Playwright smoke。
 
-## 五个页面共用的构建流程
+## 反馈管理页（feedback-admin）
+
+反馈管理页已迁移到 `frontend/src/pages/feedback-admin/`，入口使用 ESM，
+接口请求集中在 `frontend/src/services/feedback-admin.js`。页面支持筛选、状态
+更新、管理员备注和删除操作，构建后仍通过 `/static/feedback-admin.html` 提供。
+单元测试位于 `frontend/test/feedback-admin-{page,service}.test.js`，浏览器 smoke
+覆盖开发服务器和构建后的静态页面。
+
+## 工作流设置页（workflow-settings）
+
+工作流设置页入口位于 `frontend/src/workflow-settings/main.js`，工作流列表、删除和
+启停操作集中在 `frontend/src/services/workflow-settings.js`。页面同时展示本地
+ComfyUI 工作流、AI 配置中的 RunningHub 应用和云端 ComfyUI 资源，构建后继续通过
+`/static/workflow-settings.html` 提供。页面 service/page 单测位于
+`frontend/test/workflow-settings-{service,page}.test.js`，Playwright smoke 会 mock
+两类 API 源并实际点击启停开关，开发态和构建后的静态页面都应通过。
+
+## 用户管理页（user-management）
+
+用户管理页的接口操作已集中到 `frontend/src/services/user-management.js`，入口只
+负责状态、渲染和事件绑定。服务层覆盖用户/组织 CRUD、组织与个人预算、默认预算、
+用量和登录会话，并保留用量接口的降级语义：RunningHub 是必需源，Omnilojo 不可用
+时仍显示 RunningHub 数据。`frontend/test/user-management-service.test.js` 覆盖
+请求编码、写入 payload 和降级路径，页面回归测试确认入口不再直接持有 API URL。
+
+## 前端页面共用的构建流程
 
 ```bash
 cd frontend
 npm install
-npm run build   # 一次性构建全部五个页面（canvas + api-settings + asset-manager + comfyui-settings + index）
-npm test        # 跑全部五个页面的 Vitest 回归测试
+npm run build   # 一次性构建页面注册表中的全部页面
+npm test        # 跑全部页面的 Vitest 回归测试
 ```
 
 `frontend/scripts/build-pages.mjs` 是通用的多页面构建脚本（取代了
 早期只认识画布一个页面的 `build-canvas.mjs`），内部维护一份
 `PAGES` 注册表，每个页面登记 `page`（对应 `frontend/src/<page>/` 和
-`static/dist/<page>/`）、`mainSrc`（该页面唯一源码在 `static/js/` 下的
+`static/dist/<page>/`）、`mainSrc`（该页面入口源码在 `frontend/src/` 下的
 路径）、`handwrittenFiles`（已拆分模块的文件名列表，顺序即
 `<script src>` 加载顺序）。新增一个页面只需要往这个注册表加一条配置。
 
-`static/api-settings.html`、`static/asset-manager.html`、
-`static/comfyui-settings.html`、`static/index.html` 的 `<script>` 标签
-已经从直接指向 `/static/js/<page>.js` 改成指向
-`/static/dist/<page>/main.js` + 各拆分模块——**这意味着这几个页面
-现在也需要先跑 `npm run build` 才能生效**，跟画布的规则完全一致。
-如果只改了 `static/js/api-settings.js`/`static/js/asset-manager.js`/
-`static/js/comfyui-settings.js`/`static/js/index.js`，忘记
-`npm run build`，页面加载到的会是旧版本代码。
-
-
+页面的 `<script>` 标签已经统一指向 `/static/dist/<page>/` 下的构建产物，
+因此修改 `frontend/src/` 后必须先运行 `npm run build` 才能生效。

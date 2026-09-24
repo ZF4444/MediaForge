@@ -41,6 +41,7 @@ export function createUploadSandbox(overrides = {}) {
 
     const sandbox = {
         window: { StudioI18n: null, MediaForgeUpload: overrides.mediaForgeUpload || null },
+        MediaForgeUpload: overrides.mediaForgeUpload || null,
         console, Date, Math, Array, Object, Number, String, Boolean, Set, Map, Promise,
         File: overrides.File || class File {
             constructor(parts, name, opts) { this.name = name; this.type = opts?.type || ''; }

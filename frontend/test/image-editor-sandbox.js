@@ -51,6 +51,7 @@ export function createImageEditorSandbox(overrides = {}) {
 
     const sandbox = {
         window: { innerWidth: 1600, innerHeight: 1000 },
+        MediaForgeUpload: overrides.mediaForgeUpload || null,
         console, Date, Math, Array, Object, Number, String, Boolean, Set, Map, Promise,
 
         document: {

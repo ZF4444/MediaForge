@@ -1,0 +1,13 @@
+body { padding: 24px; }
+.page { padding: 0; }
+.rh-shell { max-width: 1100px; margin: auto; }
+.rh-head { display: flex; justify-content: space-between; align-items: end; margin-bottom: 18px; }
+.rh-head h1 { margin: 0; font-size: 22px; }
+.rh-head p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.rh-paste-row { display: flex; gap: 8px; }
+.rh-paste-input { flex: 1; }
+.rh-card-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.rh-config-card { background: var(--panel); border: 1px solid var(--line); padding: 12px; border-radius: 12px; }
+.rh-card-columns { margin-top: 18px; }
+.rh-group-head { display: flex; justify-content: space-between; font-weight: 800; }
+.rh-workflow-editor-overlay { position: fixed !important; inset: 0 !important; }

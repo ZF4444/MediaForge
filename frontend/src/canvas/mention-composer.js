@@ -198,25 +198,25 @@ function renderPromptComposer(node){
     if(window.lucide) lucide.createIcons();
 }
 function bindPromptComposerControls(node){
-    if(promptTaskSelect) promptTaskSelect.onchange = e => {
+    if(promptTaskSelect) promptTaskSelect.addEventListener('change', e => {
         node.llmTask = e.target.value;
         renderPromptComposer(node);
         scheduleSave();
-    };
+    });
     if(promptComposerInstruction){
-        promptComposerInstruction.oninput = e => { node.llmInstruction = e.target.value; scheduleSave(); };
+        promptComposerInstruction.addEventListener('input', e => { node.llmInstruction = e.target.value; scheduleSave(); });
     }
     const modelPill = promptComposerParams?.querySelector('.prompt-composer-model-control > .smart-pill');
-    if(modelPill) modelPill.onclick = event => {
+    if(modelPill) modelPill.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
         const control = modelPill.parentElement;
         const wasPinned = control.classList.contains('pinned');
         document.querySelectorAll('.smart-control.pinned').forEach(item => item.classList.remove('pinned'));
         if(!wasPinned) control.classList.add('pinned');
-    };
+    });
     promptComposerParams?.querySelectorAll('.prompt-composer-model-option').forEach(modelEl => {
-        modelEl.onclick = event => {
+        modelEl.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             if(modelEl.classList.contains('is-locked')){
@@ -227,18 +227,18 @@ function bindPromptComposerControls(node){
             node.llmModelId = modelEl.dataset.promptModelId || '';
             renderPromptComposer(node);
             scheduleSave();
-        };
+        });
     });
     const ruleEl = promptComposerParams?.querySelector('.prompt-composer-rule');
-    if(ruleEl) ruleEl.onchange = e => {
+    if(ruleEl) ruleEl.addEventListener('change', e => {
         if(node.llmTask === 'caption') node.captionTemplateId = e.target.value;
         else if(node.llmTask === 'expand') node.expandTemplateId = e.target.value;
         scheduleSave();
-    };
-    if(promptComposerRunBtn) promptComposerRunBtn.onclick = e => {
+    });
+    if(promptComposerRunBtn) promptComposerRunBtn.addEventListener('click', e => {
         e.preventDefault(); e.stopPropagation();
         runPromptLLMNode(node.id);
-    };
+    });
 }
 function updatePromptComposer(){
     if(!promptComposer) return;
