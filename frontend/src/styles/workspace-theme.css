@@ -55,6 +55,8 @@ html:not(.studio-theme-dark):not(.theme-dark) .asset-tabs button.active { backgr
 html:not(.studio-theme-dark):not(.theme-dark) .asset-btn,
 html:not(.studio-theme-dark):not(.theme-dark) .asset-icon-btn { border-color: rgba(255,255,255,.84); border-radius: 8px; background: rgba(255,255,255,.7); }
 html:not(.studio-theme-dark):not(.theme-dark) .asset-card,
+html:not(.studio-theme-dark):not(.theme-dark) .upload-grid-card,
+html:not(.studio-theme-dark):not(.theme-dark) .side-upload-card,
 html:not(.studio-theme-dark):not(.theme-dark) .prompt-row,
 html:not(.studio-theme-dark):not(.theme-dark) .nav-row { border-color: rgba(255,255,255,.76); background: rgba(255,255,255,.64); }
 html:not(.studio-theme-dark):not(.theme-dark) .asset-card { border-radius: 10px; }
