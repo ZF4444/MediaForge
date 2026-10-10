@@ -34,7 +34,7 @@ from app.models.canvas_agent import SemanticPlan, with_semantic_prompt
 from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_agent.canvas_adapter import capability_schema_resolver, semantic_plan_to_patch
 from app.services.canvas_agent.checkpoint import create_async_checkpointer
-from app.services.canvas_agent.context import build_canvas_context
+from app.services.canvas_agent.canvas_context import build_canvas_context
 from app.services.canvas_agent.events import emit_agent_event
 from app.services.canvas_agent.event_factory import EventSpec, patch_applied, progress as progress_event, task_lifecycle
 from app.services.canvas_agent.event_types import PRESENTATION_TARGETS

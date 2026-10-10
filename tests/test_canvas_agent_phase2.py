@@ -126,15 +126,15 @@ def test_completed_run_can_start_the_next_planning_turn():
 
 
 def test_canvas_media_references_use_the_saved_node_media(monkeypatch):
-    from app.services.canvas_agent import context
+    from app.services.canvas_agent import canvas_context
 
-    monkeypatch.setattr(context, "load_canvas_payload", lambda *_args: {
+    monkeypatch.setattr(canvas_context, "load_canvas_payload", lambda *_args: {
         "version": 7,
         "nodes": [{"id": "node-1", "title": "猫", "images": [{"url": "/api/files/first"}, {"url": "/api/files/second"}]}],
         "connections": [],
     })
 
-    result = context.build_canvas_context("owner", "canvas-1", media_references=[
+    result = canvas_context.build_canvas_context("owner", "canvas-1", media_references=[
         {"node_id": "node-1", "image_index": 1, "url": "https://example.invalid/forged"},
         {"node_id": "missing", "image_index": 0},
     ])

@@ -15,7 +15,7 @@ from app.services.ai_parameters import capability_parameters
 
 from .canvas_adapter import capability_schema_resolver, semantic_plan_to_patch
 from .canvas_capabilities import CapabilityRegistry, from_repository
-from .context import build_canvas_context
+from .canvas_context import build_canvas_context
 from .event_factory import SKILL_ARTIFACT_KIND
 from .policy import assess_patch
 from .skills import read_skill_document, read_skill_resource
