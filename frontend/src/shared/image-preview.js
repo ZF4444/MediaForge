@@ -1,4 +1,4 @@
-(function(){
+const StudioImagePreview = (function(){
     'use strict';
 
     /* 一次性注入预览框样式 —— 所有页面共用同一套外观 */
