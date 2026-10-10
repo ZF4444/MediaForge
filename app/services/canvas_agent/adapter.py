@@ -1,3 +1,23 @@
+"""Adapter that turns an Agent SemanticPlan into a CanvasPatch.
+
+The LLM describes its intent as a SemanticPlan (semantic node types such as
+``image_generation`` plus ``canvas.*`` actions). This module translates that
+plan into the concrete operations the canvas executor understands
+(``add_node``, ``add_connection``, ``update_node_params``, ``run_node`` ...).
+
+Responsibilities:
+- Map semantic node types to canvas node types (``_NODE_TYPES``) and fill in
+  generation defaults (``_GENERATION_DEFAULTS``), deep-merging model-provided
+  params so nested ``runSettings`` defaults are not lost.
+- Assemble node params from a capability schema via ``capability_schema_resolver``,
+  shared by the propose and apply paths so both produce identical results.
+- Lay out newly created nodes: use the requested placement when it is free,
+  otherwise scan grid cells to avoid overlapping existing nodes.
+- Resolve ``canvas.connect`` endpoints (plan step ids or real node ids) and
+  drop invalid edges (missing endpoint / self-loop) with a warning log.
+
+Entry points: ``semantic_plan_to_patch`` and ``capability_schema_resolver``.
+"""
 from __future__ import annotations
 from copy import deepcopy
 from typing import Any
@@ -154,6 +174,33 @@ def capability_schema_resolver(node: Any) -> dict[str, Any] | None:
 
 def semantic_plan_to_patch(plan: SemanticPlan, canvas_id: str, base_version: int, canvas: dict[str, Any] | None = None,
                            schema_resolver: Any = None) -> CanvasPatch:
+    """Convert a SemanticPlan into a CanvasPatch of executable operations.
+
+    Args:
+        plan: Agent-produced plan; each step is handled by its ``action``.
+        canvas_id: Target canvas id, copied into the resulting patch.
+        base_version: Canvas version the patch is based on (optimistic lock).
+        canvas: Current canvas snapshot. Its existing nodes are used to compute
+            the auto-layout origin and to avoid overlapping new nodes.
+        schema_resolver: Optional callable ``(node) -> schema | None`` (usually
+            ``capability_schema_resolver``). When provided and a node's params
+            have no ``runSettings`` envelope yet, flat ``{field_id: value}``
+            params are normalized against the schema; otherwise params pass
+            through unchanged.
+
+    Step handling:
+        - ``canvas.create_node`` -> ``add_node`` (type mapped, defaults merged,
+          placement resolved); raises ValueError if ``node`` is missing or the
+          semantic type is unsupported.
+        - ``canvas.update_node_params`` / ``replace_node_content`` / ``run_node``
+          / ``run_group`` -> the same-named op targeting ``target_node_id``.
+        - ``canvas.connect`` -> ``add_connection``; endpoints may be step ids
+          (resolved through created-node refs) or real node ids. Invalid edges
+          (missing endpoint / self-loop) are dropped with a warning.
+
+    Returns:
+        A CanvasPatch whose ``operations`` follow the plan step order.
+    """
     refs: dict[str, str] = {}
     operations: list[dict[str, Any]] = []
     existing = list((canvas or {}).get("nodes") or [])
