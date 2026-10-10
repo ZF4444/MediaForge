@@ -23,6 +23,10 @@ scripts/sync_to_remote.sh
 
 # 前端构建产物（frontend/ 构建生成，不入库）
 static/dist/
+# 由 frontend/src/pages/*/index.html 构建生成的页面，以及 publicDir 复制出的资源
+static/*.html
+static/fonts/
+static/gaussian/
 frontend/node_modules/
 frontend/dist/
 # 已迁移页面的入口源码位于 frontend/src，由构建脚本生成 static/dist。
