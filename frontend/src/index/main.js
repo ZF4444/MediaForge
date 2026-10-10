@@ -303,6 +303,8 @@ let closeHelpDrawer = () => {};
                 pageTriggers(pid).forEach(el => {
                     const visible = allowed.has(pid);
                     el.style.display = visible ? '' : 'none';
+                    // 管理员入口在 HTML 中默认带 is-hidden（display:none !important），需同步移除才能显示
+                    el.classList.toggle('is-hidden', !visible);
                     if (!visible && el.classList.contains('active')) hidActive = true;
                 });
             });
