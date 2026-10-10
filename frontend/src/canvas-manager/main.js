@@ -1,11 +1,6 @@
 import { apiJson } from '../services/http.js';
 import { createIcons } from 'lucide/dist/esm/lucide.mjs';
-import CircleDot from 'lucide/dist/esm/icons/circle-dot.mjs';
-import LayoutDashboard from 'lucide/dist/esm/icons/layout-dashboard.mjs';
 import Sparkles from 'lucide/dist/esm/icons/sparkles.mjs';
-import SquareStack from 'lucide/dist/esm/icons/square-stack.mjs';
-import MessageCircle from 'lucide/dist/esm/icons/message-circle.mjs';
-import Workflow from 'lucide/dist/esm/icons/workflow.mjs';
 import Layers from 'lucide/dist/esm/icons/layers.mjs';
 import Upload from 'lucide/dist/esm/icons/upload.mjs';
 import RefreshCw from 'lucide/dist/esm/icons/refresh-cw.mjs';
@@ -17,15 +12,17 @@ import LayoutGrid from 'lucide/dist/esm/icons/layout-grid.mjs';
 import Download from 'lucide/dist/esm/icons/download.mjs';
 import Pencil from 'lucide/dist/esm/icons/pencil.mjs';
 import { applyStoredTheme } from '../shared/theme-bootstrap.js';
-
-applyStoredTheme();
 import Trash from 'lucide/dist/esm/icons/trash.mjs';
 import CircleAlert from 'lucide/dist/esm/icons/circle-alert.mjs';
 
+applyStoredTheme();
+
 const icons = {
-  CircleDot, LayoutDashboard, Sparkles, SquareStack, MessageCircle, Workflow, Layers,
+  Sparkles, Layers,
   Upload, RefreshCw, Plus, Search, ChevronDown, SearchX, LayoutGrid, Download,
   Pencil, Trash, CircleAlert,
+  // 页面仍使用旧图标名 layers-3 / trash-2；在 lucide 1.x 中分别是 Layers / Trash 的别名。
+  Layers3: Layers, Trash2: Trash,
 };
 const renderIcons = () => createIcons({ icons });
 const list = document.getElementById('canvasList');
