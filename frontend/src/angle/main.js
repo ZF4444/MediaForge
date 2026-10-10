@@ -8,16 +8,7 @@ import HistoryBulkManager from '../shared/history-bulk-manager.js';
 import { listHistory } from '../services/history.js';
 import '../styles/angle.css';
 
-function applyStoredTheme() {
-    let theme = 'dark';
-    try {
-        theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || theme;
-    } catch {}
-    const dark = theme === 'dark';
-    document.documentElement.classList.toggle('studio-theme-dark', dark);
-    document.documentElement.classList.toggle('theme-dark', dark);
-}
-
+import { applyStoredTheme } from '../shared/theme-bootstrap.js';
 applyStoredTheme();
 
 const angleIcons = { ArrowUp, Camera, Cloud, Download, MoveHorizontal, MoveVertical, RotateCcw, Save, TextQuote, X, Zap, ZoomIn };

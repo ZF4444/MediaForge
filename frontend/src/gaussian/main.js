@@ -4,14 +4,7 @@ import { listHistory, saveHistory } from '../services/history.js';
 import StudioImagePreview from '../shared/image-preview.js';
 import HistoryBulkManager from '../shared/history-bulk-manager.js';
 import '../pages/gaussian/page.css';
-
-        function applyStoredTheme() {
-            let theme = 'dark';
-            try { theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || theme; } catch {}
-            const dark = theme === 'dark';
-            document.documentElement.classList.toggle('studio-theme-dark', dark);
-            document.documentElement.classList.toggle('theme-dark', dark);
-        }
+import { applyStoredTheme } from '../shared/theme-bootstrap.js';
 
         applyStoredTheme();
 
