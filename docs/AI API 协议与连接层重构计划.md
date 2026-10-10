@@ -268,7 +268,7 @@ app/ai/
 - 根入口继续为 `main:app`；现有启动方式、认证中间件和静态页面不变。
 - 当前请求字段 `provider_id`、`provider`、`model`、`ms_model` 及现有响应字段、状态码、SSE 事件格式在兼容期不变。
 - 现有路由路径继续可用：`/api/providers`、`/api/chat`、`/api/chat/stream`、`/api/chat/agent`、`/api/canvas-llm`、`/api/canvas-image-tasks`、视频与模型发现接口。
-- `APP_SECRET_KEY` 启用时，密钥继续仅从加密密钥存储读取；未启用时继续兼容 `API/.env`。
+- `APP_SECRET_KEY` 启用时，密钥继续仅从加密密钥存储读取；未启用时继续兼容 `config/.env`。
 - `provider_operation()` 的并发、Redis 限流、熔断和 Prometheus 指标语义不变。
 - 运行中的画布任务、历史对话和旧版前端可继续读取和提交。
 

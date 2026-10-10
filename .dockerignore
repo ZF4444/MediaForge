@@ -2,7 +2,7 @@
 .venv
 __pycache__
 *.pyc
-API/.env
+config/.env
 data
 logs
 backups

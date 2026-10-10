@@ -32,8 +32,8 @@
 ```
 
 脚本会通过 Homebrew 按需安装 `uv`、Node.js、FFmpeg、PostgreSQL 16、Redis 和
-MinIO，创建 `API/.env`，安装 Python/前端依赖，构建前端，并启动本机服务。
-已有的 `API/.env` 会被保留；要按模板
+MinIO，创建 `config/.env`，安装 Python/前端依赖，构建前端，并启动本机服务。
+已有的 `config/.env` 会被保留；要按模板
 重新生成，使用 `./scripts/setup-dev.sh --force-env`。
 
 本地基础设施端口为 PostgreSQL `5432`、Redis `6379`、MinIO API `9000`、
@@ -111,7 +111,7 @@ export APP_SECRET_KEY="$(openssl rand -hex 32)"
 `APP_SECRET_KEY` 是 AI 连接密钥（各平台 API Key）在数据库中加密存储的主密钥，长度至少 16
 个字符。它必须**生成一次后长期固定**，不能每次启动随机生成：一旦更换，之前用旧密钥加密写入
 `ai_connection_secrets` 表的所有密钥都将无法解密，AI 调用随之失效。上面的 `openssl rand -hex 32`
-仅用于**首次生成**，生成后应把结果固定写入 `API/.env`、systemd `Environment=` 或 Secret Manager，
+仅用于**首次生成**，生成后应把结果固定写入 `config/.env`、systemd `Environment=` 或 Secret Manager，
 后续启动直接复用同一个值。多 worker / 多副本部署时，所有进程也必须共享同一个 `APP_SECRET_KEY`，
 否则一个进程加密的密钥另一个进程无法解密。确需轮换密钥时，须先用旧密钥解密再用新密钥重新加密迁移，
 不能直接替换。
@@ -134,7 +134,7 @@ API-only 副本（`CANVAS_TASK_WORKER_ENABLED=false` 且
 
 应用检测到 `SUBSCRIBE` 被 ACL 拒绝时会自动降级为定时刷新 Provider 配置，但 WebSocket 跨进程事件仍需要 `publish/subscribe` 权限。
 
-在 `API/.env` 中填写 AI 平台密钥：
+在 `config/.env` 中填写 AI 平台密钥：
 
 ```dotenv
 COMFLY_API_KEY=sk-xxxxx
@@ -331,7 +331,7 @@ curl http://127.0.0.1:3000/metrics
 python main.py --listen 0.0.0.0 --port 8188
 ```
 
-并在 `API/.env` 配置：
+并在 `config/.env` 配置：
 
 ```dotenv
 COMFYUI_INSTANCES=192.168.80.21:8188,192.168.80.22:8188
@@ -345,7 +345,7 @@ COMFYUI_INSTANCES=192.168.80.21:8188,192.168.80.22:8188
 | `/health/ready` 返回 503 | 查看返回的 `components` 字段，检查对应连接配置 |
 | 页面模块 404 或仍显示旧逻辑 | 确认执行了 `cd frontend && npm run build`，并检查 `static/dist/` |
 | `npm ci` 失败 | 检查 `package.json` 与 `package-lock.json` 是否同步 |
-| API 调用失败 | 检查 `API/.env` 中对应平台的 API Key |
+| API 调用失败 | 检查 `config/.env` 中对应平台的 API Key |
 
 日志默认位于：`logs/app.log`、`logs/access.log`、`logs/error.log`、`logs/audit.log` 和 `logs/task.log`。
 
@@ -354,7 +354,7 @@ COMFYUI_INSTANCES=192.168.80.21:8188,192.168.80.22:8188
 ```text
 ├── main.py              # 主服务入口
 ├── app/                 # 后端配置、模型、路由和服务
-├── API/.env             # API Key 配置
+├── config/              # 配置：.env（API Key）、.env.example、deploy/、monitoring/
 ├── frontend/            # 前端源码、构建脚本和测试
 ├── static/              # 页面与静态资源
 ├── static/dist/         # 前端构建产物，不入库

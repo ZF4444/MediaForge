@@ -33,8 +33,8 @@ from threading import Lock, Thread
 
 
 def _load_bootstrap_env() -> None:
-    """Load API/.env before importing modules that read configuration values."""
-    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "API", ".env")
+    """Load config/.env before importing modules that read configuration values."""
+    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", ".env")
     if not os.path.exists(env_file):
         return
     try:
@@ -1179,7 +1179,7 @@ def api_headers(json_body=True, connection=None, model="", api_key=""):
     else:
         api_key = AI_API_KEY
         if not api_key:
-            raise HTTPException(status_code=400, detail="未配置 COMFLY_API_KEY，请在 API/.env 中填写。")
+            raise HTTPException(status_code=400, detail="未配置 COMFLY_API_KEY，请在 config/.env 中填写。")
     from app.ai.transport import headers_for_connection
     headers = dict(headers_for_connection(connection or {"protocol": "openai", "api_key": api_key}, json_body=json_body, api_key=api_key))
     # Most AI gateways accept this standard header, while gateways that do not

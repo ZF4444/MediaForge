@@ -115,7 +115,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000", "--workers", 
 .venv
 __pycache__
 *.pyc
-API/.env
+config/.env
 data
 logs
 backups
@@ -187,7 +187,7 @@ Provider 配置监听在缺少 `subscribe` 权限时会自动改用定时刷新�
 openssl rand -base64 36
 ```
 
-如果使用项目根目录的 `API/.env`，它必须通过 Secret 管理，并且不能进入镜像；生产优先使用 Compose 的 `env_file` 或部署平台的 Secret 注入。
+如果使用项目的 `config/.env`，它必须通过 Secret 管理，并且不能进入镜像；生产优先使用 Compose 的 `env_file` 或部署平台的 Secret 注入。
 
 ## 7. 创建 Compose 文件
 

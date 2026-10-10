@@ -3,7 +3,7 @@ name: mediaforge-local
 services:
   api:
     build:
-      context: ..
+      context: ../..
       dockerfile: Dockerfile
     image: mediaforge:local
     restart: unless-stopped

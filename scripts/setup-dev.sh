@@ -3,8 +3,8 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_TEMPLATE="$PROJECT_DIR/API/.env.example"
-ENV_FILE="$PROJECT_DIR/API/.env"
+ENV_TEMPLATE="$PROJECT_DIR/config/.env.example"
+ENV_FILE="$PROJECT_DIR/config/.env"
 INSTALL_SYSTEM_DEPS=true
 START_INFRA=true
 BUILD_FRONTEND=true
@@ -16,13 +16,13 @@ usage() {
 Usage: ./scripts/setup-dev.sh [options]
 
 Sets up a native macOS development environment: Homebrew dependencies,
-API/.env, Python/frontend dependencies, PostgreSQL, Redis, and MinIO.
+config/.env, Python/frontend dependencies, PostgreSQL, Redis, and MinIO.
 
 Options:
   --skip-system-deps     Do not install missing system dependencies.
   --skip-infra           Do not configure or start local PostgreSQL, Redis, and MinIO.
   --skip-frontend-build  Install frontend dependencies without building assets.
-  --force-env            Replace API/.env with API/.env.example.
+  --force-env            Replace config/.env with config/.env.example.
   --only-infra           Only configure and start native infrastructure.
   -h, --help             Show this help.
 EOF
@@ -82,11 +82,11 @@ configure_env() {
   [[ -f "$ENV_TEMPLATE" ]] || fail "Environment template not found: $ENV_TEMPLATE"
   mkdir -p "$(dirname "$ENV_FILE")"
   if [[ -f "$ENV_FILE" && "$FORCE_ENV" == false ]]; then
-    log "Keeping existing API/.env"
+    log "Keeping existing config/.env"
   else
     cp "$ENV_TEMPLATE" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
-    log "Created API/.env from the development template"
+    log "Created config/.env from the development template"
   fi
 }
 
@@ -130,7 +130,7 @@ configure_postgres() {
   pg_user="$(env_value POSTGRES_USER)"
   pg_password="$(env_value POSTGRES_PASSWORD)"
   pg_database="$(env_value POSTGRES_DB)"
-  [[ -n "$pg_user" && -n "$pg_password" && -n "$pg_database" ]] || fail "POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB are required in API/.env."
+  [[ -n "$pg_user" && -n "$pg_password" && -n "$pg_database" ]] || fail "POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB are required in config/.env."
   role_literal="$(sql_literal "$pg_user")"
   role_identifier="$(sql_identifier "$pg_user")"
   password_literal="$(sql_literal "$pg_password")"
@@ -161,7 +161,7 @@ start_minio() {
   minio_access_key="$(env_value MINIO_ROOT_USER)"
   minio_secret_key="$(env_value MINIO_ROOT_PASSWORD)"
   launch_domain="gui/$(id -u)"
-  [[ -n "$minio_access_key" && -n "$minio_secret_key" ]] || fail "MINIO_ROOT_USER and MINIO_ROOT_PASSWORD are required in API/.env."
+  [[ -n "$minio_access_key" && -n "$minio_secret_key" ]] || fail "MINIO_ROOT_USER and MINIO_ROOT_PASSWORD are required in config/.env."
 
   mkdir -p "$minio_data" "$(dirname "$minio_log")" "$(dirname "$minio_agent")"
   cat > "$minio_agent" <<EOF
