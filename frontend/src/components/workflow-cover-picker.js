@@ -63,7 +63,9 @@ export function mountWorkflowCoverPicker({ root, input, removeButton, initialCov
   };
 }
 
-export function mountActionDelegation(root, actions, { event = 'click' } = {}) {
+// capture=true：在捕获阶段分发，避免路径上的弹窗/面板调用 stopPropagation() 后，
+// 其内部的 data-action 按钮收不到 click（表现为单击无效、双击才生效）。
+export function mountActionDelegation(root, actions, { event = 'click', capture = false } = {}) {
   if (!root || !actions) return () => {};
   const handler = eventObject => {
     const target = eventObject.target.closest?.('[data-action]');
@@ -79,6 +81,6 @@ export function mountActionDelegation(root, actions, { event = 'click' } = {}) {
     });
     action(...args, eventObject);
   };
-  root.addEventListener(event, handler);
-  return () => root.removeEventListener(event, handler);
+  root.addEventListener(event, handler, capture);
+  return () => root.removeEventListener(event, handler, capture);
 }
