@@ -6,7 +6,6 @@ from app.models.canvas_agent import SemanticPlan
 from app.services.canvas_agent.canvas_adapter import semantic_plan_to_patch
 from app.services.canvas_agent.canvas_capabilities import Capability, CapabilityRegistry
 from app.services.canvas_agent.policy import assess_patch, validate_patch
-from app.services.canvas_agent.evaluation import evaluate_plan
 from app.services.canvas_agent.runtime import create_canvas_agent
 
 def test_semantic_plan_converts_to_versioned_patch():
@@ -307,16 +306,6 @@ def test_semantic_plan_to_patch_normalizes_flat_params_with_resolver():
     assert node["runSettings"]["resource_id"] == "res-a"
 
 
-
-def test_fixed_evaluation_records_protocol_metrics():
-    metrics = evaluate_plan("prompt-to-image", {"goal": "image", "steps": [
-        {"id": "prompt", "action": "canvas.create_node", "node": {"semantic_type": "smart-prompt"}},
-        {"id": "image", "action": "canvas.create_node", "node": {"semantic_type": "smart-image"}},
-        {"id": "edge", "action": "canvas.connect", "from_step": "prompt", "to_step": "image"},
-    ]})
-    assert metrics["structured_plan_success"] is True
-    assert metrics["patch_validation_passed"] is True
-    assert metrics["confirmation_consistent"] is True
 
 def test_runtime_uses_explicit_planning_and_execution_graph():
     from langchain_core.language_models.fake_chat_models import FakeListChatModel

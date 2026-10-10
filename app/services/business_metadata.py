@@ -138,11 +138,6 @@ CREATE TABLE IF NOT EXISTS canvas_agent_skills (
     id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '1',
     enabled BOOLEAN NOT NULL DEFAULT TRUE, metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS canvas_agent_evaluations (
-    id TEXT PRIMARY KEY, scenario_id TEXT NOT NULL, run_id TEXT, metrics_json JSONB NOT NULL,
-    created_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_canvas_agent_evaluations_scenario_created ON canvas_agent_evaluations(scenario_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS canvas_agent_templates (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
     version INTEGER NOT NULL DEFAULT 1, content_json JSONB NOT NULL DEFAULT '{}'::jsonb,
