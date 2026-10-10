@@ -1,24 +1,44 @@
 :root {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --panel: rgba(255, 255, 255, .86);
+  --line: rgba(60, 60, 67, .16);
+  --text: #16191f;
+  --muted: #6e6e73;
+  --blue: #0a84ff;
+  --input-bg: #fff;
+  --button-bg: #f2f3f5;
+  --button-hover: #e5e7eb;
+  --help: #8e8e93;
+  --glow: rgba(120, 132, 160, .16);
+  --panel-shadow: 0 24px 60px rgba(60, 60, 67, .12), inset 0 1px rgba(255, 255, 255, .9);
+}
+html.theme-dark, html.studio-theme-dark {
   color-scheme: dark;
   --bg: #1c1c1e;
   --panel: rgba(44, 44, 46, .84);
   --line: rgba(255, 255, 255, .13);
   --text: #f5f5f7;
   --muted: #a1a1a6;
-  --blue: #0a84ff;
+  --input-bg: rgba(28, 28, 30, .86);
+  --button-bg: #323234;
+  --button-hover: #48484a;
+  --help: #8e8e93;
+  --glow: rgba(57, 75, 105, .22);
+  --panel-shadow: 0 24px 60px rgba(0, 0, 0, .28), inset 0 1px rgba(255, 255, 255, .08);
 }
 
 * { box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; background: radial-gradient(ellipse 70% 55% at 78% -10%, rgba(57, 75, 105, .22), transparent 70%), var(--bg); color: var(--text); margin: 0; min-height: 100vh; padding: 48px 24px; }
-.panel { max-width: 820px; margin: auto; padding: 30px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); box-shadow: 0 24px 60px rgba(0, 0, 0, .28), inset 0 1px rgba(255, 255, 255, .08); backdrop-filter: blur(28px) saturate(145%); }
+body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; background: radial-gradient(ellipse 70% 55% at 78% -10%, var(--glow), transparent 70%), var(--bg); color: var(--text); margin: 0; min-height: 100vh; padding: 48px 24px; }
+.panel { max-width: 820px; margin: auto; padding: 30px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); box-shadow: var(--panel-shadow); backdrop-filter: blur(28px) saturate(145%); }
 h1 { font-size: 26px; letter-spacing: -.03em; margin: 0 0 9px; }
 p { font-size: 13px; line-height: 1.7; color: var(--muted); }
 .intro { max-width: 680px; margin: 0; }
 .form { display: flex; gap: 9px; margin: 26px 0 14px; }
-.form input { min-width: 0; flex: 1; height: 42px; border: 1px solid var(--line); border-radius: 11px; padding: 0 12px; background: rgba(28, 28, 30, .86); color: var(--text); outline: 0; }
+.form input { min-width: 0; flex: 1; height: 42px; border: 1px solid var(--line); border-radius: 11px; padding: 0 12px; background: var(--input-bg); color: var(--text); outline: 0; }
 .form input:focus { border-color: rgba(10, 132, 255, .75); box-shadow: 0 0 0 3px rgba(10, 132, 255, .17); }
-.button { height: 42px; border: 1px solid var(--line); border-radius: 11px; background: #323234; color: var(--text); padding: 0 15px; font-size: 13px; font-weight: 700; cursor: pointer; }
-.button:hover { background: #48484a; }
+.button { height: 42px; border: 1px solid var(--line); border-radius: 11px; background: var(--button-bg); color: var(--text); padding: 0 15px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.button:hover { background: var(--button-hover); }
 .button:disabled { opacity: .5; cursor: not-allowed; }
 .button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
 .status { min-height: 22px; padding: 4px 0; font-size: 12px; color: var(--muted); }
@@ -31,7 +51,7 @@ p { font-size: 13px; line-height: 1.7; color: var(--muted); }
 .confirm input { accent-color: var(--blue); }
 .danger { margin-top: 16px; background: #ff453a; border-color: #ff453a; color: #fff; }
 .danger:hover { background: #ff6961; }
-.help { margin-top: 24px; font-size: 11px; color: #8e8e93; }
+.help { margin-top: 24px; font-size: 11px; color: var(--help); }
 
 @media (max-width: 600px) {
   body { padding: 20px 14px; }
