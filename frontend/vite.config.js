@@ -77,12 +77,14 @@ function assetManagerFeatures() {
         `import { loadAssetManagerBootstrap } from ${JSON.stringify(resolve(frontendRoot, 'src/services/asset-manager.js'))};`,
         `import { upload } from ${JSON.stringify(resolve(frontendRoot, 'src/services/upload-quota.js'))};`,
         `import { getFileMetadata } from ${JSON.stringify(resolve(frontendRoot, 'src/services/file-metadata.js'))};`,
-        `import { apiConfirm, apiPrompt, openExternal } from ${JSON.stringify(resolve(frontendRoot, 'src/services/http.js'))};`,
+        `import { apiJson as httpApiJson, apiConfirm, apiPrompt, openExternal } from ${JSON.stringify(resolve(frontendRoot, 'src/services/http.js'))};`,
       ].join('\n');
       const featureSources = assetManagerFeatureFiles
         .map(name => readFileSync(resolve(frontendRoot, 'src/asset-manager', name), 'utf8'))
         .join('\n\n');
-      return `${importedService}\nObject.assign(globalThis.__MediaForgeRuntimeServices || (globalThis.__MediaForgeRuntimeServices = {}), { apiJson, apiConfirm, apiPrompt, openExternal });\n${featureSources}`;
+      // 必须注册 http.js 的 apiJson：拼接进来的 main.js 里有同名本地 apiJson，它会转调
+      // runtimeServices.apiJson；若这里误注册成本地函数自身，就会无限递归（Maximum call stack size exceeded）。
+      return `${importedService}\nObject.assign(globalThis.__MediaForgeRuntimeServices || (globalThis.__MediaForgeRuntimeServices = {}), { apiJson: httpApiJson, apiConfirm, apiPrompt, openExternal });\n${featureSources}`;
     },
   };
 }
@@ -249,6 +251,13 @@ function staticPageOutput() {
   return {
     name: 'mediaforge-static-page-output',
     generateBundle(_options, bundle) {
+      // HTML 中指向 /static/ 的 <link rel="stylesheet"> 会被 Vite 当作 CSS 导入写进入口 JS，
+      // 变成 import "/static/dist/styles/xxx.css"。浏览器会把 CSS 当模块解析并报 MIME 错误，
+      // 导致整个入口脚本不执行。样式由下方回填的 <link> 加载，这里移除这些无效的 JS 导入。
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type !== 'chunk') continue;
+        chunk.code = chunk.code.replace(/import\s*["']\/static\/[^"']+\.css["'];?/g, '');
+      }
       for (const [oldName, asset] of Object.entries(bundle)) {
         if (asset.type !== 'asset') continue;
         const page = pages.find(({ htmlSrc }) => {
@@ -291,6 +300,11 @@ function legacyAssets() {
           content = content
             .replace('export const StudioTheme =', 'window.StudioTheme =')
             .replace('export const StudioScale =', 'window.StudioScale =');
+        }
+        // fonts.css 里的字体写成 /fonts/xxx.ttf（Vite 打包路径会自动改成 /static/fonts/），
+        // 原样拷贝到 dist/styles 时必须手动改写，否则浏览器请求 /fonts/* 会 404。
+        if (fileName === 'dist/styles/fonts.css') {
+          content = content.replaceAll("url('/fonts/", "url('/static/fonts/");
         }
         this.emitFile({ type: 'asset', fileName, source: content });
       }
@@ -411,7 +425,8 @@ export const moduleInputs = Object.fromEntries(
 );
 
 for (const { page, mainSrc } of pages.filter(({ page, htmlSrc }) => modulePages.has(page) && !htmlSrc)) {
-  moduleInputs[page] = resolve(repoRoot, mainSrc);
+  // Duplicate compatibility entries must not replace the HTML build input.
+  if (!moduleInputs[page]) moduleInputs[page] = resolve(repoRoot, mainSrc);
 }
 
 function viteConfig({ dev = false } = {}) {
