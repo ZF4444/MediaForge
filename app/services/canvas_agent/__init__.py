@@ -1,7 +1,7 @@
 """Canvas Agent Phase 0 deterministic infrastructure."""
 
-from .adapter import semantic_plan_to_patch
-from .capabilities import CapabilityRegistry, from_repository
+from .canvas_adapter import semantic_plan_to_patch
+from .canvas_capabilities import CapabilityRegistry, from_repository
 from .executor import apply_patch, apply_patch_idempotently
 from .policy import validate_patch, assess_patch
 from .runtime import create_canvas_agent

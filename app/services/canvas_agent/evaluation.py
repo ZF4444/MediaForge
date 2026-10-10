@@ -4,7 +4,7 @@ from typing import Any
 from app.core.utils import now_ms
 from app.models.canvas_agent import SemanticPlan
 from app.services.business_metadata import json_value, metadata_connection, new_id
-from .adapter import semantic_plan_to_patch
+from .canvas_adapter import semantic_plan_to_patch
 from .policy import assess_patch, validate_patch
 
 FIXED_CANVAS_SCENARIOS = [

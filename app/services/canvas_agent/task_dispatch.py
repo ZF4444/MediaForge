@@ -8,7 +8,7 @@ from app.ai.runtime import authorize_target_task, normalize_canvas_image_payload
 from typing import Any
 from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_tasks import create_canvas_task, enqueue_canvas_task
-from .capabilities import from_repository
+from .canvas_capabilities import from_repository
 
 
 def _image_request_for_node(node: dict[str, Any], fallback_capability: Any, fallback_prompt: str,

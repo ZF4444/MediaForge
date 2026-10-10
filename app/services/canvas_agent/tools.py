@@ -13,8 +13,8 @@ from langgraph.types import Command
 from app.models.canvas_agent import SemanticPlan
 from app.services.ai_parameters import capability_parameters
 
-from .adapter import capability_schema_resolver, semantic_plan_to_patch
-from .capabilities import CapabilityRegistry, from_repository
+from .canvas_adapter import capability_schema_resolver, semantic_plan_to_patch
+from .canvas_capabilities import CapabilityRegistry, from_repository
 from .context import build_canvas_context
 from .event_factory import SKILL_ARTIFACT_KIND
 from .policy import assess_patch
