@@ -116,16 +116,6 @@ ALTER TABLE canvas_agent_operations ADD COLUMN IF NOT EXISTS started_at BIGINT;
 ALTER TABLE canvas_agent_operations ADD COLUMN IF NOT EXISTS finished_at BIGINT;
 CREATE INDEX IF NOT EXISTS idx_canvas_agent_operations_run ON canvas_agent_operations(run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_canvas_agent_operations_claim ON canvas_agent_operations(status, lease_until, created_at);
-CREATE TABLE IF NOT EXISTS canvas_agent_artifacts (
-    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, type TEXT NOT NULL,
-    version INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'draft', content_json JSONB NOT NULL, source_artifact_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-    created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, stale BOOLEAN NOT NULL DEFAULT FALSE,
-    approved_by TEXT NOT NULL DEFAULT '', approved_at BIGINT, rejection_note TEXT NOT NULL DEFAULT '', UNIQUE(run_id, type, version)
-);
-ALTER TABLE canvas_agent_artifacts ADD COLUMN IF NOT EXISTS stale BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE canvas_agent_artifacts ADD COLUMN IF NOT EXISTS approved_by TEXT NOT NULL DEFAULT '';
-ALTER TABLE canvas_agent_artifacts ADD COLUMN IF NOT EXISTS approved_at BIGINT;
-ALTER TABLE canvas_agent_artifacts ADD COLUMN IF NOT EXISTS rejection_note TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS canvas_agent_events (
     id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES canvas_agent_runs(id) ON DELETE CASCADE, sequence BIGINT NOT NULL,
     type TEXT NOT NULL, payload_json JSONB NOT NULL DEFAULT '{}'::jsonb, created_at BIGINT NOT NULL, UNIQUE(run_id, sequence)
@@ -161,14 +151,6 @@ CREATE TABLE IF NOT EXISTS canvas_agent_templates (
     UNIQUE(user_id, name, version)
 );
 CREATE INDEX IF NOT EXISTS idx_canvas_agent_templates_user_updated ON canvas_agent_templates(user_id, updated_at DESC);
-CREATE TABLE IF NOT EXISTS canvas_agent_project_assets (
-    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT NOT NULL,
-    canvas_id TEXT NOT NULL REFERENCES smart_canvases(id) ON DELETE CASCADE,
-    artifact_id TEXT NOT NULL REFERENCES canvas_agent_artifacts(id) ON DELETE CASCADE,
-    asset_type TEXT NOT NULL DEFAULT 'artifact', visibility TEXT NOT NULL DEFAULT 'project', created_at BIGINT NOT NULL,
-    UNIQUE(user_id, project_id, artifact_id)
-);
-CREATE INDEX IF NOT EXISTS idx_canvas_agent_project_assets_user_project ON canvas_agent_project_assets(user_id, project_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY, value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL DEFAULT 1

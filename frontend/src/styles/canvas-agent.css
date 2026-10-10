@@ -27,7 +27,7 @@
 .canvas-agent-plan-state{margin-left:auto;flex:0 0 auto;padding:2px 6px;border:1px solid var(--line,#e8edf3);border-radius:999px;background:var(--soft,#f8fafc);color:var(--muted,#64748b);font-size:10px;font-weight:600;line-height:1.2}
 .canvas-agent-node-config-history .canvas-agent-history-prompt{height:62px;min-height:62px;cursor:pointer;overflow:hidden}.canvas-agent-node-config-history .canvas-agent-history-prompt.expanded{height:124px;min-height:124px;overflow:auto}
 .canvas-agent-plan-meta input{vertical-align:middle}
-.canvas-agent-stage-nav{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}.canvas-agent-stage{border:1px solid #cbd5e1;background:#fff;border-radius:5px;padding:4px 6px;font-size:10px;cursor:pointer}.canvas-agent-stage.stale{border-color:#f59e0b;color:#92400e;background:#fffbeb}.canvas-agent-artifact-detail{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;padding:6px 0}
+
 html.studio-theme-dark .canvas-agent-toggle, body.studio-theme-dark .canvas-agent-toggle{--panel-bg:#101010;--border-color:#2b2b2f;--text-primary:#e5e5e7;color:#e5e5e7;box-shadow:0 4px 14px rgba(0,0,0,.28)}
 html.studio-theme-dark .canvas-agent-panel, body.studio-theme-dark .canvas-agent-panel{--panel-bg:#101010;--border-color:#2b2b2f;--text:#e5e5e7;background:#101010;color:#e5e5e7;border-color:#2b2b2f;box-shadow:0 18px 42px rgba(0,0,0,.5)}
 html.studio-theme-dark .canvas-agent-head, body.studio-theme-dark .canvas-agent-head,

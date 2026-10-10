@@ -35,7 +35,7 @@ describe('CanvasAgentEventProjector', () => {
             type: 'skill.loaded',
             payload: {
                 message: '已读取分镜技能',
-                skill: { name: 'shot-list' },
+                skill: { name: 'canvas-capabilities' },
                 presentation: {
                     targets: ['conversation_progress', 'skill_badge'],
                     group_id: 'tool:call-1',
@@ -45,18 +45,18 @@ describe('CanvasAgentEventProjector', () => {
         });
 
         expect(projection.progress).toMatchObject({ groupId: 'tool:call-1', state: 'succeeded' });
-        expect(projection.skillBadge).toEqual({ name: 'shot-list', version: '' });
+        expect(projection.skillBadge).toEqual({ name: 'canvas-capabilities', version: '' });
     });
 
     it('keeps legacy Skill metadata as a tag without recreating progress', () => {
         const projector = createProjector();
         const projection = projector.project({
             type: 'skill.resource_loaded',
-            payload: { skill: { name: 'shot-list', version: '1' } },
+            payload: { skill: { name: 'canvas-capabilities', version: '1' } },
         });
 
         expect(projection.progress).toBeNull();
-        expect(projection.skillBadge).toEqual({ name: 'shot-list', version: '1' });
+        expect(projection.skillBadge).toEqual({ name: 'canvas-capabilities', version: '1' });
         expect(projector.isConversationEvent({ type: 'skill.resource_loaded', payload: {} })).toBe(false);
     });
 

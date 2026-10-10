@@ -145,9 +145,9 @@ class PlanConfirmation(ProtocolModel):
     reason: str = Field(default="", description="Human-readable explanation of why confirmation is required, shown to the user before they approve.")
 
 class SemanticPlan(ProtocolModel):
-    mode: Literal["fast_track", "doc_chain"] = Field(
+    mode: Literal["fast_track"] = Field(
         default="fast_track",
-        description="Execution strategy. fast_track: execute steps directly with minimal LLM calls. doc_chain: use a document-grounded reasoning chain for complex multi-step plans."
+        description="Execution strategy. fast_track: execute steps directly with minimal LLM calls."
     )
     goal: str = Field(min_length=1, description="One-sentence description of what this plan achieves, written from the user's perspective.")
     questions: list[str] = Field(default_factory=list, description="Clarifying questions to ask the user before executing, when the request is ambiguous. Leave empty if the goal is clear.")
@@ -183,7 +183,7 @@ class AgentRun(ProtocolModel):
     id: str
     canvas_id: str
     conversation_id: str = ""
-    mode: Literal["fast_track", "doc_chain"] = "fast_track"
+    mode: Literal["fast_track"] = "fast_track"
     status: str = "created"
     phase: str = "planning"
     base_canvas_version: int = 1
@@ -200,15 +200,6 @@ class AgentOperation(ProtocolModel):
     input: dict[str, Any] = Field(default_factory=dict)
     result: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
-
-class Artifact(ProtocolModel):
-    id: str
-    run_id: str
-    type: str
-    version: int = 1
-    status: str = "draft"
-    content: dict[str, Any] = Field(default_factory=dict)
-    source_artifact_ids: list[str] = Field(default_factory=list)
 
 class AgentEvent(ProtocolModel):
     id: str

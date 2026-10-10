@@ -271,8 +271,7 @@
       messages:(data.messages||[]).map(item=>[item.id||'',item.role||'',item.content||'',JSON.stringify(item.metadata_json||{}),item.created_at||'']),
       events:(data.events||[]).map(event=>[event.sequence||'',event.type||'',event.created_at||'']),
       plan:[data.plan?.version||'',data.plan?.status||''],
-      tasks:(data.tasks||[]).map(item=>[item.id||item.task_id||'',item.status||'',item.updated_at||'']),
-      artifacts:(data.artifacts||[]).map(item=>[item.id||'',item.version||'',item.status||'',item.stale||false])
+      tasks:(data.tasks||[]).map(item=>[item.id||item.task_id||'',item.status||'',item.updated_at||''])
     });
     if(renderKey===lastRunRenderKey) return;
     lastRunRenderKey=renderKey;
@@ -322,7 +321,7 @@
     else if(!planRendered) { planBox.innerHTML=''; planBox.hidden=true; messages.appendChild(planBox); }
     if(!planBox.isConnected){ planBox.innerHTML=''; planBox.hidden=true; messages.appendChild(planBox); }
     messages.append(artifactsBox);
-    window.CanvasAgentArtifacts.render(data.tasks||[],data.artifacts||[]); if((data.artifacts||[]).length)window.CanvasAgentArtifacts.renderDocChain(data.artifacts);
+    window.CanvasAgentArtifacts.render(data.tasks||[]);
     restoreMessageScroll(messages,scrollSnapshot); rebuildingMessages=false; messageFollow=scrollSnapshot.follow;
   }
   async function ensureRun() { if (state.runId) return state.runId; status('正在创建会话'); const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); await refreshRuns(); return state.runId; }

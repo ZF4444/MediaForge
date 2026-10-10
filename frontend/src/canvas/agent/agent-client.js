@@ -27,17 +27,10 @@
     retryTask: taskId => request(runPath(`/tasks/${encodeURIComponent(taskId)}/retry`), {method:'POST', body:'{}'}),
     review: (status, note='') => request(runPath('/review'), {method:'POST', body:JSON.stringify({status, note})}),
     redo: (nodeId, prompt) => request(runPath('/redo'), {method:'POST', body:JSON.stringify({node_id:nodeId, prompt})}),
-    artifacts: () => request(runPath('/artifacts')),
-    setArtifactStatus: (id, status, note='') => request(runPath(`/artifacts/${encodeURIComponent(id)}/status`), {method:'POST', body:JSON.stringify({status, note})}),
-    compilePack: (shotListId, anchorId) => request(runPath('/prompt-pack/compile'), {method:'POST', body:JSON.stringify({shot_list_artifact_id:shotListId, anchor_artifact_id:anchorId})}),
-    generatePack: (artifactId, nodeIds) => request(runPath(`/prompt-pack/${encodeURIComponent(artifactId)}/generate`), {method:'POST', body:JSON.stringify({node_ids:nodeIds})}),
     estimateCost: budget => request(runPath('/cost-estimate'), {method:'POST', body:JSON.stringify({budget})}),
     orchestrate: (goal, roles=[]) => request(runPath('/orchestrate'), {method:'POST', body:JSON.stringify({goal, roles})}),
-    evaluateArtifact: id => request(runPath(`/artifacts/${encodeURIComponent(id)}/quality`), {method:'POST', body:'{}'}),
     templates: () => request('/api/canvas-agent/templates'),
     createTemplate: body => request('/api/canvas-agent/templates', {method:'POST', body:JSON.stringify(body)}),
     instantiateTemplate: (id, runId) => request(`/api/canvas-agent/templates/${encodeURIComponent(id)}/instantiate`, {method:'POST', body:JSON.stringify({run_id:runId})}),
-    projectAssets: projectId => request(`/api/canvas-agent/project-assets?project_id=${encodeURIComponent(projectId)}`),
-    shareProjectAsset: body => request('/api/canvas-agent/project-assets', {method:'POST', body:JSON.stringify(body)}),
   };
 })();

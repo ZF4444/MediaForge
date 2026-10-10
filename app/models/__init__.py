@@ -263,32 +263,6 @@ class CanvasAgentReviewRequest(BaseModel):
     status: str = "approved"
     note: str = Field(default="", max_length=4000)
 
-class CanvasArtifactUpsertRequest(BaseModel):
-    type: str = Field(min_length=1, max_length=64)
-    content: Dict[str, Any] = {}
-    status: str = "draft"
-    source_artifact_ids: List[str] = []
-
-class CanvasArtifactStatusRequest(BaseModel):
-    status: str = Field(min_length=1, max_length=32)
-    note: str = Field(default="", max_length=4000)
-
-class CanvasPromptCompileRequest(BaseModel):
-    shot: Dict[str, Any] = {}
-    anchor_artifact_id: str = ""
-
-class CanvasArtifactAdvanceRequest(BaseModel):
-    target_stage: str = Field(min_length=1, max_length=64)
-    content: Dict[str, Any] = {}
-    source_artifact_ids: List[str] = []
-
-class CanvasPromptPackCompileRequest(BaseModel):
-    shot_list_artifact_id: str = Field(min_length=1, max_length=128)
-    anchor_artifact_id: str = Field(min_length=1, max_length=128)
-
-class CanvasPromptPackGenerateRequest(BaseModel):
-    node_ids: List[str] = []
-
 class CanvasCostEstimateRequest(BaseModel):
     budget: float | None = Field(default=None, ge=0)
 
@@ -305,13 +279,6 @@ class CanvasTemplateCreateRequest(BaseModel):
 
 class CanvasTemplateInstantiateRequest(BaseModel):
     run_id: str = Field(min_length=1, max_length=128)
-
-class CanvasProjectAssetShareRequest(BaseModel):
-    run_id: str = Field(min_length=1, max_length=128)
-    artifact_id: str = Field(min_length=1, max_length=128)
-    project_id: str = Field(min_length=1, max_length=128)
-    asset_type: str = Field(default="artifact", max_length=80)
-
 
 class CanvasAssetCheckRequest(BaseModel):
     urls: List[str] = []

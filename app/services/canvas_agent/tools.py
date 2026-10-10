@@ -19,7 +19,7 @@ from .context import build_canvas_context
 from .event_factory import SKILL_ARTIFACT_KIND
 from .policy import assess_patch
 from .skills import read_skill_document, read_skill_resource
-from .store import latest_artifact, save_plan
+from .store import save_plan
 
 
 def submit_semantic_plan(plan: dict[str, Any]) -> SemanticPlan:
@@ -101,11 +101,6 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
         # The display labels are stored alongside the canonical AI resources.
         # Keep this legacy synchronous repository lookup off the ASGI loop.
         return await asyncio.to_thread(agent_display_schema, schema, connection_id, model)
-
-    @tool
-    async def read_artifact(artifact_type: str = "") -> dict[str, Any] | None:
-        """Read the latest artifact owned by this Agent Run."""
-        return await asyncio.to_thread(latest_artifact, user_id, run_id, artifact_type)
 
     @tool
     async def read_canvas_skill(name: str, runtime: ToolRuntime) -> Command:
@@ -256,7 +251,7 @@ def build_canvas_tools(*, user_id: str, run_id: str, canvas_id: str,
 
     tools = [
         # read_canvas_context,
-        # read_capability_registry, read_capability_parameters, read_artifact,
+        # read_capability_registry, read_capability_parameters,
         read_canvas_skill, read_canvas_skill_file,
         # propose_canvas_patch, request_clarification,
     ]

@@ -2,7 +2,7 @@
 
 > 状态：设计定稿，待实施
 >
-> 适用范围：画布 Agent 的 Run、LangGraph 编排、Patch Executor、画布任务和 Artifact 工作流。
+> 适用范围：画布 Agent 的 Run、LangGraph 编排、Patch Executor、画布任务和模板、编排等工作流。
 
 ## 1. 目标与结论
 
@@ -38,7 +38,7 @@ POST /runs/{id}/...  ->     执行 LangGraph / Patch / 任务提交
 - 主页面通过 iframe 加载画布时，画布脚本主动不建立 WebSocket；iframe 内没有实时事件通道。
 - `agent.*` 未进入既有 Redis WebSocket Pub/Sub 分发，多个 API worker 时，请求和浏览器连接落在不同进程会丢实时通知。
 - 进度事件缺少规范字段，无法可靠表达 operation、图节点、工具名、尝试次数和可重试性。
-- `/messages`、`/answers`、`/confirm` 都可能长时间运行，但调度边界不一致；其它 Artifact、任务、审阅接口虽会发事件，语义也不统一。
+- `/messages`、`/answers`、`/confirm` 都可能长时间运行，但调度边界不一致；其它任务、审阅接口虽会发事件，语义也不统一。
 
 ## 3. 名词与权威边界
 
@@ -105,7 +105,7 @@ CREATE INDEX canvas_agent_event_outbox_pending_idx
 ```text
 id                 Operation 主键
 idempotency_key    <run_id>:<command_type>:<client_request_id>
-type               agent.message / agent.answer / agent.confirm / artifact.* / task.*
+type               agent.message / agent.answer / agent.confirm / task.*
 status             accepted / queued / running / succeeded / failed / cancelled / blocked
 input_json         经校验后的命令内容
 result_json        完成摘要，不存大对象
@@ -150,8 +150,7 @@ result_json        完成摘要，不存大对象
 | 命令 | `operation.accepted`、`operation.queued`、`operation.started`、`operation.succeeded`、`operation.failed`、`operation.cancelled` |
 | 编排 | `progress.context`、`progress.model`、`progress.agent`、`progress.tool_started`、`progress.tool_completed`、`progress.tool_failed`、`progress.validation`、`progress.confirmation`、`progress.execution` |
 | 业务结果 | `message.replied`、`plan.created`、`patch.applied`、`tasks.queued`、`task.progress`、`task.succeeded`、`task.failed`、`run.completed`、`run.blocked`、`run.failed` |
-| Artifact | `artifact.created`、`artifact.advanced`、`artifact.status_changed`、`artifact.quality_evaluated`、`prompt_pack.compiled`、`prompt_pack.tasks_queued` |
-| 协作 | `orchestration.proposed`、`template.instantiated`、`project_asset.shared` |
+| 协作 | `orchestration.proposed`、`template.instantiated` |
 
 `progress` 不能再是一个只有自由文本的事件。为兼容已有客户端，可在迁移期同时写旧 `progress`，但前端优先使用上述类型与 `payload.message`。
 
@@ -177,7 +176,6 @@ result_json        完成摘要，不存大对象
 | `POST /runs/{run_id}/messages` | `agent.message` | 加载上下文、运行 LangGraph、生成计划或回复 |
 | `POST /runs/{run_id}/answers` | `agent.answer` | 恢复/继续 LangGraph 规划 |
 | `POST /runs/{run_id}/confirm` | `agent.confirm` | 恢复确认节点、Patch Executor、提交画布任务 |
-| `POST /runs/{run_id}/prompt-pack/{id}/generate` | `prompt_pack.generate` | 校验产物、批量创建运行任务 |
 
 响应统一：
 
@@ -197,9 +195,7 @@ HTTP 入口只做鉴权、请求校验、幂等去重、Operation 入库、Run �
 以下动作在低延迟且无长链路时保持同步；每个成功、拒绝和失败结果均经 AREB 写事件：
 
 - `POST /runs`、`/cancel`、`/retry`、`/redo`、`/review`
-- Artifact 创建、推进、状态更新、质量评估
-- Prompt Pack 编译
-- Template 实例化、Project Asset 分享、编排方案生成
+- Template 实例化、编排方案生成
 
 若这些接口将来引入外部 HTTP、批量数据库处理或生成任务，也必须迁入异步命令平面。
 
@@ -310,7 +306,7 @@ class AgentEventService:
 3. **前端时序修复**：发送前启动消费；分离 `runSummary` 与 `lastEvent`；显示工具名、错误和确认状态。
 4. **异步消息与回答**：`/messages`、`/answers` 迁为 202 Command，由 Agent Worker 执行。
 5. **异步确认**：`/confirm` 迁为 202 Command，覆盖 LangGraph resume、Patch、任务提交。
-6. **其余接口接入**：Artifact、Prompt Pack、任务重试、审阅、模板等统一事件类型与 Operation 记录。
+6. **其余接口接入**：任务重试、审阅、模板等统一事件类型与 Operation 记录。
 7. **清理兼容逻辑**：删除旧 `progress` 自由文本消费、路由中的直连广播和同步长请求路径。
 
 迁移期间后端同时发布旧 `progress` 和新 `progress.*`；前端优先新协议。完成全量发布并观察稳定后删除旧协议。

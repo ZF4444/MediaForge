@@ -52,7 +52,7 @@ def test_patch_transaction_and_idempotency():
 def test_agent_store_persists_versioned_business_facts():
     from app.core.database import close_database_pool, open_database_pool
     from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
-    from app.services.canvas_agent.store import append_event, append_message, begin_operation, create_run, finish_operation, save_artifact, save_plan
+    from app.services.canvas_agent.store import append_event, append_message, begin_operation, create_run, finish_operation, save_plan
 
     def run_sync():
         initialize_business_metadata()
@@ -64,7 +64,6 @@ def test_agent_store_persists_versioned_business_facts():
             run = create_run(uid, canvas_id)
             assert append_message(uid, run["id"], "user", "hello")["sequence"] == 1
             assert save_plan(uid, run["id"], {"goal":"hello"})["content_json"]["schema_version"] == 1
-            assert save_artifact(uid, run["id"], "shot_list", {"shots":[]})["content_json"]["schema_version"] == 1
             operation = begin_operation(uid, run["id"], run["id"] + ":op", "canvas.apply_patch", {"patch":{}})
             assert finish_operation(operation["idempotency_key"], status="succeeded", result={"ok":True})["result_json"]["schema_version"] == 1
             assert append_event(uid, run["id"], "agent.plan.created", {"plan_version":1})["payload_json"]["schema_version"] == 1
@@ -167,39 +166,10 @@ def test_expired_tool_group_is_closed_once_across_concurrent_reconcilers():
     asyncio.run(run())
 
 
-def test_artifact_versions_propagate_stale_to_downstream():
+def test_phase4_templates_are_owner_scoped():
     from app.core.database import close_database_pool, open_database_pool
     from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
-    from app.services.canvas_agent.store import create_run, list_artifacts, save_artifact
-
-    def run_sync():
-        initialize_business_metadata()
-        uid = "phase3-artifact-" + uuid.uuid4().hex[:12]; canvas_id = "phase3-artifact-canvas-" + uuid.uuid4().hex[:12]; now = 1000000000000
-        try:
-            with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-                cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s)", (uid, uid, now))
-                cur.execute("INSERT INTO smart_canvases(id,user_id,title,created_at,updated_at,version,viewport_json) VALUES(%s,%s,%s,%s,%s,1,%s)", (canvas_id, uid, "phase3", now, now, json_value({"viewport": {}, "payload": {}})))
-            run = create_run(uid, canvas_id)
-            brief = save_artifact(uid, run["id"], "brief", {"text": "v1"}, status="approved")
-            script = save_artifact(uid, run["id"], "script", {"text": "script"}, source_artifact_ids=[brief["id"]])
-            shot_list = save_artifact(uid, run["id"], "shot_list", {"shots": []}, source_artifact_ids=[script["id"]])
-            save_artifact(uid, run["id"], "brief", {"text": "v2"})
-            stored = next(item for item in list_artifacts(uid, run["id"]) if item["id"] == script["id"])
-            assert stored["stale"] is True
-            assert next(item for item in list_artifacts(uid, run["id"]) if item["id"] == shot_list["id"])["stale"] is True
-        finally:
-            with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur: cur.execute("DELETE FROM users WHERE id=%s", (uid,))
-
-    async def run():
-        await open_database_pool()
-        try: await asyncio.to_thread(run_sync)
-        finally: await close_database_pool()
-    asyncio.run(run())
-
-def test_phase4_templates_and_project_assets_are_owner_scoped():
-    from app.core.database import close_database_pool, open_database_pool
-    from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
-    from app.services.canvas_agent.store import create_run, create_template, list_project_assets, list_templates, save_artifact, share_project_asset
+    from app.services.canvas_agent.store import create_run, create_template, list_templates
 
     def run_sync():
         initialize_business_metadata()
@@ -213,10 +183,6 @@ def test_phase4_templates_and_project_assets_are_owner_scoped():
             template = create_template(uid, "product-launch", {"goal": "launch"}, source_run_id=run["id"])
             assert list_templates(uid)[0]["id"] == template["id"]
             assert list_templates(other) == []
-            artifact = save_artifact(uid, run["id"], "brief", {"text": "launch"})
-            shared = share_project_asset(uid, run["id"], artifact["id"], "project-a")
-            assert list_project_assets(uid, "project-a")[0]["id"] == shared["id"]
-            assert list_project_assets(other, "project-a") == []
         finally:
             with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur: cur.execute("DELETE FROM users WHERE id IN (%s,%s)", (uid, other))
 

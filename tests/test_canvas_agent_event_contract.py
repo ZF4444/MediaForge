@@ -239,4 +239,4 @@ def test_read_canvas_context_completion_detail_full_vs_specific_nodes():
     assert fallback == "已读取missing节点"
 
     # Non-context tools keep the default label (empty detail).
-    assert _completion_detail("read_artifact", {}, None) == ""
+    assert _completion_detail("read_canvas_skill", {}, None) == ""

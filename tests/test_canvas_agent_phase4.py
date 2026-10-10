@@ -1,6 +1,5 @@
 import pytest
 
-from app.services.canvas_agent.evaluation import evaluate_artifact_quality
 from app.services.canvas_agent.orchestration import build_specialist_plan, enforce_budget, estimate_plan_cost
 
 
@@ -26,11 +25,3 @@ def test_specialist_orchestration_is_bounded_and_ordered():
     assert graph["execution_boundary"] == "specialists_propose_only"
     with pytest.raises(ValueError):
         build_specialist_plan("x", roles=["unbounded_agent"])
-
-
-def test_artifact_quality_gate_detects_stale_and_incomplete_content():
-    failed = evaluate_artifact_quality({"id": "p1", "type": "prompt_pack", "stale": True, "content_json": {"prompts": [{"shot_id": "s1"}]}})
-    assert failed["approved_for_next_stage"] is False
-    assert set(failed["issues"]) == {"artifact_stale", "incomplete_prompt"}
-    passed = evaluate_artifact_quality({"id": "p2", "type": "prompt_pack", "content_json": {"prompts": [{"shot_id": "s1", "prompt": "clean product shot"}]}})
-    assert passed["score"] == 100

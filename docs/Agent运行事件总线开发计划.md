@@ -4,7 +4,7 @@
 >
 > 关联设计：[Agent运行事件总线方案.md](Agent运行事件总线方案.md)
 >
-> 范围：Canvas Agent 的命令受理、LangGraph 运行进度、Patch Executor、画布任务、Artifact 相关事件和浏览器实时消费。
+> 范围：Canvas Agent 的命令受理、LangGraph 运行进度、Patch Executor、画布任务相关事件和浏览器实时消费。
 
 ## 1. 目标与边界
 
@@ -32,7 +32,7 @@
 | WebSocket | `/ws/stats` 已按 user 隔离，已有 Redis Pub/Sub bridge | `agent.*` 未接入远程投递；iframe 主动跳过连接 |
 | 前端面板 | 能恢复历史 events 并轮询 | `send/answer/confirm` 在长 HTTP 返回后才开始消费；状态文本被 Run 摘要覆盖 |
 | 命令执行 | `/messages`、`/answers`、`/confirm` 同步执行 LangGraph/Patch | HTTP 生命周期绑住长操作，刷新或超时无法可靠追踪 |
-| 业务副作用 | Patch Executor、task dispatch、Artifact 接口已经产生事件 | 事件命名、operation 关联和失败语义不统一 |
+| 业务副作用 | Patch Executor、task dispatch 已经产生事件 | 事件命名、operation 关联和失败语义不统一 |
 
 当前初始化使用 `app/services/business_metadata.py` 的幂等 DDL，而非独立 Alembic 迁移。本计划沿用该模式：所有新表使用 `CREATE TABLE IF NOT EXISTS`，增列使用 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`，并提供可重复运行的 backfill。
 
@@ -237,10 +237,8 @@ finished_at       BIGINT NULL
 按风险由低到高接入：
 
 1. `cancel`、`retry`、`redo`、`review`。
-2. Artifact 创建、推进、状态更新、质量评估。
-3. Prompt Pack 编译、生成任务提交。
-4. Template 实例化、Project Asset 分享、编排提案。
-5. 与 Agent Run 关联的 canvas task retry/terminal event。
+2. Template 实例化、编排提案。
+3. 与 Agent Run 关联的 canvas task retry/terminal event。
 
 每个入口要求：使用 `AgentEventService`，关联现有或新建 Operation，事件类型落在注册表内，失败不向客户端泄露供应商原始响应。
 
@@ -371,7 +369,7 @@ GET /api/canvas-agent/runs/{run_id}/events?after_sequence=41&limit=500
 4. `fix(canvas-agent-ui): consume sequenced events before command submission`
 5. `feat(agent-commands): run messages and answers asynchronously`
 6. `feat(agent-commands): run confirmations asynchronously with cancellation`
-7. `refactor(agent-events): route artifacts and tasks through event service`
+7. `refactor(agent-events): route tasks through event service`
 8. `chore(agent-events): remove legacy progress transport and add runbook`
 
 每个提交都必须包含对应测试，且不混合 Provider Schema、节点 UI 或无关画布功能改动。

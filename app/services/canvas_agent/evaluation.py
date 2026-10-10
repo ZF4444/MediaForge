@@ -39,32 +39,3 @@ def record_evaluation(metrics: dict[str, Any], *, run_id: str = "") -> str:
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("INSERT INTO canvas_agent_evaluations(id,scenario_id,run_id,metrics_json,created_at) VALUES(%s,%s,%s,%s,%s)", (evaluation_id,str(metrics.get("scenario_id") or ""),run_id or None,json_value(metrics),now_ms()))
     return evaluation_id
-
-def evaluate_artifact_quality(artifact: dict[str, Any]) -> dict[str, Any]:
-    """Deterministic quality gate suitable for approval UI and regression tests."""
-    content = dict(artifact.get("content_json") or artifact.get("content") or {})
-    artifact_type = str(artifact.get("type") or "")
-    issues: list[str] = []
-    if artifact.get("stale"):
-        issues.append("artifact_stale")
-    if artifact_type == "shot_list" and not content.get("shots"):
-        issues.append("missing_shots")
-    if artifact_type == "prompt_pack":
-        prompts = content.get("prompts") or []
-        if not prompts: issues.append("missing_prompts")
-        elif any(not isinstance(item, dict) or not item.get("prompt") for item in prompts): issues.append("incomplete_prompt")
-    if artifact_type == "asset_anchors":
-        anchors = sum(len(value) for value in content.values() if isinstance(value, list))
-        if not anchors: issues.append("missing_anchors")
-    source_count = len(artifact.get("source_artifact_ids") or [])
-    score = max(0, 100 - len(issues) * 30)
-    return {
-        "schema_version": 1,
-        "scenario_id": f"artifact-quality:{artifact_type}",
-        "artifact_id": artifact.get("id", ""),
-        "artifact_type": artifact_type,
-        "score": score,
-        "approved_for_next_stage": not issues,
-        "source_count": source_count,
-        "issues": issues,
-    }

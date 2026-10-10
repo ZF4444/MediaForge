@@ -85,27 +85,6 @@ def list_operations(user_id: str, run_id: str) -> list[dict[str, Any]]:
         cur.execute("SELECT o.* FROM canvas_agent_operations o JOIN canvas_agent_runs r ON r.id=o.run_id WHERE o.run_id=%s AND r.user_id=%s ORDER BY o.created_at", (run_id, user_id))
         return cur.fetchall()
 
-def latest_artifact(user_id: str, run_id: str, artifact_type: str = "") -> dict[str, Any] | None:
-    with metadata_connection() as conn, conn.cursor() as cur:
-        if artifact_type:
-            cur.execute("SELECT a.* FROM canvas_agent_artifacts a JOIN canvas_agent_runs r ON r.id=a.run_id WHERE a.run_id=%s AND r.user_id=%s AND a.type=%s ORDER BY a.version DESC LIMIT 1", (run_id,user_id,artifact_type))
-        else:
-            cur.execute("SELECT a.* FROM canvas_agent_artifacts a JOIN canvas_agent_runs r ON r.id=a.run_id WHERE a.run_id=%s AND r.user_id=%s ORDER BY a.updated_at DESC LIMIT 1", (run_id,user_id))
-        return cur.fetchone()
-
-def list_artifacts(user_id: str, run_id: str, *, artifact_type: str = "") -> list[dict[str, Any]]:
-    with metadata_connection() as conn, conn.cursor() as cur:
-        if artifact_type:
-            cur.execute("SELECT a.* FROM canvas_agent_artifacts a JOIN canvas_agent_runs r ON r.id=a.run_id WHERE a.run_id=%s AND r.user_id=%s AND a.type=%s ORDER BY a.type,a.version", (run_id, user_id, artifact_type))
-        else:
-            cur.execute("SELECT a.* FROM canvas_agent_artifacts a JOIN canvas_agent_runs r ON r.id=a.run_id WHERE a.run_id=%s AND r.user_id=%s ORDER BY a.type,a.version", (run_id, user_id))
-        return cur.fetchall()
-
-def get_artifact(user_id: str, run_id: str, artifact_id: str) -> dict[str, Any] | None:
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT a.* FROM canvas_agent_artifacts a JOIN canvas_agent_runs r ON r.id=a.run_id WHERE a.id=%s AND a.run_id=%s AND r.user_id=%s", (artifact_id, run_id, user_id))
-        return cur.fetchone()
-
 def append_message(user_id: str, run_id: str, role: str, content: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     mid = new_id(); now = now_ms()
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
@@ -280,40 +259,6 @@ def request_run_command_cancellation(user_id: str, run_id: str) -> list[dict[str
         cur.execute("UPDATE canvas_agent_operations SET cancel_requested_at=%s,updated_at=%s WHERE run_id=%s AND status IN ('accepted','running') AND type IN ('agent.message','agent.answer','agent.confirm') RETURNING *", (now, now, run_id))
         return cur.fetchall()
 
-def save_artifact(user_id: str, run_id: str, artifact_type: str, content: dict[str, Any], *, status: str = "draft", source_artifact_ids: list[str] | None = None) -> dict[str, Any]:
-    now = now_ms(); body = _json(content); source_ids = list(source_artifact_ids or [])
-    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM canvas_agent_runs WHERE id=%s AND user_id=%s FOR UPDATE", (run_id,user_id))
-        if not cur.fetchone(): raise PermissionError("run not found")
-        cur.execute("SELECT id FROM canvas_agent_artifacts WHERE run_id=%s AND type=%s ORDER BY version DESC LIMIT 1", (run_id, artifact_type)); previous = cur.fetchone()
-        version = 1
-        if previous:
-            cur.execute("SELECT COALESCE(MAX(version),0)+1 AS version FROM canvas_agent_artifacts WHERE run_id=%s AND type=%s", (run_id,artifact_type)); version = int(cur.fetchone()["version"])
-        artifact_id = new_id()
-        cur.execute("INSERT INTO canvas_agent_artifacts(id,run_id,type,version,status,content_json,source_artifact_ids,created_at,updated_at,stale) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE) RETURNING *", (artifact_id,run_id,artifact_type,version,status,json_value(body),json_value(source_ids),now,now))
-        artifact = cur.fetchone()
-        if previous:
-            pending = [previous["id"]]
-            while pending:
-                source_id = pending.pop(0)
-                cur.execute("SELECT id,source_artifact_ids FROM canvas_agent_artifacts WHERE run_id=%s AND stale=FALSE", (run_id,))
-                for dependent in cur.fetchall():
-                    source_ids_for_dependent = dependent.get("source_artifact_ids") or []
-                    if source_id in source_ids_for_dependent:
-                        cur.execute("UPDATE canvas_agent_artifacts SET stale=TRUE,updated_at=%s,status=CASE WHEN status='approved' THEN 'stale' ELSE status END WHERE id=%s", (now, dependent["id"]))
-                        pending.append(dependent["id"])
-        return artifact
-
-def set_artifact_status(user_id: str, run_id: str, artifact_id: str, status: str, *, actor: str = "", rejection_note: str = "") -> dict[str, Any] | None:
-    allowed = {"draft", "approved", "rejected", "stale"}
-    if status not in allowed: raise ValueError("invalid artifact status")
-    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("SELECT a.* FROM canvas_agent_artifacts a JOIN canvas_agent_runs r ON r.id=a.run_id WHERE a.id=%s AND a.run_id=%s AND r.user_id=%s FOR UPDATE", (artifact_id, run_id, user_id)); row = cur.fetchone()
-        if not row: return None
-        approved_by = actor if status == "approved" else (row.get("approved_by") or "")
-        approved_at = now_ms() if status == "approved" else row.get("approved_at")
-        cur.execute("UPDATE canvas_agent_artifacts SET status=%s,stale=%s,approved_by=%s,approved_at=%s,rejection_note=%s,updated_at=%s WHERE id=%s RETURNING *", (status, status == "stale", approved_by, approved_at, rejection_note[:4000], now_ms(), artifact_id)); return cur.fetchone()
-
 def append_event(user_id: str, run_id: str, event_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compatibility API; new code must use ``AgentEventService`` directly."""
     from .event_bus import AgentEventService
@@ -340,17 +285,3 @@ def get_template(user_id: str, template_id: str) -> dict[str, Any] | None:
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT * FROM canvas_agent_templates WHERE id=%s AND user_id=%s", (template_id, user_id))
         return cur.fetchone()
-
-def share_project_asset(user_id: str, run_id: str, artifact_id: str, project_id: str, *, asset_type: str = "artifact") -> dict[str, Any]:
-    now = now_ms()
-    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("SELECT r.canvas_id FROM canvas_agent_artifacts a JOIN canvas_agent_runs r ON r.id=a.run_id WHERE a.id=%s AND a.run_id=%s AND r.user_id=%s FOR UPDATE", (artifact_id, run_id, user_id))
-        row = cur.fetchone()
-        if not row: raise PermissionError("artifact not found or not owned by user")
-        cur.execute("INSERT INTO canvas_agent_project_assets(id,user_id,project_id,canvas_id,artifact_id,asset_type,created_at) VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(user_id,project_id,artifact_id) DO UPDATE SET asset_type=EXCLUDED.asset_type RETURNING *", (new_id(), user_id, project_id, row["canvas_id"], artifact_id, asset_type, now))
-        return cur.fetchone()
-
-def list_project_assets(user_id: str, project_id: str) -> list[dict[str, Any]]:
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT p.*,a.type AS artifact_type,a.version AS artifact_version,a.status AS artifact_status,a.stale,a.content_json FROM canvas_agent_project_assets p JOIN canvas_agent_artifacts a ON a.id=p.artifact_id WHERE p.user_id=%s AND p.project_id=%s ORDER BY p.created_at DESC", (user_id, project_id))
-        return cur.fetchall()

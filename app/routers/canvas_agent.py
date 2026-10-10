@@ -25,34 +25,16 @@ from app.models import (
     CanvasAgentRetryRequest,
     CanvasAgentReviewRequest,
     CanvasAgentRunCreateRequest,
-    CanvasArtifactAdvanceRequest,
-    CanvasArtifactStatusRequest,
-    CanvasArtifactUpsertRequest,
     CanvasCostEstimateRequest,
     CanvasOrchestrationRequest,
-    CanvasProjectAssetShareRequest,
-    CanvasPromptCompileRequest,
-    CanvasPromptPackCompileRequest,
-    CanvasPromptPackGenerateRequest,
     CanvasTemplateCreateRequest,
     CanvasTemplateInstantiateRequest,
 )
 from app.models.canvas_agent import SemanticPlan, with_semantic_prompt
 from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_agent.adapter import capability_schema_resolver, semantic_plan_to_patch
-from app.services.canvas_agent.artifacts import (
-    ARTIFACT_STAGES,
-    compile_prompt,
-    normalize_anchors,
-    validate_stage,
-)
 from app.services.canvas_agent.checkpoint import create_async_checkpointer
 from app.services.canvas_agent.context import build_canvas_context
-from app.services.canvas_agent.doc_chain import stage_sources, validate_stage_sources
-from app.services.canvas_agent.evaluation import (
-    evaluate_artifact_quality,
-    record_evaluation,
-)
 from app.services.canvas_agent.events import emit_agent_event
 from app.services.canvas_agent.event_factory import EventSpec, patch_applied, progress as progress_event, task_lifecycle
 from app.services.canvas_agent.event_types import PRESENTATION_TARGETS
@@ -87,25 +69,19 @@ from app.services.canvas_agent.store import (
     create_run,
     create_template,
     delete_run,
-    get_artifact,
     get_run,
     get_template,
     latest_plan,
-    list_artifacts,
     list_events,
     list_messages,
     list_operations,
-    list_project_assets,
     list_runs,
     list_templates,
     rename_run,
     replace_plan_content,
     request_run_command_cancellation,
-    save_artifact,
     save_plan,
-    set_artifact_status,
     set_plan_status,
-    share_project_asset,
     submit_command,
     update_run,
 )
@@ -488,16 +464,15 @@ async def delete_agent_run(run_id: str, request: Request, x_user_id: str = Heade
 @router.get("/api/canvas-agent/runs/{run_id}")
 async def get_agent_run(run_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
-    messages, plan, events, operations, artifacts = await asyncio.gather(
+    messages, plan, events, operations = await asyncio.gather(
         asyncio.to_thread(list_messages, user_id, run_id),
         asyncio.to_thread(latest_plan, user_id, run_id),
         asyncio.to_thread(list_events, user_id, run_id),
         asyncio.to_thread(list_operations, user_id, run_id),
-        asyncio.to_thread(list_artifacts, user_id, run_id),
     )
     task_ids = list((run.get("metadata_json") or {}).get("task_ids") or [])
     tasks = await asyncio.gather(*(get_canvas_task(task_id) for task_id in task_ids)) if task_ids else []
-    return {"run": run, "messages": messages, "plan": plan, "events": events, "operations": operations, "artifacts": artifacts, "tasks": [task for task in tasks if task]}
+    return {"run": run, "messages": messages, "plan": plan, "events": events, "operations": operations, "tasks": [task for task in tasks if task]}
 
 async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgentMessageRequest):
     """Run one planning turn for a new user message and persist the resulting plan.
@@ -797,90 +772,6 @@ async def get_agent_events(run_id: str, request: Request, after_sequence: int = 
     events = await asyncio.to_thread(list_events, user_id, run_id, after_sequence=after_sequence, limit=limit)
     return {"events": events, "after_sequence": after_sequence, "next_sequence": int(events[-1]["sequence"]) if events else int(after_sequence), "has_more": len(events) >= min(max(1, limit), 2000)}
 
-@router.get("/api/canvas-agent/runs/{run_id}/artifacts")
-async def get_agent_artifacts(run_id: str, request: Request, artifact_type: str = "", x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
-    if artifact_type: validate_stage(artifact_type)
-    return {"artifacts": await asyncio.to_thread(list_artifacts, user_id, run_id, artifact_type=artifact_type)}
-
-@router.post("/api/canvas-agent/runs/{run_id}/artifacts")
-async def upsert_agent_artifact(run_id: str, payload: CanvasArtifactUpsertRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, run_id); stage = validate_stage(payload.type)
-    if payload.status not in {"draft", "approved", "rejected"}: raise HTTPException(status_code=422, detail="无效的 Artifact 状态")
-    content = normalize_anchors(payload.content) if stage == "asset_anchors" else payload.content
-    artifact = await asyncio.to_thread(save_artifact, user_id, run_id, stage, content, status=payload.status, source_artifact_ids=payload.source_artifact_ids)
-    await emit_agent_event(user_id, run_id, "artifact.created", {"artifact_id": artifact["id"], "type": stage, "version": artifact["version"], "stale_downstream": True})
-    return {"artifact": artifact}
-
-@router.post("/api/canvas-agent/runs/{run_id}/artifacts/advance")
-async def advance_agent_artifact(run_id: str, payload: CanvasArtifactAdvanceRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
-    stage = validate_stage(payload.target_stage)
-    all_artifacts = await asyncio.to_thread(list_artifacts, user_id, run_id)
-    sources = [item for item in all_artifacts if item["id"] in set(payload.source_artifact_ids)]
-    if not payload.source_artifact_ids:
-        required_types = set(stage_sources(stage))
-        sources = [item for item in all_artifacts if item.get("type") in required_types and item.get("status") == "approved" and not item.get("stale")]
-    try: validate_stage_sources(stage, sources)
-    except ValueError as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc
-    source_ids = [item["id"] for item in sources]
-    content = normalize_anchors(payload.content) if stage == "asset_anchors" else payload.content
-    artifact = await asyncio.to_thread(save_artifact, user_id, run_id, stage, content, status="draft", source_artifact_ids=source_ids)
-    await emit_agent_event(user_id, run_id, "artifact.advanced", {"artifact_id": artifact["id"], "type": stage, "version": artifact["version"], "source_artifact_ids": source_ids})
-    return {"artifact": artifact, "required_sources": stage_sources(stage)}
-
-@router.post("/api/canvas-agent/runs/{run_id}/artifacts/{artifact_id}/status")
-async def update_agent_artifact_status(run_id: str, artifact_id: str, payload: CanvasArtifactStatusRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
-    if payload.status not in {"approved", "rejected", "stale", "draft"}: raise HTTPException(status_code=422, detail="无效的 Artifact 状态")
-    artifact = await asyncio.to_thread(set_artifact_status, user_id, run_id, artifact_id, payload.status, actor=user_id, rejection_note=payload.note)
-    if not artifact: raise HTTPException(status_code=404, detail="Artifact 不存在")
-    await emit_agent_event(user_id, run_id, "artifact.status_changed", {"artifact_id": artifact_id, "status": payload.status, "version": artifact["version"]})
-    return {"artifact": artifact}
-
-@router.post("/api/canvas-agent/runs/{run_id}/prompt-compile")
-async def compile_agent_prompt(run_id: str, payload: CanvasPromptCompileRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
-    anchors = {}
-    if payload.anchor_artifact_id:
-        artifact = await asyncio.to_thread(get_artifact, user_id, run_id, payload.anchor_artifact_id)
-        if not artifact: raise HTTPException(status_code=404, detail="Anchor Artifact 不存在")
-        if artifact.get("stale"): raise HTTPException(status_code=409, detail="Anchor Artifact 已过期，请先重新批准")
-        anchors = artifact.get("content_json") or {}
-    return {"compiled": compile_prompt(shot=payload.shot, anchors=anchors)}
-
-@router.post("/api/canvas-agent/runs/{run_id}/prompt-pack/compile")
-async def compile_agent_prompt_pack(run_id: str, payload: CanvasPromptPackCompileRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
-    shot_list = await asyncio.to_thread(get_artifact, user_id, run_id, payload.shot_list_artifact_id)
-    anchors = await asyncio.to_thread(get_artifact, user_id, run_id, payload.anchor_artifact_id)
-    if not shot_list or not anchors: raise HTTPException(status_code=404, detail="Shot List 或 Anchor Artifact 不存在")
-    if shot_list.get("stale") or anchors.get("stale") or shot_list.get("status") != "approved" or anchors.get("status") != "approved": raise HTTPException(status_code=409, detail="Shot List 与 Anchor 必须已批准且未过期")
-    shots = (shot_list.get("content_json") or {}).get("shots") or []
-    prompts = [compile_prompt(shot=shot, anchors=anchors.get("content_json") or {}) for shot in shots if isinstance(shot, dict)]
-    artifact = await asyncio.to_thread(save_artifact, user_id, run_id, "prompt_pack", {"prompts": prompts}, status="draft", source_artifact_ids=[shot_list["id"], anchors["id"]])
-    await emit_agent_event(user_id, run_id, "prompt_pack.compiled", {"artifact_id": artifact["id"], "version": artifact["version"], "prompt_count": len(prompts)})
-    return {"artifact": artifact}
-
-@router.post("/api/canvas-agent/runs/{run_id}/prompt-pack/{artifact_id}/generate")
-async def generate_from_prompt_pack(run_id: str, artifact_id: str, payload: CanvasPromptPackGenerateRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); run = await _require_run(user_id, run_id)
-    pack = await asyncio.to_thread(get_artifact, user_id, run_id, artifact_id)
-    if not pack: raise HTTPException(status_code=404, detail="Prompt Pack 不存在")
-    if pack.get("stale") or pack.get("status") != "approved": raise HTTPException(status_code=409, detail="Prompt Pack 必须已批准且未过期")
-    prompts = (pack.get("content_json") or {}).get("prompts") or []
-    requested_ids = list(payload.node_ids)
-    prompt_map = {str(item.get("shot_id") or ""): str(item.get("prompt") or "") for item in prompts if isinstance(item, dict)}
-    if requested_ids and len(requested_ids) != len(prompts): raise HTTPException(status_code=422, detail="节点数量必须与 Prompt Pack 数量一致")
-    if not requested_ids: raise HTTPException(status_code=422, detail="生成 Prompt Pack 必须提供目标画布节点")
-    node_ids = requested_ids
-    requests = [{"op": "run_node", "node_id": node_id} for node_id in node_ids]
-    prompts_by_node = {node_id: prompt for node_id, prompt in zip(node_ids, [item.get("prompt", "") for item in prompts])}
-    tasks = await submit_run_requests(user_id, run["canvas_id"], run_id, requests, prompt="", prompts_by_node=prompts_by_node)
-    await asyncio.to_thread(update_run, user_id, run_id, status="running", phase="running", metadata_json={"task_ids": [task["task_id"] for task in tasks], "prompt_pack_id": artifact_id})
-    await emit_agent_event(user_id, run_id, "prompt_pack.tasks_queued", {"artifact_id": artifact_id, "tasks": tasks})
-    return {"tasks": tasks}
-
 @router.get("/api/canvas-agent/skills")
 async def list_agent_skills():
     return {"skills": [summary.__dict__ for summary in list_enabled_skill_summaries()]}
@@ -905,16 +796,6 @@ async def orchestrate_agent_run(run_id: str, payload: CanvasOrchestrationRequest
     await emit_agent_event(user_id, run_id, "orchestration.proposed", orchestration)
     return {"orchestration": orchestration, "budget": payload.budget}
 
-@router.post("/api/canvas-agent/runs/{run_id}/artifacts/{artifact_id}/quality")
-async def evaluate_agent_artifact_quality(run_id: str, artifact_id: str, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
-    artifact = await asyncio.to_thread(get_artifact, user_id, run_id, artifact_id)
-    if not artifact: raise HTTPException(status_code=404, detail="Artifact 不存在")
-    metrics = evaluate_artifact_quality(artifact)
-    evaluation_id = await asyncio.to_thread(record_evaluation, metrics, run_id=run_id)
-    await emit_agent_event(user_id, run_id, "artifact.quality_evaluated", {"artifact_id": artifact_id, "evaluation_id": evaluation_id, "score": metrics["score"]})
-    return {"evaluation_id": evaluation_id, "metrics": metrics}
-
 @router.get("/api/canvas-agent/templates")
 async def get_agent_templates(request: Request, x_user_id: str = Header(default="")):
     return {"templates": await asyncio.to_thread(list_templates, _user(request, x_user_id))}
@@ -933,16 +814,3 @@ async def instantiate_agent_template(template_id: str, payload: CanvasTemplateIn
     if not template: raise HTTPException(status_code=404, detail="模板不存在")
     await emit_agent_event(user_id, payload.run_id, "template.instantiated", {"template_id": template_id, "version": template["version"]})
     return {"template": template, "content": template["content_json"]}
-
-@router.get("/api/canvas-agent/project-assets")
-async def get_agent_project_assets(project_id: str, request: Request, x_user_id: str = Header(default="")):
-    if not project_id: raise HTTPException(status_code=422, detail="project_id 必填")
-    return {"assets": await asyncio.to_thread(list_project_assets, _user(request, x_user_id), project_id)}
-
-@router.post("/api/canvas-agent/project-assets")
-async def share_agent_project_asset(payload: CanvasProjectAssetShareRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, payload.run_id)
-    try: asset = await asyncio.to_thread(share_project_asset, user_id, payload.run_id, payload.artifact_id, payload.project_id, asset_type=payload.asset_type)
-    except PermissionError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
-    await emit_agent_event(user_id, payload.run_id, "project_asset.shared", {"asset_id": asset["id"], "project_id": payload.project_id, "artifact_id": payload.artifact_id})
-    return {"asset": asset}

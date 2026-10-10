@@ -21,7 +21,6 @@ _TOOL_LABELS = {
     "read_canvas_context": "画布上下文",
     "read_capability_registry": "可用能力",
     "read_capability_parameters": "节点配置",
-    "read_artifact": "关联素材",
     "read_canvas_skill": "技能说明",
     "read_canvas_skill_file": "技能参考资料",
     "propose_canvas_patch": "执行计划",

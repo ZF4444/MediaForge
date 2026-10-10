@@ -67,7 +67,7 @@ def migration_execute(payload: dict[str, Any]):
             ("history_records", "user_id"), ("conversations", "user_id"),
             ("smart_canvases", "user_id"), ("canvas_agent_runs", "user_id"),
             ("canvas_agent_event_outbox", "user_id"), ("canvas_agent_templates", "user_id"),
-            ("canvas_agent_project_assets", "user_id"), ("runninghub_usage_records", "user_id"),
+            ("runninghub_usage_records", "user_id"),
             ("omnilojo_usage_records", "user_id"), ("ai_usage_records", "user_id"), ("feedback_entries", "user_id"),
             ("user_settings", "user_id"), ("files", "user_id"), ("ai_task_archive", "owner_id"),
             ("asset_libraries", "user_id"),
@@ -105,18 +105,6 @@ def migration_execute(payload: dict[str, Any]):
                     (target_id, source_id, target_id),
                 )
                 cur.execute("UPDATE canvas_agent_templates SET user_id=%s WHERE user_id=%s", (target_id, source_id))
-            elif table == "canvas_agent_project_assets":
-                # This table has a unique user/project/artifact key. Keep B's
-                # existing share and move the remaining source rows.
-                cur.execute(
-                    """DELETE FROM canvas_agent_project_assets source
-                       WHERE source.user_id=%s AND EXISTS (
-                           SELECT 1 FROM canvas_agent_project_assets target
-                           WHERE target.user_id=%s AND target.project_id=source.project_id
-                             AND target.artifact_id=source.artifact_id)""",
-                    (source_id, target_id),
-                )
-                cur.execute("UPDATE canvas_agent_project_assets SET user_id=%s WHERE user_id=%s", (target_id, source_id))
             else:
                 cur.execute(f"UPDATE {table} SET {column}=%s WHERE {column}=%s", (target_id, source_id))
             moved_tables.append(table)
