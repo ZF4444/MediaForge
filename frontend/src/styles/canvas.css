@@ -1758,3 +1758,19 @@ html:not(.theme-dark):not(.studio-theme-dark) .composer-card {
         -webkit-backdrop-filter:none;
     }
 }
+
+/* 画布的 .composer 只是定位/动画容器，真正的圆角面板是内层 .composer-card。
+   theme.css 为 GPT 对话页写的 `.composer` 深色规则（背景/边框/阴影，!important）是全局选择器，
+   会在画布深色模式下给这个外层容器刷上直角底色，露在圆角面板四周。这里把它还原为透明。 */
+html.studio-theme-dark body #composer.composer,
+html.theme-dark body #composer.composer,
+body.studio-theme-dark #composer.composer,
+body.theme-dark #composer.composer,
+html.studio-theme-dark body #promptComposer.composer,
+html.theme-dark body #promptComposer.composer,
+body.studio-theme-dark #promptComposer.composer,
+body.theme-dark #promptComposer.composer {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+}

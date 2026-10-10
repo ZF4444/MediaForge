@@ -47,3 +47,16 @@ let selectedId = '';
 let selectedIds = [];
 let selectedImage = {nodeId:'', index:-1};
 let viewport = {x:0, y:0, scale:1};
+
+// 画布运行时的视口/选中状态更新入口。必须直接改写上面的顶层变量（render、
+// 平移、缩放等都读这几个变量），不能指向 shared/canvas-state.js 里那份独立的 state。
+function updateCanvasViewport(nextViewport = {}) {
+    viewport = {...viewport, ...nextViewport};
+    return viewport;
+}
+function setCanvasSelection({id, ids, image} = {}) {
+    if (id !== undefined) selectedId = String(id || '');
+    if (ids !== undefined) selectedIds = Array.isArray(ids) ? ids.map(value => String(value)) : [];
+    if (image) selectedImage = {...selectedImage, ...image};
+    return selectedId;
+}
