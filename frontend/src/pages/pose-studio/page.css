@@ -225,6 +225,9 @@
             object-fit:cover;
             display:block;
         }
+        /* Tailwind v4 的 .hidden 在 @layer utilities 内，优先级低于上面未分层的 display:block，
+           需要显式声明，否则没有图片时会显示成破图图标和 alt 文字。 */
+        .media-preview.hidden { display:none; }
         .pose-frame {
             width:100%;
             height:calc((100vh - 86px) * .67);

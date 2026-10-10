@@ -1,4 +1,5 @@
 import { createIcons, icons } from 'lucide';
+import '@tailwindcss/browser';
 import { getAiConfiguration, uploadPoseFile, transferPose as requestPoseTransfer } from '../services/pose-studio.js';
 import 'virtual:mediaforge-theme';
 import '../styles/fonts.css';

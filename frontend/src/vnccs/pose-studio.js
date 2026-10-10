@@ -552,8 +552,6 @@ const STYLES = `
     flex-shrink: 0;
 }
 .vnccs-ps-light-slider-vert {
-    -webkit-appearance: slider-vertical;
-    appearance: slider-vertical;
     writing-mode: vertical-lr;
     direction: rtl;
     width: 6px;
