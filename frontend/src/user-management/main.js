@@ -30,7 +30,7 @@ import { applyStoredTheme } from '../shared/theme-bootstrap.js';
 applyStoredTheme();
 
 (() => {
-    const pageIcons = {users:Users,shieldCheck:ShieldCheck,database:Database,monitorSmartphone:MonitorSmartphone,chartNoAxesColumn:ChartNoAxesColumn,'chart-no-axes-column':ChartNoAxesColumn,walletCards:WalletCards,plus:Plus,refreshCw:RefreshCw,refreshCW:RefreshCw,refresh:RefreshCw,trash:Trash,trash2:Trash,'trash-2':Trash,pencil:Pencil,check:Check};
+    const pageIcons = { Users, ShieldCheck, Database, MonitorSmartphone, ChartNoAxesColumn, WalletCards, Plus, RefreshCw, Trash2: Trash, Pencil, Check };
     const renderIcons = () => createIcons({icons:pageIcons});
     const state = { users: [], orgs: [], types: {}, userTypes: {}, query: '', usage: null };
     const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
