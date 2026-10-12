@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 from app.core.utils import now_ms
 from app.services.business_metadata import json_value, metadata_connection, new_id
-from app.models.canvas_agent import SCHEMA_VERSION
+from app.services.canvas_agent.schemas import SCHEMA_VERSION
 
 def _json(value: Any) -> dict[str, Any]:
     value = dict(value or {})

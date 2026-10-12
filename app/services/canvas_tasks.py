@@ -250,7 +250,7 @@ async def _emit_agent_task_event(task: dict[str, Any]) -> None:
         return
     try:
         from app.services.canvas_agent.events import emit_agent_event
-        from app.services.canvas_agent.reliability import classify_failure
+        from app.services.canvas_agent.reliability_helpers import classify_failure
         from app.services.canvas_agent.event_factory import task_lifecycle
         task_event = task_lifecycle(status, {
             "task_id": task.get("id"),

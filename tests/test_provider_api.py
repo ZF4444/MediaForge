@@ -169,7 +169,7 @@ def test_api_generation_schema_exposes_prompt_role_field():
 
 def test_semantic_node_migrates_legacy_content_into_params_prompt():
     """历史 plan 里的顶层 content 会被迁移到 params.runSettings.prompt。"""
-    from app.models.canvas_agent import SemanticNode, semantic_prompt
+    from app.services.canvas_agent.schemas import SemanticNode, semantic_prompt
 
     node = SemanticNode.model_validate({
         "semantic_type": "image_generation",

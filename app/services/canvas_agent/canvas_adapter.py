@@ -22,7 +22,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 from app.core.logging import get_logger
-from app.models.canvas_agent import CanvasPatch, SemanticPlan, semantic_prompt
+from app.services.canvas_agent.schemas import CanvasPatch, SemanticPlan, semantic_prompt
 
 logger = get_logger("canvas_agent_adapter")
 

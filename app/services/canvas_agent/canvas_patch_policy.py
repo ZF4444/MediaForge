@@ -1,6 +1,6 @@
 """Canvas Patch 策略：评估操作风险（是否需要用户确认）并校验补丁合法性与节点修改权限。"""
 from __future__ import annotations
-from app.models.canvas_agent import CanvasPatch
+from app.services.canvas_agent.schemas import CanvasPatch
 
 SAFE_OPS = {"add_node", "move_node", "add_connection", "remove_connection", "add_group"}
 CONFIRM_OPS = {"update_node_params", "replace_node_content", "run_node", "run_group"}

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.models.canvas_agent import SemanticPlan
+from app.services.canvas_agent.schemas import SemanticPlan
 from app.services.canvas_agent.canvas_adapter import semantic_plan_to_patch
 from app.services.canvas_agent.canvas_capabilities import Capability, CapabilityRegistry
 from app.services.canvas_agent.canvas_patch_policy import assess_patch, validate_patch
@@ -371,7 +371,7 @@ def test_provider_adapter_forwards_native_response_format(monkeypatch):
     import asyncio
     from langchain.agents.structured_output import ProviderStrategy
     from langchain_core.messages import HumanMessage
-    from app.models.canvas_agent import SemanticPlan
+    from app.services.canvas_agent.schemas import SemanticPlan
     from app.services.canvas_agent.model_adapter import MediaForgeChatModel
 
     model = MediaForgeChatModel(endpoint="https://example.invalid/v1/chat/completions", model_name="gpt-test")

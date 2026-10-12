@@ -29,7 +29,7 @@ from app.models import (
     CanvasTemplateCreateRequest,
     CanvasTemplateInstantiateRequest,
 )
-from app.models.canvas_agent import SemanticPlan, with_semantic_prompt
+from app.services.canvas_agent.schemas import SemanticPlan, with_semantic_prompt
 from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_agent.canvas_adapter import capability_schema_resolver, semantic_plan_to_patch
 from app.services.canvas_agent.checkpoint import create_async_checkpointer
@@ -51,7 +51,7 @@ from app.services.canvas_agent.canvas_cost_estimate import (
     estimate_plan_cost,
 )
 from app.services.canvas_agent.agent_runner import run_canvas_agent
-from app.services.canvas_agent.reliability import (
+from app.services.canvas_agent.reliability_helpers import (
     DEFAULT_RUN_LIMITS,
     canvas_structure_fingerprint,
     classify_failure,

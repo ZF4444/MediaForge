@@ -1,8 +1,8 @@
 import pytest
 
-from app.models.canvas_agent import CanvasPatch, SemanticPlan
+from app.services.canvas_agent.schemas import CanvasPatch, SemanticPlan
 from app.services.canvas_agent.canvas_patch_policy import validate_patch
-from app.services.canvas_agent.reliability import canvas_structure_fingerprint, classify_failure, enforce_plan_limits
+from app.services.canvas_agent.reliability_helpers import canvas_structure_fingerprint, classify_failure, enforce_plan_limits
 from app.routers.canvas_agent import _hydrate_plan_nodes
 
 
@@ -55,7 +55,7 @@ def test_hydrate_plan_nodes_normalizes_frontend_only_node_types():
     hydrated = _hydrate_plan_nodes(plan, canvas)
     assert hydrated["steps"][1]["node"]["semantic_type"] == "image_generation"
     # The whole plan must remain valid for downstream cost estimation.
-    from app.models.canvas_agent import SemanticPlan
+    from app.services.canvas_agent.schemas import SemanticPlan
     SemanticPlan.model_validate(hydrated)
 
 

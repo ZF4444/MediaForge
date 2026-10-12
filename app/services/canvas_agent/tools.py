@@ -10,7 +10,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool, tool
 from langgraph.types import Command
 
-from app.models.canvas_agent import SemanticPlan
+from app.services.canvas_agent.schemas import SemanticPlan
 from app.services.ai_parameters import capability_parameters
 
 from .canvas_adapter import capability_schema_resolver, semantic_plan_to_patch

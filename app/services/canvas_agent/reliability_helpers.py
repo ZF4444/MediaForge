@@ -1,4 +1,10 @@
-"""Phase 2 concurrency, quota and failure-classification helpers."""
+"""Run reliability helpers for the Canvas Agent.
+
+- Plan quota: ``plan_usage`` / ``enforce_plan_limits`` against ``DEFAULT_RUN_LIMITS``.
+- Failure classification: ``classify_failure`` maps errors to transient/permission/conflict/quota/permanent.
+- Conflict detection: ``canvas_structure_fingerprint`` hashes canvas semantics (ignoring placement and run state)
+  so a stale ``canvas.version`` caused only by moves or task updates doesn't invalidate a confirmed plan.
+"""
 from __future__ import annotations
 
 import hashlib

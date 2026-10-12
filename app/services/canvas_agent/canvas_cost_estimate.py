@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.models.canvas_agent import SemanticPlan
+from app.services.canvas_agent.schemas import SemanticPlan
 
 
 COST_BY_LEVEL = {"low": 0.5, "medium": 2.0, "high": 8.0, "unknown": 1.0}

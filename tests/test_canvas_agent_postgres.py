@@ -8,7 +8,7 @@ pytestmark = pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="DATABASE_
 
 def test_patch_transaction_and_idempotency():
     from app.core.database import close_database_pool, open_database_pool
-    from app.models.canvas_agent import CanvasPatch
+    from app.services.canvas_agent.schemas import CanvasPatch
     from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
     from app.services.canvas_agent.canvas_executor import PatchConflictError, apply_patch, apply_patch_idempotently
 
@@ -222,7 +222,7 @@ def test_checkpoint_replay_with_canvas_executor_is_idempotent():
     from langgraph.types import Command, interrupt
     from app.services.canvas_agent.checkpoint import create_checkpointer
     from app.services.canvas_agent.canvas_executor import apply_patch_idempotently
-    from app.models.canvas_agent import CanvasPatch
+    from app.services.canvas_agent.schemas import CanvasPatch
     from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
 
     def run_sync():

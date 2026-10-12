@@ -5,7 +5,7 @@ from copy import deepcopy
 from typing import Any
 
 from app.core.utils import now_ms
-from app.models.canvas_agent import CanvasPatch
+from app.services.canvas_agent.schemas import CanvasPatch
 from app.services.business_metadata import _file_refs, json_value, metadata_connection, new_id
 from app.core.logging import audit_event
 from app.core.metrics import AGENT_OPERATION_SECONDS
