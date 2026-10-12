@@ -416,7 +416,7 @@ def test_planner_normalizes_known_legacy_canvas_operations():
     assert semantic_prompt(plan.steps[0].node.params) == "雨夜城市"
 
 def test_provider_adapter_preserves_invalid_tool_calls_for_planner_blocking():
-    from app.services.canvas_agent.model_resolver import MediaForgeChatModel
+    from app.services.canvas_agent.model_adapter import MediaForgeChatModel
     valid, invalid = MediaForgeChatModel._tool_calls([
         {"id": "ok", "function": {"name": "submit_semantic_plan", "arguments": '{"goal":"x","steps":[]}'}},
         {"id": "bad", "function": {"name": "submit_semantic_plan", "arguments": '{"goal":'}},
@@ -433,7 +433,7 @@ def test_provider_adapter_forwards_native_response_format(monkeypatch):
     from langchain.agents.structured_output import ProviderStrategy
     from langchain_core.messages import HumanMessage
     from app.models.canvas_agent import SemanticPlan
-    from app.services.canvas_agent.model_resolver import MediaForgeChatModel
+    from app.services.canvas_agent.model_adapter import MediaForgeChatModel
 
     model = MediaForgeChatModel(endpoint="https://example.invalid/v1/chat/completions", model_name="gpt-test")
     captured = {}

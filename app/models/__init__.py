@@ -266,11 +266,6 @@ class CanvasAgentReviewRequest(BaseModel):
 class CanvasCostEstimateRequest(BaseModel):
     budget: float | None = Field(default=None, ge=0)
 
-class CanvasOrchestrationRequest(BaseModel):
-    goal: str = Field(min_length=1, max_length=8000)
-    roles: List[str] = []
-    budget: float | None = Field(default=None, ge=0)
-
 class CanvasTemplateCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     description: str = Field(default="", max_length=2000)

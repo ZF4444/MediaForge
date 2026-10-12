@@ -1,3 +1,17 @@
+"""画布 Agent 事件发布模块。
+
+职责：
+- 通过 ContextVar 维护当前协程内的 operation_id，供事件关联同一次操作。
+- 将 ``task.*`` 生命周期事件（queued / running / succeeded / failed 等）投影到
+  ``smart_canvas_nodes`` 的节点数据中（pendingTasks、pending、running、
+  runStartedAt / runFinishedAt / runElapsedMs、images 等），并递增画布版本号。
+- 统一的事件入口 ``emit_agent_event``：规范化 ``progress.*`` 事件类型，必要时
+  同步画布与执行消息引用，经 ``AgentEventService`` 持久化事件，
+  并通过 WebSocket 广播画布更新。
+
+注意：画布投影在数据库事务内以 ``FOR SHARE`` / ``FOR UPDATE`` 加锁执行，
+同步的数据库操作均通过 ``asyncio.to_thread`` 调用，避免阻塞事件循环。
+"""
 from __future__ import annotations
 from contextvars import ContextVar
 from typing import Any

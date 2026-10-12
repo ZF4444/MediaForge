@@ -26,7 +26,6 @@ from app.models import (
     CanvasAgentReviewRequest,
     CanvasAgentRunCreateRequest,
     CanvasCostEstimateRequest,
-    CanvasOrchestrationRequest,
     CanvasTemplateCreateRequest,
     CanvasTemplateInstantiateRequest,
 )
@@ -38,17 +37,16 @@ from app.services.canvas_agent.canvas_context import build_canvas_context
 from app.services.canvas_agent.events import emit_agent_event
 from app.services.canvas_agent.event_factory import EventSpec, patch_applied, progress as progress_event, task_lifecycle
 from app.services.canvas_agent.event_types import PRESENTATION_TARGETS
-from app.services.canvas_agent.executor import (
+from app.services.canvas_agent.canvas_executor import (
     PatchConflictError,
     PatchPermissionError,
     apply_patch_idempotently,
 )
-from app.services.canvas_agent.model_resolver import (
+from app.services.canvas_agent.model_adapter import (
     CanvasAgentUpstreamError,
     resolve_canvas_agent_model,
 )
-from app.services.canvas_agent.orchestration import (
-    build_specialist_plan,
+from app.services.canvas_agent.canvas_cost_estimate import (
     enforce_budget,
     estimate_plan_cost,
 )
@@ -787,14 +785,6 @@ async def estimate_agent_run_cost(run_id: str, payload: CanvasCostEstimateReques
     plan = await asyncio.to_thread(latest_plan, user_id, run_id)
     if not plan: raise HTTPException(status_code=404, detail="尚无可估算成本的计划")
     return {"estimate": estimate_plan_cost(plan["content_json"], budget=payload.budget)}
-
-@router.post("/api/canvas-agent/runs/{run_id}/orchestrate")
-async def orchestrate_agent_run(run_id: str, payload: CanvasOrchestrationRequest, request: Request, x_user_id: str = Header(default="")):
-    user_id = _user(request, x_user_id); await _require_run(user_id, run_id)
-    try: orchestration = build_specialist_plan(payload.goal, roles=payload.roles)
-    except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
-    await emit_agent_event(user_id, run_id, "orchestration.proposed", orchestration)
-    return {"orchestration": orchestration, "budget": payload.budget}
 
 @router.get("/api/canvas-agent/templates")
 async def get_agent_templates(request: Request, x_user_id: str = Header(default="")):

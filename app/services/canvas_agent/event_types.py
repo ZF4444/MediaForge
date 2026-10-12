@@ -25,7 +25,7 @@ EVENT_TYPES = {
     "operation.accepted", "operation.queued", "operation.started", "operation.succeeded", "operation.failed", "operation.cancel_requested", "operation.cancelled",
     "progress", "progress.context", "progress.model", "progress.agent", "progress.tool_started", "progress.tool_completed", "progress.tool_failed", "progress.validation", "progress.confirmation", "progress.execution",
     "message.replied", "plan.created", "plan.confirmed", "plan.rejected", "patch.applied", "tasks.queued", "task.queued", "task.running", "task.succeeded", "task.failed", "task.timed_out", "task.cancelled", "task.retrying",
-    "orchestration.proposed", "template.instantiated",
+    "template.instantiated",
     "skill.discovered", "skill.loaded", "skill.resource_loaded", "skill.rejected", "skill.resource_rejected", "skill.invalidated",
 }
 
