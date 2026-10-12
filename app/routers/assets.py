@@ -11,6 +11,7 @@
 - app.config：ASSET_LIBRARY_DIR
 - app.models：素材库相关请求模型
 """
+
 import os
 import tempfile
 import uuid
@@ -61,9 +62,18 @@ def get_asset_library():
 @router.post("/api/asset-library/libraries")
 def create_asset_library(payload: AssetLibraryRequest):
     lib = load_asset_library()
-    library = {"id": f"lib_{uuid.uuid4().hex[:12]}", "name": sanitize_asset_name(payload.name, "资产库"), "type": "asset", "categories": []}
-    library["categories"].append({"id": f"cat_{uuid.uuid4().hex[:12]}", "name": "默认分组", "type": "image", "items": []})
-    library["categories"].append({"id": f"wf_{uuid.uuid4().hex[:12]}", "name": "工作流", "type": "workflow", "items": []})
+    library = {
+        "id": f"lib_{uuid.uuid4().hex[:12]}",
+        "name": sanitize_asset_name(payload.name, "资产库"),
+        "type": "asset",
+        "categories": [],
+    }
+    library["categories"].append(
+        {"id": f"cat_{uuid.uuid4().hex[:12]}", "name": "默认分组", "type": "image", "items": []}
+    )
+    library["categories"].append(
+        {"id": f"wf_{uuid.uuid4().hex[:12]}", "name": "工作流", "type": "workflow", "items": []}
+    )
     lib.setdefault("libraries", []).append(library)
     lib["active_library_id"] = library["id"]
     save_asset_library(lib)
@@ -104,7 +114,12 @@ def create_asset_library_category(payload: AssetLibraryCategoryRequest):
     if not library:
         raise HTTPException(status_code=404, detail="资产库不存在")
     cat_type = "workflow" if str(payload.type or "").lower() == "workflow" else "image"
-    category = {"id": f"cat_{uuid.uuid4().hex[:12]}", "name": sanitize_asset_name(payload.name, "新文件夹"), "type": cat_type, "items": []}
+    category = {
+        "id": f"cat_{uuid.uuid4().hex[:12]}",
+        "name": sanitize_asset_name(payload.name, "新文件夹"),
+        "type": cat_type,
+        "items": [],
+    }
     library.setdefault("categories", []).append(category)
     lib["active_library_id"] = library.get("id") or lib.get("active_library_id")
     save_asset_library(lib)

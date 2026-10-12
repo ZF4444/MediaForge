@@ -1,4 +1,5 @@
 """Stable public contract for Canvas Agent run events."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -17,21 +18,86 @@ PRESENTATION_TARGETS = {
 }
 PRESENTATION_STATES = {"started", "updated", "succeeded", "failed", "rejected"}
 
-PHASES = {"", "context", "model", "agent", "tool", "skill", "validation", "confirmation", "execution", "reviewing", "running", "planning", "applying", "cancelling", "message", "answer"}
+PHASES = {
+    "",
+    "context",
+    "model",
+    "agent",
+    "tool",
+    "skill",
+    "validation",
+    "confirmation",
+    "execution",
+    "reviewing",
+    "running",
+    "planning",
+    "applying",
+    "cancelling",
+    "message",
+    "answer",
+}
 SEVERITIES = {"info", "warning", "error"}
 
 EVENT_TYPES = {
-    "run.created", "run.completed", "run.failed", "run.blocked", "run.cancelled", "run.reviewed", "run.retrying",
-    "operation.accepted", "operation.queued", "operation.started", "operation.succeeded", "operation.failed", "operation.cancel_requested", "operation.cancelled",
-    "progress", "progress.context", "progress.model", "progress.agent", "progress.tool_started", "progress.tool_completed", "progress.tool_failed", "progress.validation", "progress.confirmation", "progress.execution",
-    "message.replied", "plan.created", "plan.confirmed", "plan.rejected", "patch.applied", "tasks.queued", "task.queued", "task.running", "task.succeeded", "task.failed", "task.timed_out", "task.cancelled", "task.retrying",
+    "run.created",
+    "run.completed",
+    "run.failed",
+    "run.blocked",
+    "run.cancelled",
+    "run.reviewed",
+    "run.retrying",
+    "operation.accepted",
+    "operation.queued",
+    "operation.started",
+    "operation.succeeded",
+    "operation.failed",
+    "operation.cancel_requested",
+    "operation.cancelled",
+    "progress",
+    "progress.context",
+    "progress.model",
+    "progress.agent",
+    "progress.tool_started",
+    "progress.tool_completed",
+    "progress.tool_failed",
+    "progress.validation",
+    "progress.confirmation",
+    "progress.execution",
+    "message.replied",
+    "plan.created",
+    "plan.confirmed",
+    "plan.rejected",
+    "patch.applied",
+    "tasks.queued",
+    "task.queued",
+    "task.running",
+    "task.succeeded",
+    "task.failed",
+    "task.timed_out",
+    "task.cancelled",
+    "task.retrying",
     "template.instantiated",
-    "skill.discovered", "skill.loaded", "skill.resource_loaded", "skill.rejected", "skill.resource_rejected", "skill.invalidated",
+    "skill.discovered",
+    "skill.loaded",
+    "skill.resource_loaded",
+    "skill.rejected",
+    "skill.resource_rejected",
+    "skill.invalidated",
 }
 
 logger = get_logger("canvas_agent")
 
-_SENSITIVE_KEYS = {"api_key", "apikey", "authorization", "cookie", "password", "secret", "token", "access_key", "private_key"}
+_SENSITIVE_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "cookie",
+    "password",
+    "secret",
+    "token",
+    "access_key",
+    "private_key",
+}
 
 
 def normalize_event_type(value: str) -> str:
@@ -56,6 +122,7 @@ def normalize_event_type(value: str) -> str:
 
 def sanitize_payload(value: dict[str, Any] | None) -> dict[str, Any]:
     """Drop credentials and cap payload size before it reaches DB/Redis/browser."""
+
     def clean(item: Any, depth: int = 0) -> Any:
         # The depth guard only bounds pathological nesting; legitimate payloads
         # such as a plan's per-node runSettings.rhParams field values sit ~10
@@ -65,7 +132,10 @@ def sanitize_payload(value: dict[str, Any] | None) -> dict[str, Any]:
         if depth > 16:
             return "[truncated]"
         if isinstance(item, dict):
-            return {str(key): "[redacted]" if str(key).lower() in _SENSITIVE_KEYS else clean(child, depth + 1) for key, child in item.items()}
+            return {
+                str(key): "[redacted]" if str(key).lower() in _SENSITIVE_KEYS else clean(child, depth + 1)
+                for key, child in item.items()
+            }
         if isinstance(item, (list, tuple)):
             return [clean(child, depth + 1) for child in item[:100]]
         if isinstance(item, str):
@@ -74,6 +144,7 @@ def sanitize_payload(value: dict[str, Any] | None) -> dict[str, Any]:
 
     payload = clean(dict(value or {}))
     import json
+
     encoded = json.dumps(payload, ensure_ascii=False, default=str)
     if len(encoded.encode("utf-8")) <= MAX_EVENT_PAYLOAD_BYTES:
         return payload
@@ -112,6 +183,7 @@ def normalize_presentation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         validate_presentation_payload(payload)
     except ValueError as exc:
         from app.core.metrics import AGENT_EVENT_PRESENTATION_INVALID
+
         logger.error(
             "invalid canvas agent event presentation",
             extra={"event": "canvas_agent_event_presentation_invalid", "error": str(exc)},

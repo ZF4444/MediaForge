@@ -6,6 +6,7 @@
 - app.services.history：save_to_history
 - app.models：SaveHistoryRequest / DeleteHistoryRequest
 """
+
 import os
 import time
 
@@ -62,10 +63,14 @@ def delete_history(req: DeleteHistoryRequest):
     try:
         from app.services.business_metadata import metadata_connection
         from app.core.auth import current_user_id
+
         uid = current_user_id()
         target_record = None
         with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-            cur.execute("SELECT id FROM history_records WHERE user_id=%s AND ABS(created_at - %s) < 2 LIMIT 1", (uid, int(float(req.timestamp) * 1000)))
+            cur.execute(
+                "SELECT id FROM history_records WHERE user_id=%s AND ABS(created_at - %s) < 2 LIMIT 1",
+                (uid, int(float(req.timestamp) * 1000)),
+            )
             row = cur.fetchone()
             if row:
                 target_record = next((item for item in load_history_records() if item.get("id") == row["id"]), None)
@@ -79,7 +84,10 @@ def delete_history(req: DeleteHistoryRequest):
                     try:
                         os.remove(file_path)
                     except Exception:
-                        logger.exception("failed to delete history file", extra={"event": "history_file_delete_failed", "file_path": file_path})
+                        logger.exception(
+                            "failed to delete history file",
+                            extra={"event": "history_file_delete_failed", "file_path": file_path},
+                        )
             audit_event(
                 "history_deleted",
                 action="delete",
@@ -92,5 +100,12 @@ def delete_history(req: DeleteHistoryRequest):
             return {"success": False, "message": "Record not found"}
     except Exception as e:
         logger.exception("failed to delete history", extra={"event": "history_delete_failed"})
-        audit_event("history_delete_failed", action="delete", resource_type="history_record", resource_id=req.timestamp, result="failure", error_type=type(e).__name__)
+        audit_event(
+            "history_delete_failed",
+            action="delete",
+            resource_type="history_record",
+            resource_id=req.timestamp,
+            result="failure",
+            error_type=type(e).__name__,
+        )
         return {"success": False, "message": str(e)}

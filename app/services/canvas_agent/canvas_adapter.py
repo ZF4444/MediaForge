@@ -18,6 +18,7 @@ Responsibilities:
 
 Entry points: ``semantic_plan_to_patch`` and ``capability_schema_resolver``.
 """
+
 from __future__ import annotations
 from copy import deepcopy
 from typing import Any
@@ -27,14 +28,22 @@ from app.services.canvas_agent.schemas import CanvasPatch, SemanticPlan, semanti
 logger = get_logger("canvas_agent_adapter")
 
 _NODE_TYPES = {
-    "prompt": "smart-prompt", "smart-prompt": "smart-prompt",
-    "image_generation": "smart-image", "video_generation": "smart-image", "workflow_generation": "smart-image",
-    "smart-image": "smart-image", "group": "smart-group", "smart-group": "smart-group",
+    "prompt": "smart-prompt",
+    "smart-prompt": "smart-prompt",
+    "image_generation": "smart-image",
+    "video_generation": "smart-image",
+    "workflow_generation": "smart-image",
+    "smart-image": "smart-image",
+    "group": "smart-group",
+    "smart-group": "smart-group",
 }
 _GENERATION_DEFAULTS = {
     "image_generation": {"genKind": "image", "runSettings": {"engine": "api", "apiKind": "image"}},
     "video_generation": {"genKind": "video", "runSettings": {"engine": "api", "apiKind": "video"}},
-    "workflow_generation": {"genKind": "workflow", "runSettings": {"engine": "comfy", "comfyWorkflow": "", "comfyParams": {}}},
+    "workflow_generation": {
+        "genKind": "workflow",
+        "runSettings": {"engine": "comfy", "comfyWorkflow": "", "comfyParams": {}},
+    },
     "smart-image": {"genKind": "image", "runSettings": {"engine": "api", "apiKind": "image"}},
 }
 
@@ -66,10 +75,26 @@ def _canonical_node_data(node: Any, node_type: str, normalized_params: dict[str,
     if node_type == "smart-image":
         run_settings = dict(node_data.get("runSettings") or {})
         setting_keys = {
-            "engine", "apiKind", "connection_id", "model_id", "resource_id", "model", "ratio",
-            "resolution", "quality", "count", "duration", "fps", "aspect_ratio",
-            "size", "seed", "comfyWorkflow", "comfyParams", "runninghubWorkflow",
-            "workflow_id", "workflowId",
+            "engine",
+            "apiKind",
+            "connection_id",
+            "model_id",
+            "resource_id",
+            "model",
+            "ratio",
+            "resolution",
+            "quality",
+            "count",
+            "duration",
+            "fps",
+            "aspect_ratio",
+            "size",
+            "seed",
+            "comfyWorkflow",
+            "comfyParams",
+            "runninghubWorkflow",
+            "workflow_id",
+            "workflowId",
         }
         for key in list(node_data):
             if key in setting_keys:
@@ -85,12 +110,14 @@ def _canonical_node_data(node: Any, node_type: str, normalized_params: dict[str,
                 run_settings[key] = value
         node_data["runSettings"] = run_settings
 
-    node_data.update({
-        "type": node_type,
-        "title": node.title,
-        "text": semantic_prompt(params),
-        "capability": node.capability,
-    })
+    node_data.update(
+        {
+            "type": node_type,
+            "title": node.title,
+            "text": semantic_prompt(params),
+            "capability": node.capability,
+        }
+    )
     return node_data
 
 
@@ -149,6 +176,7 @@ def _resolve_placement(requested: Any, fallback: dict[str, float], occupied: lis
                 return candidate
     raise ValueError("unable to place agent-created node without overlap")
 
+
 def capability_schema_resolver(node: Any) -> dict[str, Any] | None:
     """Resolve the field contract for a plan node via capability_parameters.
 
@@ -164,16 +192,24 @@ def capability_schema_resolver(node: Any) -> dict[str, Any] | None:
         return None
     try:
         from app.services.ai_parameters import capability_parameters
+
         return capability_parameters(
-            capability=capability, connection_id=connection_id,
-            model_id=model_id, resource_id=resource_id,
+            capability=capability,
+            connection_id=connection_id,
+            model_id=model_id,
+            resource_id=resource_id,
         )
     except Exception:
         return None
 
 
-def semantic_plan_to_patch(plan: SemanticPlan, canvas_id: str, base_version: int, canvas: dict[str, Any] | None = None,
-                           schema_resolver: Any = None) -> CanvasPatch:
+def semantic_plan_to_patch(
+    plan: SemanticPlan,
+    canvas_id: str,
+    base_version: int,
+    canvas: dict[str, Any] | None = None,
+    schema_resolver: Any = None,
+) -> CanvasPatch:
     """Convert a SemanticPlan into a CanvasPatch of executable operations.
 
     Args:
@@ -233,6 +269,7 @@ def semantic_plan_to_patch(plan: SemanticPlan, canvas_id: str, base_version: int
                 schema = schema_resolver(node)
                 if schema:
                     from app.services.ai_parameters import normalize_capability_params
+
                     normalized_params = normalize_capability_params(schema, raw_params)
             node_data = _canonical_node_data(node, node_type, normalized_params)
             fallback = {
@@ -243,8 +280,20 @@ def semantic_plan_to_patch(plan: SemanticPlan, canvas_id: str, base_version: int
             occupied.append({**node_data, **placement})
             operations.append({"op": "add_node", "client_ref": step.id, "placement": placement, "node": node_data})
             create_index += 1
-        elif step.action in {"canvas.update_node_params", "canvas.replace_node_content", "canvas.run_node", "canvas.run_group"}:
-            operations.append({"op": step.action.removeprefix("canvas."), "node_id": step.target_node_id, "params": (step.node.params if step.node else {}), "content": (semantic_prompt(step.node.params) if step.node else "")})
+        elif step.action in {
+            "canvas.update_node_params",
+            "canvas.replace_node_content",
+            "canvas.run_node",
+            "canvas.run_group",
+        }:
+            operations.append(
+                {
+                    "op": step.action.removeprefix("canvas."),
+                    "node_id": step.target_node_id,
+                    "params": (step.node.params if step.node else {}),
+                    "content": (semantic_prompt(step.node.params) if step.node else ""),
+                }
+            )
         elif step.action == "canvas.connect":
             source = refs.get(step.from_step, step.from_step)
             target = refs.get(step.to_step, step.to_step)
@@ -257,9 +306,20 @@ def semantic_plan_to_patch(plan: SemanticPlan, canvas_id: str, base_version: int
                 logger.warning(
                     "dropping invalid canvas.connect step: step_id=%s from_step=%r to_step=%r "
                     "resolved_source=%r resolved_target=%r reason=%s",
-                    step.id, step.from_step, step.to_step, source, target,
+                    step.id,
+                    step.from_step,
+                    step.to_step,
+                    source,
+                    target,
                     "self_loop" if source and source == target else "missing_endpoint",
                 )
                 continue
-            operations.append({"op": "add_connection", "from_ref": source, "to_ref": target, "connection": {"kind": step.relation or "default"}})
+            operations.append(
+                {
+                    "op": "add_connection",
+                    "from_ref": source,
+                    "to_ref": target,
+                    "connection": {"kind": step.relation or "default"},
+                }
+            )
     return CanvasPatch(canvas_id=canvas_id, base_version=base_version, operations=operations)

@@ -95,22 +95,30 @@ def test_database_retries_only_connection_checkout(monkeypatch):
     sleeps = []
 
     class Checkout:
-        def __init__(self, pool): self.pool = pool
+        def __init__(self, pool):
+            self.pool = pool
+
         async def __aenter__(self):
             self.pool.calls += 1
             if self.pool.calls < 3:
                 raise PoolTimeout("pool exhausted")
             return "connection"
-        async def __aexit__(self, *_args): return False
+
+        async def __aexit__(self, *_args):
+            return False
 
     class Pool:
         calls = 0
-        def connection(self, **_kwargs): return Checkout(self)
+
+        def connection(self, **_kwargs):
+            return Checkout(self)
 
     pool = Pool()
     monkeypatch.setattr(database, "_POOL", pool)
+
     async def fake_sleep(delay):
         sleeps.append(delay)
+
     monkeypatch.setattr(database.asyncio, "sleep", fake_sleep)
 
     async def scenario():

@@ -11,6 +11,7 @@
   find_asset_category_in_library / make_asset_library_item / save_asset_library
 - app.models：SharedFolderRegister / SharedFolderImport
 """
+
 import os
 import urllib.parse
 import uuid
@@ -37,9 +38,23 @@ from app.services.assets import (
 router = APIRouter()
 
 SHARED_MEDIA_EXTS = {
-    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
-    ".mp4", ".webm", ".mov", ".m4v", ".mkv",
-    ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".mp4",
+    ".webm",
+    ".mov",
+    ".m4v",
+    ".mkv",
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".aac",
+    ".ogg",
+    ".flac",
 }
 SHARED_SCAN_MAX_ENTRIES = 8000
 SHARED_FOLDERS_LOCK = Lock()
@@ -144,16 +159,18 @@ def scan_shared_tree(folder_id, folder_abs, rel_prefix="", display="", counter=N
             except OSError:
                 size = 0
                 mtime = 0
-            node["items"].append({
-                "id": f"{folder_id}:{child_rel}",
-                "name": ent.name,
-                "url": f"/api/shared-folders/{folder_id}/file?path={urllib.parse.quote(child_rel)}",
-                "kind": asset_library_media_kind(ent.name),
-                "size": size,
-                "lastModified": mtime,
-                "relativePath": child_rel,
-                "folderId": folder_id,
-            })
+            node["items"].append(
+                {
+                    "id": f"{folder_id}:{child_rel}",
+                    "name": ent.name,
+                    "url": f"/api/shared-folders/{folder_id}/file?path={urllib.parse.quote(child_rel)}",
+                    "kind": asset_library_media_kind(ent.name),
+                    "size": size,
+                    "lastModified": mtime,
+                    "relativePath": child_rel,
+                    "folderId": folder_id,
+                }
+            )
     return node
 
 
@@ -163,14 +180,16 @@ def list_shared_folders():
     folders = []
     for entry in data.get("folders", []):
         abs_path = shared_folder_abs(entry)
-        folders.append({
-            "id": entry.get("id"),
-            "name": entry.get("name") or os.path.basename(abs_path) or abs_path,
-            "rel": entry.get("rel") or "",
-            "path": abs_path,
-            "exists": os.path.isdir(abs_path),
-            "created_at": entry.get("created_at"),
-        })
+        folders.append(
+            {
+                "id": entry.get("id"),
+                "name": entry.get("name") or os.path.basename(abs_path) or abs_path,
+                "rel": entry.get("rel") or "",
+                "path": abs_path,
+                "exists": os.path.isdir(abs_path),
+                "created_at": entry.get("created_at"),
+            }
+        )
     return {"folders": folders}
 
 
@@ -184,7 +203,13 @@ def register_shared_folder(payload: SharedFolderRegister):
             if os.path.normpath(shared_folder_abs(entry)) == os.path.normpath(abs_path):
                 entry["name"] = name
                 shared_folders_save(data)
-                audit_event("shared_folder_updated", action="update", resource_type="shared_folder", resource_id=entry.get("id"), after={"name": name, "rel": rel})
+                audit_event(
+                    "shared_folder_updated",
+                    action="update",
+                    resource_type="shared_folder",
+                    resource_id=entry.get("id"),
+                    after={"name": name, "rel": rel},
+                )
                 return {"folder": {**entry, "path": abs_path, "exists": True}}
         entry = {
             "id": f"shared_{uuid.uuid4().hex[:12]}",
@@ -194,7 +219,13 @@ def register_shared_folder(payload: SharedFolderRegister):
         }
         data.setdefault("folders", []).append(entry)
         shared_folders_save(data)
-    audit_event("shared_folder_registered", action="register", resource_type="shared_folder", resource_id=entry["id"], after={"name": name, "rel": rel})
+    audit_event(
+        "shared_folder_registered",
+        action="register",
+        resource_type="shared_folder",
+        resource_id=entry["id"],
+        after={"name": name, "rel": rel},
+    )
     return {"folder": {**entry, "path": abs_path, "exists": True}}
 
 

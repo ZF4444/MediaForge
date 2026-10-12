@@ -302,6 +302,7 @@ def load_storage_quota_config() -> Dict[str, Any]:
                 "users": dict(_QUOTA_CONFIG_CACHE.get("users") or {}),
             }
         from app.services.business_metadata import get_app_setting
+
         _QUOTA_CONFIG_CACHE = _sanitize_storage_quota_config(get_app_setting("storage_quota", {}))
         return {
             "enabled": bool(_QUOTA_CONFIG_CACHE.get("enabled", STORAGE_QUOTA_ENABLED)),
@@ -315,6 +316,7 @@ def save_storage_quota_config(config: Dict[str, Any]) -> Dict[str, Any]:
     sanitized = _sanitize_storage_quota_config(config)
     with GLOBAL_CONFIG_LOCK:
         from app.services.business_metadata import set_app_setting
+
         set_app_setting("storage_quota", sanitized)
         _QUOTA_CONFIG_CACHE = sanitized
     return {
@@ -500,7 +502,7 @@ def _cleanup_candidates(limit: int, now_ms_value: int) -> List[Dict[str, Any]]:
           AND status <> 'deleted'
           AND category <> 'library'
           {_UNREFERENCED_FILE_SQL}
-          AND ({' OR '.join(conditions)})
+          AND ({" OR ".join(conditions)})
         ORDER BY COALESCE(expires_at, created_at) ASC
         LIMIT %s
     """
@@ -581,11 +583,14 @@ def run_storage_cleanup_once(limit: int = 0) -> Dict[str, int]:
     deleted = 0
     for row in rows:
         entry = _row_to_entry(row)
-        if not cleanup_reason_for_entry({
-            **entry,
-            "expires_at": row.get("expires_at"),
-            "last_accessed_at": row.get("last_accessed_at"),
-        }, now_ms_value=now_value):
+        if not cleanup_reason_for_entry(
+            {
+                **entry,
+                "expires_at": row.get("expires_at"),
+                "last_accessed_at": row.get("last_accessed_at"),
+            },
+            now_ms_value=now_value,
+        ):
             continue
         deleted_at_ms = now_ms()
         if not _delete_unreferenced_file_for_cleanup(entry, deleted_at_ms):
@@ -631,11 +636,15 @@ async def storage_cleanup_loop() -> None:
         try:
             result = await run_storage_io(run_storage_metadata_purge_once)
             BACKGROUND_RUNS.labels(job="storage_metadata_purge", status="success").inc()
-            logger.info("storage metadata purge completed", extra={"event": "storage_metadata_purge_completed", **result})
+            logger.info(
+                "storage metadata purge completed", extra={"event": "storage_metadata_purge_completed", **result}
+            )
         except Exception:
             BACKGROUND_FAILURES.labels(job="storage_metadata_purge").inc()
             BACKGROUND_RUNS.labels(job="storage_metadata_purge", status="failed").inc()
-            logger.exception("storage metadata purge failed", extra={"event": "storage_metadata_purge_failed", "alert": True})
+            logger.exception(
+                "storage metadata purge failed", extra={"event": "storage_metadata_purge_failed", "alert": True}
+            )
         await asyncio.sleep(max(60, int(STORAGE_CLEANUP_INTERVAL_SECONDS or 3600)))
 
 
@@ -703,7 +712,10 @@ def _is_transient_storage_error(exc: BaseException) -> bool:
         except (TypeError, ValueError):
             status = 0
         return status >= 500 or str(getattr(exc, "code", "")) in {
-            "InternalError", "RequestTimeout", "ServiceUnavailable", "SlowDown",
+            "InternalError",
+            "RequestTimeout",
+            "ServiceUnavailable",
+            "SlowDown",
         }
     return False
 
@@ -827,7 +839,9 @@ def save_bytes(data: bytes, object_key: str, content_type: str = "", bucket: str
     }
 
 
-def save_fileobj(fileobj: BinaryIO, object_key: str, length: int, content_type: str = "", bucket: str = "") -> Dict[str, Any]:
+def save_fileobj(
+    fileobj: BinaryIO, object_key: str, length: int, content_type: str = "", bucket: str = ""
+) -> Dict[str, Any]:
     bucket_name = (bucket or MINIO_BUCKET_PRIVATE).strip() or MINIO_BUCKET_PRIVATE
     _ensure_bucket(bucket_name)
     client = _get_client()
@@ -866,11 +880,21 @@ def save_fileobj(fileobj: BinaryIO, object_key: str, length: int, content_type: 
 
 
 def get_presigned_get_url(bucket: str, object_key: str, expires_seconds: int = 900) -> str:
-    return _minio_call("presigned_get_object", lambda: _get_client().presigned_get_object(bucket, object_key, expires=timedelta(seconds=max(1, int(expires_seconds or 900)))))
+    return _minio_call(
+        "presigned_get_object",
+        lambda: _get_client().presigned_get_object(
+            bucket, object_key, expires=timedelta(seconds=max(1, int(expires_seconds or 900)))
+        ),
+    )
 
 
 def get_presigned_put_url(bucket: str, object_key: str, expires_seconds: int = 900) -> str:
-    return _minio_call("presigned_put_object", lambda: _get_client().presigned_put_object(bucket, object_key, expires=timedelta(seconds=max(1, int(expires_seconds or 900)))))
+    return _minio_call(
+        "presigned_put_object",
+        lambda: _get_client().presigned_put_object(
+            bucket, object_key, expires=timedelta(seconds=max(1, int(expires_seconds or 900)))
+        ),
+    )
 
 
 def delete_object(bucket: str, object_key: str) -> None:
@@ -889,6 +913,7 @@ def get_object_bytes(bucket: str, object_key: str) -> bytes:
         finally:
             response.close()
             response.release_conn()
+
     return _minio_call("get_object", _read_object, object_id=object_key)
 
 
@@ -1065,7 +1090,9 @@ def lookup_media_url(url: str, *, include_deleted: bool = False) -> Optional[Dic
                 """
                 SELECT * FROM files
                 WHERE legacy_url = %s
-                """ + deleted_filter + """
+                """
+                + deleted_filter
+                + """
                 LIMIT 1
                 """,
                 (url,),
@@ -1092,7 +1119,8 @@ def lookup_media_urls(urls: List[str], *, include_deleted: bool = False) -> Dict
                 """
                 SELECT * FROM files
                 WHERE legacy_url = ANY(%s)
-                """ + deleted_filter,
+                """
+                + deleted_filter,
                 (canonical_urls,),
             )
             rows = cur.fetchall() or []
@@ -1181,7 +1209,9 @@ def get_user_files_by_ids(file_ids: List[str], *, user_id: str = "") -> Dict[str
     return {entry["file_id"]: entry for entry in entries if entry.get("file_id")}
 
 
-def resolve_file_reference(url: str = "", file_id: str = "", *, allow_register: bool = True) -> Optional[Dict[str, Any]]:
+def resolve_file_reference(
+    url: str = "", file_id: str = "", *, allow_register: bool = True
+) -> Optional[Dict[str, Any]]:
     if file_id:
         entry = get_file_by_id(file_id)
         if entry:
@@ -1522,9 +1552,7 @@ def list_media_entries_page_for_user(
             total = int(total_row.get("total") or 0)
             order_sql = "ASC" if normalized_sort_order == "asc" else "DESC"
             cur.execute(
-                "SELECT * "
-                + where
-                + f" ORDER BY created_at {order_sql}, id {order_sql} LIMIT %s OFFSET %s",
+                "SELECT * " + where + f" ORDER BY created_at {order_sql}, id {order_sql} LIMIT %s OFFSET %s",
                 [*params, safe_limit, safe_offset],
             )
             rows = cur.fetchall() or []
@@ -1584,7 +1612,9 @@ def remove_media_url(url: str, *, delete_remote: bool = False) -> Optional[Dict[
     return removed
 
 
-def media_entry_by_basename(name: str, categories: Optional[set[str]] = None, *, user_id: str = "") -> Optional[Dict[str, Any]]:
+def media_entry_by_basename(
+    name: str, categories: Optional[set[str]] = None, *, user_id: str = ""
+) -> Optional[Dict[str, Any]]:
     uid = os.path.basename(str(user_id or current_user_id() or "anonymous")) or "anonymous"
     safe_name = os.path.basename(str(name or ""))
     if not safe_name:
@@ -1957,7 +1987,7 @@ def _active_cache_object_keys(entries: List[Dict[str, Any]]) -> set[tuple[str, s
     active: set[tuple[str, str]] = set()
     batch_size = max(1, min(1000, int(STORAGE_CACHE_CLEANUP_BATCH_SIZE or 1000)))
     for offset in range(0, len(entries), batch_size):
-        batch = entries[offset:offset + batch_size]
+        batch = entries[offset : offset + batch_size]
         keys = list(dict.fromkeys(str(entry["object_key"]) for entry in batch))
         with _db_connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -2109,12 +2139,16 @@ def run_storage_cache_cleanup_once(
                     evicted["lru"] += 1
 
         removed_dirs = 0 if effective_dry_run else _remove_empty_cache_directories()
-        after = storage_cache_status() if not effective_dry_run else {
-            **before,
-            "files": max(0, int(before["files"]) - len(selected)),
-            "bytes": max(0, int(before["bytes"]) - bytes_removed),
-            "free_bytes": max(0, int(before["free_bytes"]) + bytes_removed),
-        }
+        after = (
+            storage_cache_status()
+            if not effective_dry_run
+            else {
+                **before,
+                "files": max(0, int(before["files"]) - len(selected)),
+                "bytes": max(0, int(before["bytes"]) - bytes_removed),
+                "free_bytes": max(0, int(before["free_bytes"]) + bytes_removed),
+            }
+        )
         result = {
             "enabled": True,
             "cleanup_enabled": True,
@@ -2132,10 +2166,7 @@ def run_storage_cache_cleanup_once(
             "removed_dirs": removed_dirs,
             "limit_reached": len(selected) >= limit,
             "capacity_unresolved": bool(
-                (
-                    needs_size_cleanup
-                    and int(after["bytes"]) > int(after["target_bytes"])
-                )
+                (needs_size_cleanup and int(after["bytes"]) > int(after["target_bytes"]))
                 or (min_free_bytes and int(after["free_bytes"]) < min_free_bytes)
             ),
             "duration_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -2163,11 +2194,15 @@ def clear_storage_cache(*, dry_run: bool = False) -> Dict[str, Any]:
                 removed_bytes += int(entry["size"])
         if not dry_run:
             _remove_empty_cache_directories()
-        after = storage_cache_status() if not dry_run else {
-            **before,
-            "files": max(0, before["files"] - removed),
-            "bytes": max(0, before["bytes"] - removed_bytes),
-        }
+        after = (
+            storage_cache_status()
+            if not dry_run
+            else {
+                **before,
+                "files": max(0, before["files"] - removed),
+                "bytes": max(0, before["bytes"] - removed_bytes),
+            }
+        )
         return {
             "dry_run": bool(dry_run),
             "removed": removed,
@@ -2238,11 +2273,14 @@ async def storage_cache_cleanup_loop(*, initial_delay_seconds: int = 30) -> None
             status = "success" if not result.get("skipped") else "skipped"
             BACKGROUND_RUNS.labels(job="storage_cache_cleanup", status=status).inc()
             log_method = logger.warning if result.get("capacity_unresolved") else logger.info
-            log_method("storage cache cleanup completed", extra={
-                "event": "storage_cache_cleanup_completed",
-                "alert": bool(result.get("capacity_unresolved")),
-                **result,
-            })
+            log_method(
+                "storage cache cleanup completed",
+                extra={
+                    "event": "storage_cache_cleanup_completed",
+                    "alert": bool(result.get("capacity_unresolved")),
+                    **result,
+                },
+            )
         except Exception:
             STORAGE_CACHE_CLEANUP_FAILURES.inc()
             BACKGROUND_FAILURES.labels(job="storage_cache_cleanup").inc()
@@ -2538,7 +2576,7 @@ def save_media_fileobj(
     )
     result = {**stored, "url": url, "entry": entry, "file_id": file_id}
     if quota_warning:
-            result["quota_warning"] = quota_warning
+        result["quota_warning"] = quota_warning
     return result
 
 
@@ -2615,5 +2653,5 @@ def save_media_bytes(
     )
     result = {**stored, "url": url, "entry": entry, "file_id": file_id}
     if quota_warning:
-            result["quota_warning"] = quota_warning
+        result["quota_warning"] = quota_warning
     return result

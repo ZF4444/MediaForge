@@ -1,4 +1,5 @@
 """Submit approved generation intents through the existing Canvas Task queue."""
+
 from __future__ import annotations
 import uuid
 import asyncio
@@ -11,8 +12,9 @@ from app.services.canvas_tasks import create_canvas_task, enqueue_canvas_task
 from .canvas_capabilities import from_repository
 
 
-def _image_request_for_node(node: dict[str, Any], fallback_capability: Any, fallback_prompt: str,
-                            prompts_by_node: dict[str, str] | None) -> dict[str, Any]:
+def _image_request_for_node(
+    node: dict[str, Any], fallback_capability: Any, fallback_prompt: str, prompts_by_node: dict[str, str] | None
+) -> dict[str, Any]:
     """Use the same persisted runSettings contract as manually-run image nodes."""
     settings = node.get("runSettings") if isinstance(node.get("runSettings"), dict) else {}
     if str(node.get("genKind") or "image") != "image" or str(settings.get("apiKind") or "image") != "image":
@@ -49,6 +51,7 @@ def _image_request_for_node(node: dict[str, Any], fallback_capability: Any, fall
     # only its legacy target snapshot.
     try:
         from app.ai.database_repository import DatabaseAIRepository
+
         repo = DatabaseAIRepository()
         # Resolution is performed by the async submitter; keep this helper
         # synchronous because it is also used by unit tests and tooling.
@@ -60,9 +63,18 @@ def _image_request_for_node(node: dict[str, Any], fallback_capability: Any, fall
     return request
 
 
-async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, requests: list[dict[str, Any]], *, prompt: str, prompts_by_node: dict[str, str] | None = None) -> list[dict[str, Any]]:
+async def submit_run_requests(
+    user_id: str,
+    canvas_id: str,
+    run_id: str,
+    requests: list[dict[str, Any]],
+    *,
+    prompt: str,
+    prompts_by_node: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     canvas = await asyncio.to_thread(load_canvas_payload, user_id, canvas_id)
-    if not canvas: raise PermissionError("canvas not found")
+    if not canvas:
+        raise PermissionError("canvas not found")
     nodes = {str(node.get("id")): node for node in canvas.get("nodes", []) if isinstance(node, dict)}
     registry = await asyncio.to_thread(from_repository)
     capability = registry.get("image.text_to_image")
@@ -84,19 +96,37 @@ async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, request
         task_id = f"canvas_agent_img_{uuid.uuid4().hex}"
         request = _image_request_for_node(node, capability, prompt, prompts_by_node)
         from app.models import OnlineImageRequest
-        request = (await asyncio.to_thread(
-            normalize_canvas_image_payload,
-            OnlineImageRequest.model_validate(request),
-        )).model_dump(mode="json")
+
+        request = (
+            await asyncio.to_thread(
+                normalize_canvas_image_payload,
+                OnlineImageRequest.model_validate(request),
+            )
+        ).model_dump(mode="json")
         try:
             from app.ai.database_repository import DatabaseAIRepository
+
             repo = DatabaseAIRepository()
             if request.get("resource_id"):
-                target = await asyncio.to_thread(repo.resolve_executable, resource_id=request["resource_id"], kind="image")
+                target = await asyncio.to_thread(
+                    repo.resolve_executable, resource_id=request["resource_id"], kind="image"
+                )
                 request.update({"connection_id": target.connection.id, "resource_id": target.resource.id})
             else:
-                target = await asyncio.to_thread(repo.resolve_model, model_id=request.get("model_id", ""), connection_id=request.get("connection_id", ""), model=request.get("model", ""), kind="image")
-                request.update({"connection_id": target.connection.id, "model_id": target.model.id, "model": target.model.upstream_model})
+                target = await asyncio.to_thread(
+                    repo.resolve_model,
+                    model_id=request.get("model_id", ""),
+                    connection_id=request.get("connection_id", ""),
+                    model=request.get("model", ""),
+                    kind="image",
+                )
+                request.update(
+                    {
+                        "connection_id": target.connection.id,
+                        "model_id": target.model.id,
+                        "model": target.model.upstream_model,
+                    }
+                )
         except (LookupError, RuntimeError):
             raise ValueError("生图节点的稳定资源标识无效或已禁用")
         # Reuse the existing access-control resolver; the Agent never chooses
@@ -106,14 +136,18 @@ async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, request
         for key in ("provider_id", "provider", "model"):
             persisted_request.pop(key, None)
         task_data = {
-            "id": task_id, "type": "online-image", "status": "queued",
+            "id": task_id,
+            "type": "online-image",
+            "status": "queued",
             "connection_id": request.get("connection_id", ""),
             "model_id": request.get("model_id", ""),
             "resource_id": request.get("resource_id", ""),
-            "owner_id": user_id, "agent_run_id": run_id,
+            "owner_id": user_id,
+            "agent_run_id": run_id,
             "agent_node_id": node["id"],
             "deadline_at": time.time() + CANVAS_TASK_TIMEOUT_SECONDS,
-            "attempt": 1, "request": persisted_request,
+            "attempt": 1,
+            "request": persisted_request,
         }
         if not (task_data["connection_id"] or task_data["model_id"] or task_data["resource_id"]):
             raise ValueError("生图任务未解析到有效的 connection_id/model_id")
@@ -123,16 +157,20 @@ async def submit_run_requests(user_id: str, canvas_id: str, run_id: str, request
         # before a worker claims the task and begins image generation.
         from .event_factory import task_lifecycle
         from .events import emit_agent_event
-        task_event = task_lifecycle("queued", {
-            "task_id": task_id,
-            "node_id": node["id"],
-            "status": "queued",
-            "connection_id": request.get("connection_id", ""),
-            "model_id": request.get("model_id", ""),
-            "resource_id": request.get("resource_id", ""),
-            "kind": "image",
-            "expected_count": request["n"],
-        })
+
+        task_event = task_lifecycle(
+            "queued",
+            {
+                "task_id": task_id,
+                "node_id": node["id"],
+                "status": "queued",
+                "connection_id": request.get("connection_id", ""),
+                "model_id": request.get("model_id", ""),
+                "resource_id": request.get("resource_id", ""),
+                "kind": "image",
+                "expected_count": request["n"],
+            },
+        )
         await emit_agent_event(
             user_id,
             run_id,

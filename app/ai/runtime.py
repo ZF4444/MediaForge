@@ -4,6 +4,7 @@ This prevents downstream modules such as Canvas Agent from importing the root
 ASGI module.  Bindings are intentionally narrow and will disappear after the
 connection-backed gateway.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -40,7 +41,9 @@ def load_connection_runtime() -> list[dict[str, Any]]:
 def resolve_connection_runtime(connection_id: str) -> dict[str, Any]:
     """Return transient transport metadata for a canonical connection."""
     selected = str(connection_id or "").strip()
-    runtime = next((item for item in load_connection_runtime() if str(item.get("connection_id") or "") == selected), None)
+    runtime = next(
+        (item for item in load_connection_runtime() if str(item.get("connection_id") or "") == selected), None
+    )
     if runtime is None:
         raise ValueError("指定的 AI 连接未加载")
     return runtime
@@ -86,7 +89,14 @@ async def authorize_target_task(target: Any, user_id: str) -> None:
     result = _target_authorizer(target, user_id)
     if inspect.isawaitable(result):
         await result
-    runtime = {"id": connection_id, "connection_id": connection_id, "protocol": connection.protocol, "name": connection.name, "base_url": connection.base_url, **dict(connection.settings or {})}
+    runtime = {
+        "id": connection_id,
+        "connection_id": connection_id,
+        "protocol": connection.protocol,
+        "name": connection.name,
+        "base_url": connection.base_url,
+        **dict(connection.settings or {}),
+    }
     result = _connection_budget_authorizer(runtime, user_id)
     if inspect.isawaitable(result):
         await result

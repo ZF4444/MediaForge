@@ -1,4 +1,5 @@
 """Protocol-neutral video response and status helpers."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -29,13 +30,52 @@ def task_url_candidates(base_url: str, protocol: str, task_id: str, submit_url: 
     v2 = f"{root}/v2/videos/generations/{task_id}"
     return [v2, v1, generic] if "/v2/videos/generations" in str(submit_url or "") else [v1, generic, v2]
 
+
 VIDEO_URL_KEYS = (
-    "url", "video_url", "videoUrl", "mp4_url", "mp4Url", "output", "output_url", "outputUrl",
-    "download_url", "downloadUrl", "video", "src", "uri", "preview_url", "previewUrl", "path",
-    "last_frame_url", "lastFrameUrl",
+    "url",
+    "video_url",
+    "videoUrl",
+    "mp4_url",
+    "mp4Url",
+    "output",
+    "output_url",
+    "outputUrl",
+    "download_url",
+    "downloadUrl",
+    "video",
+    "src",
+    "uri",
+    "preview_url",
+    "previewUrl",
+    "path",
+    "last_frame_url",
+    "lastFrameUrl",
 )
-VIDEO_TASK_SUCCESS_STATUSES = {"SUCCESS", "SUCCEED", "SUCCEEDED", "COMPLETED", "COMPLETE", "DONE", "FINISHED", "FINISH", "OK", "READY"}
-VIDEO_TASK_FAILURE_STATUSES = {"FAILURE", "FAILED", "FAIL", "ERROR", "ERRORED", "CANCELED", "CANCELLED", "TIMEOUT", "TIMEDOUT", "REJECTED", "EXPIRED"}
+VIDEO_TASK_SUCCESS_STATUSES = {
+    "SUCCESS",
+    "SUCCEED",
+    "SUCCEEDED",
+    "COMPLETED",
+    "COMPLETE",
+    "DONE",
+    "FINISHED",
+    "FINISH",
+    "OK",
+    "READY",
+}
+VIDEO_TASK_FAILURE_STATUSES = {
+    "FAILURE",
+    "FAILED",
+    "FAIL",
+    "ERROR",
+    "ERRORED",
+    "CANCELED",
+    "CANCELLED",
+    "TIMEOUT",
+    "TIMEDOUT",
+    "REJECTED",
+    "EXPIRED",
+}
 
 
 def _collect_video_url(value: Any, urls: list[str]) -> None:
@@ -92,7 +132,17 @@ def humanize_video_task_failure(reason: Any) -> str:
     return f"视频生成任务失败：{text}"
 
 
-def volcengine_generation_body(*, model: str, prompt: str, duration: int, ratio: str = "", resolution: str = "", content: list[dict[str, Any]] | None = None, seed: Any = None, generate_audio: bool = False) -> dict[str, Any]:
+def volcengine_generation_body(
+    *,
+    model: str,
+    prompt: str,
+    duration: int,
+    ratio: str = "",
+    resolution: str = "",
+    content: list[dict[str, Any]] | None = None,
+    seed: Any = None,
+    generate_audio: bool = False,
+) -> dict[str, Any]:
     """Build Ark/Volcengine content-generation request payload."""
     body: dict[str, Any] = {"model": model, "content": [{"type": "text", "text": prompt}]}
     body["duration"] = duration

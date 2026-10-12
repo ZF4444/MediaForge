@@ -4,10 +4,14 @@ from app.routers import access_control as access_control_router
 
 def test_user_type_permissions_and_legacy_config_migration(monkeypatch):
     monkeypatch.setattr(access_control, "all_page_ids", lambda: ["canvas", "asset-manager", "gpt-chat"])
-    monkeypatch.setattr(access_control, "get_app_setting", lambda *_args: {
-        "default": {"pages": ["canvas"]},
-        "users": {"alice": {"pages": ["asset-manager"]}},
-    })
+    monkeypatch.setattr(
+        access_control,
+        "get_app_setting",
+        lambda *_args: {
+            "default": {"pages": ["canvas"]},
+            "users": {"alice": {"pages": ["asset-manager"]}},
+        },
+    )
     monkeypatch.setattr(access_control, "_ACCESS_CONTROL_CACHE", None)
 
     migrated = access_control.load_config()
@@ -24,12 +28,14 @@ def test_save_config_assigns_permissions_by_user_type(monkeypatch):
     monkeypatch.setattr(access_control, "set_app_setting", lambda _key, value: stored.update(value))
     monkeypatch.setattr(access_control, "_ACCESS_CONTROL_CACHE", None)
 
-    saved = access_control.save_config({
-        "types": {
-            "creator": {"name": "创作用户", "pages": ["canvas"]},
-        },
-        "user_types": {"bob": "creator", "admin": "creator", "nobody": "missing"},
-    })
+    saved = access_control.save_config(
+        {
+            "types": {
+                "creator": {"name": "创作用户", "pages": ["canvas"]},
+            },
+            "user_types": {"bob": "creator", "admin": "creator", "nobody": "missing"},
+        }
+    )
 
     assert saved["user_types"] == {"bob": "creator", "admin": "creator"}
     assert saved["types"]["creator"]["pages"] == ["canvas"]

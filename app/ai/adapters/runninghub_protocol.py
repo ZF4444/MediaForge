@@ -1,4 +1,5 @@
 """Pure RunningHub task protocol parsing helpers."""
+
 from __future__ import annotations
 
 import os
@@ -38,7 +39,18 @@ def extract_task_id(payload: Any) -> str:
 def extract_outputs(payload: Any) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
-    keys = {"fileUrl", "file_url", "download_url", "imageUrl", "image_url", "videoUrl", "video_url", "audioUrl", "audio_url", "fileName"}
+    keys = {
+        "fileUrl",
+        "file_url",
+        "download_url",
+        "imageUrl",
+        "image_url",
+        "videoUrl",
+        "video_url",
+        "audioUrl",
+        "audio_url",
+        "fileName",
+    }
 
     def visit(value: Any, depth: int = 0) -> None:
         if depth > 10:
@@ -90,7 +102,14 @@ def normalized_status(raw: Any, code: Any, urls: list[str]) -> str:
     ).upper()
     if code in (803, "803", 804, "804") or "APIKEY_TASK_IS_QUEUED" in messages or "APIKEY_TASK_IS_RUNNING" in messages:
         return "RUNNING"
-    status = next((str(item.get("status") or "").upper() for item in (raw, data) if isinstance(item, dict) and item.get("status")), "")
+    status = next(
+        (
+            str(item.get("status") or "").upper()
+            for item in (raw, data)
+            if isinstance(item, dict) and item.get("status")
+        ),
+        "",
+    )
     if status in {"SUCCESS", "SUCCEEDED", "COMPLETED"}:
         # RunningHub can briefly report a terminal status before its output
         # list is populated. Do not finalize an empty result; the caller will
@@ -107,7 +126,13 @@ def fail_reason(raw: Any) -> str:
     if not isinstance(raw, dict):
         return "RunningHub 任务失败"
     data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
-    return str(data.get("errorMessage") or data.get("failReason") or raw.get("msg") or raw.get("errorMessage") or "RunningHub 任务失败")
+    return str(
+        data.get("errorMessage")
+        or data.get("failReason")
+        or raw.get("msg")
+        or raw.get("errorMessage")
+        or "RunningHub 任务失败"
+    )
 
 
 def extract_image(raw: Any) -> dict[str, str]:
@@ -122,4 +147,7 @@ def find_app(resource_settings: Mapping[str, Any] | None, model: str) -> Mapping
     settings = resource_settings or {}
     apps = settings.get("rh_apps") if isinstance(settings, Mapping) else None
     key = str(model or "").strip()
-    return next((entry for entry in apps or [] if isinstance(entry, Mapping) and str(entry.get("app_id") or "").strip() == key), None)
+    return next(
+        (entry for entry in apps or [] if isinstance(entry, Mapping) and str(entry.get("app_id") or "").strip() == key),
+        None,
+    )

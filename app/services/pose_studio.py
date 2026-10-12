@@ -69,43 +69,114 @@ SAM3D_CANONICAL_JOINT_NAMES = {
     113: "head",
 }
 SAM3D_VISIBLE_MARKER_JOINTS = {
-    1, 2, 3, 4, 8,
-    18, 19, 20, 24,
-    34, 35, 36, 37, 38, 40, 42,
-    44, 45, 46, 48, 49, 50, 52, 53, 54, 56, 57, 58, 61, 62, 63, 70,
-    74, 76, 78,
-    80, 81, 82, 84, 85, 86, 88, 89, 90, 92, 93, 94, 97, 98, 99, 106,
-    111, 113,
+    1,
+    2,
+    3,
+    4,
+    8,
+    18,
+    19,
+    20,
+    24,
+    34,
+    35,
+    36,
+    37,
+    38,
+    40,
+    42,
+    44,
+    45,
+    46,
+    48,
+    49,
+    50,
+    52,
+    53,
+    54,
+    56,
+    57,
+    58,
+    61,
+    62,
+    63,
+    70,
+    74,
+    76,
+    78,
+    80,
+    81,
+    82,
+    84,
+    85,
+    86,
+    88,
+    89,
+    90,
+    92,
+    93,
+    94,
+    97,
+    98,
+    99,
+    106,
+    111,
+    113,
 }
 VNCCS_GAME_ENGINE_BONE_NAMES = {
     "Root",
-    "ball_l", "ball_r",
-    "calf_l", "calf_r",
-    "clavicle_l", "clavicle_r",
-    "foot_l", "foot_r",
-    "hand_l", "hand_r",
+    "ball_l",
+    "ball_r",
+    "calf_l",
+    "calf_r",
+    "clavicle_l",
+    "clavicle_r",
+    "foot_l",
+    "foot_r",
+    "hand_l",
+    "hand_r",
     "head",
-    "index_01_l", "index_01_r",
-    "index_02_l", "index_02_r",
-    "index_03_l", "index_03_r",
-    "lowerarm_l", "lowerarm_r",
-    "middle_01_l", "middle_01_r",
-    "middle_02_l", "middle_02_r",
-    "middle_03_l", "middle_03_r",
+    "index_01_l",
+    "index_01_r",
+    "index_02_l",
+    "index_02_r",
+    "index_03_l",
+    "index_03_r",
+    "lowerarm_l",
+    "lowerarm_r",
+    "middle_01_l",
+    "middle_01_r",
+    "middle_02_l",
+    "middle_02_r",
+    "middle_03_l",
+    "middle_03_r",
     "neck_01",
     "pelvis",
-    "pinky_01_l", "pinky_01_r",
-    "pinky_02_l", "pinky_02_r",
-    "pinky_03_l", "pinky_03_r",
-    "ring_01_l", "ring_01_r",
-    "ring_02_l", "ring_02_r",
-    "ring_03_l", "ring_03_r",
-    "spine_01", "spine_02", "spine_03",
-    "thigh_l", "thigh_r",
-    "thumb_01_l", "thumb_01_r",
-    "thumb_02_l", "thumb_02_r",
-    "thumb_03_l", "thumb_03_r",
-    "upperarm_l", "upperarm_r",
+    "pinky_01_l",
+    "pinky_01_r",
+    "pinky_02_l",
+    "pinky_02_r",
+    "pinky_03_l",
+    "pinky_03_r",
+    "ring_01_l",
+    "ring_01_r",
+    "ring_02_l",
+    "ring_02_r",
+    "ring_03_l",
+    "ring_03_r",
+    "spine_01",
+    "spine_02",
+    "spine_03",
+    "thigh_l",
+    "thigh_r",
+    "thumb_01_l",
+    "thumb_01_r",
+    "thumb_02_l",
+    "thumb_02_r",
+    "thumb_03_l",
+    "thumb_03_r",
+    "upperarm_l",
+    "upperarm_r",
 }
 
 
@@ -164,7 +235,7 @@ def _extract_fbx_blocks(text: str, block_name: str):
                     break
         if close_pos < 0:
             continue
-        yield text[match.start():open_pos].strip(), text[open_pos + 1:close_pos]
+        yield text[match.start() : open_pos].strip(), text[open_pos + 1 : close_pos]
 
 
 def _parse_fbx_array(block: str, key: str) -> List[float]:
@@ -239,7 +310,7 @@ def _read_fbx_binary_array(content: bytes, offset: int, type_code: str) -> Tuple
         return [], len(content)
     count, encoding, byte_length = struct.unpack_from("<III", content, offset)
     offset += 12
-    raw = content[offset:offset + byte_length]
+    raw = content[offset : offset + byte_length]
     offset += byte_length
     if encoding == 1:
         try:
@@ -290,7 +361,7 @@ def _read_fbx_property(content: bytes, offset: int) -> Tuple[Any, int]:
             return b"", len(content)
         length = struct.unpack_from("<I", content, offset)[0]
         offset += 4
-        return content[offset:offset + length], offset + length
+        return content[offset : offset + length], offset + length
     raise HTTPException(status_code=400, detail=f"不支持的 FBX 属性类型：{code}")
 
 
@@ -319,7 +390,7 @@ def _parse_fbx_binary_nodes(content: bytes) -> List[Dict[str, Any]]:
                 break
             if name_len < 0 or offset + name_len > len(content):
                 raise HTTPException(status_code=400, detail="FBX 节点名称长度异常")
-            name = content[offset:offset + name_len].decode("utf-8", "replace")
+            name = content[offset : offset + name_len].decode("utf-8", "replace")
             offset += name_len
             props = []
             for _ in range(prop_count):
@@ -360,7 +431,11 @@ def _fbx_property_value(model_node: Dict[str, Any], property_name: str):
         if not props:
             continue
         if _read_fbx_string(props[0]) == property_name:
-            return props[-3:] if property_name in {"Lcl Translation", "Lcl Rotation", "Lcl Scaling"} and len(props) >= 3 else props[-1]
+            return (
+                props[-3:]
+                if property_name in {"Lcl Translation", "Lcl Rotation", "Lcl Scaling"} and len(props) >= 3
+                else props[-1]
+            )
     return None
 
 
@@ -450,13 +525,21 @@ def _parse_binary_fbx_model(content: bytes) -> Dict[str, Any]:
             except Exception:
                 continue
 
-    mesh_model_id = next((parent_id for child_id, parent_id in oo_connections if child_id == geometry_id and parent_id in models), None) if geometry_id is not None else None
+    mesh_model_id = (
+        next(
+            (parent_id for child_id, parent_id in oo_connections if child_id == geometry_id and parent_id in models),
+            None,
+        )
+        if geometry_id is not None
+        else None
+    )
     if mesh_model_id in models:
         vertices = _apply_matrix_to_vertices(vertices, _global_model_matrix(mesh_model_id, models, parent_by_child))
 
     bone_types = {"LimbNode", "Skeleton", "Null"}
     bone_models = {
-        mid: item for mid, item in models.items()
+        mid: item
+        for mid, item in models.items()
         if item.get("type") in bone_types
         and item.get("name") not in {"GeneratedRigMesh", "RootNode", "SceneRoot"}
         and mid != mesh_model_id
@@ -501,7 +584,9 @@ def _parse_binary_fbx_model(content: bytes) -> Dict[str, Any]:
             cluster_id = int(props[0])
         except Exception:
             continue
-        link_model_id = next((child_id for child_id in children_by_parent.get(cluster_id, []) if child_id in bone_models), None)
+        link_model_id = next(
+            (child_id for child_id in children_by_parent.get(cluster_id, []) if child_id in bone_models), None
+        )
         if link_model_id is None:
             continue
         bone_name = bone_models[link_model_id]["name"]
@@ -539,14 +624,16 @@ def _parse_binary_fbx_model(content: bytes) -> Dict[str, Any]:
         child_heads = [absolute_head(child_id) for child_id in children.get(model_id, [])]
         tail = child_heads[0] if child_heads else [head[0], head[1] + float(item.get("length") or 1.0), head[2]]
         parent_id = bone_parent_by_child.get(model_id)
-        bones.append({
-            "name": item["name"],
-            "headPos": head,
-            "tailPos": tail,
-            "parent": bone_models[parent_id]["name"] if parent_id in bone_models else None,
-            "length": float(item.get("length") or 1.0),
-            "restMatrix": None,
-        })
+        bones.append(
+            {
+                "name": item["name"],
+                "headPos": head,
+                "tailPos": tail,
+                "parent": bone_models[parent_id]["name"] if parent_id in bone_models else None,
+                "length": float(item.get("length") or 1.0),
+                "restMatrix": None,
+            }
+        )
 
     return {
         "vertices": vertices,
@@ -555,7 +642,11 @@ def _parse_binary_fbx_model(content: bytes) -> Dict[str, Any]:
         "normals": [],
         "bones": bones,
         "weights": cluster_weights or _weights_from_nearest_bone(vertices, bones),
-        "rig_source": "bind_pose" if bind_pose_matrices else "cluster_transform_link" if cluster_matrices else "model_trs",
+        "rig_source": "bind_pose"
+        if bind_pose_matrices
+        else "cluster_transform_link"
+        if cluster_matrices
+        else "model_trs",
     }
 
 
@@ -699,7 +790,9 @@ def _apply_matrix(point: List[float], matrix: List[List[float]]) -> List[float]:
     ]
 
 
-def _global_model_matrix(model_id: int, models: Dict[int, Dict[str, Any]], parent_by_child: Dict[int, int], visiting=None) -> List[List[float]]:
+def _global_model_matrix(
+    model_id: int, models: Dict[int, Dict[str, Any]], parent_by_child: Dict[int, int], visiting=None
+) -> List[List[float]]:
     visiting = visiting or set()
     local = _model_local_matrix(models.get(model_id) or {})
     parent_id = parent_by_child.get(model_id)
@@ -831,7 +924,8 @@ def _parse_ascii_fbx_model(content: bytes) -> Dict[str, Any]:
 
     bone_types = {"LimbNode", "Skeleton", "Null"}
     bone_models = {
-        mid: item for mid, item in models.items()
+        mid: item
+        for mid, item in models.items()
         if item.get("type") in bone_types
         and item.get("name") not in {"GeneratedRigMesh", "RootNode", "SceneRoot"}
         and mid != mesh_model_id
@@ -858,14 +952,16 @@ def _parse_ascii_fbx_model(content: bytes) -> Dict[str, Any]:
         child_heads = [absolute_head(child_id) for child_id in children.get(model_id, [])]
         tail = child_heads[0] if child_heads else [head[0], head[1] + float(item.get("length") or 1.0), head[2]]
         parent_id = bone_parent_by_child.get(model_id)
-        bones.append({
-            "name": item["name"],
-            "headPos": head,
-            "tailPos": tail,
-            "parent": bone_models[parent_id]["name"] if parent_id in bone_models else None,
-            "length": float(item.get("length") or 1.0),
-            "restMatrix": None,
-        })
+        bones.append(
+            {
+                "name": item["name"],
+                "headPos": head,
+                "tailPos": tail,
+                "parent": bone_models[parent_id]["name"] if parent_id in bone_models else None,
+                "length": float(item.get("length") or 1.0),
+                "restMatrix": None,
+            }
+        )
 
     return {
         "vertices": vertices,

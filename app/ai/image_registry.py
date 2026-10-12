@@ -1,4 +1,5 @@
 """Image adapter assembly kept independent from HTTP routes."""
+
 from __future__ import annotations
 
 from typing import Mapping

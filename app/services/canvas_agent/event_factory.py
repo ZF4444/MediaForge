@@ -3,6 +3,7 @@
 This module has no persistence or transport responsibilities. Callers construct
 an ``EventSpec`` here, then submit it through ``emit_agent_event``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -295,11 +296,13 @@ def task_lifecycle(status: str, payload: dict[str, Any]) -> EventSpec:
     body = dict(payload)
     body["status"] = status
     task_id = str(body.get("task_id") or "")
-    body.update({
-        "message": _TASK_MESSAGES.get(status, "生成任务状态已更新"),
-        "subject": {"kind": "task", "id": task_id, "node_id": str(body.get("node_id") or "")},
-        "presentation": _presentation("canvas_refresh"),
-    })
+    body.update(
+        {
+            "message": _TASK_MESSAGES.get(status, "生成任务状态已更新"),
+            "subject": {"kind": "task", "id": task_id, "node_id": str(body.get("node_id") or "")},
+            "presentation": _presentation("canvas_refresh"),
+        }
+    )
     if status in {"failed", "timed_out"}:
         body["presentation"] = _presentation("canvas_refresh", "system_notice")
     return EventSpec(

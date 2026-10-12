@@ -18,6 +18,7 @@ The script preserves every existing user type, assignment, and page permission.
 It is intended as a recovery tool when no currently assigned type can open the
 user-management page.
 """
+
 from __future__ import annotations
 
 import argparse

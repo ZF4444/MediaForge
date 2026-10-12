@@ -1,4 +1,5 @@
 """LangChain ChatModel adapter over canonical AI connection targets."""
+
 from __future__ import annotations
 import asyncio
 import json
@@ -17,6 +18,7 @@ _RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523
 class CanvasAgentUpstreamError(RuntimeError):
     """The configured model connection was unavailable after bounded retries."""
 
+
 class GatewayChatModel(BaseChatModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     endpoint: str
@@ -25,18 +27,40 @@ class GatewayChatModel(BaseChatModel):
     request_timeout: float = 180.0
 
     @property
-    def _llm_type(self) -> str: return "mediaforge-connection"
+    def _llm_type(self) -> str:
+        return "mediaforge-connection"
+
     @property
-    def _identifying_params(self) -> dict[str, Any]: return {"endpoint": self.endpoint, "model": self.model_name}
+    def _identifying_params(self) -> dict[str, Any]:
+        return {"endpoint": self.endpoint, "model": self.model_name}
 
     @staticmethod
     def _message(message: BaseMessage) -> dict[str, Any]:
-        role = "user" if isinstance(message, HumanMessage) else "system" if isinstance(message, SystemMessage) else "tool" if isinstance(message, ToolMessage) else "assistant"
+        role = (
+            "user"
+            if isinstance(message, HumanMessage)
+            else "system"
+            if isinstance(message, SystemMessage)
+            else "tool"
+            if isinstance(message, ToolMessage)
+            else "assistant"
+        )
         content = message.content if isinstance(message.content, (str, list)) else str(message.content)
         item: dict[str, Any] = {"role": role, "content": content}
-        if isinstance(message, ToolMessage): item["tool_call_id"] = message.tool_call_id
+        if isinstance(message, ToolMessage):
+            item["tool_call_id"] = message.tool_call_id
         if isinstance(message, AIMessage) and message.tool_calls:
-            item["tool_calls"] = [{"id": call.get("id"), "type": "function", "function": {"name": call.get("name"), "arguments": json.dumps(call.get("args") or {}, ensure_ascii=False)}} for call in message.tool_calls]
+            item["tool_calls"] = [
+                {
+                    "id": call.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": call.get("name"),
+                        "arguments": json.dumps(call.get("args") or {}, ensure_ascii=False),
+                    },
+                }
+                for call in message.tool_calls
+            ]
         return item
 
     @staticmethod
@@ -54,7 +78,8 @@ class GatewayChatModel(BaseChatModel):
             base = {"id": call.get("id") or "call_agent", "name": function.get("name") or "", "type": "tool_call"}
             try:
                 args = json.loads(raw_arguments)
-                if not isinstance(args, dict): raise ValueError("tool arguments must be an object")
+                if not isinstance(args, dict):
+                    raise ValueError("tool arguments must be an object")
                 valid.append({**base, "args": args})
             except (TypeError, ValueError, json.JSONDecodeError):
                 invalid.append({**base, "args": str(raw_arguments), "type": "invalid_tool_call"})
@@ -67,15 +92,28 @@ class GatewayChatModel(BaseChatModel):
 
     async def _post_with_retry(self, body: dict[str, Any]) -> dict[str, Any]:
         from app.ai.chat import complete_with_retry
+
         try:
-            return await complete_with_retry(endpoint=self.endpoint, headers=self.headers, body=body, timeout=self.request_timeout, retryable_status_codes=_RETRYABLE_STATUS_CODES)
+            return await complete_with_retry(
+                endpoint=self.endpoint,
+                headers=self.headers,
+                body=body,
+                timeout=self.request_timeout,
+                retryable_status_codes=_RETRYABLE_STATUS_CODES,
+            )
         except Exception as exc:
             if exc.__class__.__name__ in {"NetworkError", "TimeoutException"}:
                 raise CanvasAgentUpstreamError("模型服务暂时不可用，请稍后重试") from exc
             raise
 
-    async def _agenerate(self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
-        body: dict[str, Any] = {"model": self.model_name, "messages": [self._message(message) for message in messages], "stream": False}
+    async def _agenerate(
+        self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any
+    ) -> ChatResult:
+        body: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": [self._message(message) for message in messages],
+            "stream": False,
+        }
         response_format = kwargs.get("response_format")
         if response_format is not None:
             if not isinstance(response_format, dict):
@@ -90,14 +128,19 @@ class GatewayChatModel(BaseChatModel):
         choice = (data.get("choices") or [{}])[0]
         raw = choice.get("message") or {}
         tool_calls, invalid_tool_calls = self._tool_calls(raw.get("tool_calls") or [])
-        message = AIMessage(content=raw.get("content") or "", tool_calls=tool_calls, invalid_tool_calls=invalid_tool_calls)
+        message = AIMessage(
+            content=raw.get("content") or "", tool_calls=tool_calls, invalid_tool_calls=invalid_tool_calls
+        )
         return ChatResult(generations=[ChatGeneration(message=message)], llm_output={"usage": data.get("usage") or {}})
 
-    def _generate(self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+    def _generate(
+        self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any
+    ) -> ChatResult:
         return asyncio.run(self._agenerate(messages, stop, run_manager, **kwargs))
 
     def bind_tools(self, tools, *, tool_choice: str | None = None, **kwargs: Any):
         return self.bind(_bound_tools=list(tools), _tool_choice=tool_choice, **kwargs)
+
 
 MediaForgeChatModel = GatewayChatModel
 
@@ -107,8 +150,11 @@ def resolve_canvas_agent_model(*, model: str = "", model_id: str = "", connectio
         raise ValueError("Canvas Agent requires model_id or connection_id")
     from app.ai.database_repository import DatabaseAIRepository
     from app.ai.transport import endpoint_for_target, headers_for_target
+
     try:
-        target = DatabaseAIRepository().resolve_model(model_id=model_id, connection_id=connection_id, model=model, kind="chat")
+        target = DatabaseAIRepository().resolve_model(
+            model_id=model_id, connection_id=connection_id, model=model, kind="chat"
+        )
     except LookupError as exc:
         raise ValueError("指定的 Canvas Agent 聊天模型不存在或已禁用") from exc
     return GatewayChatModel(

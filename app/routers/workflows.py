@@ -10,6 +10,7 @@
 - app.config：WORKFLOW_DIR
 - app.models：WorkflowUploadRequest / WorkflowConfig
 """
+
 import re
 import os
 
@@ -30,7 +31,9 @@ router = APIRouter()
 
 CUSTOM_WORKFLOW_FOLDER = "custom"
 LEGACY_CUSTOM_WORKFLOW_FOLDER = "自定义"
-WORKFLOW_NAME_RE = re.compile(rf"^(?:(?:{CUSTOM_WORKFLOW_FOLDER}|{LEGACY_CUSTOM_WORKFLOW_FOLDER})/)?[a-zA-Z0-9_一-龥\.\-]+\.json$")
+WORKFLOW_NAME_RE = re.compile(
+    rf"^(?:(?:{CUSTOM_WORKFLOW_FOLDER}|{LEGACY_CUSTOM_WORKFLOW_FOLDER})/)?[a-zA-Z0-9_一-龥\.\-]+\.json$"
+)
 
 
 @router.get("/api/workflows")
@@ -63,8 +66,17 @@ def upload_workflow(payload: WorkflowUploadRequest):
         raise HTTPException(status_code=400, detail="不是有效的 ComfyUI API 工作流 JSON（需包含 class_type）")
     stored_name = f"{CUSTOM_WORKFLOW_FOLDER}/{name}"
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("""INSERT INTO comfy_workflows(name,workflow_json,config_json,created_at,updated_at)
-            VALUES(%s,%s,%s,%s,%s) ON CONFLICT(name) DO UPDATE SET workflow_json=EXCLUDED.workflow_json,updated_at=EXCLUDED.updated_at""", (stored_name, json_value(payload.workflow), json_value({'title': name.replace('.json',''), 'fields': [], 'media': 'image'}), now_ms(), now_ms()))
+        cur.execute(
+            """INSERT INTO comfy_workflows(name,workflow_json,config_json,created_at,updated_at)
+            VALUES(%s,%s,%s,%s,%s) ON CONFLICT(name) DO UPDATE SET workflow_json=EXCLUDED.workflow_json,updated_at=EXCLUDED.updated_at""",
+            (
+                stored_name,
+                json_value(payload.workflow),
+                json_value({"title": name.replace(".json", ""), "fields": [], "media": "image"}),
+                now_ms(),
+                now_ms(),
+            ),
+        )
     return {"name": stored_name}
 
 

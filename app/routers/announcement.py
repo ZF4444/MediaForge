@@ -7,6 +7,7 @@
 
 权限：拥有“全局广播”页面权限的用户可发布或清除公告。
 """
+
 import asyncio
 from fastapi import APIRouter, HTTPException
 

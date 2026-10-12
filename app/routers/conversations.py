@@ -9,6 +9,7 @@
 - app.config：CONVERSATION_LOCK
 - app.models：ConversationCreateRequest
 """
+
 import uuid
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -68,14 +69,59 @@ def save_conversation(user_id, conversation):
     with metadata_connection() as conn:
         with conn.transaction():
             with conn.cursor() as cur:
-                cur.execute("INSERT INTO conversations(id,user_id,title,created_at,updated_at,extra_json) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,updated_at=EXCLUDED.updated_at,extra_json=EXCLUDED.extra_json", (conversation["id"], user_id, persisted.get("title", ""), persisted.get("created_at", now_ms()), persisted.get("updated_at", now_ms()), json_value({k:v for k,v in persisted.items() if k not in {"id","title","created_at","updated_at","messages"}})))
+                cur.execute(
+                    "INSERT INTO conversations(id,user_id,title,created_at,updated_at,extra_json) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,updated_at=EXCLUDED.updated_at,extra_json=EXCLUDED.extra_json",
+                    (
+                        conversation["id"],
+                        user_id,
+                        persisted.get("title", ""),
+                        persisted.get("created_at", now_ms()),
+                        persisted.get("updated_at", now_ms()),
+                        json_value(
+                            {
+                                k: v
+                                for k, v in persisted.items()
+                                if k not in {"id", "title", "created_at", "updated_at", "messages"}
+                            }
+                        ),
+                    ),
+                )
                 cur.execute("DELETE FROM conversation_messages WHERE conversation_id=%s", (conversation["id"],))
                 for order, msg in enumerate(persisted.get("messages", [])):
                     mid = msg.get("id") or new_id()
-                    cur.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,sort_order,created_at,updated_at,extra_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)", (mid, conversation["id"], msg.get("role", "user"), msg.get("content", ""), order, msg.get("created_at", now_ms()), msg.get("updated_at", now_ms()), json_value({k:v for k,v in msg.items() if k not in {"id","role","content","created_at","updated_at","attachments"}})))
+                    cur.execute(
+                        "INSERT INTO conversation_messages(id,conversation_id,role,content,sort_order,created_at,updated_at,extra_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (
+                            mid,
+                            conversation["id"],
+                            msg.get("role", "user"),
+                            msg.get("content", ""),
+                            order,
+                            msg.get("created_at", now_ms()),
+                            msg.get("updated_at", now_ms()),
+                            json_value(
+                                {
+                                    k: v
+                                    for k, v in msg.items()
+                                    if k not in {"id", "role", "content", "created_at", "updated_at", "attachments"}
+                                }
+                            ),
+                        ),
+                    )
                     for aorder, attachment in enumerate(msg.get("attachments") or []):
                         if isinstance(attachment, dict) and attachment.get("file_id"):
-                            cur.execute("INSERT INTO conversation_message_files(id,message_id,file_id,sort_order,kind,role) SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE) ON CONFLICT DO NOTHING", (new_id(), mid, attachment["file_id"], aorder, attachment.get("kind", ""), attachment.get("role", ""), attachment["file_id"]))
+                            cur.execute(
+                                "INSERT INTO conversation_message_files(id,message_id,file_id,sort_order,kind,role) SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE) ON CONFLICT DO NOTHING",
+                                (
+                                    new_id(),
+                                    mid,
+                                    attachment["file_id"],
+                                    aorder,
+                                    attachment.get("kind", ""),
+                                    attachment.get("role", ""),
+                                    attachment["file_id"],
+                                ),
+                            )
 
 
 def new_conversation(user_id, title="新对话"):
@@ -93,39 +139,76 @@ def new_conversation(user_id, title="新对话"):
 
 def load_conversation(user_id, conversation_id):
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM conversations WHERE id=%s AND user_id=%s", (conversation_id, user_id)); row = cur.fetchone()
-        if not row: raise HTTPException(status_code=404, detail="对话不存在")
-        cur.execute("SELECT * FROM conversation_messages WHERE conversation_id=%s ORDER BY sort_order", (conversation_id,)); messages = cur.fetchall()
+        cur.execute("SELECT * FROM conversations WHERE id=%s AND user_id=%s", (conversation_id, user_id))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="对话不存在")
+        cur.execute(
+            "SELECT * FROM conversation_messages WHERE conversation_id=%s ORDER BY sort_order", (conversation_id,)
+        )
+        messages = cur.fetchall()
         mids = [m["id"] for m in messages]
         attachments = {}
         if mids:
-            cur.execute("SELECT message_id,file_id,sort_order,kind,role FROM conversation_message_files WHERE message_id = ANY(%s) ORDER BY sort_order", (mids,))
-            for a in cur.fetchall(): attachments.setdefault(a["message_id"], []).append({"file_id": a["file_id"], "kind": a["kind"], "role": a["role"]})
+            cur.execute(
+                "SELECT message_id,file_id,sort_order,kind,role FROM conversation_message_files WHERE message_id = ANY(%s) ORDER BY sort_order",
+                (mids,),
+            )
+            for a in cur.fetchall():
+                attachments.setdefault(a["message_id"], []).append(
+                    {"file_id": a["file_id"], "kind": a["kind"], "role": a["role"]}
+                )
     conversation = dict(row.get("extra_json") or {})
     hydrated_messages = []
     for message in messages:
         item = dict(message.get("extra_json") or {})
-        item.update({"id": message["id"], "role": message["role"], "content": message["content"], "created_at": message["created_at"], "updated_at": message["updated_at"], "attachments": attachments.get(message["id"], [])})
+        item.update(
+            {
+                "id": message["id"],
+                "role": message["role"],
+                "content": message["content"],
+                "created_at": message["created_at"],
+                "updated_at": message["updated_at"],
+                "attachments": attachments.get(message["id"], []),
+            }
+        )
         hydrated_messages.append(item)
-    conversation.update({"id": row["id"], "title": row["title"], "created_at": row["created_at"], "updated_at": row["updated_at"], "messages": hydrated_messages})
+    conversation.update(
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "messages": hydrated_messages,
+        }
+    )
     return hydrate_conversation(conversation)
 
 
 def list_conversations(user_id):
     records = []
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT c.id, c.title, c.created_at, c.updated_at,
                    COALESCE((SELECT m.content FROM conversation_messages m
                              WHERE m.conversation_id=c.id AND m.role <> 'system'
                              ORDER BY m.sort_order DESC LIMIT 1), '') AS last_message
             FROM conversations c WHERE c.user_id=%s ORDER BY c.updated_at DESC
-        """, (user_id,))
+        """,
+            (user_id,),
+        )
         rows = cur.fetchall()
     for data in rows:
-        records.append({
-            "id": data["id"], "title": data["title"], "created_at": data["created_at"], "updated_at": data["updated_at"], "last_message": data["last_message"],
-        })
+        records.append(
+            {
+                "id": data["id"],
+                "title": data["title"],
+                "created_at": data["created_at"],
+                "updated_at": data["updated_at"],
+                "last_message": data["last_message"],
+            }
+        )
     return records
 
 

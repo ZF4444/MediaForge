@@ -54,12 +54,23 @@ def test_add_asset_library_item_uses_file_id(monkeypatch):
 
     monkeypatch.setattr(asset_router, "load_asset_library", lambda: library)
     monkeypatch.setattr(asset_router, "find_asset_category_in_library", lambda lib, category_id, library_id: category)
-    monkeypatch.setattr(asset_router, "resolve_file_reference", lambda file_id="": {"url": "/api/files/file-asset-1/preview"} if file_id == "file-asset-1" else None)
-    monkeypatch.setattr(asset_router, "output_file_from_url", lambda url: "/tmp/materialized.png" if url == "/api/files/file-asset-1/preview" else None)
+    monkeypatch.setattr(
+        asset_router,
+        "resolve_file_reference",
+        lambda file_id="": {"url": "/api/files/file-asset-1/preview"} if file_id == "file-asset-1" else None,
+    )
+    monkeypatch.setattr(
+        asset_router,
+        "output_file_from_url",
+        lambda url: "/tmp/materialized.png" if url == "/api/files/file-asset-1/preview" else None,
+    )
     monkeypatch.setattr(
         asset_router,
         "make_asset_library_item",
-        lambda src, name: ("copied.png", {"id": "asset1", "name": name, "file_id": "file-lib-1", "url": "/api/files/file-lib-1/preview"}),
+        lambda src, name: (
+            "copied.png",
+            {"id": "asset1", "name": name, "file_id": "file-lib-1", "url": "/api/files/file-lib-1/preview"},
+        ),
     )
     monkeypatch.setattr(asset_router, "save_asset_library", lambda lib: saved.setdefault("library", lib))
 

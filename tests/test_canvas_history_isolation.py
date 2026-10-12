@@ -10,6 +10,7 @@
 三个 save_to_history 调用点被 `if not _is_canvas_sourced(...)` 守卫;守卫的
 真值来源就是这里验证的 _is_canvas_sourced,因此隔离行为由本文件覆盖。
 """
+
 import main
 from app.models import GenerateRequest, ImageTaskQueryRequest, OnlineImageRequest
 

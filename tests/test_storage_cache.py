@@ -62,9 +62,15 @@ def test_download_object_to_file_streams_and_hashes(monkeypatch, tmp_path):
             self.chunks = iter((b"abc", b"def", b""))
             self.closed = False
             self.released = False
-        def read(self, _size): return next(self.chunks)
-        def close(self): self.closed = True
-        def release_conn(self): self.released = True
+
+        def read(self, _size):
+            return next(self.chunks)
+
+        def close(self):
+            self.closed = True
+
+        def release_conn(self):
+            self.released = True
 
     response = Response()
     client = type("Client", (), {"get_object": lambda self, *_args: response})()
@@ -104,8 +110,10 @@ def test_materialize_streams_once_for_concurrent_requests(monkeypatch, tmp_path)
         results.append(storage.materialize_media_url("/api/files/file-1/preview"))
 
     threads = [threading.Thread(target=materialize) for _ in range(2)]
-    for thread in threads: thread.start()
-    for thread in threads: thread.join(timeout=2)
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
 
     assert len(calls) == 1
     assert len(set(results)) == 1
@@ -241,8 +249,14 @@ def test_cache_cleanup_removes_stale_tmp_and_known_orphan(monkeypatch, tmp_path)
         "_active_cache_object_keys",
         lambda _entries: {("private", "users/alice/active.bin")},
     )
-    monkeypatch.setattr(storage, "delete_object", lambda *_args: (_ for _ in ()).throw(AssertionError("MinIO delete called")))
-    monkeypatch.setattr(storage, "_delete_unreferenced_file_for_cleanup", lambda *_args: (_ for _ in ()).throw(AssertionError("DB delete called")))
+    monkeypatch.setattr(
+        storage, "delete_object", lambda *_args: (_ for _ in ()).throw(AssertionError("MinIO delete called"))
+    )
+    monkeypatch.setattr(
+        storage,
+        "_delete_unreferenced_file_for_cleanup",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("DB delete called")),
+    )
 
     result = storage.run_storage_cache_cleanup_once(force_orphan_scan=True)
 

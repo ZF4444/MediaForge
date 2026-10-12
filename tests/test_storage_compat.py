@@ -11,15 +11,21 @@ from PIL import Image
 def test_output_file_from_url_materializes_registered_storage_object(monkeypatch, tmp_path):
     cache_dir = tmp_path / "cache"
     monkeypatch.setattr(storage, "STORAGE_CACHE_DIR", str(cache_dir))
+
     def download_object(_bucket, _object_key, fileobj, **_kwargs):
         fileobj.write(b"hello-minio")
         return {"size": 11, "sha256": ""}
+
     monkeypatch.setattr(storage, "download_object_to_file", download_object)
-    monkeypatch.setattr(storage, "get_file_by_id", lambda _: {
-        "file_id": "file-test",
-        "bucket": "mediaforge-private",
-        "object_key": "users/anonymous/inputs/2026/07/test.png",
-    })
+    monkeypatch.setattr(
+        storage,
+        "get_file_by_id",
+        lambda _: {
+            "file_id": "file-test",
+            "bucket": "mediaforge-private",
+            "object_key": "users/anonymous/inputs/2026/07/test.png",
+        },
+    )
     monkeypatch.setattr(storage, "_touch_access", lambda _: None)
 
     path = output_file_from_url("/api/files/file-test/preview")
@@ -42,9 +48,9 @@ def test_upload_ai_reference_uses_storage_service(monkeypatch):
 
         async def read(self, size: int = -1):
             if size is None or size < 0:
-                chunk = self._content[self._offset:]
+                chunk = self._content[self._offset :]
             else:
-                chunk = self._content[self._offset:self._offset + size]
+                chunk = self._content[self._offset : self._offset + size]
             self._offset += len(chunk)
             return chunk
 
@@ -168,27 +174,59 @@ def test_storage_files_page_sorts_by_created_at_in_both_directions(monkeypatch):
         {"file_id": "oldest", "created_at": 100},
         {"file_id": "newest", "created_at": 300},
     ]
+
     class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def execute(self, sql, params): self.sql = sql
-        def fetchone(self): return {"total": len(entries)}
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params):
+            self.sql = sql
+
+        def fetchone(self):
+            return {"total": len(entries)}
+
         def fetchall(self):
             reverse = "ORDER BY created_at DESC" in self.sql
-            return [storage_row(item) for item in sorted(entries, key=lambda item: item["created_at"], reverse=reverse)[:2]]
+            return [
+                storage_row(item) for item in sorted(entries, key=lambda item: item["created_at"], reverse=reverse)[:2]
+            ]
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def cursor(self): return Cursor()
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def cursor(self):
+            return Cursor()
 
     def storage_row(item):
         return {
-            "id": item["file_id"], "user_id": "anonymous", "bucket": "private", "object_key": item["file_id"],
-            "legacy_url": "", "category": "output", "original_name": item["file_id"], "stored_name": item["file_id"],
-            "ext": "", "mime_type": "application/octet-stream", "size_bytes": 0, "sha256": "", "kind": "file",
-            "source": "generated", "is_public": False, "status": "active", "created_at": item["created_at"],
-            "updated_at": item["created_at"], "last_accessed_at": 0, "expires_at": None, "deleted_at": None,
+            "id": item["file_id"],
+            "user_id": "anonymous",
+            "bucket": "private",
+            "object_key": item["file_id"],
+            "legacy_url": "",
+            "category": "output",
+            "original_name": item["file_id"],
+            "stored_name": item["file_id"],
+            "ext": "",
+            "mime_type": "application/octet-stream",
+            "size_bytes": 0,
+            "sha256": "",
+            "kind": "file",
+            "source": "generated",
+            "is_public": False,
+            "status": "active",
+            "created_at": item["created_at"],
+            "updated_at": item["created_at"],
+            "last_accessed_at": 0,
+            "expires_at": None,
+            "deleted_at": None,
         }
 
     monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
@@ -207,16 +245,30 @@ def test_storage_files_page_filters_by_age_and_unreferenced_state(monkeypatch):
     executed = []
 
     class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def execute(self, sql, params): executed.append((sql, params))
-        def fetchone(self): return {"total": 0}
-        def fetchall(self): return []
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params):
+            executed.append((sql, params))
+
+        def fetchone(self):
+            return {"total": 0}
+
+        def fetchall(self):
+            return []
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def cursor(self): return Cursor()
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def cursor(self):
+            return Cursor()
 
     monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
     monkeypatch.setattr(storage, "_db_connect", Connection)
@@ -244,15 +296,27 @@ def test_storage_matching_ids_use_the_same_filters(monkeypatch):
     executed = []
 
     class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def execute(self, sql, params): executed.append((sql, params))
-        def fetchall(self): return [{"id": "old-unreferenced"}]
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params):
+            executed.append((sql, params))
+
+        def fetchall(self):
+            return [{"id": "old-unreferenced"}]
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def cursor(self): return Cursor()
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def cursor(self):
+            return Cursor()
 
     monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
     monkeypatch.setattr(storage, "_db_connect", Connection)
@@ -281,7 +345,9 @@ def test_save_ai_image_to_output_registers_generated_file(monkeypatch):
         lambda category, filename, content, **kwargs: {"url": f"/api/files/generated-1/preview"},
     )
 
-    url = asyncio.run(save_ai_image_to_output({"type": "b64", "value": "aGVsbG8=", "mime_type": "image/png"}, prefix="gen_"))
+    url = asyncio.run(
+        save_ai_image_to_output({"type": "b64", "value": "aGVsbG8=", "mime_type": "image/png"}, prefix="gen_")
+    )
 
     assert url == "/api/files/generated-1/preview"
 
@@ -316,7 +382,7 @@ def test_spool_upload_hashes_and_sizes_without_reading_whole_file_at_once(monkey
 
         async def read(self, size: int = -1):
             assert size and size > 0, "must request bounded chunks, not the whole file"
-            chunk = self._content[self._offset:self._offset + size]
+            chunk = self._content[self._offset : self._offset + size]
             self._offset += len(chunk)
             return chunk
 

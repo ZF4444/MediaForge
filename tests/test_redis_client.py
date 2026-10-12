@@ -98,16 +98,18 @@ def test_auth_middleware_returns_503_when_redis_fails(monkeypatch):
         raise AssertionError("request must not reach the route")
 
     monkeypatch.setattr(main, "get_session", unavailable)
-    request = Request({
-        "type": "http",
-        "method": "GET",
-        "path": "/api/canvases",
-        "headers": [(b"cookie", b"sid=token")],
-        "query_string": b"",
-        "server": ("testserver", 80),
-        "client": ("testclient", 123),
-        "scheme": "http",
-    })
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/canvases",
+            "headers": [(b"cookie", b"sid=token")],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "client": ("testclient", 123),
+            "scheme": "http",
+        }
+    )
 
     response = asyncio.run(main.auth_middleware(request, unexpected_next))
 
@@ -123,19 +125,22 @@ def test_auth_middleware_skips_redis_for_static_assets(monkeypatch):
 
     async def static_response(_request):
         from starlette.responses import Response
+
         return Response("ok")
 
     monkeypatch.setattr(main, "get_session", unexpected_session)
-    request = Request({
-        "type": "http",
-        "method": "GET",
-        "path": "/static/app.js",
-        "headers": [(b"cookie", b"sid=token")],
-        "query_string": b"",
-        "server": ("testserver", 80),
-        "client": ("testclient", 123),
-        "scheme": "http",
-    })
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/static/app.js",
+            "headers": [(b"cookie", b"sid=token")],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "client": ("testclient", 123),
+            "scheme": "http",
+        }
+    )
 
     response = asyncio.run(main.auth_middleware(request, static_response))
 

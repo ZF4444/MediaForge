@@ -10,6 +10,7 @@
   sanitize_export_filename/ensure_same_origin_request/normalize_local_image_path/import_local_image_file
 - app.models：LocalImageImportRequest
 """
+
 import hashlib
 import os
 import re
@@ -104,7 +105,9 @@ async def download_output(url: str, name: str = "", inline: bool = False):
     path = await run_storage_io(output_file_from_url, url)
     if not path:
         raise HTTPException(status_code=404, detail="MinIO 文件不存在")
-    filename = sanitize_export_filename(os.path.basename(name) if name else os.path.basename(path), os.path.basename(path))
+    filename = sanitize_export_filename(
+        os.path.basename(name) if name else os.path.basename(path), os.path.basename(path)
+    )
     return FileResponse(path, media_type=content_type_for_path(path), filename=None if inline else filename)
 
 
@@ -129,11 +132,27 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
         elif ext in audio_exts or content_type.startswith("audio/"):
             kind = "audio"
             if ext not in audio_exts:
-                ext = ".wav" if "wav" in content_type else ".ogg" if "ogg" in content_type else ".m4a" if "mp4" in content_type else ".mp3"
+                ext = (
+                    ".wav"
+                    if "wav" in content_type
+                    else ".ogg"
+                    if "ogg" in content_type
+                    else ".m4a"
+                    if "mp4" in content_type
+                    else ".mp3"
+                )
         elif ext in image_exts or content_type.startswith("image/"):
             kind = "image"
             if ext not in image_exts:
-                ext = ".jpg" if "jpeg" in content_type else ".webp" if "webp" in content_type else ".gif" if "gif" in content_type else ".png"
+                ext = (
+                    ".jpg"
+                    if "jpeg" in content_type
+                    else ".webp"
+                    if "webp" in content_type
+                    else ".gif"
+                    if "gif" in content_type
+                    else ".png"
+                )
         else:
             fileobj.close()
             continue
@@ -165,7 +184,11 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
             content_type=file.content_type or "",
             kind=kind,
         )
-        item = {"url": entry.get("url") or file_preview_url(entry.get("file_id") or ""), "name": file.filename or filename, "kind": kind}
+        item = {
+            "url": entry.get("url") or file_preview_url(entry.get("file_id") or ""),
+            "name": file.filename or filename,
+            "kind": kind,
+        }
         if entry.get("file_id"):
             item["file_id"] = entry["file_id"]
         if natural_w > 0 and natural_h > 0:

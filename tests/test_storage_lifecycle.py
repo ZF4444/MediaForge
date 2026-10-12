@@ -51,26 +51,44 @@ def test_cleanup_reason_skips_library_and_honors_last_access(monkeypatch):
     now_value = 10 * 24 * 60 * 60 * 1000
     monkeypatch.setattr(storage, "STORAGE_INPUT_RETENTION_DAYS", 3)
 
-    assert storage.cleanup_reason_for_entry({
-        "category": "library",
-        "created_at": 1,
-        "last_accessed_at": 1,
-        "expires_at": 1,
-    }, now_ms_value=now_value) is None
+    assert (
+        storage.cleanup_reason_for_entry(
+            {
+                "category": "library",
+                "created_at": 1,
+                "last_accessed_at": 1,
+                "expires_at": 1,
+            },
+            now_ms_value=now_value,
+        )
+        is None
+    )
 
-    assert storage.cleanup_reason_for_entry({
-        "category": "input",
-        "created_at": now_value - 9 * 24 * 60 * 60 * 1000,
-        "last_accessed_at": now_value - 1 * 24 * 60 * 60 * 1000,
-        "expires_at": None,
-    }, now_ms_value=now_value) is None
+    assert (
+        storage.cleanup_reason_for_entry(
+            {
+                "category": "input",
+                "created_at": now_value - 9 * 24 * 60 * 60 * 1000,
+                "last_accessed_at": now_value - 1 * 24 * 60 * 60 * 1000,
+                "expires_at": None,
+            },
+            now_ms_value=now_value,
+        )
+        is None
+    )
 
-    assert storage.cleanup_reason_for_entry({
-        "category": "input",
-        "created_at": now_value - 9 * 24 * 60 * 60 * 1000,
-        "last_accessed_at": now_value - 5 * 24 * 60 * 60 * 1000,
-        "expires_at": None,
-    }, now_ms_value=now_value) == "input_retention"
+    assert (
+        storage.cleanup_reason_for_entry(
+            {
+                "category": "input",
+                "created_at": now_value - 9 * 24 * 60 * 60 * 1000,
+                "last_accessed_at": now_value - 5 * 24 * 60 * 60 * 1000,
+                "expires_at": None,
+            },
+            now_ms_value=now_value,
+        )
+        == "input_retention"
+    )
 
 
 def test_run_storage_cleanup_once_marks_deleted_and_removes_cache(monkeypatch, tmp_path):
@@ -82,17 +100,29 @@ def test_run_storage_cleanup_once_marks_deleted_and_removes_cache(monkeypatch, t
 
     monkeypatch.setattr(storage, "STORAGE_CLEANUP_ENABLED", True)
     monkeypatch.setattr(storage, "now_ms", lambda: now_value)
-    monkeypatch.setattr(storage, "_cleanup_candidates", lambda limit, current: [
-        _row("expired-1", category="input", created_at=1, expires_at=now_value - 1),
-        _row("library-1", category="library", created_at=1, expires_at=now_value - 1),
-    ])
-    monkeypatch.setattr(storage, "delete_object", lambda bucket, object_key: deleted_objects.append((bucket, object_key)))
+    monkeypatch.setattr(
+        storage,
+        "_cleanup_candidates",
+        lambda limit, current: [
+            _row("expired-1", category="input", created_at=1, expires_at=now_value - 1),
+            _row("library-1", category="library", created_at=1, expires_at=now_value - 1),
+        ],
+    )
+    monkeypatch.setattr(
+        storage, "delete_object", lambda bucket, object_key: deleted_objects.append((bucket, object_key))
+    )
+
     def delete_unreferenced(entry, deleted_at_ms):
         storage.delete_media_objects(entry)
         deleted_ids.append((entry["file_id"], deleted_at_ms))
         return True
+
     monkeypatch.setattr(storage, "_delete_unreferenced_file_for_cleanup", delete_unreferenced)
-    monkeypatch.setattr(storage, "cached_media_path", lambda entry: str(cache_file) if entry.get("file_id") == "expired-1" else str(tmp_path / "other.png"))
+    monkeypatch.setattr(
+        storage,
+        "cached_media_path",
+        lambda entry: str(cache_file) if entry.get("file_id") == "expired-1" else str(tmp_path / "other.png"),
+    )
 
     result = storage.run_storage_cleanup_once(limit=10)
 
@@ -111,14 +141,22 @@ def test_cleanup_does_not_mark_deleted_when_remote_delete_fails(monkeypatch):
     marked = []
     monkeypatch.setattr(storage, "STORAGE_CLEANUP_ENABLED", True)
     monkeypatch.setattr(storage, "now_ms", lambda: now_value)
-    monkeypatch.setattr(storage, "_cleanup_candidates", lambda *_args: [
-        _row("expired-1", category="input", created_at=1, expires_at=now_value - 1),
-    ])
-    monkeypatch.setattr(storage, "delete_media_objects", lambda _entry: (_ for _ in ()).throw(storage.StorageUnavailableError("down")))
+    monkeypatch.setattr(
+        storage,
+        "_cleanup_candidates",
+        lambda *_args: [
+            _row("expired-1", category="input", created_at=1, expires_at=now_value - 1),
+        ],
+    )
+    monkeypatch.setattr(
+        storage, "delete_media_objects", lambda _entry: (_ for _ in ()).throw(storage.StorageUnavailableError("down"))
+    )
+
     def delete_unreferenced(entry, deleted_at_ms):
         storage.delete_media_objects(entry)
         marked.append((entry["file_id"], deleted_at_ms))
         return True
+
     monkeypatch.setattr(storage, "_delete_unreferenced_file_for_cleanup", delete_unreferenced)
 
     with pytest.raises(storage.StorageUnavailableError):
@@ -131,15 +169,27 @@ def test_cleanup_candidates_exclude_every_business_reference(monkeypatch):
     executed = []
 
     class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def execute(self, sql, params): executed.append((sql, params))
-        def fetchall(self): return []
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params):
+            executed.append((sql, params))
+
+        def fetchall(self):
+            return []
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def cursor(self): return Cursor()
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def cursor(self):
+            return Cursor()
 
     monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
     monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
@@ -159,16 +209,30 @@ def test_cleanup_rechecks_references_before_deleting_objects(monkeypatch):
     deleted_objects = []
 
     class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def execute(self, sql, params): executed.append((sql, params))
-        def fetchone(self): return None
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params):
+            executed.append((sql, params))
+
+        def fetchone(self):
+            return None
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def transaction(self): return self
-        def cursor(self): return Cursor()
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def transaction(self):
+            return self
+
+        def cursor(self):
+            return Cursor()
 
     monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
     monkeypatch.setattr(storage, "_db_connect", Connection)
@@ -190,16 +254,30 @@ def test_cleanup_deletes_objects_and_marks_metadata_after_recheck(monkeypatch):
     deleted_objects = []
 
     class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def execute(self, sql, params): executed.append((sql, params))
-        def fetchone(self): return {"id": "orphan-1"}
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params):
+            executed.append((sql, params))
+
+        def fetchone(self):
+            return {"id": "orphan-1"}
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def transaction(self): return self
-        def cursor(self): return Cursor()
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def transaction(self):
+            return self
+
+        def cursor(self):
+            return Cursor()
 
     monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
     monkeypatch.setattr(storage, "_db_connect", Connection)
@@ -242,19 +320,31 @@ def test_remove_media_url_deletes_remote_derivatives(monkeypatch, tmp_path):
     deleted_objects = []
 
     class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def execute(self, *_): pass
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, *_):
+            pass
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def cursor(self): return Cursor()
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def cursor(self):
+            return Cursor()
 
     monkeypatch.setattr(storage, "resolve_file_reference", lambda **_: removed_entry)
     monkeypatch.setattr(storage, "_ensure_files_table", lambda: None)
     monkeypatch.setattr(storage, "_db_connect", Connection)
-    monkeypatch.setattr(storage, "delete_object", lambda bucket, object_key: deleted_objects.append((bucket, object_key)))
+    monkeypatch.setattr(
+        storage, "delete_object", lambda bucket, object_key: deleted_objects.append((bucket, object_key))
+    )
     monkeypatch.setattr(storage, "cached_media_path", lambda entry: str(cache_file))
 
     removed = storage.remove_media_url(removed_entry["url"], delete_remote=True)
@@ -277,7 +367,9 @@ def test_remove_media_url_does_not_mark_deleted_when_remote_delete_fails(monkeyp
     }
     database_calls = []
     monkeypatch.setattr(storage, "resolve_file_reference", lambda **_kwargs: removed_entry)
-    monkeypatch.setattr(storage, "delete_media_objects", lambda _entry: (_ for _ in ()).throw(storage.StorageUnavailableError("down")))
+    monkeypatch.setattr(
+        storage, "delete_media_objects", lambda _entry: (_ for _ in ()).throw(storage.StorageUnavailableError("down"))
+    )
     monkeypatch.setattr(storage, "_ensure_files_table", lambda: database_calls.append("ensure"))
 
     with pytest.raises(storage.StorageUnavailableError):
@@ -302,12 +394,18 @@ def test_delete_media_objects_propagates_non_transient_error(monkeypatch):
 def test_save_media_bytes_rolls_back_object_when_metadata_insert_fails(monkeypatch):
     deleted = []
     monkeypatch.setattr(storage, "enforce_storage_quota", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(storage, "save_bytes", lambda *_args, **_kwargs: {
-        "bucket": "private",
-        "object_key": "users/user-1/uploads/file-1.png",
-        "size": 7,
-    })
-    monkeypatch.setattr(storage, "register_media_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database down")))
+    monkeypatch.setattr(
+        storage,
+        "save_bytes",
+        lambda *_args, **_kwargs: {
+            "bucket": "private",
+            "object_key": "users/user-1/uploads/file-1.png",
+            "size": 7,
+        },
+    )
+    monkeypatch.setattr(
+        storage, "register_media_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database down"))
+    )
     monkeypatch.setattr(storage, "delete_object", lambda bucket, key: deleted.append((bucket, key)))
 
     with pytest.raises(RuntimeError, match="database down"):
@@ -334,14 +432,18 @@ def test_save_media_fileobj_streams_without_buffering_full_payload(monkeypatch):
         return {"bucket": "private", "object_key": object_key, "etag": "", "version_id": "", "size": length}
 
     monkeypatch.setattr(storage, "save_fileobj", fake_save_fileobj)
-    monkeypatch.setattr(storage, "register_media_url", lambda *_args, **kwargs: {
-        "url": "/api/files/file-1/preview",
-        "file_id": "file-1",
-        "kind": kwargs.get("kind"),
-        "size": kwargs.get("size"),
-        "sha256": kwargs.get("sha256"),
-        "created_at": 123,
-    })
+    monkeypatch.setattr(
+        storage,
+        "register_media_url",
+        lambda *_args, **kwargs: {
+            "url": "/api/files/file-1/preview",
+            "file_id": "file-1",
+            "kind": kwargs.get("kind"),
+            "size": kwargs.get("size"),
+            "sha256": kwargs.get("sha256"),
+            "created_at": 123,
+        },
+    )
     monkeypatch.setattr(storage, "ensure_media_derivatives", lambda *_args, **_kwargs: None)
 
     result = storage.save_media_fileobj(
@@ -364,12 +466,18 @@ def test_save_media_fileobj_rolls_back_object_when_metadata_insert_fails(monkeyp
 
     deleted = []
     monkeypatch.setattr(storage, "enforce_storage_quota", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(storage, "save_fileobj", lambda *_args, **_kwargs: {
-        "bucket": "private",
-        "object_key": "users/user-1/uploads/file-1.png",
-        "size": 4,
-    })
-    monkeypatch.setattr(storage, "register_media_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database down")))
+    monkeypatch.setattr(
+        storage,
+        "save_fileobj",
+        lambda *_args, **_kwargs: {
+            "bucket": "private",
+            "object_key": "users/user-1/uploads/file-1.png",
+            "size": 4,
+        },
+    )
+    monkeypatch.setattr(
+        storage, "register_media_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database down"))
+    )
     monkeypatch.setattr(storage, "delete_object", lambda bucket, key: deleted.append((bucket, key)))
 
     with pytest.raises(RuntimeError, match="database down"):
@@ -383,18 +491,22 @@ def test_run_storage_metadata_purge_once_hard_deletes_only_when_objects_are_gone
     monkeypatch.setattr(storage, "STORAGE_METADATA_PURGE_ENABLED", True)
     monkeypatch.setattr(storage, "STORAGE_METADATA_PURGE_RETENTION_DAYS", 30)
     monkeypatch.setattr(storage, "metadata_db_enabled", lambda: True)
-    monkeypatch.setattr(storage, "_deleted_metadata_candidates", lambda limit, deleted_before_ms: [
-        {
-            **_row("gone-1", category="output", created_at=1),
-            "status": "deleted",
-            "deleted_at": deleted_before_ms - 1,
-        },
-        {
-            **_row("still-there", category="output", created_at=1),
-            "status": "deleted",
-            "deleted_at": deleted_before_ms - 1,
-        },
-    ])
+    monkeypatch.setattr(
+        storage,
+        "_deleted_metadata_candidates",
+        lambda limit, deleted_before_ms: [
+            {
+                **_row("gone-1", category="output", created_at=1),
+                "status": "deleted",
+                "deleted_at": deleted_before_ms - 1,
+            },
+            {
+                **_row("still-there", category="output", created_at=1),
+                "status": "deleted",
+                "deleted_at": deleted_before_ms - 1,
+            },
+        ],
+    )
     monkeypatch.setattr(storage, "media_objects_exist", lambda entry: entry.get("file_id") == "still-there")
     monkeypatch.setattr(storage, "_hard_delete_file_row", lambda file_id: deleted_rows.append(file_id))
 
@@ -406,15 +518,21 @@ def test_run_storage_metadata_purge_once_hard_deletes_only_when_objects_are_gone
 
 def test_storage_quota_config_can_override_default_and_user_limit(monkeypatch):
     settings = {}
-    monkeypatch.setattr("app.services.business_metadata.get_app_setting", lambda key, default=None: settings.get(key, default))
-    monkeypatch.setattr("app.services.business_metadata.set_app_setting", lambda key, value: settings.__setitem__(key, value) or value)
+    monkeypatch.setattr(
+        "app.services.business_metadata.get_app_setting", lambda key, default=None: settings.get(key, default)
+    )
+    monkeypatch.setattr(
+        "app.services.business_metadata.set_app_setting", lambda key, value: settings.__setitem__(key, value) or value
+    )
     monkeypatch.setattr(storage, "_QUOTA_CONFIG_CACHE", None)
 
-    saved = storage.save_storage_quota_config({
-        "enabled": False,
-        "default_quota_bytes": 2048,
-        "users": {"user-1": {"quota_bytes": 1024}},
-    })
+    saved = storage.save_storage_quota_config(
+        {
+            "enabled": False,
+            "default_quota_bytes": 2048,
+            "users": {"user-1": {"quota_bytes": 1024}},
+        }
+    )
 
     assert saved["enabled"] is False
     assert saved["default_quota_bytes"] == 2048
@@ -425,9 +543,15 @@ def test_storage_quota_config_can_override_default_and_user_limit(monkeypatch):
 
 def test_storage_usage_summary_groups_sizes_by_category(monkeypatch):
     class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def execute(self, *_): pass
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, *_):
+            pass
+
         def fetchall(self):
             return [
                 {"category": "output", "size_bytes": 500, "file_count": 2},
@@ -435,9 +559,14 @@ def test_storage_usage_summary_groups_sizes_by_category(monkeypatch):
             ]
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def cursor(self): return Cursor()
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def cursor(self):
+            return Cursor()
 
     monkeypatch.setattr(storage, "storage_quota_enabled", lambda: True)
     monkeypatch.setattr(storage, "storage_quota_limit_bytes_for_user", lambda user_id="": 1000)

@@ -178,7 +178,12 @@ async def _record_distributed_result(connection: str, operation: str, exc: BaseE
 
 async def _acquire_distributed_slot(connection: str, operation: str) -> tuple[str, str] | None:
     """Acquire one cluster-wide execution slot when Redis governance is enabled."""
-    if not _governance_enabled() or os.getenv("AI_DISTRIBUTED_CONCURRENCY_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
+    if not _governance_enabled() or os.getenv("AI_DISTRIBUTED_CONCURRENCY_ENABLED", "true").lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
         return None
     limit = _connection_setting(connection, "MAX_CONCURRENCY", 100)
     token = uuid.uuid4().hex
@@ -195,7 +200,9 @@ redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
 return 1
 """
         try:
-            acquired = await client.eval(script, 2, bucket, key, limit, token, _connection_setting(connection, "SLOT_TTL_SECONDS", 900))
+            acquired = await client.eval(
+                script, 2, bucket, key, limit, token, _connection_setting(connection, "SLOT_TTL_SECONDS", 900)
+            )
         except TypeError:
             # Lightweight test doubles and older Redis wrappers may not expose
             # variadic EVAL. Rate limiting remains active in that case.

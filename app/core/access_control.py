@@ -13,6 +13,7 @@
 依赖：PostgreSQL app_settings 与用户注册表。
 本模块不引用 FastAPI app 对象，避免循环导入。
 """
+
 import os
 import re
 import copy
@@ -84,9 +85,9 @@ def _extract_nav_items(html: str) -> List[Dict[str, str]]:
         # 在该导航项标签之后、下一个导航项标签开始之前的区间内查找可见文案 span，
         # 取其内文本作为 label（不依赖固定字符数，避免图标标记变化导致窗口不够）。
         end = matches[idx + 1].start() if idx + 1 < len(matches) else min(len(html), m.end() + 4000)
-        tail = html[m.end():end]
+        tail = html[m.end() : end]
         label_match = _LABEL_SPAN_RE.search(tail)
-        label = re.sub(r'<[^>]*>', '', label_match.group("text")).strip() if label_match else page_id
+        label = re.sub(r"<[^>]*>", "", label_match.group("text")).strip() if label_match else page_id
         seen.add(page_id)
         items.append({"id": page_id, "label": label or page_id})
     return items
@@ -108,7 +109,9 @@ def _load_all_pages() -> List[Dict[str, str]]:
                 items.insert(canvas_index + 1, {"id": "canvas-agent", "label": "画布 Agent"})
             return items
     except Exception:
-        logger.exception("failed to parse navigation pages; using fallback", extra={"event": "navigation_pages_parse_failed"})
+        logger.exception(
+            "failed to parse navigation pages; using fallback", extra={"event": "navigation_pages_parse_failed"}
+        )
     return list(_FALLBACK_ALL_PAGES)
 
 

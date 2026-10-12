@@ -21,10 +21,12 @@ def test_omnilojo_log_items_rejects_unsuccessful_response():
 
 
 def test_omnilojo_request_ids_support_top_level_and_embedded_log_fields():
-    assert _omnilojo_request_ids({
-        "request_id": "request-1",
-        "other": '{"upstream_request_id":"upstream-1"}',
-    }) == ("request-1", "upstream-1")
+    assert _omnilojo_request_ids(
+        {
+            "request_id": "request-1",
+            "other": '{"upstream_request_id":"upstream-1"}',
+        }
+    ) == ("request-1", "upstream-1")
 
 
 def test_omnilojo_image_request_uses_google_image_size_and_nearest_ratio():
@@ -48,6 +50,7 @@ def test_gemini_image_options_tall_source_snaps_to_supported_ratio():
 
 def test_gemini_image_options_from_settings_passes_enums_directly():
     from app.ai.transport import gemini_image_options_from_settings
+
     # Canvas enums map straight to Gemini options without a pixel round-trip.
     assert gemini_image_options_from_settings("1k", "21:9") == {"aspectRatio": "21:9", "imageSize": "1K"}
     assert gemini_image_options_from_settings("4k", "1:1") == {"aspectRatio": "1:1", "imageSize": "4K"}
@@ -71,9 +74,11 @@ def test_gemini_image_options_classifies_tier_by_area_not_long_edge():
 
 def test_omnilojo_response_usage_calculates_model_pricing():
     values = omnilojo_response_usage_values(
-        {"omnilojo_model_prices": {
-            "gemini-3-pro-image": {"input_per_million": 2, "output_per_million": 120},
-        }},
+        {
+            "omnilojo_model_prices": {
+                "gemini-3-pro-image": {"input_per_million": 2, "output_per_million": 120},
+            }
+        },
         "gemini-3-pro-image",
         {"prompt_tokens": 12, "completion_tokens": 1293},
     )
@@ -121,7 +126,9 @@ def test_record_omnilojo_response_usage_does_not_require_cursor_rowcount(monkeyp
     monkeypatch.setattr(usage, "metadata_connection", lambda: Connection())
 
     inserted = usage.record_omnilojo_response_usage(
-        "user-1", {"id": "provider-1"}, "image-model",
+        "user-1",
+        {"id": "provider-1"},
+        "image-model",
         {"id": "request-1", "usage": {"prompt_tokens": 3, "completion_tokens": 5}},
         operation="image_generation",
     )

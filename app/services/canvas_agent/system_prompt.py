@@ -4,6 +4,7 @@ This is intentionally smaller than tau's coding-agent prompt builder.  Canvas
 Agent only needs deterministic tool guidance and the enabled Skill index; it
 does not load project docs, shell instructions, prompt templates, or TUI state.
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence

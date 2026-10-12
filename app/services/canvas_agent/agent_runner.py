@@ -1,4 +1,5 @@
 """Canvas Agent 运行入口：组装用户消息（含画布引用图片）并调用 agent 图。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,20 +11,38 @@ from . import runtime
 from .tools import build_canvas_tools
 
 
-async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *, checkpointer: Any = None,
-                           emit_progress=None, execute_patch=None, dispatch_tasks=None) -> dict[str, Any]:
+async def run_canvas_agent(
+    model: Any,
+    message: str,
+    context: dict[str, Any],
+    *,
+    checkpointer: Any = None,
+    emit_progress=None,
+    execute_patch=None,
+    dispatch_tasks=None,
+) -> dict[str, Any]:
     run_id = str(context.get("run_id") or "canvas-agent")
     user_id = str(context.get("user_id") or "")
     canvas_id = str(context.get("canvas_id") or "")
-    tools = build_canvas_tools(user_id=user_id, run_id=run_id, canvas_id=canvas_id,
-                               get_canvas=context.get("get_canvas"))
-    graph = runtime.create_canvas_agent(model=model, user_id=user_id, run_id=run_id,
-                                canvas_id=canvas_id, checkpointer=checkpointer,
-                                emit_progress=emit_progress, get_canvas=context.get("get_canvas"),
-                                execute_patch=execute_patch, dispatch_tasks=dispatch_tasks, tools=tools)
+    tools = build_canvas_tools(
+        user_id=user_id, run_id=run_id, canvas_id=canvas_id, get_canvas=context.get("get_canvas")
+    )
+    graph = runtime.create_canvas_agent(
+        model=model,
+        user_id=user_id,
+        run_id=run_id,
+        canvas_id=canvas_id,
+        checkpointer=checkpointer,
+        emit_progress=emit_progress,
+        get_canvas=context.get("get_canvas"),
+        execute_patch=execute_patch,
+        dispatch_tasks=dispatch_tasks,
+        tools=tools,
+    )
     references = list(context.get("media_references") or [])
     if references:
         from app.ai.runtime import reference_to_data_url
+
         parts: list[dict[str, Any]] = [{"type": "text", "text": message}]
         included = 0
         for ref in references:
@@ -50,7 +69,4 @@ async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *,
         human = HumanMessage(content=parts)
     else:
         human = HumanMessage(content=message)
-    return await graph.ainvoke({"run_id": run_id, "messages": [human]},
-                               config={"configurable": {"thread_id": run_id}})
-
-
+    return await graph.ainvoke({"run_id": run_id, "messages": [human]}, config={"configurable": {"thread_id": run_id}})

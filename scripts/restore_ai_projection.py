@@ -1,4 +1,5 @@
 """Rebuild authoritative AI rows from the cutover archive after a bad cutover."""
+
 from __future__ import annotations
 
 import asyncio

@@ -175,7 +175,9 @@ def test_canvas_tasks_persist_update_claim_and_recover(monkeypatch):
         await canvas_tasks.release_canvas_task_claim("task-1", worker_a_lease)
         assert await canvas_tasks.has_canvas_task_claim("task-1") is True
         assert await canvas_tasks.update_claimed_canvas_task("task-1", worker_a_lease, status="running") is None
-        assert (await canvas_tasks.update_claimed_canvas_task("task-1", worker_b_lease, status="running"))["status"] == "running"
+        assert (await canvas_tasks.update_claimed_canvas_task("task-1", worker_b_lease, status="running"))[
+            "status"
+        ] == "running"
         assert [task["id"] for task in await canvas_tasks.list_recoverable_canvas_tasks()] == ["task-1"]
         await canvas_tasks.update_canvas_task("task-1", status="succeeded", result={"images": []})
         assert await canvas_tasks.list_recoverable_canvas_tasks() == []
@@ -194,11 +196,14 @@ def test_canvas_tasks_persist_update_claim_and_recover(monkeypatch):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("message", [
-    "Timeout reading from 127.0.0.1:6379",
-    "Timeout reading from redis.example:6379",
-    "Timeout connecting to server",
-])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Timeout reading from 127.0.0.1:6379",
+        "Timeout reading from redis.example:6379",
+        "Timeout connecting to server",
+    ],
+)
 def test_canvas_task_timeout_reconnects_and_retries(monkeypatch, message):
     class TimeoutStreamClient:
         def __init__(self):
@@ -235,21 +240,23 @@ def test_canvas_task_strips_legacy_fields_for_stable_target(monkeypatch):
     monkeypatch.setattr(canvas_tasks, "get_redis_client", lambda: redis)
 
     async def scenario():
-        record = await canvas_tasks.create_canvas_task({
-            "id": "stable-task",
-            "status": "queued",
-            "type": "online-image",
-            "connection_id": "conn-1",
-            "model_id": "model-1",
-            "request": {
+        record = await canvas_tasks.create_canvas_task(
+            {
+                "id": "stable-task",
+                "status": "queued",
+                "type": "online-image",
                 "connection_id": "conn-1",
                 "model_id": "model-1",
-                "provider_id": "legacy-provider",
-                "provider": {"id": "legacy-provider"},
-                "model": "legacy-model",
-                "prompt": "hello",
-            },
-        })
+                "request": {
+                    "connection_id": "conn-1",
+                    "model_id": "model-1",
+                    "provider_id": "legacy-provider",
+                    "provider": {"id": "legacy-provider"},
+                    "model": "legacy-model",
+                    "prompt": "hello",
+                },
+            }
+        )
         request = record["request"]
         assert request["connection_id"] == "conn-1"
         assert request["model_id"] == "model-1"
@@ -270,11 +277,15 @@ def test_canvas_task_persists_submitter_log_context(monkeypatch):
         operation_id="operation_canvas123",
     )
     try:
-        record = asyncio.run(canvas_tasks.create_canvas_task({
-            "id": "canvas-task-123",
-            "status": "queued",
-            "type": "online-image",
-        }))
+        record = asyncio.run(
+            canvas_tasks.create_canvas_task(
+                {
+                    "id": "canvas-task-123",
+                    "status": "queued",
+                    "type": "online-image",
+                }
+            )
+        )
     finally:
         reset_log_context(token)
 

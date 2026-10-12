@@ -5,6 +5,7 @@
 
 依赖：pydantic、typing、app.config 中的长度/默认值常量。
 """
+
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -171,15 +172,14 @@ class ChatRequest(BaseModel):
     ms_model: str = ""
 
 
-
 class CanvasLLMRequest(BaseModel):
     message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
     system_prompt: str = ""
     messages: List[Dict[str, Any]] = []
     model_id: str = ""
     connection_id: str = ""
-    images: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
-    videos: List[str] = []   # MinIO /api/files/* 引用、http(s) URL 或 data URL
+    images: List[str] = []  # MinIO /api/files/* 引用、http(s) URL 或 data URL
+    videos: List[str] = []  # MinIO /api/files/* 引用、http(s) URL 或 data URL
 
 
 class ConversationCreateRequest(BaseModel):
@@ -213,6 +213,7 @@ class CanvasSaveRequest(BaseModel):
     # It remains optional until Phase 1 moves the classic save endpoint to version CAS.
     base_version: int = 0
 
+
 class CanvasAgentRunCreateRequest(BaseModel):
     canvas_id: str = Field(min_length=1, max_length=128)
     mode: str = "fast_track"
@@ -221,6 +222,7 @@ class CanvasAgentRunCreateRequest(BaseModel):
     mention_node_ids: List[str] = []
     max_steps: int = Field(default=12, ge=1, le=100)
     limits: Dict[str, Any] = {}
+
 
 class CanvasAgentMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
@@ -235,6 +237,7 @@ class CanvasAgentMessageRequest(BaseModel):
     resource_id: str = ""
     client_request_id: str = Field(default="", max_length=128)
 
+
 class CanvasAgentAnswerRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=20000)
     use_model: bool = True
@@ -245,6 +248,7 @@ class CanvasAgentAnswerRequest(BaseModel):
     resource_id: str = ""
     client_request_id: str = Field(default="", max_length=128)
 
+
 class CanvasAgentConfirmRequest(BaseModel):
     plan_version: int = Field(ge=1)
     approved: bool = True
@@ -252,19 +256,24 @@ class CanvasAgentConfirmRequest(BaseModel):
     node_overrides: List[Dict[str, Any]] = Field(default_factory=list, max_length=32)
     client_request_id: str = Field(default="", max_length=128)
 
+
 class CanvasAgentRetryRequest(BaseModel):
     operation_id: str = ""
+
 
 class CanvasAgentRedoRequest(BaseModel):
     node_id: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1, max_length=20000)
 
+
 class CanvasAgentReviewRequest(BaseModel):
     status: str = "approved"
     note: str = Field(default="", max_length=4000)
 
+
 class CanvasCostEstimateRequest(BaseModel):
     budget: float | None = Field(default=None, ge=0)
+
 
 class CanvasTemplateCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=160)
@@ -272,8 +281,10 @@ class CanvasTemplateCreateRequest(BaseModel):
     content: Dict[str, Any] = {}
     source_run_id: str = Field(default="", max_length=128)
 
+
 class CanvasTemplateInstantiateRequest(BaseModel):
     run_id: str = Field(min_length=1, max_length=128)
+
 
 class CanvasAssetCheckRequest(BaseModel):
     urls: List[str] = []

@@ -14,6 +14,7 @@ sync_system_prompt_libraries()。之后的所有调整（包括系统管理员�
 - app.core.auth：current_user_id（按用户隔离）
 - app.core.shared：sanitize_asset_name
 """
+
 import hashlib
 import json
 import re
@@ -78,7 +79,9 @@ def normalize_prompt_library_item(item):
     # negative 的内容不再保留。
     prompt = str(item.get("prompt") or item.get("positive") or item.get("text") or "").strip()
     return {
-        "id": re.sub(r"[^A-Za-z0-9_-]+", "_", str(item.get("id") or item.get("item_id") or f"tpl_{uuid.uuid4().hex[:12]}"))[:60],
+        "id": re.sub(
+            r"[^A-Za-z0-9_-]+", "_", str(item.get("id") or item.get("item_id") or f"tpl_{uuid.uuid4().hex[:12]}")
+        )[:60],
         "name": name,
         "category": normalize_prompt_category_id(item.get("category") or "custom"),
         "scene": str(item.get("scene") or "").strip()[:500],
@@ -105,7 +108,8 @@ def seed_system_prompt_library():
 # 这里的常量只用于全新部署时的首次灌入，之后的编辑均落库，不会被这份常量覆盖。
 BUILTIN_CAPTION_RULES = [
     {
-        "id": "vision_zh_pixel", "name": "像素级描述",
+        "id": "vision_zh_pixel",
+        "name": "像素级描述",
         "content": """Role
 你是一位专业的AI生图提示词与图片反推工程师，专注于为即梦、可灵、Nano Banana Pro、Qwen-Image、Qwen-Edit、Stable Diffusion、Midjourney等主流AI绘图工具生成精准、详尽的提示词。核心职责是根据用户需求或参考图片，输出能完整复现画面细节的生图指令，确保AI生成结果与用户预期高度一致。
 
@@ -178,7 +182,8 @@ BUILTIN_CAPTION_RULES = [
 3.若生成多组提示词，每组之间仅用换行分隔，不得添加任何分隔符。""",
     },
     {
-        "id": "vision_zh_tags", "name": "图像描述-Tag风格",
+        "id": "vision_zh_tags",
+        "name": "图像描述-Tag风格",
         "content": """Role
 
 你是一位拥有像素级观察力的视觉分析专家，精通 Stable Diffusion (SD1.5/SDXL) 的 Danbooru 标签体系与权重语法。你的核心任务是深度解析参考图（或结合用户指令），将画面中的每一个细节拆解并转化为高信息密度的标签（Tags）流。
@@ -225,7 +230,8 @@ BUILTIN_CAPTION_RULES = [
 输出：杰作，最高品质，(1男孩:1.2)，可爱，(3D角色:1.1)，大眼睛，微笑，(SSS皮肤:1.2)，柔和光照，精细针织毛衣，鲜艳色彩，模糊的玩具室背景，皮克斯风格，奥卡诺渲染，虚幻引擎5，高分辨率，清晰对焦""",
     },
     {
-        "id": "vision_en_detail", "name": "Detail Caption (EN)",
+        "id": "vision_en_detail",
+        "name": "Detail Caption (EN)",
         "content": """Role
 You are a professional AI Image Prompt and Reverse Engineering Expert. You specialize in generating precise and detailed prompts for mainstream AI drawing tools such as Jimeng, Keling, Nano Banana Pro, Qwen-Image, Qwen-Edit, Stable Diffusion, and Midjourney. Your core responsibility is to output image generation instructions that fully replicate the details of a reference image or satisfy a user's request, ensuring the AI output aligns perfectly with expectations.
 
@@ -292,7 +298,8 @@ Output Specification
 3. Separate multiple prompts only with line breaks; do not use any other separators.""",
     },
     {
-        "id": "vision_en_tags", "name": "Caption-Tags (EN)",
+        "id": "vision_en_tags",
+        "name": "Caption-Tags (EN)",
         "content": """Role
 You are a world-class Visual Analyst and Prompt Engineer specializing in the architecture of Stable Diffusion (SDXL/SD1.5), Flux, and high-end video models. Your mission is to dissect images or user intents into "pixel-level" detail and reconstruct them into professional, high-fidelity English prompt strings.
 Highest Commands (Absolute Constraints)
@@ -331,7 +338,8 @@ Input (Video Sequence: Car driving) + Instruction: "Make it a black Porsche"
 Output: masterpiece, best quality, (black Porsche 911:1.4), sleek aerodynamic body, glossy paint reflecting city lights, headlights on, speeding on a coastal highway, sunset horizon, orange and purple sky, motion blur on the wheels, low angle tracking shot, cinematic drone view, high speed energy, realistic physics, 4k, highres""",
     },
     {
-        "id": "vision_zh_i2v", "name": "图生视频提示词",
+        "id": "vision_zh_i2v",
+        "name": "图生视频提示词",
         "content": """身份设定
 你是一位精通人体工学与物理引擎的AI视频提示词专家。你的核心任务是基于用户提供的参考图（初始帧）和动态指令，生成可直接供视频生成模型（如Wan, Kling, Sora）执行的提示词。你的特长是处理复杂的肢体连贯性、服饰物理反馈及惯性细节。
 最高指令 (Absolute Command)
@@ -376,22 +384,31 @@ Output: masterpiece, best quality, (black Porsche 911:1.4), sleek aerodynamic bo
 def seed_caption_prompt_library():
     items = []
     for rule in BUILTIN_CAPTION_RULES:
-        items.append(normalize_prompt_library_item({
-            "id": f"builtin_caption_{rule['id']}",
-            "name": rule["name"],
-            "category": "builtin",
-            "scene": "系统内置反推规则",
-            "prompt": rule["content"],
-            "builtin": True,
-        }))
+        items.append(
+            normalize_prompt_library_item(
+                {
+                    "id": f"builtin_caption_{rule['id']}",
+                    "name": rule["name"],
+                    "category": "builtin",
+                    "scene": "系统内置反推规则",
+                    "prompt": rule["content"],
+                    "builtin": True,
+                }
+            )
+        )
     return {
-        "id": "caption", "name": "反推提示词库", "type": "prompt", "items": items, "categories": [],
+        "id": "caption",
+        "name": "反推提示词库",
+        "type": "prompt",
+        "items": items,
+        "categories": [],
     }
 
 
 BUILTIN_EXPAND_RULES = [
     {
-        "id": "general", "name": "扩写-通用",
+        "id": "general",
+        "name": "扩写-通用",
         "content": """Role
 你是一位拥有全学科视觉知识的图像生成提示词专家。你的核心能力是：精准识别用户输入关键词的侧重点，自动判定其所属领域（如写实摄影、工业设计、平面海报、二次元动漫、3D动画、数字艺术等），并调用该领域的专业术语进行像素级的深度扩写。
 
@@ -445,7 +462,8 @@ F. 艺术/插画模式 (Art/Illustration)：侧重笔触质感、媒介（水墨
 输出：A beautiful two-dimensional illustration in a cel-shaded coloring style. A magic girl with dazzling purple eyes and flowing long hair is casting a spell, with a magical staff at the top of her hand emitting a magnificent five-pointed starlight effect, particle fragments flying in the wind. The lines are clear and sharp, the shadows have clean edges, and the color contrast is vivid. The background is a dreamlike starry sky and magical runes, full of dynamism. The image has a typical high-quality movie theater animation quality, anime style, cel shaded, line art, vibrant colors, high fidelity, 8k resolution""",
     },
     {
-        "id": "portrait_master", "name": "扩写-人像大师",
+        "id": "portrait_master",
+        "name": "扩写-人像大师",
         "content": """Role
 你是一位追求自然真实感与极致细节的人像摄影提示词专家。你的核心任务是将用户简单的描述，通过显微镜式的观察与扩写，转化为画面感极强、细节丰富、且符合亚洲主流审美（干净自然）的高质量提示词。你的输出将直接用于绘图模型，因此格式必须绝对纯净。
 
@@ -512,7 +530,8 @@ F. 艺术/插画模式 (Art/Illustration)：侧重笔触质感、媒介（水墨
 输出：A high-definition smartphone selfie photo full of life. A young girl is smiling brightly and healing towards the camera, showing her white and neat teeth. She has a moist and bright healthy skin tone, with extremely subtle natural pore details on her face. Sunlight shines obliquely from the front, forming bright pupils in her eyes. Due to the front camera perspective, the composition has a slight wide-angle perspective, with a background of her own balcony, dotted with green plants. The picture has a fresh and natural color tone, without excessive artificial filter traces, with clear and sharp image quality, photorealistic, ultra-detailed texture, sharp focus, 8k resolution""",
     },
     {
-        "id": "tags_style", "name": "扩写-Tags风格",
+        "id": "tags_style",
+        "name": "扩写-Tags风格",
         "content": """Role
 
 你是一位精通 Danbooru 标签体系与 Stable Diffusion 权重语法的顶级提示词工程师。你的核心能力是将用户简单的关键词，转化为适合 SD1.5 和 SDXL 模型识别的标签（Tags）流。你擅长根据领域（写实、动漫、3D、艺术）调用特定的技术词汇，并合理分配权重，以激活模型的最佳潜力。
@@ -568,7 +587,8 @@ D. 艺术模式 (Art)：调用 oil painting, watercolor, brush stroke, impasto, 
 输出：Masterpiece, highest quality, (1 girl:1.2), magical girl, (glowing magic wand:1.2), casting spells, magic circle, stars and twinkling, (cell shading:1.1), animation style, bright colors, flowing long hair, dynamic pose, high resolution, detailed background""",
     },
     {
-        "id": "qwen_image_edit", "name": "Qwen-Image-Edit指令优化",
+        "id": "qwen_image_edit",
+        "name": "Qwen-Image-Edit指令优化",
         "content": """Role
 你是一位精通视觉逻辑与图像编辑的顶级提示词专家。你的任务是将用户简单的、碎片化的编辑意图，转化为符合 Qwen-Image-Edit 模型要求的高质量、高执行力、且逻辑严密的自然语言指令。
 
@@ -619,7 +639,8 @@ Output Constraint
 确保输出结果可直接被 ComfyUI 插件传递给 Qwen 模型使用。""",
     },
     {
-        "id": "kontext", "name": "Kontext指令优化并翻译",
+        "id": "kontext",
+        "name": "Kontext指令优化并翻译",
         "content": """Kontext Prompt Assistant Guide (Enhanced Visual-Aware Version)
 You are an expert Multimodal Image Editor specializing in Flux.1 Kontext. Your task is to analyze the user's intent alongside the visual content of the image, identify specific visual anchors, and transform the request into a high-precision Kontext editing prompt.
 1. Visual Analysis & Grounding Process
@@ -648,7 +669,8 @@ Tone: Use descriptive, physically grounded, and technical language.
 Formatting: Output ONLY the final prompt text. No explanations, no quotes, no markdown bolding, no "Prompt:" prefix.""",
     },
     {
-        "id": "wan", "name": "Wan视频提示词",
+        "id": "wan",
+        "name": "Wan视频提示词",
         "content": """Role
 你是一位精通电影视听语言和物理引擎的AI视频导演，专为通义万相 (Wan 2.1) 模型设计提示词。你能够精准捕捉用户输入的所有关键词，并严格按照官方公式：[主体] + [场景] + [运动] + [美学控制] + [风格化] 进行深度视觉扩写。
 
@@ -700,16 +722,24 @@ Formatting: Output ONLY the final prompt text. No explanations, no quotes, no ma
 def seed_expand_prompt_library():
     items = []
     for rule in BUILTIN_EXPAND_RULES:
-        items.append(normalize_prompt_library_item({
-            "id": f"builtin_expand_{rule['id']}",
-            "name": rule["name"],
-            "category": "builtin",
-            "scene": "系统内置扩写规则",
-            "prompt": rule["content"],
-            "builtin": True,
-        }))
+        items.append(
+            normalize_prompt_library_item(
+                {
+                    "id": f"builtin_expand_{rule['id']}",
+                    "name": rule["name"],
+                    "category": "builtin",
+                    "scene": "系统内置扩写规则",
+                    "prompt": rule["content"],
+                    "builtin": True,
+                }
+            )
+        )
     return {
-        "id": "expand", "name": "扩写提示词库", "type": "prompt", "items": items, "categories": [],
+        "id": "expand",
+        "name": "扩写提示词库",
+        "type": "prompt",
+        "items": items,
+        "categories": [],
     }
 
 
@@ -756,8 +786,13 @@ def sync_system_prompt_libraries():
             if not isinstance(item, dict) or not str(item.get("prompt") or "").strip():
                 continue
             upsert_prompt_template(
-                str(item.get("id")), "", template_type, library["id"], item,
-                builtin=True, builtin_key=str(item.get("id")),
+                str(item.get("id")),
+                "",
+                template_type,
+                library["id"],
+                item,
+                builtin=True,
+                builtin_key=str(item.get("id")),
             )
     return seeds
 
@@ -784,11 +819,16 @@ def load_system_prompt_libraries():
     # 这里需要把两者合并，否则新建的分组（categories）在管理员之外的
     # sync_global_reserved=False 路径下即使写库成功，下次加载也会被这里
     # 硬编码的种子 categories 覆盖，造成“刷新后分组消失”。
-    stored_by_id = {str(record.get("id")): record.get("library_json") for record in get_system_prompt_library_records()
-                     if isinstance(record.get("library_json"), dict)}
+    stored_by_id = {
+        str(record.get("id")): record.get("library_json")
+        for record in get_system_prompt_library_records()
+        if isinstance(record.get("library_json"), dict)
+    }
     libraries = []
     for library_id, items in grouped.items():
-        base = deepcopy(seeds.get(library_id) or {"id": library_id, "name": library_id, "type": "prompt", "categories": []})
+        base = deepcopy(
+            seeds.get(library_id) or {"id": library_id, "name": library_id, "type": "prompt", "categories": []}
+        )
         stored = stored_by_id.get(library_id)
         if isinstance(stored, dict):
             if isinstance(stored.get("categories"), list):
@@ -858,13 +898,16 @@ def normalize_prompt_libraries(data):
     seen_lib_ids = set()
     for raw in raw_libraries:
         is_system = raw.get("id") in {"system", "caption", "expand"}
-        lib_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(raw.get("id") or f"lib_{uuid.uuid4().hex[:12]}"))[:60] or f"lib_{uuid.uuid4().hex[:12]}"
+        lib_id = (
+            re.sub(r"[^A-Za-z0-9_-]+", "_", str(raw.get("id") or f"lib_{uuid.uuid4().hex[:12]}"))[:60]
+            or f"lib_{uuid.uuid4().hex[:12]}"
+        )
         if lib_id in seen_lib_ids:
             continue
         seen_lib_ids.add(lib_id)
         items = []
         seen_items = set()
-        for raw_item in (raw.get("items") if isinstance(raw.get("items"), list) else []):
+        for raw_item in raw.get("items") if isinstance(raw.get("items"), list) else []:
             if not isinstance(raw_item, dict):
                 continue
             item = normalize_prompt_library_item(raw_item)
@@ -883,25 +926,37 @@ def normalize_prompt_libraries(data):
         if not is_system:
             # 非系统库不保留任何内置分组（内置/我的），仅保留用户自建分组
             builtin_category_ids = {"builtin", "custom"}
-            raw_categories = [c for c in raw_categories if isinstance(c, dict) and normalize_prompt_category_id(c.get("id") or c.get("name") or "") not in builtin_category_ids]
-        libraries.append({
-            "id": lib_id,
-            "name": sanitize_asset_name(raw.get("name") or default_name, default_name),
-            "type": "prompt",
-            "readonly": is_system,
-            "system": is_system,
-            "categories": normalize_prompt_template_categories(
-                raw_categories, include_defaults=is_system,
-                used_category_ids={str(item.get("category")) for item in items if isinstance(item, dict)},
-            ),
-            "items": items,
-        })
+            raw_categories = [
+                c
+                for c in raw_categories
+                if isinstance(c, dict)
+                and normalize_prompt_category_id(c.get("id") or c.get("name") or "") not in builtin_category_ids
+            ]
+        libraries.append(
+            {
+                "id": lib_id,
+                "name": sanitize_asset_name(raw.get("name") or default_name, default_name),
+                "type": "prompt",
+                "readonly": is_system,
+                "system": is_system,
+                "categories": normalize_prompt_template_categories(
+                    raw_categories,
+                    include_defaults=is_system,
+                    used_category_ids={str(item.get("category")) for item in items if isinstance(item, dict)},
+                ),
+                "items": items,
+            }
+        )
         for item in items:
             if is_system:
                 item["builtin"] = bool(item.get("builtin"))
     active = str(data.get("active_library_id") or "system")
     if not any(lib["id"] == active for lib in libraries):
-        active = "system" if any(lib["id"] == "system" for lib in libraries) else (libraries[0]["id"] if libraries else "system")
+        active = (
+            "system"
+            if any(lib["id"] == "system" for lib in libraries)
+            else (libraries[0]["id"] if libraries else "system")
+        )
     return {"active_library_id": active, "libraries": libraries, "updated_at": int(data.get("updated_at") or now_ms())}
 
 
@@ -922,13 +977,17 @@ def _migrate_legacy_rules(data, kind, rules):
         item_id = f"legacy_{kind}_{rule_id}"
         if item_id in existing_ids:
             continue
-        library.setdefault("items", []).append(normalize_prompt_library_item({
-            "id": item_id,
-            "name": rule.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
-            "category": "custom",
-            "scene": "从旧画布旧规则迁移",
-            "prompt": rule.get("content") or "",
-        }))
+        library.setdefault("items", []).append(
+            normalize_prompt_library_item(
+                {
+                    "id": item_id,
+                    "name": rule.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
+                    "category": "custom",
+                    "scene": "从旧画布旧规则迁移",
+                    "prompt": rule.get("content") or "",
+                }
+            )
+        )
         existing_ids.add(item_id)
         migrated = True
     return migrated
@@ -952,9 +1011,17 @@ def load_prompt_libraries():
         for library in normalized.get("libraries", []):
             library_id = str(library.get("id"))
             if library_id in account_items:
-                builtin_ids = {str(item.get("id")) for item in library.get("items", []) if isinstance(item, dict) and item.get("builtin")}
+                builtin_ids = {
+                    str(item.get("id"))
+                    for item in library.get("items", [])
+                    if isinstance(item, dict) and item.get("builtin")
+                }
                 existing = {str(item.get("id")) for item in library.get("items", []) if isinstance(item, dict)}
-                library["items"].extend(item for item in account_items[library_id] if str(item.get("id")) not in existing and str(item.get("id")) not in builtin_ids)
+                library["items"].extend(
+                    item
+                    for item in account_items[library_id]
+                    if str(item.get("id")) not in existing and str(item.get("id")) not in builtin_ids
+                )
     # System libraries are global database records. User settings only retain
     # custom libraries and user-created items that were historically stored in
     # the reserved libraries.
@@ -964,20 +1031,31 @@ def load_prompt_libraries():
         merged = []
         for library_id, system_library in system_libraries.items():
             user_library = user_libraries.get(library_id) or {}
-            system_item_ids = {str(item.get("id")) for item in system_library.get("items", []) if isinstance(item, dict)}
+            system_item_ids = {
+                str(item.get("id")) for item in system_library.get("items", []) if isinstance(item, dict)
+            }
             # Keep user-created legacy items, while the database owns built-ins.
-            extras = [item for item in (user_library.get("items") or [])
-                      if isinstance(item, dict) and str(item.get("id")) not in system_item_ids
-                      and not str(item.get("id") or "").startswith("builtin_")]
+            extras = [
+                item
+                for item in (user_library.get("items") or [])
+                if isinstance(item, dict)
+                and str(item.get("id")) not in system_item_ids
+                and not str(item.get("id") or "").startswith("builtin_")
+            ]
             system_library["items"] = system_library.get("items", []) + extras
             # 分类同理：system_library 的 categories 只包含全局共享的分组
             # （内置 + 管理员编辑保存的），普通用户自建的分组（pcat_xxx）
             # 只存在账户级 user_library.categories 里，必须在这里合并，
             # 否则每次加载都会被系统库的分类列表直接覆盖，造成“新建分组
             # 刷新后消失”。
-            system_category_ids = {str(cat.get("id")) for cat in system_library.get("categories", []) if isinstance(cat, dict)}
-            extra_categories = [cat for cat in (user_library.get("categories") or [])
-                                 if isinstance(cat, dict) and str(cat.get("id")) not in system_category_ids]
+            system_category_ids = {
+                str(cat.get("id")) for cat in system_library.get("categories", []) if isinstance(cat, dict)
+            }
+            extra_categories = [
+                cat
+                for cat in (user_library.get("categories") or [])
+                if isinstance(cat, dict) and str(cat.get("id")) not in system_category_ids
+            ]
             system_library["categories"] = system_library.get("categories", []) + extra_categories
             merged.append(system_library)
         merged.extend(lib for lib in normalized.get("libraries", []) if str(lib.get("id")) not in system_libraries)
@@ -996,7 +1074,11 @@ def load_prompt_libraries():
             continue
         migrated = _migrate_legacy_rules(normalized, kind, _legacy_rule_items(kind, user_id)) or migrated
         migration_state[kind] = True
-    if normalized.get("active_library_id") != data.get("active_library_id") or normalized.get("libraries") != data.get("libraries") or migrated:
+    if (
+        normalized.get("active_library_id") != data.get("active_library_id")
+        or normalized.get("libraries") != data.get("libraries")
+        or migrated
+    ):
         normalized = save_prompt_libraries(normalized)
     if migration_state != get_user_setting(user_id, "prompt_library_rule_migrations", {}):
         set_user_setting(user_id, "prompt_library_rule_migrations", migration_state)
@@ -1017,6 +1099,7 @@ def save_prompt_libraries(data, sync_global_reserved=False):
     system_ids = {str(lib.get("id")) for lib in load_system_prompt_libraries()}
     if sync_global_reserved:
         from app.services.business_metadata import replace_global_library_prompt_templates
+
         reserved_ids = {library["id"] for library in reserved_prompt_libraries()}
         type_by_reserved_library = {"system": "system", "caption": "reverse", "expand": "expand"}
         for library in data.get("libraries", []):
@@ -1026,15 +1109,19 @@ def save_prompt_libraries(data, sync_global_reserved=False):
             # 只有「内置」分类的条目才代表全局共享的内置内容；管理员账户下
             # 「我的」分类（或其它自建分类）里的私有条目不能被当作全局内容
             # 写入 system_prompt_libraries，否则会泄露给所有其它账户。
-            builtin_items = [item for item in library.get("items", [])
-                              if isinstance(item, dict) and item.get("category") == "builtin"]
+            builtin_items = [
+                item
+                for item in library.get("items", [])
+                if isinstance(item, dict) and item.get("category") == "builtin"
+            ]
             global_library = {**library, "items": builtin_items}
             checksum = _system_library_checksum(global_library)
             upsert_system_prompt_library(library_id, global_library, checksum)
             template_type = type_by_reserved_library.get(library_id, "system")
             templates = [
                 {"id": str(item["id"]), "template_type": template_type, "payload": item}
-                for item in builtin_items if item.get("id")
+                for item in builtin_items
+                if item.get("id")
             ]
             replace_global_library_prompt_templates(library_id, templates)
         system_ids = {str(lib.get("id")) for lib in load_system_prompt_libraries()}
@@ -1050,12 +1137,17 @@ def save_prompt_libraries(data, sync_global_reserved=False):
             )
             system_items = {str(item.get("id")) for item in system_library.get("items", []) if isinstance(item, dict)}
             custom_items = [item for item in library.get("items", []) if str(item.get("id")) not in system_items]
-            system_categories = {str(cat.get("id")) for cat in system_library.get("categories", []) if isinstance(cat, dict)}
+            system_categories = {
+                str(cat.get("id")) for cat in system_library.get("categories", []) if isinstance(cat, dict)
+            }
             # 用户自建分组（不在全局共享分类集合里的）即使暂时是空分组
             # （custom_items 不含其条目），也要保留，否则新建空分组后
             # 不会写入账户设置，刷新即消失。
-            custom_categories = [cat for cat in (library.get("categories") or [])
-                                  if isinstance(cat, dict) and str(cat.get("id")) not in system_categories]
+            custom_categories = [
+                cat
+                for cat in (library.get("categories") or [])
+                if isinstance(cat, dict) and str(cat.get("id")) not in system_categories
+            ]
             if custom_items or custom_categories:
                 stored_libraries.append({**library, "items": custom_items, "categories": custom_categories})
             continue
@@ -1069,13 +1161,22 @@ def save_prompt_libraries(data, sync_global_reserved=False):
         template_type = type_by_library.get(library_id)
         if not template_type:
             continue
-        system_library = next((item for item in load_system_prompt_libraries() if str(item.get("id")) == library_id), {})
+        system_library = next(
+            (item for item in load_system_prompt_libraries() if str(item.get("id")) == library_id), {}
+        )
         system_ids = {str(item.get("id")) for item in system_library.get("items", []) if isinstance(item, dict)}
         for item in library.get("items", []):
             if isinstance(item, dict) and str(item.get("id")) not in system_ids:
-                account_templates.append({"id": str(item.get("id")), "library_id": library_id,
-                    "template_type": template_type, "payload": item})
+                account_templates.append(
+                    {
+                        "id": str(item.get("id")),
+                        "library_id": library_id,
+                        "template_type": template_type,
+                        "payload": item,
+                    }
+                )
     from app.services.business_metadata import replace_account_prompt_templates
+
     replace_account_prompt_templates(current_user_id(), account_templates)
     return data
 
@@ -1094,4 +1195,6 @@ def find_prompt_library(data, library_id=""):
         return None
     libraries = data.get("libraries") if isinstance(data.get("libraries"), list) else []
     library_id = str(library_id or data.get("active_library_id") or "").strip()
-    return next((item for item in libraries if item.get("id") == library_id), None) or (libraries[0] if libraries else None)
+    return next((item for item in libraries if item.get("id") == library_id), None) or (
+        libraries[0] if libraries else None
+    )

@@ -12,6 +12,7 @@
 - app.core.access_control：全集清单/读写/有效权限
 - app.models：AccessControlConfigPayload
 """
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.access_control import (
@@ -82,10 +83,7 @@ def access_control_put_config(payload: AccessControlConfigPayload):
     """保存用户类型与用户类型分配。"""
     _require_user_management()
     data = {
-        "types": {
-            type_id: {"name": entry.name, "pages": entry.pages}
-            for type_id, entry in payload.types.items()
-        },
+        "types": {type_id: {"name": entry.name, "pages": entry.pages} for type_id, entry in payload.types.items()},
         "user_types": payload.user_types,
     }
     saved = save_config(data)
@@ -142,7 +140,11 @@ async def access_control_sessions(request: Request):
         }
         for row in rows
     ]
-    return {"sessions": sessions, "online_count": sum(1 for item in sessions if item["online"]), "online_window_minutes": 5}
+    return {
+        "sessions": sessions,
+        "online_count": sum(1 for item in sessions if item["online"]),
+        "online_window_minutes": 5,
+    }
 
 
 @router.put("/api/access-control/users/{user_id}/type")

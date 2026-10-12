@@ -23,7 +23,9 @@ def test_service_unavailable_handlers_return_retryable_503():
     from app.core.database import DatabaseUnavailableError
     from main import database_unavailable_exception_handler, storage_unavailable_exception_handler
 
-    database_response = asyncio.run(database_unavailable_exception_handler(None, DatabaseUnavailableError("database down")))
+    database_response = asyncio.run(
+        database_unavailable_exception_handler(None, DatabaseUnavailableError("database down"))
+    )
     storage_response = asyncio.run(storage_unavailable_exception_handler(None, StorageUnavailableError("storage down")))
 
     assert database_response.status_code == 503

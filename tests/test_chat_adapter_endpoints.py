@@ -5,6 +5,7 @@
 历史上适配器自己用 base_url 拼 `/chat/completions`，丢掉了版本前缀，导致画布
 提示词节点持续返回「接口返回了空回复」。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -16,8 +17,12 @@ from app.ai.domain import Connection, ModelResource, ResolvedTarget
 
 def _endpoint(protocol: str, base_url: str, settings: dict | None = None) -> str:
     connection = Connection(
-        id="c1", protocol=protocol, name="test", base_url=base_url,
-        enabled=True, settings=settings or {},
+        id="c1",
+        protocol=protocol,
+        name="test",
+        base_url=base_url,
+        enabled=True,
+        settings=settings or {},
     )
     model = ModelResource("m1", "c1", "some-model", "chat", protocol)
     target = ResolvedTarget(connection=connection, model=model)

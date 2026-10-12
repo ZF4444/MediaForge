@@ -19,9 +19,7 @@ from app.core.log_context import get_log_context
 
 
 _ROOT_LOGGER = "aistudio"
-_STANDARD_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__) | {
-    "message", "asctime", "event"
-}
+_STANDARD_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "event"}
 _SENSITIVE_KEY = re.compile(
     r"(?:authorization|cookie|password|passwd|secret|api[_-]?key|access[_-]?key|token|session|credential)",
     re.IGNORECASE,
@@ -71,9 +69,7 @@ def redact(value: Any, key: str = "") -> Any:
         text = _safe_path(value) if _PATH_KEY.search(str(key)) and os.path.isabs(value) else value
         text = _ABSOLUTE_PRIVATE_PATH.sub(lambda match: _safe_path(match.group(0)), text)
         text = _BEARER.sub(lambda match: match.group(1) + _masked(match.group(2)), text)
-        return _SECRET_ASSIGNMENT.sub(
-            lambda match: f"{match.group(1)}{match.group(2)}{_masked(match.group(3))}", text
-        )
+        return _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}{match.group(2)}{_masked(match.group(3))}", text)
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return redact(str(value))
@@ -102,7 +98,11 @@ class JsonFormatter(logging.Formatter):
         # Context dimensions only exist for the request/task types that own
         # them. Omit absent values instead of emitting a misleading wall of
         # nulls on unrelated system and background-worker records.
-        return json.dumps(redact({key: value for key, value in payload.items() if value is not None}), ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(
+            redact({key: value for key, value in payload.items() if value is not None}),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
 
 class _DomainFilter(logging.Filter):
@@ -162,9 +162,7 @@ def configure_logging() -> None:
         handler.addFilter(_DomainFilter(domain))
         root.addHandler(handler)
 
-    error_handler = _file_handler(
-        log_dir, "error", int(os.getenv("LOG_ERROR_RETENTION_DAYS", "30"))
-    )
+    error_handler = _file_handler(log_dir, "error", int(os.getenv("LOG_ERROR_RETENTION_DAYS", "30")))
     error_handler.setLevel(logging.ERROR)
     root.addHandler(error_handler)
 

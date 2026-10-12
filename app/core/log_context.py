@@ -16,9 +16,7 @@ _DEFAULTS = {
     "operation_id": None,
 }
 
-_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
-    "log_context", default=_DEFAULTS
-)
+_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("log_context", default=_DEFAULTS)
 
 
 def get_log_context() -> dict[str, Any]:

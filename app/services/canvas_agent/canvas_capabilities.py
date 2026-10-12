@@ -1,4 +1,5 @@
 """Canonical capability registry for Canvas Agent."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -59,21 +60,26 @@ class CapabilityRegistry:
         """
         grouped: dict[str, dict[str, Any]] = {}
         for item in self.list():
-            entry = grouped.setdefault(item.name, {
-                "name": item.name,
-                "description": item.description,
-                "cost_level": item.cost_level,
-                "targets": [],
-            })
+            entry = grouped.setdefault(
+                item.name,
+                {
+                    "name": item.name,
+                    "description": item.description,
+                    "cost_level": item.cost_level,
+                    "targets": [],
+                },
+            )
             if item.description and not entry["description"]:
                 entry["description"] = item.description
-            entry["targets"].append({
-                "connection_id": item.connection_id,
-                "model_id": item.model_id,
-                "resource_id": item.resource_id,
-                "display_name": f"{item.connection_name} / {item.model_name or item.resource_id}",
-                "enabled": item.enabled,
-            })
+            entry["targets"].append(
+                {
+                    "connection_id": item.connection_id,
+                    "model_id": item.model_id,
+                    "resource_id": item.resource_id,
+                    "display_name": f"{item.connection_name} / {item.model_name or item.resource_id}",
+                    "enabled": item.enabled,
+                }
+            )
         return list(grouped.values())
 
 
@@ -88,13 +94,19 @@ def from_repository(repository: DatabaseAIRepository | None = None) -> Capabilit
         # chat 模型不注册为能力，返回 None 后跳过
         capability_name = {"image": "image.text_to_image", "video": "video.text_to_video"}.get(model.kind)
         if capability_name:
-            registry.register(Capability(
-                capability_name,
-                "",
-                {"image": "medium", "video": "high"}[model.kind],
-                model.enabled and connection.enabled,
-                connection.id, model.id, "", connection.name, model.alias or model.upstream_model,
-            ))
+            registry.register(
+                Capability(
+                    capability_name,
+                    "",
+                    {"image": "medium", "video": "high"}[model.kind],
+                    model.enabled and connection.enabled,
+                    connection.id,
+                    model.id,
+                    "",
+                    connection.name,
+                    model.alias or model.upstream_model,
+                )
+            )
     for resource in repository.executable_resources():
         connection = connections.get(resource.connection_id)
         if connection is None:
@@ -107,10 +119,34 @@ def from_repository(repository: DatabaseAIRepository | None = None) -> Capabilit
             media = "video" if settings.get("media") == "video" else "image"
             name = str(settings.get("capability") or f"comfyui.workflow.{media}")
         description = str(settings.get("note") or "")
-        registry.register(Capability(name, description, "high", resource.enabled and connection.enabled, connection.id, "", resource.id, connection.name, resource.name))
+        registry.register(
+            Capability(
+                name,
+                description,
+                "high",
+                resource.enabled and connection.enabled,
+                connection.id,
+                "",
+                resource.id,
+                connection.name,
+                resource.name,
+            )
+        )
     # local workflows have no connection; resolver uses workflow_name as the model key
     for workflow in list_comfy_workflows():
         media = "video" if workflow.get("media") == "video" else "image"
         description = str(workflow.get("note") or "")
-        registry.register(Capability(f"comfyui.workflow.{media}", description, "high", workflow.get("enabled", True) is not False, "", "", workflow["name"], "本地 ComfyUI", workflow.get("title") or workflow["name"]))
+        registry.register(
+            Capability(
+                f"comfyui.workflow.{media}",
+                description,
+                "high",
+                workflow.get("enabled", True) is not False,
+                "",
+                "",
+                workflow["name"],
+                "本地 ComfyUI",
+                workflow.get("title") or workflow["name"],
+            )
+        )
     return registry

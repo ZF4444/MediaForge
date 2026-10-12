@@ -64,7 +64,11 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
         for address in addresses:
             try:
                 return await self._delegate.connect_tcp(
-                    address, port, timeout=timeout, local_address=local_address, socket_options=socket_options,
+                    address,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
                 )
             except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
                 last_error = exc
@@ -219,7 +223,8 @@ def new_outbound_http_client(
     outbound_proxy = str(os.getenv("AI_OUTBOUND_PROXY", "")).strip()
     transport = (
         httpx.AsyncHTTPTransport(limits=effective_limits, proxy=outbound_proxy, trust_env=False)
-        if outbound_proxy else _PinnedAsyncHTTPTransport(limits=effective_limits)
+        if outbound_proxy
+        else _PinnedAsyncHTTPTransport(limits=effective_limits)
     )
     return httpx.AsyncClient(timeout=timeout, transport=transport, follow_redirects=follow_redirects)
 

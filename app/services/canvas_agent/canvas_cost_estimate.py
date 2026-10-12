@@ -1,4 +1,5 @@
 """Canvas Agent 计划成本估算与预算校验。"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -20,7 +21,13 @@ def estimate_plan_cost(plan_payload: dict[str, Any], *, budget: float | None = N
         line_items.append({"capability": name, "cost_level": level, "estimated_cost": COST_BY_LEVEL[level]})
     run_steps = sum(1 for step in plan.steps if step.action in {"canvas.run_node", "canvas.run_group"})
     if run_steps and not line_items:
-        line_items.append({"capability": "canvas.execution", "cost_level": "unknown", "estimated_cost": COST_BY_LEVEL["unknown"] * run_steps})
+        line_items.append(
+            {
+                "capability": "canvas.execution",
+                "cost_level": "unknown",
+                "estimated_cost": COST_BY_LEVEL["unknown"] * run_steps,
+            }
+        )
     predicted = round(sum(float(item["estimated_cost"]) for item in line_items), 4)
     declared = float(plan.execution.estimated_cost or 0)
     estimate = max(predicted, declared)
@@ -38,4 +45,3 @@ def estimate_plan_cost(plan_payload: dict[str, Any], *, budget: float | None = N
 def enforce_budget(estimate: dict[str, Any]) -> None:
     if not estimate.get("within_budget", True):
         raise ValueError("计划预计成本超过预算")
-

@@ -4,6 +4,7 @@ The operation is opt-in and transactional. Historical task/provider values are
 kept in ``ai_task_archive`` and the archived configuration is retained in
 ``ai_cutover_archive`` so an operator can restore data before a backup expires.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,8 +36,12 @@ async def apply() -> dict[str, object]:
                             task_provider_fields JSONB
                         )
                     """)
-                    await cur.execute("ALTER TABLE ai_legacy_schema_archive ADD COLUMN IF NOT EXISTS usage_provider_ids JSONB")
-                    await cur.execute("ALTER TABLE ai_legacy_schema_archive ADD COLUMN IF NOT EXISTS task_provider_fields JSONB")
+                    await cur.execute(
+                        "ALTER TABLE ai_legacy_schema_archive ADD COLUMN IF NOT EXISTS usage_provider_ids JSONB"
+                    )
+                    await cur.execute(
+                        "ALTER TABLE ai_legacy_schema_archive ADD COLUMN IF NOT EXISTS task_provider_fields JSONB"
+                    )
                     await cur.execute("SELECT to_regclass('public.provider_secrets') AS name")
                     has_secrets = bool((await cur.fetchone())["name"])
                     await cur.execute("SELECT value_json FROM app_settings WHERE key='api_providers'")
@@ -55,22 +60,33 @@ async def apply() -> dict[str, object]:
                     if setting or secrets or legacy_rows:
                         await cur.execute(
                             "INSERT INTO ai_legacy_schema_archive(archived_at,provider_secrets,api_providers,legacy_mappings) VALUES(%s,%s,%s,%s)",
-                            (int(time.time() * 1000), json.dumps(secrets), json.dumps(setting["value_json"] if setting else None, ensure_ascii=False), json.dumps(legacy_rows, ensure_ascii=False)),
+                            (
+                                int(time.time() * 1000),
+                                json.dumps(secrets),
+                                json.dumps(setting["value_json"] if setting else None, ensure_ascii=False),
+                                json.dumps(legacy_rows, ensure_ascii=False),
+                            ),
                         )
                     await cur.execute("DELETE FROM app_settings WHERE key='api_providers'")
                     await cur.execute("DROP TABLE IF EXISTS provider_secrets")
                     await cur.execute("DROP TABLE IF EXISTS ai_legacy_mappings")
                     await cur.execute("DROP TABLE IF EXISTS model_protocols")
-                    await cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='omnilojo_usage_records' AND column_name='provider_id'")
+                    await cur.execute(
+                        "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='omnilojo_usage_records' AND column_name='provider_id'"
+                    )
                     if await cur.fetchone():
-                        await cur.execute("SELECT row_to_json(x) AS value FROM omnilojo_usage_records x WHERE provider_id<>''")
+                        await cur.execute(
+                            "SELECT row_to_json(x) AS value FROM omnilojo_usage_records x WHERE provider_id<>''"
+                        )
                         usage_rows = [row["value"] for row in await cur.fetchall()]
                         if usage_rows:
                             await cur.execute(
                                 "INSERT INTO ai_legacy_schema_archive(archived_at,usage_provider_ids) VALUES(%s,%s)",
                                 (int(time.time() * 1000), json.dumps(usage_rows, ensure_ascii=False)),
                             )
-                        await cur.execute("UPDATE omnilojo_usage_records SET connection_id=provider_id WHERE connection_id='' AND provider_id<>''")
+                        await cur.execute(
+                            "UPDATE omnilojo_usage_records SET connection_id=provider_id WHERE connection_id='' AND provider_id<>''"
+                        )
                         await cur.execute("""DO $$
                         DECLARE constraint_name TEXT;
                         BEGIN
@@ -86,9 +102,13 @@ async def apply() -> dict[str, object]:
                           END IF;
                         END $$""")
                         await cur.execute("ALTER TABLE omnilojo_usage_records DROP COLUMN provider_id")
-                    await cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='ai_task_archive' AND column_name='provider_id'")
+                    await cur.execute(
+                        "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='ai_task_archive' AND column_name='provider_id'"
+                    )
                     if await cur.fetchone():
-                        await cur.execute("SELECT task_id,provider_id,model FROM ai_task_archive WHERE provider_id<>'' OR model<>''")
+                        await cur.execute(
+                            "SELECT task_id,provider_id,model FROM ai_task_archive WHERE provider_id<>'' OR model<>''"
+                        )
                         task_rows = [dict(row) for row in await cur.fetchall()]
                         if task_rows:
                             await cur.execute(
@@ -97,7 +117,12 @@ async def apply() -> dict[str, object]:
                             )
                         await cur.execute("ALTER TABLE ai_task_archive DROP COLUMN provider_id")
                         await cur.execute("ALTER TABLE ai_task_archive DROP COLUMN model")
-                    return {"status": "applied", "provider_secrets": has_secrets, "ai_legacy_mappings": has_mappings, "api_providers": bool(setting)}
+                    return {
+                        "status": "applied",
+                        "provider_secrets": has_secrets,
+                        "ai_legacy_mappings": has_mappings,
+                        "api_providers": bool(setting),
+                    }
     finally:
         await close_database_pool()
 

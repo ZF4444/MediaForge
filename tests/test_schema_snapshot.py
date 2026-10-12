@@ -4,6 +4,7 @@
 对 OpenAPI components.schemas 中每个模型的字段名/类型/默认值/required
 做规范化比对，确保 Pydantic 模型迁移到 app/models 后字段完全不变。
 """
+
 import json
 import os
 

@@ -5,13 +5,20 @@ get_comfy_history 被本地 ComfyUI 生图复用，故置于 service 层供多�
 
 依赖：PostgreSQL 业务元数据表与统一文件引用服务。
 """
+
 import json
 import urllib.request
 
 from app.core.auth import current_user_id
 from app.core.comfyui import comfyui_url
 from app.services.business_metadata import metadata_connection, insert_history_record
-from app.services.storage import compact_media_refs, file_refs_from_urls, normalize_media_refs, remove_media_url, urls_from_file_refs
+from app.services.storage import (
+    compact_media_refs,
+    file_refs_from_urls,
+    normalize_media_refs,
+    remove_media_url,
+    urls_from_file_refs,
+)
 
 
 def normalize_history_record(record):
@@ -75,7 +82,16 @@ def load_history_records(limit: int = None, offset: int = 0):
         for row in rows:
             refs = refs_by_record.get(row["id"], [])
             record = dict(row.get("extra_json") or {})
-            record.update({"id": row["id"], "timestamp": row["created_at"] / 1000, "prompt": row["prompt"], "type": row["type"], "is_cloud": row["is_cloud"], "image_refs": refs})
+            record.update(
+                {
+                    "id": row["id"],
+                    "timestamp": row["created_at"] / 1000,
+                    "prompt": row["prompt"],
+                    "type": row["type"],
+                    "is_cloud": row["is_cloud"],
+                    "image_refs": refs,
+                }
+            )
             result.append(normalize_history_record(record))
     return result
 

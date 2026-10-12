@@ -6,6 +6,7 @@
 - /api/upload、/api/view、/api/pose-studio/generate-fbx 通过共享客户端发起请求，
   不会在每次请求时创建新连接。
 """
+
 from __future__ import annotations
 
 import ast
@@ -77,10 +78,7 @@ def test_main_py_has_no_synchronous_requests_calls_outside_thread_bridge():
             if innermost not in allowed_sync_functions:
                 violations.append((node.lineno, innermost))
 
-    assert not violations, (
-        "发现事件循环内直接调用同步 requests，应改为共享 httpx 客户端："
-        f"{violations}"
-    )
+    assert not violations, f"发现事件循环内直接调用同步 requests，应改为共享 httpx 客户端：{violations}"
 
 
 def test_upload_image_route_uses_shared_client(monkeypatch):

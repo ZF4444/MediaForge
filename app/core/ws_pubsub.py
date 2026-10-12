@@ -24,7 +24,9 @@ async def publish_websocket_event(event: str, payload: dict[str, Any]) -> None:
     try:
         await get_redis_client().publish(REDIS_WEBSOCKET_CHANNEL, message)
     except (RedisError, RedisUnavailableError):
-        logger.exception("websocket event publish failed", extra={"event": "websocket_pubsub_publish_failed", "message_type": event})
+        logger.exception(
+            "websocket event publish failed", extra={"event": "websocket_pubsub_publish_failed", "message_type": event}
+        )
 
 
 async def _listen_once(manager: ConnectionManager) -> None:
@@ -43,9 +45,13 @@ async def _listen_once(manager: ConnectionManager) -> None:
                 if event and isinstance(payload, dict):
                     await manager.deliver_remote_event(event, payload)
             except (TypeError, ValueError):
-                logger.warning("ignored malformed websocket pubsub event", extra={"event": "websocket_pubsub_malformed"})
+                logger.warning(
+                    "ignored malformed websocket pubsub event", extra={"event": "websocket_pubsub_malformed"}
+                )
             except Exception:
-                logger.exception("websocket pubsub event delivery failed", extra={"event": "websocket_pubsub_delivery_failed"})
+                logger.exception(
+                    "websocket pubsub event delivery failed", extra={"event": "websocket_pubsub_delivery_failed"}
+                )
     finally:
         with contextlib.suppress(Exception):
             await pubsub.aclose()

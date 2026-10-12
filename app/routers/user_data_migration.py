@@ -1,4 +1,5 @@
 """Migration of a non-Feishu account into the current account."""
+
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -36,9 +37,16 @@ def migration_source(username: str):
             raise HTTPException(status_code=404, detail="未找到该用户。")
         if _is_feishu(user["id"]):
             raise HTTPException(status_code=400, detail="用户 A 不能是飞书用户。")
-        cur.execute("SELECT id,title,created_at,updated_at FROM smart_canvases WHERE user_id=%s AND deleted_at IS NULL ORDER BY updated_at DESC", (user["id"],))
+        cur.execute(
+            "SELECT id,title,created_at,updated_at FROM smart_canvases WHERE user_id=%s AND deleted_at IS NULL ORDER BY updated_at DESC",
+            (user["id"],),
+        )
         canvases = [dict(row) for row in cur.fetchall()]
-    return {"source": {"user_id": user["id"], "username": user["username"]}, "canvases": canvases, "target_user_id": target_id}
+    return {
+        "source": {"user_id": user["id"], "username": user["username"]},
+        "canvases": canvases,
+        "target_user_id": target_id,
+    }
 
 
 @router.post("/api/user-data-migration/execute")
@@ -64,12 +72,19 @@ def migration_execute(payload: dict[str, Any]):
         # These are business-owned rows. Management configuration tables
         # (budgets, org/access/storage quota settings and sessions) are excluded.
         statements = [
-            ("history_records", "user_id"), ("conversations", "user_id"),
-            ("smart_canvases", "user_id"), ("canvas_agent_runs", "user_id"),
-            ("canvas_agent_event_outbox", "user_id"), ("canvas_agent_templates", "user_id"),
+            ("history_records", "user_id"),
+            ("conversations", "user_id"),
+            ("smart_canvases", "user_id"),
+            ("canvas_agent_runs", "user_id"),
+            ("canvas_agent_event_outbox", "user_id"),
+            ("canvas_agent_templates", "user_id"),
             ("runninghub_usage_records", "user_id"),
-            ("omnilojo_usage_records", "user_id"), ("ai_usage_records", "user_id"), ("feedback_entries", "user_id"),
-            ("user_settings", "user_id"), ("files", "user_id"), ("ai_task_archive", "owner_id"),
+            ("omnilojo_usage_records", "user_id"),
+            ("ai_usage_records", "user_id"),
+            ("feedback_entries", "user_id"),
+            ("user_settings", "user_id"),
+            ("files", "user_id"),
+            ("ai_task_archive", "owner_id"),
             ("asset_libraries", "user_id"),
         ]
         for table, column in statements:
@@ -112,5 +127,12 @@ def migration_execute(payload: dict[str, Any]):
         cur.execute("DELETE FROM user_budgets WHERE user_id=%s", (source_id,))
         cur.execute("DELETE FROM user_sessions WHERE user_id=%s", (source_id,))
         cur.execute("DELETE FROM users WHERE id=%s", (source_id,))
-    audit_event("user_data_migrated", action="update", resource_type="user", resource_id=source_id, user_id=target_id, after={"target_user_id": target_id, "migrated_tables": moved_tables})
+    audit_event(
+        "user_data_migrated",
+        action="update",
+        resource_type="user",
+        resource_id=source_id,
+        user_id=target_id,
+        after={"target_user_id": target_id, "migrated_tables": moved_tables},
+    )
     return {"ok": True, "source_user_id": source_id, "target_user_id": target_id, "migrated_tables": moved_tables}

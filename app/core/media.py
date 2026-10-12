@@ -1,4 +1,5 @@
 """Media helpers backed by MinIO file references."""
+
 import os
 import urllib.parse
 import uuid
@@ -18,6 +19,7 @@ def output_file_from_url(url):
         return None
     try:
         from app.services.storage import materialize_media_url
+
         return materialize_media_url(url)
     except Exception:
         return None
@@ -136,10 +138,7 @@ def origin_from_url(value):
 def ensure_same_origin_request(request):
     host = str(request.headers.get("host") or "").lower()
     # Support reverse proxy: prefer X-Forwarded-Proto/Host
-    scheme = (
-        str(request.headers.get("x-forwarded-proto") or "").lower()
-        or request.url.scheme
-    )
+    scheme = str(request.headers.get("x-forwarded-proto") or "").lower() or request.url.scheme
     fwd_host = str(request.headers.get("x-forwarded-host") or "").lower() or host
     expected = f"{scheme}://{fwd_host}".lower() if fwd_host else ""
     origin = origin_from_url(request.headers.get("origin", ""))

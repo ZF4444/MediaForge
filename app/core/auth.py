@@ -7,6 +7,7 @@
 依赖：app.config（路径常量），app.core.utils.now_ms。
 本模块不引用 FastAPI app 对象，避免循环导入（中间件仍注册在 main.py）。
 """
+
 import asyncio
 import contextvars
 import hashlib
@@ -53,7 +54,10 @@ def load_users_registry():
     with USERS_LOCK:
         with metadata_connection() as conn, conn.cursor() as cur:
             cur.execute("SELECT id,username,created_at,org_id FROM users")
-            loaded = {row["id"]: {"username": row["username"], "created_at": row["created_at"], "org_id": row["org_id"]} for row in cur.fetchall()}
+            loaded = {
+                row["id"]: {"username": row["username"], "created_at": row["created_at"], "org_id": row["org_id"]}
+                for row in cur.fetchall()
+            }
         # Several routers import USERS directly, so preserve the shared object.
         USERS.clear()
         USERS.update(loaded)
@@ -62,7 +66,10 @@ def load_users_registry():
 def _persist_users_unlocked():
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
         for uid, info in USERS.items():
-            cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO UPDATE SET username=EXCLUDED.username", (uid, info.get("username") or uid, int(info.get("created_at") or now_ms())))
+            cur.execute(
+                "INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO UPDATE SET username=EXCLUDED.username",
+                (uid, info.get("username") or uid, int(info.get("created_at") or now_ms())),
+            )
 
 
 def user_exists(user_id: str) -> bool:
@@ -96,7 +103,10 @@ def register_user(user_id: str, username: str) -> bool:
         except Exception:
             pass
         with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-            cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING id", (user_id, username, created_at))
+            cur.execute(
+                "INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING id",
+                (user_id, username, created_at),
+            )
             if not cur.fetchone():
                 return False
             if default_budget["monthly_budget_usd"] == 0 and default_budget["enabled"] is True:
@@ -125,20 +135,44 @@ async def delete_user(user_id: str) -> dict:
         await cur.execute("SELECT token_hash FROM user_sessions WHERE user_id=%s", (user_id,))
         token_hashes = [str(row["token_hash"]) for row in await cur.fetchall()]
         # Remove child references before their owning records and file metadata.
-        await cur.execute("DELETE FROM history_record_files WHERE history_record_id IN (SELECT id FROM history_records WHERE user_id=%s)", (user_id,))
-        await cur.execute("DELETE FROM conversation_message_files WHERE message_id IN (SELECT m.id FROM conversation_messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.user_id=%s)", (user_id,))
-        await cur.execute("DELETE FROM smart_canvas_node_files WHERE node_id IN (SELECT n.id FROM smart_canvas_nodes n JOIN smart_canvases c ON c.id=n.canvas_id WHERE c.user_id=%s)", (user_id,))
-        await cur.execute("DELETE FROM asset_items WHERE category_id IN (SELECT c.id FROM asset_categories c JOIN asset_libraries l ON l.id=c.library_id WHERE l.user_id=%s)", (user_id,))
+        await cur.execute(
+            "DELETE FROM history_record_files WHERE history_record_id IN (SELECT id FROM history_records WHERE user_id=%s)",
+            (user_id,),
+        )
+        await cur.execute(
+            "DELETE FROM conversation_message_files WHERE message_id IN (SELECT m.id FROM conversation_messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.user_id=%s)",
+            (user_id,),
+        )
+        await cur.execute(
+            "DELETE FROM smart_canvas_node_files WHERE node_id IN (SELECT n.id FROM smart_canvas_nodes n JOIN smart_canvases c ON c.id=n.canvas_id WHERE c.user_id=%s)",
+            (user_id,),
+        )
+        await cur.execute(
+            "DELETE FROM asset_items WHERE category_id IN (SELECT c.id FROM asset_categories c JOIN asset_libraries l ON l.id=c.library_id WHERE l.user_id=%s)",
+            (user_id,),
+        )
         await cur.execute("DELETE FROM history_records WHERE user_id=%s", (user_id,))
-        await cur.execute("DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user_id=%s)", (user_id,))
+        await cur.execute(
+            "DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user_id=%s)",
+            (user_id,),
+        )
         await cur.execute("DELETE FROM conversations WHERE user_id=%s", (user_id,))
-        await cur.execute("DELETE FROM smart_canvas_nodes WHERE canvas_id IN (SELECT id FROM smart_canvases WHERE user_id=%s)", (user_id,))
+        await cur.execute(
+            "DELETE FROM smart_canvas_nodes WHERE canvas_id IN (SELECT id FROM smart_canvases WHERE user_id=%s)",
+            (user_id,),
+        )
         await cur.execute("DELETE FROM smart_canvases WHERE user_id=%s", (user_id,))
-        await cur.execute("DELETE FROM asset_categories WHERE library_id IN (SELECT id FROM asset_libraries WHERE user_id=%s)", (user_id,))
+        await cur.execute(
+            "DELETE FROM asset_categories WHERE library_id IN (SELECT id FROM asset_libraries WHERE user_id=%s)",
+            (user_id,),
+        )
         await cur.execute("DELETE FROM asset_libraries WHERE user_id=%s", (user_id,))
         await cur.execute("DELETE FROM feedback_entries WHERE user_id=%s", (user_id,))
         await cur.execute("DELETE FROM user_settings WHERE user_id=%s", (user_id,))
-        await cur.execute("DELETE FROM files WHERE user_id=%s AND NOT EXISTS (SELECT 1 FROM history_record_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM conversation_message_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id=files.id) RETURNING *", (user_id,))
+        await cur.execute(
+            "DELETE FROM files WHERE user_id=%s AND NOT EXISTS (SELECT 1 FROM history_record_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM conversation_message_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM smart_canvas_node_files WHERE file_id=files.id) AND NOT EXISTS (SELECT 1 FROM asset_items WHERE file_id=files.id) RETURNING *",
+            (user_id,),
+        )
         deleted_files = await cur.fetchall()
         await cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
         if not cur.rowcount:
@@ -332,7 +366,9 @@ async def session_last_seen_flush_loop() -> None:
                     extra={"event": "session_last_seen_flushed", "count": flushed},
                 )
         except RedisUnavailableError:
-            logger.exception("Redis unavailable during last_seen flush", extra={"event": "session_last_seen_flush_failed"})
+            logger.exception(
+                "Redis unavailable during last_seen flush", extra={"event": "session_last_seen_flush_failed"}
+            )
         except Exception:
             logger.exception("session last_seen flush failed", extra={"event": "session_last_seen_flush_failed"})
 

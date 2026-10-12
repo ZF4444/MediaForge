@@ -47,7 +47,10 @@ def write_help_markdown(content: str, page: str | None = None) -> str:
     text = str(content or "")
     with HELP_LOCK:
         with metadata_connection() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO help_pages(slug,content,updated_at) VALUES(%s,%s,%s) ON CONFLICT(slug) DO UPDATE SET content=EXCLUDED.content,updated_at=EXCLUDED.updated_at", (page, text, now_ms()))
+            cur.execute(
+                "INSERT INTO help_pages(slug,content,updated_at) VALUES(%s,%s,%s) ON CONFLICT(slug) DO UPDATE SET content=EXCLUDED.content,updated_at=EXCLUDED.updated_at",
+                (page, text, now_ms()),
+            )
     return text
 
 

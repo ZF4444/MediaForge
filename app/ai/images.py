@@ -1,4 +1,5 @@
 """Stable-target image gateway over the protocol adapter registry."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

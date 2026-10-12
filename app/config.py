@@ -5,6 +5,7 @@
 注意 BASE_DIR：本文件位于 app/ 下，项目根是其上一级目录，
 因此用 dirname(dirname(__file__)) 还原出与原 main.py 相同的 BASE_DIR。
 """
+
 import os
 import tempfile
 import uuid
@@ -53,7 +54,9 @@ REDIS_CANVAS_TASK_PREFIX = str(os.getenv("REDIS_CANVAS_TASK_PREFIX", "mediaforge
 REDIS_CANVAS_TASK_TTL_SECONDS = max(300, int(os.getenv("REDIS_CANVAS_TASK_TTL_SECONDS", str(7 * 24 * 60 * 60))))
 CANVAS_TASK_TIMEOUT_SECONDS = max(30, int(os.getenv("CANVAS_TASK_TIMEOUT_SECONDS", "900")))
 REDIS_CANVAS_TASK_LEASE_SECONDS = max(15, int(os.getenv("REDIS_CANVAS_TASK_LEASE_SECONDS", "90")))
-REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS = max(5, int(os.getenv("REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS", "15")))
+REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS = max(
+    5, int(os.getenv("REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS", "15"))
+)
 REDIS_CANVAS_TASK_STREAM = str(os.getenv("REDIS_CANVAS_TASK_STREAM", "mediaforge:canvas-task:queue")).strip()
 REDIS_CANVAS_TASK_CONSUMER_GROUP = str(os.getenv("REDIS_CANVAS_TASK_CONSUMER_GROUP", "canvas-workers")).strip()
 REDIS_WEBSOCKET_CHANNEL = str(os.getenv("REDIS_WEBSOCKET_CHANNEL", "mediaforge:websocket-events")).strip()
@@ -62,13 +65,30 @@ AGENT_EVENT_OUTBOX_POLL_SECONDS = max(0.05, float(os.getenv("AGENT_EVENT_OUTBOX_
 AGENT_EVENT_OUTBOX_BATCH_SIZE = max(1, int(os.getenv("AGENT_EVENT_OUTBOX_BATCH_SIZE", "100")))
 AGENT_EVENT_TOOL_GROUP_TIMEOUT_SECONDS = max(30, int(os.getenv("AGENT_EVENT_TOOL_GROUP_TIMEOUT_SECONDS", "300")))
 AGENT_EVENT_TOOL_GROUP_SCAN_SECONDS = max(5, int(os.getenv("AGENT_EVENT_TOOL_GROUP_SCAN_SECONDS", "15")))
-AGENT_COMMAND_WORKER_ENABLED = str(os.getenv("AGENT_COMMAND_WORKER_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+AGENT_COMMAND_WORKER_ENABLED = str(os.getenv("AGENT_COMMAND_WORKER_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 AGENT_COMMAND_POLL_SECONDS = max(0.05, float(os.getenv("AGENT_COMMAND_POLL_SECONDS", "0.25")))
 REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS = max(30, int(os.getenv("REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS", "120")))
-REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS = max(1_000, int(os.getenv("REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS", "120000")))
+REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS = max(
+    1_000, int(os.getenv("REDIS_CANVAS_TASK_PENDING_CLAIM_IDLE_MS", "120000"))
+)
 REDIS_CANVAS_TASK_STREAM_MAXLEN = max(1_000, int(os.getenv("REDIS_CANVAS_TASK_STREAM_MAXLEN", "10000")))
-CANVAS_TASK_WORKER_ENABLED = str(os.getenv("CANVAS_TASK_WORKER_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
-CANVAS_TASK_RECOVERY_ENABLED = str(os.getenv("CANVAS_TASK_RECOVERY_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+CANVAS_TASK_WORKER_ENABLED = str(os.getenv("CANVAS_TASK_WORKER_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+CANVAS_TASK_RECOVERY_ENABLED = str(os.getenv("CANVAS_TASK_RECOVERY_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 CANVAS_TASK_WORKER_CONCURRENCY = max(1, int(os.getenv("CANVAS_TASK_WORKER_CONCURRENCY", "100")))
 MINIO_ENDPOINT = str(os.getenv("MINIO_ENDPOINT", "")).strip()
 MINIO_ACCESS_KEY = str(os.getenv("MINIO_ACCESS_KEY", "")).strip()
@@ -96,9 +116,12 @@ MINIO_BUCKET_TEMP = str(os.getenv("MINIO_BUCKET_TEMP", "mediaforge-temp")).strip
 STORAGE_CACHE_DIR = str(
     os.getenv("STORAGE_CACHE_DIR", os.path.join(tempfile.gettempdir(), "mediaforge-storage-cache"))
 ).strip() or os.path.join(tempfile.gettempdir(), "mediaforge-storage-cache")
-STORAGE_CACHE_CLEANUP_ENABLED = str(
-    os.getenv("STORAGE_CACHE_CLEANUP_ENABLED", "true")
-).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_CACHE_CLEANUP_ENABLED = str(os.getenv("STORAGE_CACHE_CLEANUP_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 STORAGE_CACHE_MAX_BYTES = int(os.getenv("STORAGE_CACHE_MAX_BYTES", str(20 * 1024 * 1024 * 1024)))
 STORAGE_CACHE_TARGET_BYTES = int(os.getenv("STORAGE_CACHE_TARGET_BYTES", str(15 * 1024 * 1024 * 1024)))
 STORAGE_CACHE_IDLE_TTL_SECONDS = int(os.getenv("STORAGE_CACHE_IDLE_TTL_SECONDS", str(7 * 24 * 60 * 60)))
@@ -107,16 +130,31 @@ STORAGE_CACHE_TMP_TTL_SECONDS = int(os.getenv("STORAGE_CACHE_TMP_TTL_SECONDS", "
 STORAGE_CACHE_ACCESS_GRACE_SECONDS = int(os.getenv("STORAGE_CACHE_ACCESS_GRACE_SECONDS", "900"))
 STORAGE_CACHE_MIN_FREE_BYTES = int(os.getenv("STORAGE_CACHE_MIN_FREE_BYTES", str(10 * 1024 * 1024 * 1024)))
 STORAGE_CACHE_ACCESS_TOUCH_INTERVAL_SECONDS = int(os.getenv("STORAGE_CACHE_ACCESS_TOUCH_INTERVAL_SECONDS", "300"))
-STORAGE_CACHE_ORPHAN_SCAN_ENABLED = str(os.getenv("STORAGE_CACHE_ORPHAN_SCAN_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_CACHE_ORPHAN_SCAN_ENABLED = str(os.getenv("STORAGE_CACHE_ORPHAN_SCAN_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 STORAGE_CACHE_ORPHAN_SCAN_INTERVAL_SECONDS = int(os.getenv("STORAGE_CACHE_ORPHAN_SCAN_INTERVAL_SECONDS", "86400"))
 STORAGE_CACHE_CLEANUP_BATCH_SIZE = int(os.getenv("STORAGE_CACHE_CLEANUP_BATCH_SIZE", "1000"))
 STORAGE_CACHE_DRY_RUN = str(os.getenv("STORAGE_CACHE_DRY_RUN", "false")).strip().lower() in {"1", "true", "yes", "on"}
 STORAGE_QUOTA_ENABLED = str(os.getenv("STORAGE_QUOTA_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
 STORAGE_USER_QUOTA_BYTES = int(os.getenv("STORAGE_USER_QUOTA_BYTES", str(10 * 1024 * 1024 * 1024)))
-STORAGE_CLEANUP_ENABLED = str(os.getenv("STORAGE_CLEANUP_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_CLEANUP_ENABLED = str(os.getenv("STORAGE_CLEANUP_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 STORAGE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("STORAGE_CLEANUP_INTERVAL_SECONDS", "3600"))
 STORAGE_CLEANUP_BATCH_SIZE = int(os.getenv("STORAGE_CLEANUP_BATCH_SIZE", "500"))
-STORAGE_METADATA_PURGE_ENABLED = str(os.getenv("STORAGE_METADATA_PURGE_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
+STORAGE_METADATA_PURGE_ENABLED = str(os.getenv("STORAGE_METADATA_PURGE_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 STORAGE_METADATA_PURGE_RETENTION_DAYS = int(os.getenv("STORAGE_METADATA_PURGE_RETENTION_DAYS", "7"))
 STORAGE_INPUT_RETENTION_DAYS = int(os.getenv("STORAGE_INPUT_RETENTION_DAYS", "7"))
 STORAGE_UPLOAD_RETENTION_DAYS = int(os.getenv("STORAGE_UPLOAD_RETENTION_DAYS", "7"))

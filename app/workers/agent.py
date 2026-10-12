@@ -1,4 +1,5 @@
 """Run Canvas Agent command and durable event workers without serving HTTP."""
+
 from __future__ import annotations
 
 import asyncio

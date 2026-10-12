@@ -109,6 +109,7 @@ def test_successful_quiet_poll_is_suppressed_but_error_is_logged():
     async def canvases(fail: bool = False):
         if fail:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=503)
         return {"total": 0}
 

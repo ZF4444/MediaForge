@@ -4,6 +4,7 @@
 `route_baseline.json` 逐一比对。后端拆分模块只要不改变对外路由契约，
 本测试就应保持通过；任何路径/方法的增删改都会被立即检出。
 """
+
 import json
 import os
 
@@ -21,10 +22,7 @@ def _load_baseline():
     with open(BASELINE_FILE, encoding="utf-8") as f:
         raw = json.load(f)
     # JSON 中 list 还原为可比较的 tuple
-    return sorted(
-        (p, tuple(m), t) for p, m, t in raw
-        if p not in RETIRED_ROUTES
-    )
+    return sorted((p, tuple(m), t) for p, m, t in raw if p not in RETIRED_ROUTES)
 
 
 def test_baseline_file_exists():

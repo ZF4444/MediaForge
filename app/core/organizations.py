@@ -7,6 +7,7 @@
 依赖：app.services.business_metadata（PostgreSQL 连接与建表），app.core.auth（USERS 注册表）。
 本模块不引用 FastAPI app 对象，避免循环导入。
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List

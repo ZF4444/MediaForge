@@ -4,6 +4,7 @@ These types deliberately do not know about FastAPI, environment variables, or
 historical configuration formats. Migration tooling may translate archived
 records into this domain, but runtime callers use connection/model IDs only.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -11,8 +12,14 @@ from typing import Any, Literal, Mapping
 
 
 Capability = Literal[
-    "chat", "stream_chat", "tool_calling", "generate_image", "generate_video",
-    "list_models", "run_app", "run_workflow",
+    "chat",
+    "stream_chat",
+    "tool_calling",
+    "generate_image",
+    "generate_video",
+    "list_models",
+    "run_app",
+    "run_workflow",
 ]
 ModelKind = Literal["chat", "image", "video"]
 

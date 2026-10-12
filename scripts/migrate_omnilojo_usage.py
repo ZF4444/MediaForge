@@ -4,6 +4,7 @@ This is intentionally a standalone operation rather than application-startup
 work. It is safe to run repeatedly: rows already copied are skipped by the
 ``(protocol, connection_id, upstream_log_id)`` unique key.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -13,6 +14,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 
 def _value(row, key: str, index: int = 0):
     if isinstance(row, dict):

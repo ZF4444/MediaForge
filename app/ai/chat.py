@@ -1,4 +1,5 @@
 """Connection-backed chat transport and retry helpers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,14 +20,22 @@ class ChatGateway:
     def __init__(self, *, timeout: float | httpx.Timeout = 180.0):
         self._timeout = timeout
 
-    async def complete_target(self, *, target, messages: list[dict[str, Any]], user_id: str, extra_body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    async def complete_target(
+        self, *, target, messages: list[dict[str, Any]], user_id: str, extra_body: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         from app.ai.domain import ResolvedTarget
+
         if not isinstance(target, ResolvedTarget) or target.model is None:
             raise ValueError("chat target must include a model resource")
-        return await self._execute_target(ChatCommand(target=target, messages=messages, extra_body=dict(extra_body or {})), user_id=user_id)
+        return await self._execute_target(
+            ChatCommand(target=target, messages=messages, extra_body=dict(extra_body or {})), user_id=user_id
+        )
 
-    async def stream_target(self, *, target, messages: list[dict[str, Any]], user_id: str, extra_body: Mapping[str, Any] | None = None) -> AsyncIterator[str]:
+    async def stream_target(
+        self, *, target, messages: list[dict[str, Any]], user_id: str, extra_body: Mapping[str, Any] | None = None
+    ) -> AsyncIterator[str]:
         from app.ai.domain import ResolvedTarget
+
         if not isinstance(target, ResolvedTarget) or target.model is None:
             raise ValueError("chat target must include a model resource")
         command = ChatCommand(target=target, messages=messages, stream=True, extra_body=dict(extra_body or {}))
@@ -46,18 +55,29 @@ class ChatGateway:
 
     async def _resolver_headers(self, target) -> dict[str, str]:
         from app.ai.transport import headers_for_target
+
         return dict(await asyncio.to_thread(headers_for_target, target))
 
 
 def _chat_adapter(protocol: str, timeout: float | httpx.Timeout):
     from app.ai.adapters import GeminiChatAdapter, OmnilojoChatAdapter, OpenAIChatAdapter
-    adapter_type = {"openai": OpenAIChatAdapter, "gemini": GeminiChatAdapter, "omnilojo": OmnilojoChatAdapter}.get(protocol)
+
+    adapter_type = {"openai": OpenAIChatAdapter, "gemini": GeminiChatAdapter, "omnilojo": OmnilojoChatAdapter}.get(
+        protocol
+    )
     if adapter_type is None:
         raise ValueError(f"unsupported chat protocol: {protocol}")
     return adapter_type(timeout=timeout)
 
 
-async def complete_with_retry(*, endpoint: str, headers: Mapping[str, str], body: dict[str, Any], timeout: float | httpx.Timeout = 180.0, retryable_status_codes: set[int] | None = None) -> dict[str, Any]:
+async def complete_with_retry(
+    *,
+    endpoint: str,
+    headers: Mapping[str, str],
+    body: dict[str, Any],
+    timeout: float | httpx.Timeout = 180.0,
+    retryable_status_codes: set[int] | None = None,
+) -> dict[str, Any]:
     retryable = retryable_status_codes or {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
     for attempt in range(1, retry_max_attempts() + 1):
         try:
@@ -68,7 +88,11 @@ async def complete_with_retry(*, endpoint: str, headers: Mapping[str, str], body
             return response.json()
         except (httpx.HTTPError, ValueError) as exc:
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-            if status not in retryable and not isinstance(exc, (httpx.NetworkError, httpx.TimeoutException)) or attempt == retry_max_attempts():
+            if (
+                status not in retryable
+                and not isinstance(exc, (httpx.NetworkError, httpx.TimeoutException))
+                or attempt == retry_max_attempts()
+            ):
                 raise
             await asyncio.sleep(retry_delay_seconds(attempt))
     raise AssertionError("unreachable")
@@ -96,22 +120,37 @@ def chat_body(command: ChatCommand) -> dict[str, Any]:
     return body
 
 
-async def complete(command: ChatCommand, *, actor: Actor, headers: dict[str, str], timeout: float | httpx.Timeout) -> dict[str, Any]:
+async def complete(
+    command: ChatCommand, *, actor: Actor, headers: dict[str, str], timeout: float | httpx.Timeout
+) -> dict[str, Any]:
     response = await _request(command, actor=actor, headers=headers, timeout=timeout)
     response.raise_for_status()
     return response.json()
 
 
-async def _request(command: ChatCommand, *, actor: Actor, headers: dict[str, str], timeout: float | httpx.Timeout) -> httpx.Response:
+async def _request(
+    command: ChatCommand, *, actor: Actor, headers: dict[str, str], timeout: float | httpx.Timeout
+) -> httpx.Response:
     async with connection_operation(command.target.connection.id, "llm", user_id=actor.user_id):
         async with shared_http_client(timeout=timeout) as client:
-            return await client.post(chat_completion_url(command.target.connection.base_url, command.target.protocol), headers=headers, json=chat_body(command))
+            return await client.post(
+                chat_completion_url(command.target.connection.base_url, command.target.protocol),
+                headers=headers,
+                json=chat_body(command),
+            )
 
 
-async def stream(command: ChatCommand, *, actor: Actor, headers: dict[str, str], timeout: float | httpx.Timeout) -> AsyncIterator[str]:
+async def stream(
+    command: ChatCommand, *, actor: Actor, headers: dict[str, str], timeout: float | httpx.Timeout
+) -> AsyncIterator[str]:
     async with connection_operation(command.target.connection.id, "llm", user_id=actor.user_id):
         async with shared_http_client(timeout=timeout) as client:
-            async with client.stream("POST", chat_completion_url(command.target.connection.base_url, command.target.protocol), headers=headers, json=chat_body(command)) as response:
+            async with client.stream(
+                "POST",
+                chat_completion_url(command.target.connection.base_url, command.target.protocol),
+                headers=headers,
+                json=chat_body(command),
+            ) as response:
                 if response.status_code >= 400:
                     await response.aread()
                 response.raise_for_status()

@@ -1,4 +1,5 @@
 """Omnilojo chat adapter over its OpenAI-compatible endpoint."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping

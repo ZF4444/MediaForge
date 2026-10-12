@@ -5,7 +5,8 @@ from app.services.canvas_agent.canvas_cost_estimate import enforce_budget, estim
 
 def _plan(capabilities=None, declared=0):
     return {
-        "goal": "制作产品短片", "steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "n1"}],
+        "goal": "制作产品短片",
+        "steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "n1"}],
         "execution": {"capabilities": capabilities or [], "estimated_cost": declared},
     }
 
@@ -17,4 +18,3 @@ def test_cost_estimate_is_explainable_and_enforces_budget():
     assert estimate["within_budget"] is False
     with pytest.raises(ValueError):
         enforce_budget(estimate)
-

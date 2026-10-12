@@ -1,4 +1,5 @@
 """ComfyUI asset HTTP transport."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -15,15 +16,38 @@ class ComfyUIAssetTransport:
         self._client = client
 
     async def view(self, backend: str, filename: str, *, kind: str = "input", subfolder: str = ""):
-        response = await self._client.get(self._endpoint(backend, "/view"), params={"filename": filename, "type": kind, "subfolder": subfolder}, timeout=1)
+        response = await self._client.get(
+            self._endpoint(backend, "/view"),
+            params={"filename": filename, "type": kind, "subfolder": subfolder},
+            timeout=1,
+        )
         return response
 
-    async def upload(self, backend: str, filename: str, content: bytes, content_type: str = "application/octet-stream", *, overwrite: bool = False):
+    async def upload(
+        self,
+        backend: str,
+        filename: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+        *,
+        overwrite: bool = False,
+    ):
         data = {"overwrite": "true", "type": "input"} if overwrite else None
-        return await self._client.post(self._endpoint(backend, "/upload/image"), data=data, files={"image": (filename, content, content_type)}, timeout=30 if overwrite else 5)
+        return await self._client.post(
+            self._endpoint(backend, "/upload/image"),
+            data=data,
+            files={"image": (filename, content, content_type)},
+            timeout=30 if overwrite else 5,
+        )
 
-    async def download(self, backend: str, filename: str, *, kind: str = "output", subfolder: str = "", timeout: float = 30) -> tuple[bytes, str]:
-        response = await self._client.get(self._endpoint(backend, "/view"), params={"filename": filename, "subfolder": subfolder, "type": kind}, timeout=timeout)
+    async def download(
+        self, backend: str, filename: str, *, kind: str = "output", subfolder: str = "", timeout: float = 30
+    ) -> tuple[bytes, str]:
+        response = await self._client.get(
+            self._endpoint(backend, "/view"),
+            params={"filename": filename, "subfolder": subfolder, "type": kind},
+            timeout=timeout,
+        )
         response.raise_for_status()
         return response.content, response.headers.get("content-type", "application/octet-stream")
 
@@ -43,15 +67,25 @@ class ComfyUIAssetTransport:
             return False
 
     @staticmethod
-    def upload_sync(endpoint: Callable[[str, str], str], backend: str, filename: str, content: bytes, content_type: str = "application/octet-stream") -> bool:
+    def upload_sync(
+        endpoint: Callable[[str, str], str],
+        backend: str,
+        filename: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> bool:
         try:
-            response = requests.post(endpoint(backend, "/upload/image"), files={"image": (filename, content, content_type)}, timeout=10)
+            response = requests.post(
+                endpoint(backend, "/upload/image"), files={"image": (filename, content, content_type)}, timeout=10
+            )
             return response.status_code == 200
         except Exception:
             return False
 
     @staticmethod
-    def download_sync(endpoint: Callable[[str, str], str], backend: str, filename: str, *, kind: str = "input") -> tuple[bytes, str] | None:
+    def download_sync(
+        endpoint: Callable[[str, str], str], backend: str, filename: str, *, kind: str = "input"
+    ) -> tuple[bytes, str] | None:
         try:
             query = urllib.parse.urlencode({"filename": filename, "type": kind})
             response = requests.get(endpoint(backend, f"/view?{query}"), timeout=5)

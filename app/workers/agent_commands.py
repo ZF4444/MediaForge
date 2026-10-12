@@ -1,4 +1,5 @@
 """Durable command worker for long-running Canvas Agent operations."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,14 +26,35 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 logger = get_logger("canvas_agent")
 
 
-async def _emit(user_id: str, run_id: str, operation_id: str, event_type: str, *, phase: str = "", severity: str = "info", payload: dict[str, Any] | None = None) -> None:
-    await AgentEventService.append(user_id=user_id, run_id=run_id, operation_id=operation_id, event_type=event_type, phase=phase, severity=severity, payload=payload or {})
+async def _emit(
+    user_id: str,
+    run_id: str,
+    operation_id: str,
+    event_type: str,
+    *,
+    phase: str = "",
+    severity: str = "info",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    await AgentEventService.append(
+        user_id=user_id,
+        run_id=run_id,
+        operation_id=operation_id,
+        event_type=event_type,
+        phase=phase,
+        severity=severity,
+        payload=payload or {},
+    )
 
 
 def _run_for_operation(operation_id: str) -> dict[str, Any] | None:
     from app.services.business_metadata import metadata_connection
+
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT r.* FROM canvas_agent_operations o JOIN canvas_agent_runs r ON r.id=o.run_id WHERE o.id=%s", (operation_id,))
+        cur.execute(
+            "SELECT r.* FROM canvas_agent_operations o JOIN canvas_agent_runs r ON r.id=o.run_id WHERE o.id=%s",
+            (operation_id,),
+        )
         return cur.fetchone()
 
 
@@ -81,14 +103,25 @@ async def execute_command(operation: dict[str, Any]) -> None:
     # Honor a cancellation requested after the command was claimed.
     if await asyncio.to_thread(command_cancel_requested, operation_id):
         await asyncio.to_thread(finish_command, operation_id, status="cancelled", result={})
-        await _emit(user_id, run_id, operation_id, "operation.cancelled", phase="cancelling", payload={"message": "Agent 命令已取消"})
+        await _emit(
+            user_id,
+            run_id,
+            operation_id,
+            "operation.cancelled",
+            phase="cancelling",
+            payload={"message": "Agent 命令已取消"},
+        )
         return
     phase = "confirmation" if kind == "agent.confirm" else "planning"
     username = str((USERS.get(user_id) or {}).get("username") or user_id)
     # Bind the acting user and structured log fields for the duration of the command.
     user_token = current_user_var.set(user_id)
-    log_token = set_log_context(user_id=user_id, username=username, task_id=operation_id, run_id=run_id, operation_id=operation_id)
-    await _emit(user_id, run_id, operation_id, "operation.started", phase=phase, payload={"message": "Agent 命令开始执行"})
+    log_token = set_log_context(
+        user_id=user_id, username=username, task_id=operation_id, run_id=run_id, operation_id=operation_id
+    )
+    await _emit(
+        user_id, run_id, operation_id, "operation.started", phase=phase, payload={"message": "Agent 命令开始执行"}
+    )
     token = set_current_operation(operation_id)
 
     async def renew_lease() -> None:
@@ -111,11 +144,20 @@ async def execute_command(operation: dict[str, Any]) -> None:
         else:
             raise ValueError(f"unsupported command type: {kind}")
         await asyncio.to_thread(finish_command, operation_id, status="succeeded", result=_summary(result))
-        await _emit(user_id, run_id, operation_id, "operation.succeeded", phase="execution" if kind == "agent.confirm" else "planning", payload={"message": "Agent 命令已完成"})
+        await _emit(
+            user_id,
+            run_id,
+            operation_id,
+            "operation.succeeded",
+            phase="execution" if kind == "agent.confirm" else "planning",
+            payload={"message": "Agent 命令已完成"},
+        )
     except HTTPException as exc:
         # 409 means a transient conflict (retryable), so mark blocked instead of failed.
         detail = exc.detail if isinstance(exc.detail, str) else "命令无法继续执行"
-        await asyncio.to_thread(finish_command, operation_id, status="blocked" if exc.status_code == 409 else "failed", error=str(detail))
+        await asyncio.to_thread(
+            finish_command, operation_id, status="blocked" if exc.status_code == 409 else "failed", error=str(detail)
+        )
         if exc.status_code != 409:
             await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase=phase)
         logger.error(
@@ -130,7 +172,15 @@ async def execute_command(operation: dict[str, Any]) -> None:
                 "detail": str(detail)[:500],
             },
         )
-        await _emit(user_id, run_id, operation_id, "operation.failed", phase="execution" if kind == "agent.confirm" else "planning", severity="error", payload={"message": str(detail), "status_code": exc.status_code})
+        await _emit(
+            user_id,
+            run_id,
+            operation_id,
+            "operation.failed",
+            phase="execution" if kind == "agent.confirm" else "planning",
+            severity="error",
+            payload={"message": str(detail), "status_code": exc.status_code},
+        )
     except Exception as exc:
         logger.exception(
             "canvas agent command failed",
@@ -144,7 +194,15 @@ async def execute_command(operation: dict[str, Any]) -> None:
         )
         await asyncio.to_thread(finish_command, operation_id, status="failed", error=str(exc))
         await asyncio.to_thread(update_run, user_id, run_id, status="failed", phase=phase)
-        await _emit(user_id, run_id, operation_id, "operation.failed", phase="execution" if kind == "agent.confirm" else "planning", severity="error", payload={"message": "Agent 命令执行失败", "error": str(exc)[:500]})
+        await _emit(
+            user_id,
+            run_id,
+            operation_id,
+            "operation.failed",
+            phase="execution" if kind == "agent.confirm" else "planning",
+            severity="error",
+            payload={"message": "Agent 命令执行失败", "error": str(exc)[:500]},
+        )
     finally:
         # Stop lease renewal and unwind all context tokens set for this command.
         lease_task.cancel()

@@ -7,4 +7,14 @@ from .omnilojo import OmnilojoChatAdapter, OmnilojoImageAdapter
 from .runninghub_app import RunningHubAppAdapter, RunningHubImageAdapter
 from .comfyui_workflow import ComfyUIWorkflowAdapter
 
-__all__ = ["AIAdapter", "OpenAIChatAdapter", "OpenAIImageAdapter", "GeminiChatAdapter", "OmnilojoChatAdapter", "OmnilojoImageAdapter", "RunningHubAppAdapter", "RunningHubImageAdapter", "ComfyUIWorkflowAdapter"]
+__all__ = [
+    "AIAdapter",
+    "OpenAIChatAdapter",
+    "OpenAIImageAdapter",
+    "GeminiChatAdapter",
+    "OmnilojoChatAdapter",
+    "OmnilojoImageAdapter",
+    "RunningHubAppAdapter",
+    "RunningHubImageAdapter",
+    "ComfyUIWorkflowAdapter",
+]

@@ -12,6 +12,7 @@
     }
 清空公告时文件内容为 {}。
 """
+
 import uuid
 from typing import Any, Dict, Optional
 

@@ -16,8 +16,11 @@ from app.services.canvas_agent.system_prompt import build_canvas_system_prompt
 
 def test_skill_catalog_is_injected_by_the_prompt_not_exposed_as_an_agent_tool():
     names = {
-        item.name for item in build_canvas_tools(
-            user_id="user", run_id="run", canvas_id="canvas",
+        item.name
+        for item in build_canvas_tools(
+            user_id="user",
+            run_id="run",
+            canvas_id="canvas",
         )
     }
 
@@ -38,9 +41,7 @@ def test_canvas_system_prompt_uses_tau_style_sections_and_skill_metadata():
 def test_skill_metadata_prompt_supports_explicit_skill_input_and_xml_format():
     summary = skills.SkillSummary("demo", "Demo <workflow>")
 
-    assert skills.skill_metadata_prompt([summary]) == (
-        "可用 Skill（仅元数据，未加载正文）：\n- demo: Demo <workflow>"
-    )
+    assert skills.skill_metadata_prompt([summary]) == ("可用 Skill（仅元数据，未加载正文）：\n- demo: Demo <workflow>")
     xml = skills.skill_metadata_prompt([summary], xml=True)
     assert "<name>demo</name>" in xml
     assert "Demo &lt;workflow&gt;" in xml
@@ -62,20 +63,36 @@ def test_capability_parameters_display_lookup_runs_off_event_loop(monkeypatch):
             return [ModelResource("banana2", "conn-banana", "banan2", "image", "openai", alias="Banan 2")]
 
     monkeypatch.setattr("app.ai.database_repository.DatabaseAIRepository", Repository)
-    monkeypatch.setattr(canvas_tools, "capability_parameters", lambda **_kwargs: {
-        "capability": "image.text_to_image",
-        "params_path": "runSettings",
-        "fields": [
-            {"id": "quality", "name": "Quality", "type": "dropdown", "options": ["standard", "hd"],
-             "option_labels": ["标准", "高清"], "default": "standard",
-             "execution": {"supported": True, "target": "quality", "transform": "quality"},
-             "ui": {"configurable": True}},
-            {"id": "prompt", "name": "提示词", "type": "textarea", "role": "prompt", "default": ""},
-        ],
-    })
-    tool = next(item for item in build_canvas_tools(user_id="user", run_id="run", canvas_id="canvas") if item.name == "read_capability_parameters")
+    monkeypatch.setattr(
+        canvas_tools,
+        "capability_parameters",
+        lambda **_kwargs: {
+            "capability": "image.text_to_image",
+            "params_path": "runSettings",
+            "fields": [
+                {
+                    "id": "quality",
+                    "name": "Quality",
+                    "type": "dropdown",
+                    "options": ["standard", "hd"],
+                    "option_labels": ["标准", "高清"],
+                    "default": "standard",
+                    "execution": {"supported": True, "target": "quality", "transform": "quality"},
+                    "ui": {"configurable": True},
+                },
+                {"id": "prompt", "name": "提示词", "type": "textarea", "role": "prompt", "default": ""},
+            ],
+        },
+    )
+    tool = next(
+        item
+        for item in build_canvas_tools(user_id="user", run_id="run", canvas_id="canvas")
+        if item.name == "read_capability_parameters"
+    )
 
-    result = asyncio.run(tool.ainvoke({"capability": "image.text_to_image", "connection_id": "conn-banana", "model": "banan2"}))
+    result = asyncio.run(
+        tool.ainvoke({"capability": "image.text_to_image", "connection_id": "conn-banana", "model": "banan2"})
+    )
 
     assert result["display_connection"] == "Banana"
     assert result["display_model"] == "Banan 2"
@@ -101,18 +118,36 @@ def test_execution_tool_records_a_tool_message_and_execution_result():
         return {"version": 2, "node_refs": {"create-image": "node-1"}, "run_requests": []}
 
     tools = build_canvas_tools(
-        user_id="user", run_id="run", canvas_id="canvas",
-        execute_patch=execute_patch, include_execution=True,
+        user_id="user",
+        run_id="run",
+        canvas_id="canvas",
+        execute_patch=execute_patch,
+        include_execution=True,
     )
     execute_tool = next(item for item in tools if item.name == "execute_canvas_patch")
     graph_builder = StateGraph(State)
     graph_builder.add_node("execute", ToolNode([execute_tool]))
     graph_builder.add_edge(START, "execute")
     graph_builder.add_edge("execute", END)
-    result = asyncio.run(graph_builder.compile().ainvoke({"messages": [AIMessage(content="", tool_calls=[{
-        "id": "execute-call", "name": "execute_canvas_patch",
-        "args": {"plan_version": 1, "authorized_node_ids": ["node-1"]}, "type": "tool_call",
-    }])]}))
+    result = asyncio.run(
+        graph_builder.compile().ainvoke(
+            {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "execute-call",
+                                "name": "execute_canvas_patch",
+                                "args": {"plan_version": 1, "authorized_node_ids": ["node-1"]},
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ]
+            }
+        )
+    )
 
     assert result["execution_result"]["node_refs"] == {"create-image": "node-1"}
     message = next(item for item in result["messages"] if isinstance(item, ToolMessage))
@@ -206,12 +241,28 @@ def test_skill_tools_write_loaded_state_and_require_level_two_before_level_three
         async def ainvoke(self, _messages):
             self.calls += 1
             if self.calls == 1:
-                return AIMessage(content="", tool_calls=[{"name": "read_canvas_skill", "args": {"name": "canvas-capabilities"}, "id": "call-skill", "type": "tool_call"}])
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "read_canvas_skill",
+                            "args": {"name": "canvas-capabilities"},
+                            "id": "call-skill",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
             return AIMessage(content="done")
 
-    result = asyncio.run(create_canvas_agent(model=Model(), user_id="user", run_id="run", canvas_id="canvas", tools=tools, emit_progress=emit).ainvoke({"messages": []}))
+    result = asyncio.run(
+        create_canvas_agent(
+            model=Model(), user_id="user", run_id="run", canvas_id="canvas", tools=tools, emit_progress=emit
+        ).ainvoke({"messages": []})
+    )
     assert result["loaded_skills"][0]["name"] == "canvas-capabilities"
-    assert any(message.tool_call_id == "call-skill" for message in result["messages"] if hasattr(message, "tool_call_id"))
+    assert any(
+        message.tool_call_id == "call-skill" for message in result["messages"] if hasattr(message, "tool_call_id")
+    )
     # The tool node now owns emission: the skill event is wrapped by the
     # tool group envelope (started -> skill.loaded -> completed).
     assert [event for event in events if event.startswith("skill.")] == ["skill.loaded"]
@@ -236,31 +287,49 @@ def test_skill_file_tool_requires_loaded_skill_and_reads_reference_progressively
         async def ainvoke(self, _messages):
             self.calls += 1
             if self.calls == 1:
-                return AIMessage(content="", tool_calls=[{
-                    "name": "read_canvas_skill",
-                    "args": {"name": "canvas-capabilities"},
-                    "id": "call-skill",
-                    "type": "tool_call",
-                }])
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "read_canvas_skill",
+                            "args": {"name": "canvas-capabilities"},
+                            "id": "call-skill",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
             if self.calls == 2:
-                return AIMessage(content="", tool_calls=[{
-                    "name": "read_canvas_skill_file",
-                    "args": {
-                        "skill_name": "canvas-capabilities",
-                        "path": "references/capability-reading.md",
-                        "limit": 1,
-                    },
-                    "id": "call-reference",
-                    "type": "tool_call",
-                }])
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "read_canvas_skill_file",
+                            "args": {
+                                "skill_name": "canvas-capabilities",
+                                "path": "references/capability-reading.md",
+                                "limit": 1,
+                            },
+                            "id": "call-reference",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
             return AIMessage(content="done")
 
-    result = asyncio.run(create_canvas_agent(
-        model=Model(), user_id="user", run_id="run", canvas_id="canvas", tools=tools, emit_progress=emit,
-    ).ainvoke({"messages": []}))
+    result = asyncio.run(
+        create_canvas_agent(
+            model=Model(),
+            user_id="user",
+            run_id="run",
+            canvas_id="canvas",
+            tools=tools,
+            emit_progress=emit,
+        ).ainvoke({"messages": []})
+    )
 
     reference_message = next(
-        message for message in result["messages"]
+        message
+        for message in result["messages"]
         if isinstance(message, ToolMessage) and message.tool_call_id == "call-reference"
     )
     assert "[内容未完；使用 offset=2 继续读取。]" in reference_message.content
@@ -271,9 +340,13 @@ def test_skill_file_tool_rejects_a_skill_that_was_not_loaded():
     from app.services.canvas_agent.event_factory import skill_event_from_artifact
 
     tool = next(
-        item for item in build_canvas_tools(
-            user_id="user", run_id="run", canvas_id="canvas",
-        ) if item.name == "read_canvas_skill_file"
+        item
+        for item in build_canvas_tools(
+            user_id="user",
+            run_id="run",
+            canvas_id="canvas",
+        )
+        if item.name == "read_canvas_skill_file"
     )
 
     class State(TypedDict):
@@ -284,21 +357,33 @@ def test_skill_file_tool_rejects_a_skill_that_was_not_loaded():
     graph_builder.add_node("read", ToolNode([tool]))
     graph_builder.add_edge(START, "read")
     graph_builder.add_edge("read", END)
-    result = asyncio.run(graph_builder.compile().ainvoke({
-        "loaded_skills": [],
-        "messages": [AIMessage(content="", tool_calls=[{
-            "id": "call-unloaded-resource",
-            "name": "read_canvas_skill_file",
-            "args": {
-                "skill_name": "canvas-capabilities",
-                "path": "references/capability-reading.md",
-            },
-            "type": "tool_call",
-        }])],
-    }))
+    result = asyncio.run(
+        graph_builder.compile().ainvoke(
+            {
+                "loaded_skills": [],
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "call-unloaded-resource",
+                                "name": "read_canvas_skill_file",
+                                "args": {
+                                    "skill_name": "canvas-capabilities",
+                                    "path": "references/capability-reading.md",
+                                },
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ],
+            }
+        )
+    )
 
     message = next(
-        item for item in result["messages"]
+        item
+        for item in result["messages"]
         if isinstance(item, ToolMessage) and item.tool_call_id == "call-unloaded-resource"
     )
     assert "必须先读取对应的 Skill 正文" in message.content

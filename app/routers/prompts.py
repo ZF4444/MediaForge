@@ -8,6 +8,7 @@
 - app.core.utils：now_ms
 - app.models：提示词相关请求模型
 """
+
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -122,15 +123,17 @@ def add_prompt_library_item(payload: PromptLibraryItemRequest):
     category = payload.category
     if str(category or "").strip() == "builtin" and not _current_user_is_admin():
         category = "custom"
-    item = normalize_prompt_library_item({
-        "id": f"tpl_{uuid.uuid4().hex[:12]}",
-        "name": payload.name,
-        "category": category,
-        "prompt": payload.prompt,
-        "scene": payload.scene,
-        "created_at": now_ms(),
-        "updated_at": now_ms(),
-    })
+    item = normalize_prompt_library_item(
+        {
+            "id": f"tpl_{uuid.uuid4().hex[:12]}",
+            "name": payload.name,
+            "category": category,
+            "prompt": payload.prompt,
+            "scene": payload.scene,
+            "created_at": now_ms(),
+            "updated_at": now_ms(),
+        }
+    )
     library.setdefault("items", []).insert(0, item)
     data["active_library_id"] = library.get("id") or data.get("active_library_id")
     data = _save_prompt_libraries_for(data, library.get("id"))
@@ -150,14 +153,16 @@ def update_prompt_library_item(item_id: str, payload: PromptLibraryItemRequest):
                 category = payload.category or item.get("category")
                 if str(category or "").strip() == "builtin" and not _current_user_is_admin():
                     category = "custom"
-                next_item = normalize_prompt_library_item({
-                    **item,
-                    "name": payload.name or item.get("name"),
-                    "category": category,
-                    "prompt": payload.prompt or item.get("prompt"),
-                    "scene": payload.scene,
-                    "updated_at": now_ms(),
-                })
+                next_item = normalize_prompt_library_item(
+                    {
+                        **item,
+                        "name": payload.name or item.get("name"),
+                        "category": category,
+                        "prompt": payload.prompt or item.get("prompt"),
+                        "scene": payload.scene,
+                        "updated_at": now_ms(),
+                    }
+                )
                 library["items"][index] = next_item
                 data = _save_prompt_libraries_for(data, library.get("id"))
                 return {"library": public_prompt_libraries(data), "item": next_item}
@@ -220,7 +225,9 @@ def add_prompt_library_category(payload: PromptLibraryCategoryRequest):
     if not library:
         raise HTTPException(status_code=404, detail="提示词库不存在")
     name = sanitize_asset_name(payload.name, "新分组")
-    existing = {str(c.get("id")) for c in (library.get("categories") or []) if isinstance(c, dict)} | PROMPT_BUILTIN_CATEGORY_IDS
+    existing = {
+        str(c.get("id")) for c in (library.get("categories") or []) if isinstance(c, dict)
+    } | PROMPT_BUILTIN_CATEGORY_IDS
     cat_id = f"pcat_{uuid.uuid4().hex[:10]}"
     while cat_id in existing:
         cat_id = f"pcat_{uuid.uuid4().hex[:10]}"

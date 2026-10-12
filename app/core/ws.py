@@ -40,7 +40,11 @@ class ConnectionManager:
             self.user_connections[(user_id, client_id)].add(websocket)
         logger.info(
             "websocket connected",
-            extra={"event": "websocket_connected", "connection_count": len(self.active_connections), "online_count": self.online_count()},
+            extra={
+                "event": "websocket_connected",
+                "connection_count": len(self.active_connections),
+                "online_count": self.online_count(),
+            },
         )
         await self.broadcast_count()
 
@@ -57,7 +61,11 @@ class ConnectionManager:
                     self.user_connections.pop(key, None)
         logger.info(
             "websocket disconnected",
-            extra={"event": "websocket_disconnected", "connection_count": len(self.active_connections), "online_count": self.online_count()},
+            extra={
+                "event": "websocket_disconnected",
+                "connection_count": len(self.active_connections),
+                "online_count": self.online_count(),
+            },
         )
         await self.broadcast_count()
 
@@ -69,7 +77,9 @@ class ConnectionManager:
             try:
                 await connection.send_text(data)
             except Exception:
-                logger.exception("websocket broadcast failed", extra={"event": "websocket_broadcast_failed", "broadcast_type": event})
+                logger.exception(
+                    "websocket broadcast failed", extra={"event": "websocket_broadcast_failed", "broadcast_type": event}
+                )
                 await self.disconnect(connection)
 
     async def broadcast_count(self) -> None:
@@ -81,7 +91,9 @@ class ConnectionManager:
 
     async def broadcast_to_user(self, user_id: str, message: dict, event: str) -> None:
         if not user_id:
-            logger.warning("refused unscoped websocket event", extra={"event": "websocket_unscoped_event", "broadcast_type": event})
+            logger.warning(
+                "refused unscoped websocket event", extra={"event": "websocket_unscoped_event", "broadcast_type": event}
+            )
             return
         connections = {ws for ws, owner in self.connection_users.items() if owner == user_id}
         await self._send(connections, json.dumps(message), event)
@@ -117,12 +129,16 @@ class ConnectionManager:
         if not client_id or not user_id:
             return
         await self._publish("personal", {"user_id": user_id, "client_id": client_id, "message": message})
-        await self._send(self.user_connections.get((user_id, str(client_id)[:128]), set()), json.dumps(message), "personal")
+        await self._send(
+            self.user_connections.get((user_id, str(client_id)[:128]), set()), json.dumps(message), "personal"
+        )
 
     async def deliver_remote_event(self, event: str, payload: dict) -> None:
         """Deliver a Pub/Sub event locally without publishing it again."""
         if event == "new_image":
-            await self.broadcast_to_user(str(payload.get("user_id") or ""), {"type": "new_image", "data": payload.get("image_data") or {}}, event)
+            await self.broadcast_to_user(
+                str(payload.get("user_id") or ""), {"type": "new_image", "data": payload.get("image_data") or {}}, event
+            )
         elif event in {"canvas_updated", "asset_library_updated"}:
             await self.broadcast_to_user(str(payload.get("user_id") or ""), payload.get("message") or {}, event)
         elif event == "personal":

@@ -11,6 +11,7 @@
 - app.core.ws：manager（广播素材库更新）
 - app.core.shared_state：get_global_loop（运行期事件循环）
 """
+
 import asyncio
 import json
 import os
@@ -45,12 +46,14 @@ def normalize_asset_library(lib):
     legacy_categories = lib.get("categories") if isinstance(lib.get("categories"), list) else None
     libraries = lib.get("libraries") if isinstance(lib.get("libraries"), list) else []
     if not libraries:
-        libraries = [{
-            "id": "default",
-            "name": "默认资产库",
-            "type": "asset",
-            "categories": legacy_categories or default_asset_library()["categories"],
-        }]
+        libraries = [
+            {
+                "id": "default",
+                "name": "默认资产库",
+                "type": "asset",
+                "categories": legacy_categories or default_asset_library()["categories"],
+            }
+        ]
     for library in libraries:
         library["id"] = re.sub(r"[^A-Za-z0-9_-]+", "_", str(library.get("id") or f"lib_{uuid.uuid4().hex[:8]}"))[:40]
         library["name"] = sanitize_asset_name(library.get("name") or "资产库", "资产库")
@@ -58,7 +61,7 @@ def normalize_asset_library(lib):
         if not any(c.get("type") == "workflow" for c in cats):
             cats.append({"id": "workflows", "name": "工作流", "type": "workflow", "items": []})
         for cat in cats:
-            for item in (cat.get("items") or []):
+            for item in cat.get("items") or []:
                 migrate_asset_item_registrations(item)
                 normalize_asset_item_reference(item)
         library["categories"] = cats
@@ -74,8 +77,17 @@ def normalize_asset_library(lib):
     return lib
 
 
-AVATAR_LEGACY_FLAT_FIELDS = ("platform", "provider_id", "project_name", "avatar_task_id",
-                             "avatar_status", "avatar_detail", "asset_uri", "asset_id", "registered_at")
+AVATAR_LEGACY_FLAT_FIELDS = (
+    "platform",
+    "provider_id",
+    "project_name",
+    "avatar_task_id",
+    "avatar_status",
+    "avatar_detail",
+    "asset_uri",
+    "asset_id",
+    "registered_at",
+)
 
 
 def migrate_asset_item_registrations(item):
@@ -123,12 +135,14 @@ def compact_asset_item_reference(item):
     if not isinstance(item, dict):
         return item
     compacted = dict(item)
-    media_ref = compact_media_ref({
-        "file_id": compacted.get("file_id") or "",
-        "url": compacted.get("url") or "",
-        "name": compacted.get("name") or "",
-        "kind": compacted.get("kind") or "",
-    })
+    media_ref = compact_media_ref(
+        {
+            "file_id": compacted.get("file_id") or "",
+            "url": compacted.get("url") or "",
+            "name": compacted.get("name") or "",
+            "kind": compacted.get("kind") or "",
+        }
+    )
     compacted["file_id"] = media_ref.get("file_id", "")
     compacted.pop("url", None)
     return compacted
@@ -137,8 +151,12 @@ def compact_asset_item_reference(item):
 def load_asset_library():
     from app.services.business_metadata import metadata_connection
     from app.core.auth import current_user_id
+
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT payload_json FROM asset_libraries WHERE user_id=%s ORDER BY is_default DESC, created_at LIMIT 1", (current_user_id(),))
+        cur.execute(
+            "SELECT payload_json FROM asset_libraries WHERE user_id=%s ORDER BY is_default DESC, created_at LIMIT 1",
+            (current_user_id(),),
+        )
         row = cur.fetchone()
     if row and row.get("payload_json"):
         return normalize_asset_library(row["payload_json"])
@@ -156,6 +174,7 @@ def sort_asset_library_items(lib):
         seen.add(id(cat))
         items = cat.get("items")
         if isinstance(items, list):
+
             def created_at_key(item):
                 if not isinstance(item, dict):
                     return 0
@@ -163,6 +182,7 @@ def sort_asset_library_items(lib):
                     return int(float(item.get("created_at") or 0))
                 except (TypeError, ValueError):
                     return 0
+
             items.sort(key=created_at_key, reverse=True)
 
 
@@ -226,15 +246,29 @@ def save_asset_library(lib):
                 cat["items"][index] = compact_asset_item_reference(item)
     from app.services.business_metadata import metadata_connection
     from app.core.auth import current_user_id
+
     uid = current_user_id()
     envelope_id = "default_" + uid
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("INSERT INTO asset_libraries(id,user_id,name,type,is_default,created_at,updated_at,payload_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET updated_at=EXCLUDED.updated_at,payload_json=EXCLUDED.payload_json", (envelope_id, uid, "默认资产库", "asset", True, lib.get("updated_at", now_ms()), lib.get("updated_at", now_ms()), json.dumps(persisted, ensure_ascii=False)))
+        cur.execute(
+            "INSERT INTO asset_libraries(id,user_id,name,type,is_default,created_at,updated_at,payload_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET updated_at=EXCLUDED.updated_at,payload_json=EXCLUDED.payload_json",
+            (
+                envelope_id,
+                uid,
+                "默认资产库",
+                "asset",
+                True,
+                lib.get("updated_at", now_ms()),
+                lib.get("updated_at", now_ms()),
+                json.dumps(persisted, ensure_ascii=False),
+            ),
+        )
         sync_asset_library_rows(cur, envelope_id, persisted, int(lib["updated_at"]))
     loop = get_global_loop()
     if loop:
         asyncio.run_coroutine_threadsafe(
-            manager.broadcast_asset_library_updated(int(lib["updated_at"]), uid), loop,
+            manager.broadcast_asset_library_updated(int(lib["updated_at"]), uid),
+            loop,
         )
 
 
@@ -244,14 +278,38 @@ def sync_asset_library_rows(cur, envelope_id: str, lib: Dict[str, Any], timestam
     for library_order, library in enumerate(lib.get("libraries") or []):
         for category_order, category in enumerate(library.get("categories") or []):
             category_id = f"{envelope_id}:{library.get('id', library_order)}:{category.get('id', category_order)}"
-            cur.execute("INSERT INTO asset_categories(id,library_id,name,type,sort_order,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s)", (category_id, envelope_id, category.get("name", ""), category.get("type", "image"), category_order, timestamp, timestamp))
+            cur.execute(
+                "INSERT INTO asset_categories(id,library_id,name,type,sort_order,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    category_id,
+                    envelope_id,
+                    category.get("name", ""),
+                    category.get("type", "image"),
+                    category_order,
+                    timestamp,
+                    timestamp,
+                ),
+            )
             for item_order, item in enumerate(category.get("items") or []):
                 file_id = str(item.get("file_id") or "").strip()
                 if not file_id:
                     continue
                 item_id = f"{category_id}:{item.get('id', item_order)}"
                 extra = {k: v for k, v in item.items() if k not in {"file_id", "name", "kind", "created_at"}}
-                cur.execute("INSERT INTO asset_items(id,category_id,file_id,name,kind,created_at,updated_at,extra_json) SELECT %s,%s,%s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE)", (item_id, category_id, file_id, item.get("name", ""), item.get("kind", "file"), int(item.get("created_at") or timestamp), timestamp, json.dumps(extra, ensure_ascii=False), file_id))
+                cur.execute(
+                    "INSERT INTO asset_items(id,category_id,file_id,name,kind,created_at,updated_at,extra_json) SELECT %s,%s,%s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM files WHERE id=%s AND deleted_at IS NULL AND status <> 'deleted' FOR KEY SHARE)",
+                    (
+                        item_id,
+                        category_id,
+                        file_id,
+                        item.get("name", ""),
+                        item.get("kind", "file"),
+                        int(item.get("created_at") or timestamp),
+                        timestamp,
+                        json.dumps(extra, ensure_ascii=False),
+                        file_id,
+                    ),
+                )
 
 
 def find_asset_category(lib, category_id):
@@ -264,7 +322,10 @@ def find_asset_category(lib, category_id):
 def find_asset_library(lib, library_id=""):
     lib = normalize_asset_library(lib)
     library_id = str(library_id or lib.get("active_library_id") or "").strip()
-    return next((item for item in lib.get("libraries", []) if item.get("id") == library_id), None) or (lib.get("libraries") or [None])[0]
+    return (
+        next((item for item in lib.get("libraries", []) if item.get("id") == library_id), None)
+        or (lib.get("libraries") or [None])[0]
+    )
 
 
 def find_asset_category_in_library(lib, category_id, library_id=""):

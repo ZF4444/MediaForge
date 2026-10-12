@@ -1,4 +1,5 @@
 """Protocol-neutral dispatch registry for executable AI capabilities."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

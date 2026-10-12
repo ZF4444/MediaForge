@@ -1,4 +1,5 @@
 """Cross-process delivery for durable Canvas Agent events."""
+
 from __future__ import annotations
 
 import asyncio

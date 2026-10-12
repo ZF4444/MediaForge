@@ -1,4 +1,5 @@
 """OpenAI-compatible chat protocol adapter."""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
@@ -58,11 +59,24 @@ class OpenAIImageAdapter:
     @staticmethod
     def split_references(references: list[dict[str, Any]] | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         refs = [item for item in (references or []) if item.get("url")]
-        masks = [item for item in refs if str(item.get("role") or "").lower() == "mask" or str(item.get("name") or "").lower().endswith("_mask.png")]
+        masks = [
+            item
+            for item in refs
+            if str(item.get("role") or "").lower() == "mask"
+            or str(item.get("name") or "").lower().endswith("_mask.png")
+        ]
         return [item for item in refs if item not in masks], masks
 
     @staticmethod
-    def generation_body(*, model: str, prompt: str, size: str, quality: str = "", gpt_image_2: bool = False, image: list[str] | None = None) -> dict[str, Any]:
+    def generation_body(
+        *,
+        model: str,
+        prompt: str,
+        size: str,
+        quality: str = "",
+        gpt_image_2: bool = False,
+        image: list[str] | None = None,
+    ) -> dict[str, Any]:
         body: dict[str, Any] = {"model": model, "prompt": prompt, "size": size}
         if not gpt_image_2:
             body.update({"response_format": "url", "n": 1})
@@ -75,5 +89,9 @@ class OpenAIImageAdapter:
         return body
 
     @staticmethod
-    def edit_fields(*, model: str, prompt: str, size: str, quality: str = "", gpt_image_2: bool = False) -> dict[str, Any]:
-        return OpenAIImageAdapter.generation_body(model=model, prompt=prompt, size=size, quality=quality, gpt_image_2=gpt_image_2)
+    def edit_fields(
+        *, model: str, prompt: str, size: str, quality: str = "", gpt_image_2: bool = False
+    ) -> dict[str, Any]:
+        return OpenAIImageAdapter.generation_body(
+            model=model, prompt=prompt, size=size, quality=quality, gpt_image_2=gpt_image_2
+        )

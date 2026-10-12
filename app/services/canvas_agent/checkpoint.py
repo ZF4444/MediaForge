@@ -1,11 +1,14 @@
 """Optional PostgreSQL checkpointer factory; business tables remain authoritative."""
+
 from __future__ import annotations
 from contextlib import asynccontextmanager, contextmanager
 from app.config import DATABASE_URL
 
+
 @contextmanager
 def create_checkpointer():
-    if not DATABASE_URL: raise RuntimeError("DATABASE_URL is required for the Agent checkpointer")
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is required for the Agent checkpointer")
     try:
         from langgraph.checkpoint.postgres import PostgresSaver
     except ImportError as exc:

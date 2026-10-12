@@ -1,4 +1,5 @@
 """Provider usage and organization budget endpoints."""
+
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -61,7 +62,13 @@ def organization_budget_update(org_id: str, payload: dict[str, Any]):
         result = set_organization_budget(org_id, payload.get("monthly_budget_cny", 0), bool(payload.get("enabled")))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    audit_event("organization_budget_updated", action="update", resource_type="organization_budget", resource_id=org_id, after=result)
+    audit_event(
+        "organization_budget_updated",
+        action="update",
+        resource_type="organization_budget",
+        resource_id=org_id,
+        after=result,
+    )
     return {"ok": True, "budget": result}
 
 
@@ -96,5 +103,7 @@ def new_user_budget_update(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail="预算金额必须为非负数且不能过大。")
     value = {"monthly_budget_usd": amount, "enabled": bool(payload.get("enabled", True))}
     set_app_setting("new_user_budget", value)
-    audit_event("new_user_budget_updated", action="update", resource_type="setting", resource_id="new_user_budget", after=value)
+    audit_event(
+        "new_user_budget_updated", action="update", resource_type="setting", resource_id="new_user_budget", after=value
+    )
     return {"ok": True, **value}

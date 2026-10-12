@@ -3,6 +3,7 @@
 每个前端页面拥有独立的帮助内容，通过 `page` 查询参数区分（例如 index、
 canvas、asset-manager 等）。未传或非法的 page 会回退到默认页 "index"。
 """
+
 from fastapi import APIRouter, HTTPException
 
 from app.core.access_control import has_page_access

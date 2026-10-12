@@ -29,7 +29,16 @@ def test_event_contract_rejects_unknown_types_and_redacts_secrets():
 
 
 def test_event_envelope_has_stable_client_fields():
-    envelope = event_envelope({"id": "evt", "run_id": "run", "sequence": 2, "type": "progress.agent", "created_at": 1, "payload_json": {"message": "working"}})
+    envelope = event_envelope(
+        {
+            "id": "evt",
+            "run_id": "run",
+            "sequence": 2,
+            "type": "progress.agent",
+            "created_at": 1,
+            "payload_json": {"message": "working"},
+        }
+    )
     assert envelope["schema_version"] == 1
     assert envelope["run_id"] == "run"
     assert envelope["payload"]["message"] == "working"
@@ -156,34 +165,66 @@ def test_agent_task_projection_keeps_structured_media_and_clears_terminal_state(
                 updates.append(projected)
                 node.clear()
                 node.update(projected)
+
         def fetchone(self):
-            if not hasattr(self, "calls"): self.calls = 0
+            if not hasattr(self, "calls"):
+                self.calls = 0
             self.calls += 1
-            if self.calls == 1: return {"canvas_id": "canvas-1"}
-            if self.calls == 2: return {"data_json": node}
+            if self.calls == 1:
+                return {"canvas_id": "canvas-1"}
+            if self.calls == 2:
+                return {"data_json": node}
             return {"version": 2}
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
 
     class Connection:
-        def cursor(self): return Cursor()
-        def transaction(self): return self
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
+        def cursor(self):
+            return Cursor()
+
+        def transaction(self):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
 
     monkeypatch.setattr(events, "metadata_connection", lambda: Connection())
     queued = {"task_id": "task-1", "node_id": "node-1", "status": "queued", "kind": "image", "expected_count": 1}
     assert events._project_task_to_canvas("user", "run", queued) == 2
-    assert updates[-1]["pendingTasks"] == [{"taskId": "task-1", "kind": "image", "connectionId": "", "modelId": "", "resourceId": "", "expectedCount": 1, "status": "queued"}]
+    assert updates[-1]["pendingTasks"] == [
+        {
+            "taskId": "task-1",
+            "kind": "image",
+            "connectionId": "",
+            "modelId": "",
+            "resourceId": "",
+            "expectedCount": 1,
+            "status": "queued",
+        }
+    ]
     assert updates[-1]["queued"] is True
     assert updates[-1]["runStartedAt"] > 0
     started_at = updates[-1]["runStartedAt"]
 
-    assert events._project_task_to_canvas("user", "run", {"task_id": "task-1", "node_id": "node-1", "status": "running"}) == 2
+    assert (
+        events._project_task_to_canvas("user", "run", {"task_id": "task-1", "node_id": "node-1", "status": "running"})
+        == 2
+    )
     assert updates[-1]["pendingTasks"][0]["expectedCount"] == 1
     assert updates[-1]["running"] is True
 
-    succeeded = {**queued, "status": "succeeded", "result": {"image_items": [{"file_id": "image-1", "natural_w": 864, "natural_h": 1536}]}}
+    succeeded = {
+        **queued,
+        "status": "succeeded",
+        "result": {"image_items": [{"file_id": "image-1", "natural_w": 864, "natural_h": 1536}]},
+    }
     assert events._project_task_to_canvas("user", "run", succeeded) == 2
     assert updates[-1]["images"] == [{"file_id": "image-1", "natural_w": 864, "natural_h": 1536}]
     assert updates[-1]["pending"] == 0

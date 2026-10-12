@@ -5,6 +5,7 @@ transaction: archive the legacy setting, migrate task/canvas references to
 stable IDs, copy encrypted secrets to ``ai_connection_secrets`` and remove
 ``app_settings.api_providers``. ``--rollback`` restores the archived setting.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,7 +47,16 @@ def _contains_secret(value) -> bool:
         return any(_contains_secret(item) for item in value)
     if not isinstance(value, dict):
         return False
-    secret_names = {"api_key", "apikey", "secret", "secret_key", "access_key", "access_key_id", "secret_access_key", "token"}
+    secret_names = {
+        "api_key",
+        "apikey",
+        "secret",
+        "secret_key",
+        "access_key",
+        "access_key_id",
+        "secret_access_key",
+        "token",
+    }
     for key, item in value.items():
         normalized = str(key).replace("-", "_").lower()
         if normalized in secret_names and item:
@@ -61,18 +71,29 @@ def _contains_secret(value) -> bool:
 def apply() -> dict:
     initialize_business_metadata()
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("CREATE TABLE IF NOT EXISTS ai_cutover_archive (id BIGSERIAL PRIMARY KEY, archived_at BIGINT NOT NULL, api_providers JSONB NOT NULL)")
-        cur.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='ai_legacy_mappings'")
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS ai_cutover_archive (id BIGSERIAL PRIMARY KEY, archived_at BIGINT NOT NULL, api_providers JSONB NOT NULL)"
+        )
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='ai_legacy_mappings'"
+        )
         if cur.fetchone():
-            cur.execute("CREATE TABLE IF NOT EXISTS ai_legacy_mappings_archive AS SELECT *, NOW() AS archived_at FROM ai_legacy_mappings WHERE FALSE")
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS ai_legacy_mappings_archive AS SELECT *, NOW() AS archived_at FROM ai_legacy_mappings WHERE FALSE"
+            )
             cur.execute("INSERT INTO ai_legacy_mappings_archive SELECT *, NOW() FROM ai_legacy_mappings")
         cur.execute("SELECT value_json FROM app_settings WHERE key='api_providers' FOR UPDATE")
         setting = cur.fetchone()
         providers = setting["value_json"] if isinstance(setting, dict) else setting[0] if setting else []
         if setting:
             if _contains_secret(providers) and len(str(os.getenv("APP_SECRET_KEY") or "")) < 16:
-                raise RuntimeError("legacy configuration contains secrets; set APP_SECRET_KEY (at least 16 characters) before --apply")
-            cur.execute("INSERT INTO ai_cutover_archive(archived_at,api_providers) VALUES(%s,%s)", (int(time.time() * 1000), json.dumps(providers, ensure_ascii=False)))
+                raise RuntimeError(
+                    "legacy configuration contains secrets; set APP_SECRET_KEY (at least 16 characters) before --apply"
+                )
+            cur.execute(
+                "INSERT INTO ai_cutover_archive(archived_at,api_providers) VALUES(%s,%s)",
+                (int(time.time() * 1000), json.dumps(providers, ensure_ascii=False)),
+            )
 
         cur.execute("SELECT id,connection_id,upstream_model FROM ai_models")
         model_map = {}
@@ -95,16 +116,20 @@ def apply() -> dict:
 
         # Move encrypted secrets without ever materializing plaintext in the
         # migration process. The legacy table is optional on fresh installs.
-        cur.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='provider_secrets'")
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='provider_secrets'"
+        )
         if cur.fetchone():
-            cur.execute("""INSERT INTO ai_connection_secrets(connection_id,secret_name,secret_ciphertext,version,updated_at)
+            cur.execute(
+                """INSERT INTO ai_connection_secrets(connection_id,secret_name,secret_ciphertext,version,updated_at)
                 SELECT 'legacy:' || provider_id, secret_name,
                        pgp_sym_encrypt(pgp_sym_decrypt(secret_ciphertext, %s), %s), version,
                        updated_at
                 FROM provider_secrets
                 ON CONFLICT(connection_id,secret_name) DO UPDATE SET
                   secret_ciphertext=EXCLUDED.secret_ciphertext, version=EXCLUDED.version, updated_at=EXCLUDED.updated_at""",
-                (os.environ["APP_SECRET_KEY"], os.environ["APP_SECRET_KEY"]))
+                (os.environ["APP_SECRET_KEY"], os.environ["APP_SECRET_KEY"]),
+            )
             cur.execute("DROP TABLE provider_secrets")
 
         cur.execute("ALTER TABLE ai_task_archive ADD COLUMN IF NOT EXISTS connection_id TEXT NOT NULL DEFAULT ''")
@@ -129,14 +154,28 @@ def apply() -> dict:
             if unresolved:
                 unresolved_tasks += 1
                 payload["migration_error"] = "无法将历史 Provider/模型映射到已启用的 AI 连接或模型"
-            cur.execute("UPDATE ai_task_archive SET connection_id=%s,model_id=%s,resource_id=%s,status=CASE WHEN %s THEN 'failed' ELSE status END,error=CASE WHEN %s THEN 'ai_cutover_unresolved_model' ELSE error END,payload_json=%s WHERE task_id=%s", (connection_id, model_id, resource_id, unresolved, unresolved, json.dumps(payload, ensure_ascii=False), row["task_id"]))
+            cur.execute(
+                "UPDATE ai_task_archive SET connection_id=%s,model_id=%s,resource_id=%s,status=CASE WHEN %s THEN 'failed' ELSE status END,error=CASE WHEN %s THEN 'ai_cutover_unresolved_model' ELSE error END,payload_json=%s WHERE task_id=%s",
+                (
+                    connection_id,
+                    model_id,
+                    resource_id,
+                    unresolved,
+                    unresolved,
+                    json.dumps(payload, ensure_ascii=False),
+                    row["task_id"],
+                ),
+            )
             tasks += 1
 
         cur.execute("SELECT id,data_json FROM smart_canvas_nodes")
         canvases = 0
         for row in cur.fetchall():
             rewritten = _rewrite(row["data_json"] or {}, model_map, resource_map)
-            cur.execute("UPDATE smart_canvas_nodes SET data_json=%s,updated_at=%s WHERE id=%s", (json.dumps(rewritten, ensure_ascii=False), int(time.time() * 1000), row["id"]))
+            cur.execute(
+                "UPDATE smart_canvas_nodes SET data_json=%s,updated_at=%s WHERE id=%s",
+                (json.dumps(rewritten, ensure_ascii=False), int(time.time() * 1000), row["id"]),
+            )
             canvases += 1
         cur.execute("DELETE FROM app_settings WHERE key='api_providers'")
         cur.execute("DROP TABLE IF EXISTS ai_legacy_mappings")
@@ -151,7 +190,10 @@ def rollback() -> dict:
         if not row:
             raise RuntimeError("no ai_cutover_archive row available")
         value = row["api_providers"] if isinstance(row, dict) else row[0]
-        cur.execute("INSERT INTO app_settings(key,value_json,created_at,updated_at,version) VALUES('api_providers',%s,%s,%s,1) ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=EXCLUDED.updated_at,version=app_settings.version+1", (json.dumps(value, ensure_ascii=False), int(time.time() * 1000), int(time.time() * 1000)))
+        cur.execute(
+            "INSERT INTO app_settings(key,value_json,created_at,updated_at,version) VALUES('api_providers',%s,%s,%s,1) ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=EXCLUDED.updated_at,version=app_settings.version+1",
+            (json.dumps(value, ensure_ascii=False), int(time.time() * 1000), int(time.time() * 1000)),
+        )
     return {"status": "rolled_back"}
 
 
@@ -162,14 +204,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.apply and args.rollback:
         parser.error("--apply and --rollback are mutually exclusive")
+
     async def run():
         if not args.apply and not args.rollback:
             print("preflight: use scripts/validate_ai_final_cutover.py; no changes made")
             return
         await open_database_pool()
         try:
-            result = await asyncio.to_thread( apply if args.apply else rollback )
+            result = await asyncio.to_thread(apply if args.apply else rollback)
             print(json.dumps(result, ensure_ascii=False))
         finally:
             await close_database_pool()
+
     asyncio.run(run())

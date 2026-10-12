@@ -122,8 +122,7 @@ async def open_database_pool() -> Any:
                 "cursor_factory": ObservableAsyncCursor,
                 "connect_timeout": DATABASE_CONNECT_TIMEOUT_SECONDS,
                 "options": (
-                    f"-c statement_timeout={DATABASE_STATEMENT_TIMEOUT_MS} "
-                    f"-c lock_timeout={DATABASE_LOCK_TIMEOUT_MS}"
+                    f"-c statement_timeout={DATABASE_STATEMENT_TIMEOUT_MS} -c lock_timeout={DATABASE_LOCK_TIMEOUT_MS}"
                 ),
             },
             open=False,

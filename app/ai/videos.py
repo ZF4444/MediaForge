@@ -1,4 +1,5 @@
 """Connection-target video gateway over protocol adapters."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

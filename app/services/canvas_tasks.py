@@ -117,7 +117,12 @@ def _unavailable(operation: str, exc: BaseException) -> RedisUnavailableError:
 async def create_canvas_task(task: dict[str, Any]) -> dict[str, Any]:
     task_id = str(task["id"])
     now = time.time()
-    record = {**task, "created_at": task.get("created_at", now), "updated_at": task.get("updated_at", now), "version": int(task.get("version") or 1)}
+    record = {
+        **task,
+        "created_at": task.get("created_at", now),
+        "updated_at": task.get("updated_at", now),
+        "version": int(task.get("version") or 1),
+    }
     # A durable task crosses request and worker boundaries. Preserve its
     # correlation fields here so downstream provider and storage logs retain
     # the request that submitted the generation.
@@ -132,11 +137,18 @@ async def create_canvas_task(task: dict[str, Any]) -> dict[str, Any]:
     # newly-created task requests once a canonical target is present.
     request = record.get("request")
     if isinstance(request, dict):
-        has_stable_target = any(str(record.get(key) or request.get(key) or "").strip() for key in ("connection_id", "model_id", "resource_id"))
-        has_legacy_target = any(str(record.get(key) or request.get(key) or "").strip() for key in ("provider_id", "provider", "model"))
+        has_stable_target = any(
+            str(record.get(key) or request.get(key) or "").strip()
+            for key in ("connection_id", "model_id", "resource_id")
+        )
+        has_legacy_target = any(
+            str(record.get(key) or request.get(key) or "").strip() for key in ("provider_id", "provider", "model")
+        )
         if has_legacy_target and not has_stable_target:
             raise ValueError("Canvas task requests must include connection_id, model_id, or resource_id")
-    if isinstance(request, dict) and any(str(record.get(key) or request.get(key) or "").strip() for key in ("connection_id", "model_id", "resource_id")):
+    if isinstance(request, dict) and any(
+        str(record.get(key) or request.get(key) or "").strip() for key in ("connection_id", "model_id", "resource_id")
+    ):
         request = dict(request)
         for key in ("provider_id", "provider", "model"):
             request.pop(key, None)
@@ -202,7 +214,9 @@ async def update_canvas_task(task_id: str, *, expected_status: str = "", **chang
 
 
 async def update_claimed_canvas_task(
-    task_id: str, lease_token: str, **changes: Any,
+    task_id: str,
+    lease_token: str,
+    **changes: Any,
 ) -> dict[str, Any] | None:
     """Atomically persist a worker result only while it owns the task lease.
 
@@ -238,6 +252,7 @@ async def update_claimed_canvas_task(
     await _emit_agent_task_event(record)
     return record
 
+
 async def _emit_agent_task_event(task: dict[str, Any]) -> None:
     """Project task lifecycle changes into the owning Agent Run event stream."""
     run_id = str(task.get("agent_run_id") or "")
@@ -245,21 +260,35 @@ async def _emit_agent_task_event(task: dict[str, Any]) -> None:
     if not run_id or not user_id:
         return
     status = str(task.get("status") or "")
-    event_type = {"queued": "task.queued", "running": "task.running", "succeeded": "task.succeeded", "failed": "task.failed", "interrupted": "task.cancelled", "cancelled": "task.cancelled", "timed_out": "task.timed_out"}.get(status)
+    event_type = {
+        "queued": "task.queued",
+        "running": "task.running",
+        "succeeded": "task.succeeded",
+        "failed": "task.failed",
+        "interrupted": "task.cancelled",
+        "cancelled": "task.cancelled",
+        "timed_out": "task.timed_out",
+    }.get(status)
     if not event_type:
         return
     try:
         from app.services.canvas_agent.events import emit_agent_event
         from app.services.canvas_agent.reliability_helpers import classify_failure
         from app.services.canvas_agent.event_factory import task_lifecycle
-        task_event = task_lifecycle(status, {
-            "task_id": task.get("id"),
-            "node_id": task.get("agent_node_id"),
-            "status": status,
-            "error": task.get("error") or "",
-            "failure_category": classify_failure(task.get("error") or "") if status in {"failed", "timed_out"} else "",
-            "result": task.get("result") if status == "succeeded" else None,
-        })
+
+        task_event = task_lifecycle(
+            status,
+            {
+                "task_id": task.get("id"),
+                "node_id": task.get("agent_node_id"),
+                "status": status,
+                "error": task.get("error") or "",
+                "failure_category": classify_failure(task.get("error") or "")
+                if status in {"failed", "timed_out"}
+                else "",
+                "result": task.get("result") if status == "succeeded" else None,
+            },
+        )
         await emit_agent_event(
             user_id,
             run_id,
@@ -272,9 +301,15 @@ async def _emit_agent_task_event(task: dict[str, Any]) -> None:
         # Task completion remains durable in Redis, but a missing projection
         # must be visible: otherwise generated media never reaches its node.
         import logging
+
         logging.getLogger("aistudio.app.canvas_tasks").exception(
             "failed to project canvas task result to Agent run",
-            extra={"event": "canvas_agent_task_projection_failed", "task_id": task.get("id"), "run_id": run_id, "node_id": task.get("agent_node_id")},
+            extra={
+                "event": "canvas_agent_task_projection_failed",
+                "task_id": task.get("id"),
+                "run_id": run_id,
+                "node_id": task.get("agent_node_id"),
+            },
         )
 
 
@@ -292,9 +327,15 @@ async def claim_canvas_task(task_id: str, worker_id: str) -> str | None:
 async def refresh_canvas_task_lease(task_id: str, worker_id: str) -> bool:
     client = get_redis_client()
     try:
-        return bool(await client.eval(
-            _REFRESH_LEASE_SCRIPT, 1, _lease_key(task_id), worker_id, REDIS_CANVAS_TASK_LEASE_SECONDS,
-        ))
+        return bool(
+            await client.eval(
+                _REFRESH_LEASE_SCRIPT,
+                1,
+                _lease_key(task_id),
+                worker_id,
+                REDIS_CANVAS_TASK_LEASE_SECONDS,
+            )
+        )
     except RedisError as exc:
         raise _unavailable("lease_refresh", exc) from exc
 
@@ -319,7 +360,9 @@ async def ensure_canvas_task_consumer_group() -> None:
     client = get_redis_client()
     try:
         try:
-            await client.xgroup_create(REDIS_CANVAS_TASK_STREAM, REDIS_CANVAS_TASK_CONSUMER_GROUP, id="0", mkstream=True)
+            await client.xgroup_create(
+                REDIS_CANVAS_TASK_STREAM, REDIS_CANVAS_TASK_CONSUMER_GROUP, id="0", mkstream=True
+            )
         except RedisError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
@@ -331,15 +374,22 @@ async def enqueue_canvas_task(task_id: str) -> str:
     client = get_redis_client()
     try:
         claimed = await client.set(
-            _dispatch_key(task_id), "1", nx=True, ex=REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS,
+            _dispatch_key(task_id),
+            "1",
+            nx=True,
+            ex=REDIS_CANVAS_TASK_DISPATCH_TTL_SECONDS,
         )
         if not claimed:
             return ""
         try:
-            return str(await client.xadd(
-                REDIS_CANVAS_TASK_STREAM, {"task_id": task_id}, maxlen=REDIS_CANVAS_TASK_STREAM_MAXLEN,
-                approximate=True,
-            ))
+            return str(
+                await client.xadd(
+                    REDIS_CANVAS_TASK_STREAM,
+                    {"task_id": task_id},
+                    maxlen=REDIS_CANVAS_TASK_STREAM_MAXLEN,
+                    approximate=True,
+                )
+            )
         except RedisError:
             await client.delete(_dispatch_key(task_id))
             raise
@@ -352,8 +402,11 @@ async def dequeue_canvas_tasks(consumer_id: str, *, block_ms: int = 1000) -> lis
     for attempt in range(2):
         try:
             messages = await client.xreadgroup(
-                REDIS_CANVAS_TASK_CONSUMER_GROUP, consumer_id,
-                {REDIS_CANVAS_TASK_STREAM: ">"}, count=1, block=block_ms,
+                REDIS_CANVAS_TASK_CONSUMER_GROUP,
+                consumer_id,
+                {REDIS_CANVAS_TASK_STREAM: ">"},
+                count=1,
+                block=block_ms,
             )
             break
         except RedisTimeoutError as exc:
@@ -408,7 +461,10 @@ async def dead_letter_canvas_task(message_id: str, task_id: str, reason: str) ->
     client = get_redis_client()
     try:
         pipeline = client.pipeline(transaction=True)
-        pipeline.xadd(_DEAD_LETTER_STREAM, {"task_id": task_id, "message_id": message_id, "reason": str(reason)[:1000], "failed_at": str(time.time())})
+        pipeline.xadd(
+            _DEAD_LETTER_STREAM,
+            {"task_id": task_id, "message_id": message_id, "reason": str(reason)[:1000], "failed_at": str(time.time())},
+        )
         pipeline.xack(REDIS_CANVAS_TASK_STREAM, REDIS_CANVAS_TASK_CONSUMER_GROUP, message_id)
         pipeline.delete(_dispatch_key(task_id))
         await pipeline.execute()
@@ -422,7 +478,10 @@ async def list_dead_letter_canvas_tasks(limit: int = 100) -> list[dict[str, str]
         entries = await client.xrevrange(_DEAD_LETTER_STREAM, "+", "-", count=max(1, min(500, int(limit))))
     except RedisError as exc:
         raise _unavailable("dead_letter_list", exc) from exc
-    return [{"entry_id": str(entry_id), **{str(key): str(value) for key, value in fields.items()}} for entry_id, fields in entries]
+    return [
+        {"entry_id": str(entry_id), **{str(key): str(value) for key, value in fields.items()}}
+        for entry_id, fields in entries
+    ]
 
 
 async def remove_dead_letter_canvas_task(entry_id: str) -> bool:

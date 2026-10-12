@@ -38,6 +38,7 @@ def test_shared_http_client_uses_configured_connection_limits():
 
     asyncio.run(scenario())
 
+
 def test_shared_http_client_close_is_idempotent():
     async def scenario():
         await http_client.open_http_client()

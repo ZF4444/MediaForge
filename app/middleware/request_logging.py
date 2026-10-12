@@ -60,7 +60,11 @@ class RequestLoggingMiddleware:
             bind_log_context(user_id=state.get("user_id"), username=state.get("username"))
             get_logger("http").exception(
                 "unhandled request exception",
-                extra={"event": "request_unhandled_exception", "method": scope.get("method"), "path": scope.get("path")},
+                extra={
+                    "event": "request_unhandled_exception",
+                    "method": scope.get("method"),
+                    "path": scope.get("path"),
+                },
             )
             raise
         finally:

@@ -22,8 +22,7 @@ def resolve_public_host_addresses(hostname: str, port: int) -> tuple[str, ...]:
     """
     try:
         addresses = {
-            ipaddress.ip_address(item[4][0])
-            for item in socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+            ipaddress.ip_address(item[4][0]) for item in socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
         }
     except socket.gaierror as exc:
         raise OutboundAddressError("域名无法解析") from exc

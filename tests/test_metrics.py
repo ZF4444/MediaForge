@@ -36,6 +36,7 @@ def test_metrics_endpoint_returns_prometheus_payload(monkeypatch):
         return func(*args, **kwargs)
 
     monkeypatch.setattr(main.asyncio, "to_thread", immediate_to_thread)
+
     async def refresh_postgres():
         refreshed.append("postgres")
 

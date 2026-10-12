@@ -1,4 +1,5 @@
 """ComfyUI HTTP transport used by the canonical workflow adapter."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +13,15 @@ class ComfyUITransport:
 
     protocol = "comfyui"
 
-    def __init__(self, *, endpoint: Callable[[str, str], str], post_json: Callable[[str, Mapping[str, Any]], Awaitable[Mapping[str, Any]]], history: Callable[[str, str], Mapping[str, Any]], timeout_seconds: int, sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep):
+    def __init__(
+        self,
+        *,
+        endpoint: Callable[[str, str], str],
+        post_json: Callable[[str, Mapping[str, Any]], Awaitable[Mapping[str, Any]]],
+        history: Callable[[str, str], Mapping[str, Any]],
+        timeout_seconds: int,
+        sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    ):
         self._endpoint = endpoint
         self._post_json = post_json
         self._history = history

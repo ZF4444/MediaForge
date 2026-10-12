@@ -1,4 +1,5 @@
 """Protocol-neutral commands passed from business services to AI adapters."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

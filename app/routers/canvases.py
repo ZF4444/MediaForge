@@ -8,6 +8,7 @@
 - app.core.ws：manager（广播画布更新）
 - app.models：CanvasCreateRequest / CanvasMetaUpdate / CanvasSaveRequest
 """
+
 import asyncio
 import urllib.parse
 import uuid
@@ -147,6 +148,7 @@ def canvas_record(data):
 
 def iter_canvas_records():
     from app.services.business_metadata import list_canvas_records
+
     rows = list_canvas_records(current_user_id())
     return [canvas_record(row) for row in rows]
 
@@ -160,6 +162,7 @@ def list_canvases():
             -int(item.get("updated_at") or item.get("created_at") or 0),
         ),
     )
+
 
 @router.get("/api/canvases")
 def canvases():
@@ -188,7 +191,8 @@ def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
     canvas = update_canvas_metadata(
-        current_user_id(), canvas_id,
+        current_user_id(),
+        canvas_id,
         title=(payload.title[:80] if payload.title else None),
         icon=((payload.icon or "layers")[:32] if payload.icon is not None else None),
         owner=(str(payload.owner).strip()[:40] if payload.owner is not None else None),
@@ -220,13 +224,21 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
     last_client_id = str(canvas.get("last_client_id") or "")
     incoming_client_id = str(payload.client_id or "")
     same_client_retry = bool(incoming_client_id and incoming_client_id == last_client_id)
-    if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at and not same_client_retry:
+    if (
+        payload.base_updated_at
+        and current_updated_at
+        and int(payload.base_updated_at) < current_updated_at
+        and not same_client_retry
+    ):
         hydrated = await asyncio.to_thread(hydrate_canvas, canvas)
-        raise HTTPException(status_code=409, detail={
-            "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
-            "canvas": hydrated,
-            "updated_at": current_updated_at,
-        })
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
+                "canvas": hydrated,
+                "updated_at": current_updated_at,
+            },
+        )
     canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
     canvas["icon"] = (payload.icon or canvas.get("icon") or "layers")[:32]
     canvas.pop("kind", None)
@@ -239,7 +251,10 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
         canvas["last_client_id"] = incoming_client_id
     await asyncio.to_thread(save_canvas, canvas)
     await manager.broadcast_canvas_updated(
-        canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id, current_user_id(),
+        canvas_id,
+        int(canvas.get("updated_at") or now_ms()),
+        payload.client_id,
+        current_user_id(),
     )
     saved = await asyncio.to_thread(load_canvas_raw, canvas_id)
     return {"canvas": {"id": canvas_id, "updated_at": canvas.get("updated_at", 0), "version": saved.get("version", 1)}}

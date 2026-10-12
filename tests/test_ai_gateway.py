@@ -21,6 +21,7 @@ def disable_distributed_governance(monkeypatch):
 
 def _request() -> ImageGenerationRequest:
     from app.ai.domain import Connection, ModelResource, ResolvedTarget
+
     connection = Connection("demo", "openai", "Demo", "https://api.example/v1", True)
     model = ModelResource("demo-model", "demo", "demo-image", "image", "openai")
     return ImageGenerationRequest(
@@ -57,8 +58,12 @@ def test_image_adapter_registry_rejects_unresolved_target():
 
     registry.register("demo", handler)
     unresolved = ImageGenerationRequest(
-        prompt="draw", size="1024x1024", quality="auto", model="demo-image",
-        reference_images=[], connection={"id": "demo"},
+        prompt="draw",
+        size="1024x1024",
+        quality="auto",
+        model="demo-image",
+        reference_images=[],
+        connection={"id": "demo"},
     )
     with pytest.raises(ValueError, match="resolved connection/model/resource target"):
         asyncio.run(registry.dispatch("demo", unresolved))
@@ -66,11 +71,20 @@ def test_image_adapter_registry_rejects_unresolved_target():
 
 def test_openai_image_adapter_normalizes_generation_and_references():
     from app.ai.adapters import OpenAIImageAdapter
-    images, masks = OpenAIImageAdapter.split_references([
-        {"url": "image.png"}, {"url": "mask.png", "role": "mask"},
-    ])
+
+    images, masks = OpenAIImageAdapter.split_references(
+        [
+            {"url": "image.png"},
+            {"url": "mask.png", "role": "mask"},
+        ]
+    )
     assert len(images) == 1 and len(masks) == 1
-    assert OpenAIImageAdapter.generation_body(model="gpt-image-2", prompt="x", size="1024x1024", gpt_image_2=True)["output_format"] == "png"
+    assert (
+        OpenAIImageAdapter.generation_body(model="gpt-image-2", prompt="x", size="1024x1024", gpt_image_2=True)[
+            "output_format"
+        ]
+        == "png"
+    )
 
 
 def test_image_request_exposes_canonical_target_ids():
@@ -79,8 +93,12 @@ def test_image_request_exposes_canonical_target_ids():
     connection = Connection("conn-1", "openai", "Connection", "https://api.example/v1", True)
     model = ModelResource("model-1", "conn-1", "gpt-image-2", "image", "openai")
     request = ImageGenerationRequest(
-        prompt="draw a cube", size="1024x1024", quality="auto", model="gpt-image-2",
-        reference_images=[], connection={"id": "conn-1"},
+        prompt="draw a cube",
+        size="1024x1024",
+        quality="auto",
+        model="gpt-image-2",
+        reference_images=[],
+        connection={"id": "conn-1"},
         target=ResolvedTarget(connection=connection, model=model),
     )
 
@@ -126,17 +144,19 @@ def test_connection_discovery_service_rejects_unknown_connection():
     assert called == []
 
 
-
-
 def test_connection_operation_records_success_metric():
-    before = AI_CONNECTION_REQUESTS.labels(connection="demo", operation="image_generation", status="succeeded")._value.get()
+    before = AI_CONNECTION_REQUESTS.labels(
+        connection="demo", operation="image_generation", status="succeeded"
+    )._value.get()
 
     async def scenario():
         async with gateway.connection_operation("demo", "image_generation"):
             pass
 
     asyncio.run(scenario())
-    after = AI_CONNECTION_REQUESTS.labels(connection="demo", operation="image_generation", status="succeeded")._value.get()
+    after = AI_CONNECTION_REQUESTS.labels(
+        connection="demo", operation="image_generation", status="succeeded"
+    )._value.get()
     assert after == before + 1
 
 

@@ -1,4 +1,5 @@
 """RunningHub and Omnilojo USD usage ledger and organization budget queries."""
+
 from __future__ import annotations
 
 import asyncio
@@ -54,7 +55,9 @@ def _usage_object(raw: Any) -> dict[str, Any]:
         return data["usage"]
     if isinstance(data, list):
         for item in data:
-            if isinstance(item, dict) and any(key in item for key in ("consumeMoney", "consumeCoins", "thirdPartyConsumeMoney", "taskCostTime")):
+            if isinstance(item, dict) and any(
+                key in item for key in ("consumeMoney", "consumeCoins", "thirdPartyConsumeMoney", "taskCostTime")
+            ):
                 return item
     return {}
 
@@ -91,7 +94,9 @@ def assert_runninghub_budget_available(user_id: str, month: str | None = None) -
     with metadata_connection() as conn, conn.cursor() as cur:
         org_id = _org_for_user(cur, user_id)
         if org_id:
-            cur.execute("SELECT monthly_budget_cny,enabled FROM organization_budgets WHERE organization_id=%s", (org_id,))
+            cur.execute(
+                "SELECT monthly_budget_cny,enabled FROM organization_budgets WHERE organization_id=%s", (org_id,)
+            )
             budget = cur.fetchone()
             if budget and budget["enabled"] and budget["monthly_budget_cny"] is not None:
                 cur.execute(
@@ -133,11 +138,35 @@ def record_runninghub_submission(
             """INSERT INTO runninghub_usage_records(id,upstream_task_id,connection_id,model_id,resource_id,user_id,org_id,operation,model,status,submitted_at,created_at,updated_at)
                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'submitted',%s,%s,%s)
                ON CONFLICT(upstream_task_id) DO NOTHING""",
-            (new_id(), task_id, str(connection_id or ""), str(model_id or ""), str(resource_id or ""), user_id, org_id, str(operation or ""), str(model or ""), now, now, now),
+            (
+                new_id(),
+                task_id,
+                str(connection_id or ""),
+                str(model_id or ""),
+                str(resource_id or ""),
+                user_id,
+                org_id,
+                str(operation or ""),
+                str(model or ""),
+                now,
+                now,
+                now,
+            ),
         )
 
 
-def settle_runninghub_usage(user_id: str, upstream_task_id: str, raw: Any, *, status: str, operation: str = "", model: str = "", connection_id: str = "", model_id: str = "", resource_id: str = "") -> None:
+def settle_runninghub_usage(
+    user_id: str,
+    upstream_task_id: str,
+    raw: Any,
+    *,
+    status: str,
+    operation: str = "",
+    model: str = "",
+    connection_id: str = "",
+    model_id: str = "",
+    resource_id: str = "",
+) -> None:
     task_id = str(upstream_task_id or "").strip()
     if not task_id:
         return
@@ -165,9 +194,28 @@ def settle_runninghub_usage(user_id: str, upstream_task_id: str, raw: Any, *, st
                     consume_money_cny=EXCLUDED.consume_money_cny, third_party_money_cny=EXCLUDED.third_party_money_cny,
                     total_money_cny=EXCLUDED.total_money_cny, consume_coins=EXCLUDED.consume_coins,
                     task_cost_seconds=EXCLUDED.task_cost_seconds, raw_usage=EXCLUDED.raw_usage, updated_at=EXCLUDED.updated_at""",
-            (new_id(), task_id, str(connection_id or ""), str(model_id or ""), str(resource_id or ""), user_id, org_id, str(operation or ""), str(model or ""), normalized_status, now,
-             now if normalized_status in {"succeeded", "failed"} else None, values["consume_money_cny"], values["third_party_money_cny"],
-             values["total_money_cny"], values["consume_coins"], values["task_cost_seconds"], json_value(_usage_object(raw)), now, now),
+            (
+                new_id(),
+                task_id,
+                str(connection_id or ""),
+                str(model_id or ""),
+                str(resource_id or ""),
+                user_id,
+                org_id,
+                str(operation or ""),
+                str(model or ""),
+                normalized_status,
+                now,
+                now if normalized_status in {"succeeded", "failed"} else None,
+                values["consume_money_cny"],
+                values["third_party_money_cny"],
+                values["total_money_cny"],
+                values["consume_coins"],
+                values["task_cost_seconds"],
+                json_value(_usage_object(raw)),
+                now,
+                now,
+            ),
         )
 
 
@@ -223,11 +271,18 @@ def runninghub_usage_dashboard(month: str | None = None, limit: int = 100) -> di
                GROUP BY o.id,o.name,b.monthly_budget_cny,b.enabled ORDER BY o.name""",
             (start, end, start, end, start, end, start, end),
         )
-        organizations = [{
-            "id": row["id"], "name": row["name"], "monthly_budget_cny": _number(_decimal(row["monthly_budget_cny"])),
-            "budget_enabled": bool(row["enabled"]), "spent_cny": _number(_decimal(row["spent"])),
-            "consume_coins": _number(_decimal(row["coins"])), "task_count": int(row["task_count"] or 0),
-        } for row in cur.fetchall()]
+        organizations = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "monthly_budget_cny": _number(_decimal(row["monthly_budget_cny"])),
+                "budget_enabled": bool(row["enabled"]),
+                "spent_cny": _number(_decimal(row["spent"])),
+                "consume_coins": _number(_decimal(row["coins"])),
+                "task_count": int(row["task_count"] or 0),
+            }
+            for row in cur.fetchall()
+        ]
         cur.execute(
             """SELECT r.upstream_task_id,r.user_id,COALESCE(u.username,r.user_id) AS username,r.org_id,COALESCE(o.name,'未分配') AS organization_name,
                       r.operation,r.model,r.status,r.submitted_at,r.completed_at,r.consume_money_cny,r.third_party_money_cny,r.total_money_cny,r.consume_coins,r.task_cost_seconds
@@ -247,7 +302,13 @@ def runninghub_usage_dashboard(month: str | None = None, limit: int = 100) -> di
         )
         user_budgets = [dict(row) for row in cur.fetchall()]
     for record in records:
-        for key in ("consume_money_cny", "third_party_money_cny", "total_money_cny", "consume_coins", "task_cost_seconds"):
+        for key in (
+            "consume_money_cny",
+            "third_party_money_cny",
+            "total_money_cny",
+            "consume_coins",
+            "task_cost_seconds",
+        ):
             record[key] = _number(_decimal(record[key]))
     for budget in user_budgets:
         budget["monthly_budget_usd"] = _number(_decimal(budget["monthly_budget_usd"]))
@@ -272,7 +333,13 @@ def user_usage_dashboard(user_id: str, month: str | None = None, limit: int = 20
                WHERE u.id=%s""",
             (user_id,),
         )
-        profile = cur.fetchone() or {"id": user_id, "username": user_id, "organization_name": "未分配", "monthly_budget_usd": 0, "budget_enabled": False}
+        profile = cur.fetchone() or {
+            "id": user_id,
+            "username": user_id,
+            "organization_name": "未分配",
+            "monthly_budget_usd": 0,
+            "budget_enabled": False,
+        }
         cur.execute(
             """SELECT
                    COALESCE(SUM(total_money_cny) FILTER (WHERE status='succeeded' AND submitted_at>=%s AND submitted_at<%s),0) AS runninghub_cost_usd,
@@ -347,7 +414,9 @@ def user_usage_dashboard(user_id: str, month: str | None = None, limit: int = 20
             org_omnilojo = cur.fetchone() or {}
         organization = {
             "name": str(profile.get("organization_name") or "未分配"),
-            "total_usd": _number(_decimal(org_runninghub.get("runninghub_cost_usd")) + _decimal(org_omnilojo.get("omnilojo_cost_usd"))),
+            "total_usd": _number(
+                _decimal(org_runninghub.get("runninghub_cost_usd")) + _decimal(org_omnilojo.get("omnilojo_cost_usd"))
+            ),
             "runninghub_coins": _number(_decimal(org_runninghub.get("runninghub_coins"))),
             "task_count": int(org_runninghub.get("task_count") or 0),
             "request_count": int(org_omnilojo.get("request_count") or 0),
@@ -431,7 +500,9 @@ def openai_response_usage_values(provider: dict[str, Any], model: str, usage: di
     cached_tokens = int(_decimal(details.get("cached_tokens", usage.get("cached_tokens"))))
     cached_tokens = min(cached_tokens, prompt_tokens)
     text_tokens = int(_decimal(usage.get("text_input_tokens", usage.get("text_tokens", details.get("text_tokens")))))
-    image_tokens = int(_decimal(usage.get("image_input_tokens", usage.get("image_tokens", details.get("image_tokens")))))
+    image_tokens = int(
+        _decimal(usage.get("image_input_tokens", usage.get("image_tokens", details.get("image_tokens"))))
+    )
     if text_tokens + image_tokens <= 0:
         text_tokens, image_tokens = prompt_tokens, 0
     elif text_tokens + image_tokens < prompt_tokens:
@@ -442,12 +513,35 @@ def openai_response_usage_values(provider: dict[str, Any], model: str, usage: di
     total_tokens = int(_decimal(usage.get("total_tokens"))) or prompt_tokens + completion_tokens
     prices = provider.get("model_prices") or provider.get("omnilojo_model_prices") or {}
     configured_price = prices.get(str(model or ""), {}) if isinstance(prices, dict) else {}
-    input_per_million = _decimal(configured_price.get("input_per_million", configured_price.get("text_input_per_million"))) if isinstance(configured_price, dict) else Decimal("0")
-    image_input_per_million = _decimal(configured_price.get("image_input_per_million")) if isinstance(configured_price, dict) else Decimal("0")
-    cached_input_per_million = _decimal(configured_price.get("cached_input_per_million", configured_price.get("cache_input_per_million", input_per_million))) if isinstance(configured_price, dict) else Decimal("0")
-    output_per_million = _decimal(configured_price.get("output_per_million")) if isinstance(configured_price, dict) else Decimal("0")
+    input_per_million = (
+        _decimal(configured_price.get("input_per_million", configured_price.get("text_input_per_million")))
+        if isinstance(configured_price, dict)
+        else Decimal("0")
+    )
+    image_input_per_million = (
+        _decimal(configured_price.get("image_input_per_million"))
+        if isinstance(configured_price, dict)
+        else Decimal("0")
+    )
+    cached_input_per_million = (
+        _decimal(
+            configured_price.get(
+                "cached_input_per_million", configured_price.get("cache_input_per_million", input_per_million)
+            )
+        )
+        if isinstance(configured_price, dict)
+        else Decimal("0")
+    )
+    output_per_million = (
+        _decimal(configured_price.get("output_per_million")) if isinstance(configured_price, dict) else Decimal("0")
+    )
     cached_text_tokens = min(cached_tokens, text_tokens)
-    cost_usd = (Decimal(text_tokens - cached_text_tokens) * input_per_million + Decimal(cached_text_tokens) * cached_input_per_million + Decimal(image_tokens) * image_input_per_million + Decimal(completion_tokens) * output_per_million) / Decimal("1000000")
+    cost_usd = (
+        Decimal(text_tokens - cached_text_tokens) * input_per_million
+        + Decimal(cached_text_tokens) * cached_input_per_million
+        + Decimal(image_tokens) * image_input_per_million
+        + Decimal(completion_tokens) * output_per_million
+    ) / Decimal("1000000")
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
@@ -469,7 +563,9 @@ def openai_response_usage_values(provider: dict[str, Any], model: str, usage: di
 omnilojo_response_usage_values = openai_response_usage_values
 
 
-def record_openai_response_usage(user_id: str, provider: dict[str, Any], model: str, raw: Any, *, operation: str) -> bool:
+def record_openai_response_usage(
+    user_id: str, provider: dict[str, Any], model: str, raw: Any, *, operation: str
+) -> bool:
     """Persist a user-attributed charge from an OpenAI-compatible response.
 
     The price snapshot is stored alongside returned usage so historical reports
@@ -505,7 +601,10 @@ def record_openai_response_usage(user_id: str, provider: dict[str, Any], model: 
         connection_id = str(provider.get("connection_id") or provider.get("id") or "")
         model_id = ""
         if connection_id:
-            cur.execute("SELECT id FROM ai_models WHERE connection_id=%s AND upstream_model=%s LIMIT 1", (connection_id, str(model or "")))
+            cur.execute(
+                "SELECT id FROM ai_models WHERE connection_id=%s AND upstream_model=%s LIMIT 1",
+                (connection_id, str(model or "")),
+            )
             model_row = cur.fetchone()
             model_id = str(model_row["id"] if model_row else "")
         protocol = str(provider.get("protocol") or "openai").lower()
@@ -515,20 +614,46 @@ def record_openai_response_usage(user_id: str, provider: dict[str, Any], model: 
                ON CONFLICT(protocol,connection_id,upstream_log_id) DO UPDATE SET
                  cost_usd=EXCLUDED.cost_usd,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,cached_tokens=EXCLUDED.cached_tokens,total_tokens=EXCLUDED.total_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at
                RETURNING id""",
-            (new_id(), protocol, connection_id, request_id, model_id, str(provider.get("resource_id") or ""), request_id,
-             str(user_id or ""), org_id, str(model or ""), str(operation or ""), str(values["cost_usd"]), "0",
-             values["prompt_tokens"], values["completion_tokens"], values["text_input_tokens"], values["image_input_tokens"], values["cached_tokens"], values["total_tokens"], values["configured"], now,
-             json_value(raw_usage), now, now),
+            (
+                new_id(),
+                protocol,
+                connection_id,
+                request_id,
+                model_id,
+                str(provider.get("resource_id") or ""),
+                request_id,
+                str(user_id or ""),
+                org_id,
+                str(model or ""),
+                str(operation or ""),
+                str(values["cost_usd"]),
+                "0",
+                values["prompt_tokens"],
+                values["completion_tokens"],
+                values["text_input_tokens"],
+                values["image_input_tokens"],
+                values["cached_tokens"],
+                values["total_tokens"],
+                values["configured"],
+                now,
+                json_value(raw_usage),
+                now,
+                now,
+            ),
         )
         return cur.fetchone() is not None
 
 
-def record_omnilojo_response_usage(user_id: str, provider: dict[str, Any], model: str, raw: Any, *, operation: str) -> bool:
+def record_omnilojo_response_usage(
+    user_id: str, provider: dict[str, Any], model: str, raw: Any, *, operation: str
+) -> bool:
     """Backward-compatible wrapper for callers using the old function name."""
     return record_openai_response_usage(user_id, provider, model, raw, operation=operation)
 
 
-async def sync_omnilojo_usage(provider: dict[str, Any], credential: str, month: str | None = None, *, use_token_log: bool = True) -> dict[str, Any]:
+async def sync_omnilojo_usage(
+    provider: dict[str, Any], credential: str, month: str | None = None, *, use_token_log: bool = True
+) -> dict[str, Any]:
     """Import New API consumption logs. Logs retain their raw quota and a configured cash conversion."""
     month = month or current_billing_month()
     start_ms, end_ms = _month_range(month)
@@ -549,7 +674,11 @@ async def sync_omnilojo_usage(provider: dict[str, Any], credential: str, month: 
     headers["Authorization"] = f"Bearer {credential}"
     if admin_user_id and not use_token_log:
         headers["New-Api-User"] = admin_user_id
-    params = {"key": credential} if use_token_log else {"p": 1, "page_size": 100, "type": 2, "start_timestamp": start_ms // 1000, "end_timestamp": end_ms // 1000}
+    params = (
+        {"key": credential}
+        if use_token_log
+        else {"p": 1, "page_size": 100, "type": 2, "start_timestamp": start_ms // 1000, "end_timestamp": end_ms // 1000}
+    )
     path = "/api/log/token" if use_token_log else "/api/log/"
     log_url = f"{base_url}{path}"
     if use_token_log:
@@ -565,12 +694,24 @@ async def sync_omnilojo_usage(provider: dict[str, Any], credential: str, month: 
         raise ValueError(f"Omnilojo 日志接口请求失败：{detail}") from None
     except httpx.HTTPError as exc:
         raise ValueError(f"无法连接 Omnilojo 日志接口：{exc}") from None
-    items = [item for item in items if str(item.get("type") or "2") == "2" and start_ms <= int(_omnilojo_number(item.get("created_at")) * 1000) < end_ms]
+    items = [
+        item
+        for item in items
+        if str(item.get("type") or "2") == "2"
+        and start_ms <= int(_omnilojo_number(item.get("created_at")) * 1000) < end_ms
+    ]
     imported = await asyncio.to_thread(_store_ai_usage_records, provider, items, quota_per_usd, cny_per_usd)
-    return {"month": month, "imported": imported, "quota_per_usd": _number(quota_per_usd), "cny_per_usd": _number(cny_per_usd)}
+    return {
+        "month": month,
+        "imported": imported,
+        "quota_per_usd": _number(quota_per_usd),
+        "cny_per_usd": _number(cny_per_usd),
+    }
 
 
-def _store_ai_usage_records(provider: dict[str, Any], items: list[dict[str, Any]], quota_per_usd: Decimal, cny_per_usd: Decimal) -> int:
+def _store_ai_usage_records(
+    provider: dict[str, Any], items: list[dict[str, Any]], quota_per_usd: Decimal, cny_per_usd: Decimal
+) -> int:
     """Persist records outside the async request loop."""
     imported = 0
     now = now_ms()
@@ -591,17 +732,42 @@ def _store_ai_usage_records(provider: dict[str, Any], items: list[dict[str, Any]
                 created_at = now
             request_id, upstream_request_id = _omnilojo_request_ids(item)
             connection_id = str(provider.get("connection_id") or provider.get("id") or "")
-            cur.execute("SELECT id FROM ai_models WHERE connection_id=%s AND upstream_model=%s LIMIT 1", (connection_id, str(item.get("model_name") or "")))
+            cur.execute(
+                "SELECT id FROM ai_models WHERE connection_id=%s AND upstream_model=%s LIMIT 1",
+                (connection_id, str(item.get("model_name") or "")),
+            )
             model_row = cur.fetchone()
             model_id = str(model_row["id"] if model_row else "")
             cur.execute(
                 """INSERT INTO ai_usage_records(id,protocol,connection_id,upstream_log_id,model_id,resource_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,operation,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,text_input_tokens,image_input_tokens,cached_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at)
                    VALUES(%s,'omnilojo',%s,%s,%s,'',%s,%s,%s,%s,%s,%s,%s,'usage_sync',%s,%s,%s,%s,%s,%s,0,%s,'succeeded',TRUE,TRUE,%s,%s,%s,%s)
                    ON CONFLICT(protocol,connection_id,upstream_log_id) DO UPDATE SET request_id=EXCLUDED.request_id,upstream_request_id=EXCLUDED.upstream_request_id,quota=EXCLUDED.quota,cost_usd=EXCLUDED.cost_usd,total_money_cny=EXCLUDED.total_money_cny,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,text_input_tokens=EXCLUDED.text_input_tokens,image_input_tokens=EXCLUDED.image_input_tokens,total_tokens=EXCLUDED.total_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at""",
-                (new_id(), connection_id, log_id, model_id, request_id, upstream_request_id, user["id"] if user else "", user["org_id"] if user else None, external_username,
-                 str(item.get("token_name") or ""), str(item.get("model_name") or ""), str(quota), str(cost_usd), str(cost_cny),
-                 int(_omnilojo_number(item.get("prompt_tokens"))), int(_omnilojo_number(item.get("completion_tokens"))), int(_omnilojo_number(item.get("prompt_tokens"))), 0,
-                 int(_omnilojo_number(item.get("prompt_tokens"))) + int(_omnilojo_number(item.get("completion_tokens"))), created_at, json_value(item), now, now),
+                (
+                    new_id(),
+                    connection_id,
+                    log_id,
+                    model_id,
+                    request_id,
+                    upstream_request_id,
+                    user["id"] if user else "",
+                    user["org_id"] if user else None,
+                    external_username,
+                    str(item.get("token_name") or ""),
+                    str(item.get("model_name") or ""),
+                    str(quota),
+                    str(cost_usd),
+                    str(cost_cny),
+                    int(_omnilojo_number(item.get("prompt_tokens"))),
+                    int(_omnilojo_number(item.get("completion_tokens"))),
+                    int(_omnilojo_number(item.get("prompt_tokens"))),
+                    0,
+                    int(_omnilojo_number(item.get("prompt_tokens")))
+                    + int(_omnilojo_number(item.get("completion_tokens"))),
+                    created_at,
+                    json_value(item),
+                    now,
+                    now,
+                ),
             )
             imported += 1
     return imported
@@ -616,7 +782,8 @@ def omnilojo_usage_dashboard(month: str | None = None, limit: int = 100) -> dict
     start, end = _month_range(month)
     limit = max(1, min(500, int(limit)))
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT x.upstream_log_id,x.request_id,x.upstream_request_id,x.connection_id,x.user_id,
+        cur.execute(
+            """SELECT x.upstream_log_id,x.request_id,x.upstream_request_id,x.connection_id,x.user_id,
                               COALESCE(u.username,x.external_username,'未分配') AS username,x.org_id,
                               COALESCE(o.name,'未分配') AS organization_name,x.token_name,x.model,
                               COALESCE(c.name,x.connection_id,'未指定连接') AS connection_name,
@@ -628,7 +795,9 @@ def omnilojo_usage_dashboard(month: str | None = None, limit: int = 100) -> dict
                        LEFT JOIN ai_connections c ON c.id=x.connection_id
                        LEFT JOIN ai_models m ON m.id=x.model_id
                        LEFT JOIN ai_resources r ON r.id=x.resource_id
-                       WHERE x.protocol='omnilojo' AND x.created_at>=%s AND x.created_at<%s ORDER BY x.created_at DESC LIMIT %s""", (start, end, limit))
+                       WHERE x.protocol='omnilojo' AND x.created_at>=%s AND x.created_at<%s ORDER BY x.created_at DESC LIMIT %s""",
+            (start, end, limit),
+        )
         records = [dict(row) for row in cur.fetchall()]
     for record in records:
         for key in ("quota", "cost_usd", "total_money_cny"):

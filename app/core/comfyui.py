@@ -1,4 +1,5 @@
 """ComfyUI backend endpoint normalization and URL construction."""
+
 from urllib.parse import urlsplit
 
 

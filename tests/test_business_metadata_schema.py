@@ -4,6 +4,7 @@
 建表全部失败，而错误只会在运行期以「字段不存在」的形式暴露出来。本测试不
 连接数据库，只对 SQL 文本做结构校验，因此可以在 CI 中无条件运行。
 """
+
 from __future__ import annotations
 
 import re

@@ -1,4 +1,5 @@
 """Migrate remaining mutable data/global JSON and help Markdown to PostgreSQL."""
+
 import hashlib
 import json
 import sys
@@ -52,14 +53,35 @@ def main():
     users = read_json(data / "users_registry.json", {})
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
         for uid, info in users.items():
-            cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO UPDATE SET username=EXCLUDED.username", (uid, info.get("username") or uid, int(info.get("created_at") or now_ms())))
+            cur.execute(
+                "INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s) ON CONFLICT(id) DO UPDATE SET username=EXCLUDED.username",
+                (uid, info.get("username") or uid, int(info.get("created_at") or now_ms())),
+            )
     counts["users"] = len(users)
 
     feedback_path = data / "feedback.json"
     feedback = read_json(feedback_path, []) if feedback_path.exists() else get_app_setting("feedback", [])
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
         for item in feedback if isinstance(feedback, list) else []:
-            cur.execute("INSERT INTO feedback_entries(id,user_id,username,type,content,page,user_agent,status,admin_note,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status,admin_note=EXCLUDED.admin_note,updated_at=EXCLUDED.updated_at", tuple(item.get(key, "") for key in ("id","user_id","username","type","content","page","user_agent","status","admin_note","created_at","updated_at")))
+            cur.execute(
+                "INSERT INTO feedback_entries(id,user_id,username,type,content,page,user_agent,status,admin_note,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status,admin_note=EXCLUDED.admin_note,updated_at=EXCLUDED.updated_at",
+                tuple(
+                    item.get(key, "")
+                    for key in (
+                        "id",
+                        "user_id",
+                        "username",
+                        "type",
+                        "content",
+                        "page",
+                        "user_agent",
+                        "status",
+                        "admin_note",
+                        "created_at",
+                        "updated_at",
+                    )
+                ),
+            )
     counts["feedback"] = len(feedback) if isinstance(feedback, list) else 0
     if counts["feedback"]:
         with metadata_connection() as conn, conn.cursor() as cur:
@@ -73,7 +95,17 @@ def main():
                 continue
             created = int(session.get("created_at") or now_ms())
             last_seen = int(session.get("last_seen") or created)
-            cur.execute("INSERT INTO user_sessions(token_hash,user_id,username,created_at,last_seen,expires_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(token_hash) DO NOTHING", (hashlib.sha256(token.encode()).hexdigest(), uid, session.get("username") or uid, created, last_seen, last_seen + 365 * 24 * 60 * 60 * 1000))
+            cur.execute(
+                "INSERT INTO user_sessions(token_hash,user_id,username,created_at,last_seen,expires_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(token_hash) DO NOTHING",
+                (
+                    hashlib.sha256(token.encode()).hexdigest(),
+                    uid,
+                    session.get("username") or uid,
+                    created,
+                    last_seen,
+                    last_seen + 365 * 24 * 60 * 60 * 1000,
+                ),
+            )
     counts["sessions"] = len(sessions)
 
     for user_dir in (data / "users").iterdir() if (data / "users").exists() else []:
@@ -93,11 +125,17 @@ def main():
     help_dir = data / "help_pages"
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
         for path in help_dir.glob("*.md") if help_dir.exists() else []:
-            cur.execute("INSERT INTO help_pages(slug,content,updated_at) VALUES(%s,%s,%s) ON CONFLICT(slug) DO UPDATE SET content=EXCLUDED.content,updated_at=EXCLUDED.updated_at", (path.stem, path.read_text(encoding="utf-8"), now_ms()))
+            cur.execute(
+                "INSERT INTO help_pages(slug,content,updated_at) VALUES(%s,%s,%s) ON CONFLICT(slug) DO UPDATE SET content=EXCLUDED.content,updated_at=EXCLUDED.updated_at",
+                (path.stem, path.read_text(encoding="utf-8"), now_ms()),
+            )
             counts["help_pages"] = counts.get("help_pages", 0) + 1
         legacy_help = data / "help.md"
         if legacy_help.exists():
-            cur.execute("INSERT INTO help_pages(slug,content,updated_at) VALUES(%s,%s,%s) ON CONFLICT(slug) DO NOTHING", ("index", legacy_help.read_text(encoding="utf-8"), now_ms()))
+            cur.execute(
+                "INSERT INTO help_pages(slug,content,updated_at) VALUES(%s,%s,%s) ON CONFLICT(slug) DO NOTHING",
+                ("index", legacy_help.read_text(encoding="utf-8"), now_ms()),
+            )
             counts["legacy_help"] = 1
 
     with metadata_connection() as conn, conn.cursor() as cur:

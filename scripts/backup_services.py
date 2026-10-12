@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Back up MediaForge PostgreSQL, Redis, and MinIO data."""
+
 from __future__ import annotations
 
 import argparse
@@ -57,13 +58,21 @@ def backup_minio(run_dir: Path, manifest: list[str]) -> None:
         fail("Python package 'minio' is required for MinIO backup")
 
     endpoint = endpoint.removeprefix("http://").removeprefix("https://")
-    client = Minio(endpoint, access_key=access_key, secret_key=secret_key,
-                   secure=os.getenv("MINIO_SECURE", "false").lower() in {"1", "true", "yes", "on"})
-    buckets = [os.getenv("MINIO_BUCKET_PRIVATE", "mediaforge-private"),
-               os.getenv("MINIO_BUCKET_PUBLIC", "mediaforge-public"),
-               os.getenv("MINIO_BUCKET_TEMP", "mediaforge-temp")]
+    client = Minio(
+        endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        secure=os.getenv("MINIO_SECURE", "false").lower() in {"1", "true", "yes", "on"},
+    )
+    buckets = [
+        os.getenv("MINIO_BUCKET_PRIVATE", "mediaforge-private"),
+        os.getenv("MINIO_BUCKET_PUBLIC", "mediaforge-public"),
+        os.getenv("MINIO_BUCKET_TEMP", "mediaforge-temp"),
+    ]
     for bucket in buckets:
-        if not bucket or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in bucket):
+        if not bucket or any(
+            ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in bucket
+        ):
             fail(f"invalid MinIO bucket name: {bucket}")
         destination = run_dir / "minio" / bucket
         destination.mkdir(parents=True, exist_ok=True)
@@ -75,9 +84,16 @@ def backup_minio(run_dir: Path, manifest: list[str]) -> None:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 client.fget_object(bucket, obj.object_name, str(target))
                 manifest.append(f"minio_object={bucket}/{obj.object_name}")
-                metadata = {"bucket": bucket, "object": obj.object_name, "size": stat_size(target),
-                            "etag": obj.etag, "last_modified": obj.last_modified.isoformat() if obj.last_modified else None}
-                target.with_name(target.name + ".metadata.json").write_text(json.dumps(metadata, ensure_ascii=False) + "\n", encoding="utf-8")
+                metadata = {
+                    "bucket": bucket,
+                    "object": obj.object_name,
+                    "size": stat_size(target),
+                    "etag": obj.etag,
+                    "last_modified": obj.last_modified.isoformat() if obj.last_modified else None,
+                }
+                target.with_name(target.name + ".metadata.json").write_text(
+                    json.dumps(metadata, ensure_ascii=False) + "\n", encoding="utf-8"
+                )
         except Exception as exc:
             fail(f"MinIO backup failed for bucket {bucket}: {exc}")
 
@@ -104,8 +120,11 @@ def main() -> int:
     parser.add_argument("--output-dir", default=os.getenv("BACKUP_DIR", str(ROOT / "backups")))
     parser.add_argument("--retention-days", type=int, default=int(os.getenv("BACKUP_RETENTION_DAYS", "14")))
     parser.add_argument("--only", choices=("all", "postgres", "redis", "minio"), default="all")
-    parser.add_argument("--redis-admin-url", default=os.getenv("REDIS_ADMIN_URL", ""),
-                        help="Redis administrator URL for the RDB backup (required for Redis)")
+    parser.add_argument(
+        "--redis-admin-url",
+        default=os.getenv("REDIS_ADMIN_URL", ""),
+        help="Redis administrator URL for the RDB backup (required for Redis)",
+    )
     args = parser.parse_args()
     if args.retention_days < 0:
         fail("retention days must be non-negative")
@@ -123,7 +142,18 @@ def main() -> int:
             command_exists("pg_dump")
             log("Backing up PostgreSQL")
             dump = run_dir / "postgres.dump"
-            run_command(["pg_dump", "--dbname", database_url, "--format=custom", "--no-owner", "--no-privileges", "--file", str(dump)])
+            run_command(
+                [
+                    "pg_dump",
+                    "--dbname",
+                    database_url,
+                    "--format=custom",
+                    "--no-owner",
+                    "--no-privileges",
+                    "--file",
+                    str(dump),
+                ]
+            )
             manifest.append(f"postgres_dump_bytes={stat_size(dump)}")
         if args.only in ("all", "redis"):
             if not args.redis_admin_url.strip():
@@ -138,7 +168,10 @@ def main() -> int:
         final_dir = output / timestamp
         run_dir.rename(final_dir)
         for old in output.glob("20*"):
-            if old.is_dir() and (datetime.now(timezone.utc).timestamp() - old.stat().st_mtime) > args.retention_days * 86400:
+            if (
+                old.is_dir()
+                and (datetime.now(timezone.utc).timestamp() - old.stat().st_mtime) > args.retention_days * 86400
+            ):
                 log(f"Removing expired backup {old}")
                 shutil.rmtree(old)
         log(f"Backup completed: {final_dir}")

@@ -72,10 +72,22 @@ def _compile_binary_fbx(nodes):
 
 def _fbx_matrix_prop(tx=0.0, ty=0.0, tz=0.0):
     values = [
-        1.0, 0.0, 0.0, 0.0,
-        0.0, 1.0, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        float(tx), float(ty), float(tz), 1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        float(tx),
+        float(ty),
+        float(tz),
+        1.0,
     ]
     return _fbx_array_prop("d", values)
 
@@ -85,94 +97,135 @@ def _binary_fbx_fixture(root_transform=None, bind_pose_child_y=None, bone_names=
     bone_names = bone_names or ("Root", "Chest")
     vertices = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
     poly_indices = [0, 1, -3]
-    geometry = _fbx_node("Geometry", [
-        _fbx_prop(1001),
-        _fbx_prop("Geometry::Triangle"),
-        _fbx_prop("Mesh"),
-    ], [
-        _fbx_node("Vertices", [_fbx_array_prop("d", vertices, compress=True)]),
-        _fbx_node("PolygonVertexIndex", [_fbx_array_prop("i", poly_indices, compress=True)]),
-    ])
+    geometry = _fbx_node(
+        "Geometry",
+        [
+            _fbx_prop(1001),
+            _fbx_prop("Geometry::Triangle"),
+            _fbx_prop("Mesh"),
+        ],
+        [
+            _fbx_node("Vertices", [_fbx_array_prop("d", vertices, compress=True)]),
+            _fbx_node("PolygonVertexIndex", [_fbx_array_prop("i", poly_indices, compress=True)]),
+        ],
+    )
 
     def model(model_id, name, model_type, tx, ty, tz, size=1.0, scaling=(1.0, 1.0, 1.0)):
         sx, sy, sz = scaling
-        return _fbx_node("Model", [
-            _fbx_prop(model_id),
-            _fbx_prop(f"Model::{name}"),
-            _fbx_prop(model_type),
-        ], [
-            _fbx_node("Properties70", children=[
-                _fbx_node("P", [
-                    _fbx_prop("Lcl Translation"),
-                    _fbx_prop("Lcl Translation"),
-                    _fbx_prop(""),
-                    _fbx_prop("A"),
-                    _fbx_prop(float(tx)),
-                    _fbx_prop(float(ty)),
-                    _fbx_prop(float(tz)),
-                ]),
-                _fbx_node("P", [
-                    _fbx_prop("Size"),
-                    _fbx_prop("double"),
-                    _fbx_prop("Number"),
-                    _fbx_prop("A"),
-                    _fbx_prop(float(size)),
-                ]),
-                _fbx_node("P", [
-                    _fbx_prop("Lcl Scaling"),
-                    _fbx_prop("Lcl Scaling"),
-                    _fbx_prop(""),
-                    _fbx_prop("A"),
-                    _fbx_prop(float(sx)),
-                    _fbx_prop(float(sy)),
-                    _fbx_prop(float(sz)),
-                ]),
-            ]),
-        ])
+        return _fbx_node(
+            "Model",
+            [
+                _fbx_prop(model_id),
+                _fbx_prop(f"Model::{name}"),
+                _fbx_prop(model_type),
+            ],
+            [
+                _fbx_node(
+                    "Properties70",
+                    children=[
+                        _fbx_node(
+                            "P",
+                            [
+                                _fbx_prop("Lcl Translation"),
+                                _fbx_prop("Lcl Translation"),
+                                _fbx_prop(""),
+                                _fbx_prop("A"),
+                                _fbx_prop(float(tx)),
+                                _fbx_prop(float(ty)),
+                                _fbx_prop(float(tz)),
+                            ],
+                        ),
+                        _fbx_node(
+                            "P",
+                            [
+                                _fbx_prop("Size"),
+                                _fbx_prop("double"),
+                                _fbx_prop("Number"),
+                                _fbx_prop("A"),
+                                _fbx_prop(float(size)),
+                            ],
+                        ),
+                        _fbx_node(
+                            "P",
+                            [
+                                _fbx_prop("Lcl Scaling"),
+                                _fbx_prop("Lcl Scaling"),
+                                _fbx_prop(""),
+                                _fbx_prop("A"),
+                                _fbx_prop(float(sx)),
+                                _fbx_prop(float(sy)),
+                                _fbx_prop(float(sz)),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
 
-    connections = _fbx_node("Connections", children=[
-        _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(1001), _fbx_prop(2001)]),
-        _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(2001), _fbx_prop(9001)]),
-        _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(3001), _fbx_prop(9001)]),
-        _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(3002), _fbx_prop(3001)]),
-        _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(9001), _fbx_prop(0)]),
-    ])
+    connections = _fbx_node(
+        "Connections",
+        children=[
+            _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(1001), _fbx_prop(2001)]),
+            _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(2001), _fbx_prop(9001)]),
+            _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(3001), _fbx_prop(9001)]),
+            _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(3002), _fbx_prop(3001)]),
+            _fbx_node("C", [_fbx_prop("OO"), _fbx_prop(9001), _fbx_prop(0)]),
+        ],
+    )
 
     extra_nodes = []
     if bind_pose_child_y is not None:
-        extra_nodes.append(_fbx_node("Pose", [
-            _fbx_prop(4001),
-            _fbx_prop("Pose::Bind"),
-            _fbx_prop("BindPose"),
-        ], [
-            _fbx_node("PoseNode", children=[
-                _fbx_node("Node", [_fbx_prop(3001)]),
-                _fbx_node("Matrix", [_fbx_matrix_prop(0, 0, 0)]),
-            ]),
-            _fbx_node("PoseNode", children=[
-                _fbx_node("Node", [_fbx_prop(3002)]),
-                _fbx_node("Matrix", [_fbx_matrix_prop(0, bind_pose_child_y, 0)]),
-            ]),
-        ]))
+        extra_nodes.append(
+            _fbx_node(
+                "Pose",
+                [
+                    _fbx_prop(4001),
+                    _fbx_prop("Pose::Bind"),
+                    _fbx_prop("BindPose"),
+                ],
+                [
+                    _fbx_node(
+                        "PoseNode",
+                        children=[
+                            _fbx_node("Node", [_fbx_prop(3001)]),
+                            _fbx_node("Matrix", [_fbx_matrix_prop(0, 0, 0)]),
+                        ],
+                    ),
+                    _fbx_node(
+                        "PoseNode",
+                        children=[
+                            _fbx_node("Node", [_fbx_prop(3002)]),
+                            _fbx_node("Matrix", [_fbx_matrix_prop(0, bind_pose_child_y, 0)]),
+                        ],
+                    ),
+                ],
+            )
+        )
 
-    return _compile_binary_fbx([
-        _fbx_node("Objects", children=[
-            geometry,
-            model(
-                9001,
-                "SceneRoot",
-                "Null",
-                root_transform.get("tx", 0.0),
-                root_transform.get("ty", 0.0),
-                root_transform.get("tz", 0.0),
-                scaling=root_transform.get("scaling", (1.0, 1.0, 1.0)),
+    return _compile_binary_fbx(
+        [
+            _fbx_node(
+                "Objects",
+                children=[
+                    geometry,
+                    model(
+                        9001,
+                        "SceneRoot",
+                        "Null",
+                        root_transform.get("tx", 0.0),
+                        root_transform.get("ty", 0.0),
+                        root_transform.get("tz", 0.0),
+                        scaling=root_transform.get("scaling", (1.0, 1.0, 1.0)),
+                    ),
+                    model(2001, "Mesh", "Mesh", 0, 0, 0),
+                    model(3001, bone_names[0], "LimbNode", 0, 0, 0),
+                    model(3002, bone_names[1], "LimbNode", 0, 1, 0),
+                ],
             ),
-            model(2001, "Mesh", "Mesh", 0, 0, 0),
-            model(3001, bone_names[0], "LimbNode", 0, 0, 0),
-            model(3002, bone_names[1], "LimbNode", 0, 1, 0),
-        ]),
-        connections,
-    ] + extra_nodes)
+            connections,
+        ]
+        + extra_nodes
+    )
 
 
 def test_pose_studio_upload_binary_fbx_registers_model():
@@ -191,10 +244,14 @@ def test_pose_studio_upload_binary_fbx_registers_model():
         model = uploaded["model_data"]
         assert model["source"] == "pose-studio-uploaded-fbx"
         assert model["import_transform"]["normalized"] is True
-        assert round(model["import_transform"]["normalized_bounds"]["size"][1], 2) == round(VNCCS_TARGET_MODEL_HEIGHT, 2)
+        assert round(model["import_transform"]["normalized_bounds"]["size"][1], 2) == round(
+            VNCCS_TARGET_MODEL_HEIGHT, 2
+        )
         assert [bone["name"] for bone in model["bones"]] == ["Root", "Chest"]
         assert model["bones"][1]["parent"] == "Root"
-        assert round(model["bones"][1]["headPos"][1] - model["bones"][0]["headPos"][1], 2) == round(VNCCS_TARGET_MODEL_HEIGHT, 2)
+        assert round(model["bones"][1]["headPos"][1] - model["bones"][0]["headPos"][1], 2) == round(
+            VNCCS_TARGET_MODEL_HEIGHT, 2
+        )
         assert model["weights"]
     finally:
         for path in paths:
@@ -273,11 +330,7 @@ def test_pose_studio_sam3d_semantic_names_cover_vnccs_game_engine_markers():
     }
 
     annotated = _annotate_sam3d_bone_semantics(model)
-    semantic_names = {
-        bone["semanticName"]
-        for bone in annotated["bones"]
-        if bone.get("semanticName")
-    }
+    semantic_names = {bone["semanticName"] for bone in annotated["bones"] if bone.get("semanticName")}
 
     assert semantic_names == VNCCS_GAME_ENGINE_BONE_NAMES
     assert annotated["sam3d_semantic_count"] == 53
@@ -326,11 +379,7 @@ def test_pose_studio_sam3d_visible_markers_follow_manual_selection():
     }
 
     annotated = _annotate_sam3d_bone_semantics(model)
-    visible = {
-        int(bone["name"].split("_", 1)[1])
-        for bone in annotated["bones"]
-        if bone.get("showMarker")
-    }
+    visible = {int(bone["name"].split("_", 1)[1]) for bone in annotated["bones"] if bone.get("showMarker")}
 
     assert visible == SAM3D_VISIBLE_MARKER_JOINTS
     assert 39 not in visible
@@ -345,20 +394,28 @@ def test_pose_studio_sam3d_visible_markers_follow_manual_selection():
 def test_pose_studio_sam3d_output_filename_is_not_treated_as_input_media():
     from main import collect_required_comfy_media
 
-    required = collect_required_comfy_media({
-        "1": {"image": "uploaded.png"},
-        "4": {"output_filename": "mediaforge_sam3d_unique.fbx"},
-    })
+    required = collect_required_comfy_media(
+        {
+            "1": {"image": "uploaded.png"},
+            "4": {"output_filename": "mediaforge_sam3d_unique.fbx"},
+        }
+    )
 
     assert required == ["uploaded.png"]
 
 
 def test_pose_studio_sam3d_workflow_info_uses_existing_workflow(monkeypatch):
     from main import _sam3d_workflow_info
-    monkeypatch.setattr("main.get_comfy_workflow", lambda _name: {"workflow": {
-        "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
-        "4": {"class_type": "SAM3DBodyExportFBX", "inputs": {}},
-    }})
+
+    monkeypatch.setattr(
+        "main.get_comfy_workflow",
+        lambda _name: {
+            "workflow": {
+                "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+                "4": {"class_type": "SAM3DBodyExportFBX", "inputs": {}},
+            }
+        },
+    )
 
     workflow_json, image_node_id, export_node_id = _sam3d_workflow_info()
 

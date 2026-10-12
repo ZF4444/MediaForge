@@ -24,6 +24,7 @@ import math
 import shlex
 import functools
 from types import SimpleNamespace
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows uses the process lock only.
@@ -57,7 +58,18 @@ _load_bootstrap_env()
 import httpx
 from PIL import Image
 from io import BytesIO
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header, Request, Response
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    UploadFile,
+    File,
+    Form,
+    Header,
+    Request,
+    Response,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse, RedirectResponse
@@ -96,8 +108,8 @@ AUTH_PUBLIC_PATHS = {
 }
 HEALTH_PATHS = {"/health/live", "/health/ready", "/metrics"}
 AUTH_PUBLIC_PREFIXES = (
-    "/static/",   # css/js/字体/图片等前端静态资源
-    "/auth/",     # 认证相关接口
+    "/static/",  # css/js/字体/图片等前端静态资源
+    "/auth/",  # 认证相关接口
 )
 
 
@@ -170,19 +182,45 @@ WEBSOCKET_PUBSUB_TASK = None
 AGENT_EVENT_PUBSUB_TASK = None
 AGENT_EVENT_OUTBOX_TASK = None
 APP_VERSION = "2026.05.19"
-RUN_BACKGROUND_MAINTENANCE = os.getenv("RUN_BACKGROUND_MAINTENANCE", "true").strip().lower() in {"1", "true", "yes", "on"}
+RUN_BACKGROUND_MAINTENANCE = os.getenv("RUN_BACKGROUND_MAINTENANCE", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 # 跨模块共享运行期状态：拆分出去的 service/router 通过 shared_state 访问 GLOBAL_LOOP。
 import app.core.shared_state as shared_state
-from app.services.storage import StorageQuotaExceeded, StorageUnavailableError, load_storage_quota_config, refresh_storage_metrics, storage_cache_cleanup_loop, storage_cleanup_loop, storage_readiness_status, verify_storage_startup, check_storage_quota
+from app.services.storage import (
+    StorageQuotaExceeded,
+    StorageUnavailableError,
+    load_storage_quota_config,
+    refresh_storage_metrics,
+    storage_cache_cleanup_loop,
+    storage_cleanup_loop,
+    storage_readiness_status,
+    verify_storage_startup,
+    check_storage_quota,
+)
 from app.services.business_metadata import archive_ai_task, initialize_business_metadata, get_comfy_workflow
 from app.services.canvas_agent.skills import register_builtin_skills
 from app.services.connection_secrets import initialize_connection_secrets, get_connection_secret, set_connection_secret
-from app.core.database import DatabaseUnavailableError, close_database_pool, open_database_pool, refresh_database_metrics
+from app.core.database import (
+    DatabaseUnavailableError,
+    close_database_pool,
+    open_database_pool,
+    refresh_database_metrics,
+)
 from app.core.redis_client import RedisUnavailableError, close_redis_client, open_redis_client, redis_readiness_status
 from app.core.metrics import render_metrics
 from app.core.storage_io import StorageIOOverloaded, refresh_storage_io_metrics, run_storage_io
-from app.core.http_client import close_http_client, get_http_client, new_outbound_http_client, open_http_client, shared_http_client
+from app.core.http_client import (
+    close_http_client,
+    get_http_client,
+    new_outbound_http_client,
+    open_http_client,
+    shared_http_client,
+)
 from app.core.outbound import validate_external_http_url, validate_public_http_url
 from app.core.ws_pubsub import publish_websocket_event, websocket_pubsub_loop
 from app.core.agent_event_pubsub import agent_event_pubsub_loop
@@ -236,9 +274,20 @@ from app.services.canvas_tasks import (
     update_canvas_task,
 )
 
+
 @app.on_event("startup")
 async def startup_event():
-    global GLOBAL_LOOP, SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, AGENT_COMMAND_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, AGENT_EVENT_PUBSUB_TASK, AGENT_EVENT_OUTBOX_TASK
+    global \
+        GLOBAL_LOOP, \
+        SESSION_LAST_SEEN_TASK, \
+        STORAGE_CACHE_CLEANUP_TASK, \
+        STORAGE_CLEANUP_TASK, \
+        CANVAS_TASK_RECOVERY_TASK, \
+        CANVAS_TASK_WORKER_TASK, \
+        AGENT_COMMAND_WORKER_TASK, \
+        WEBSOCKET_PUBSUB_TASK, \
+        AGENT_EVENT_PUBSUB_TASK, \
+        AGENT_EVENT_OUTBOX_TASK
     try:
         await open_database_pool()
         await open_redis_client()
@@ -295,7 +344,16 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global SESSION_LAST_SEEN_TASK, STORAGE_CACHE_CLEANUP_TASK, STORAGE_CLEANUP_TASK, CANVAS_TASK_RECOVERY_TASK, CANVAS_TASK_WORKER_TASK, AGENT_COMMAND_WORKER_TASK, WEBSOCKET_PUBSUB_TASK, AGENT_EVENT_PUBSUB_TASK, AGENT_EVENT_OUTBOX_TASK
+    global \
+        SESSION_LAST_SEEN_TASK, \
+        STORAGE_CACHE_CLEANUP_TASK, \
+        STORAGE_CLEANUP_TASK, \
+        CANVAS_TASK_RECOVERY_TASK, \
+        CANVAS_TASK_WORKER_TASK, \
+        AGENT_COMMAND_WORKER_TASK, \
+        WEBSOCKET_PUBSUB_TASK, \
+        AGENT_EVENT_PUBSUB_TASK, \
+        AGENT_EVENT_OUTBOX_TASK
     if STORAGE_CLEANUP_TASK is not None:
         STORAGE_CLEANUP_TASK.cancel()
         STORAGE_CLEANUP_TASK = None
@@ -326,7 +384,9 @@ async def shutdown_event():
     try:
         await flush_session_last_seen()
     except Exception:
-        logger.exception("final session last_seen flush failed", extra={"event": "session_last_seen_final_flush_failed"})
+        logger.exception(
+            "final session last_seen flush failed", extra={"event": "session_last_seen_final_flush_failed"}
+        )
     await close_http_client()
     await close_redis_client()
     await close_database_pool()
@@ -373,6 +433,7 @@ async def prometheus_metrics():
         headers={"Cache-Control": "no-store"},
     )
 
+
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
     token = websocket.cookies.get(SESSION_COOKIE_NAME, "")
@@ -395,6 +456,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
     except Exception:
         logger.exception("websocket handler failed", extra={"event": "websocket_handler_failed"})
         await manager.disconnect(websocket)
+
 
 # --- 配置区域 ---
 # 已迁移至 app/config.py（值完全一致），此处导入以保持原模块级名称可用。
@@ -454,7 +516,10 @@ SUPPORTED_PROVIDER_PROTOCOLS = {"openai", "gemini", "volcengine", "runninghub", 
 RUNNINGHUB_DEFAULT_BASE_URL = "https://www.runninghub.cn"
 VOLCENGINE_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 from app.config import VOLCENGINE_DEFAULT_PROJECT_NAME, VOLCENGINE_DEFAULT_REGION
-COMFYUI_INSTANCES = [normalize_comfyui_endpoint(s) for s in os.getenv("COMFYUI_INSTANCES", "127.0.0.1:8188").split(",") if s.strip()]
+
+COMFYUI_INSTANCES = [
+    normalize_comfyui_endpoint(s) for s in os.getenv("COMFYUI_INSTANCES", "127.0.0.1:8188").split(",") if s.strip()
+]
 COMFYUI_ADDRESS = COMFYUI_INSTANCES[0]
 
 AI_BASE_URL = os.getenv("COMFLY_BASE_URL", "https://ai.comfly.chat").rstrip("/")
@@ -478,6 +543,7 @@ CANVAS_RUNNINGHUB_POLL_TIMEOUT_SECONDS = float(os.getenv("CANVAS_RUNNINGHUB_POLL
 ONLINE_IMAGE_PROMPT_MAX_LENGTH = int(os.getenv("ONLINE_IMAGE_PROMPT_MAX_LENGTH", "20000"))
 VIDEO_PROMPT_MAX_LENGTH = int(os.getenv("VIDEO_PROMPT_MAX_LENGTH", "4000"))
 from app.config import ONLINE_IMAGE_PROMPT_MAX_LENGTH, VIDEO_PROMPT_MAX_LENGTH
+
 LLM_MESSAGE_MAX_LENGTH = int(os.getenv("LLM_MESSAGE_MAX_LENGTH", "20000"))
 from app.config import LLM_MESSAGE_MAX_LENGTH
 
@@ -486,6 +552,7 @@ FIELD_LABELS = {
     "message": "文本",
     "system_prompt": "系统提示词",
 }
+
 
 def friendly_validation_error(errors):
     parts = []
@@ -498,12 +565,15 @@ def friendly_validation_error(errors):
         err_type = str(err.get("type") or "")
         msg = str(err.get("msg") or "")
         if "max_length" in err_type or "at most" in msg:
-            parts.append(f"{label}过长：当前内容超过后端上限 {limit} 个字符。请拆分为多个提示词节点，或先用 LLM 节点压缩后再生成。")
+            parts.append(
+                f"{label}过长：当前内容超过后端上限 {limit} 个字符。请拆分为多个提示词节点，或先用 LLM 节点压缩后再生成。"
+            )
         elif "min_length" in err_type:
             parts.append(f"{label}不能为空。")
         else:
             parts.append(f"{label}格式不正确：{msg}")
     return "\n".join(parts) or "请求参数不正确。"
+
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -562,6 +632,7 @@ async def storage_io_overloaded_exception_handler(request: Request, exc: Storage
         content={"detail": str(exc), "error": "storage_overloaded", "retry_after_seconds": 1},
     )
 
+
 def model_list(env_name, primary, defaults):
     configured = os.getenv(env_name, "")
     configured_values = [item.strip() for item in configured.split(",") if item.strip()]
@@ -572,6 +643,7 @@ def model_list(env_name, primary, defaults):
             deduped.append(value)
     return deduped
 
+
 def reload_env_globals():
     """保存 API 设置后，将 os.environ 里最新的值同步回模块级全局变量，
     避免保存后需要重启才能生效。"""
@@ -580,44 +652,80 @@ def reload_env_globals():
     AI_API_KEY = os.getenv("COMFLY_API_KEY", "")
     AI_BASE_URL = os.getenv("COMFLY_BASE_URL", "https://ai.comfly.chat").rstrip("/")
     IMAGE_MODELS = model_list("IMAGE_MODELS", os.getenv("IMAGE_MODEL", IMAGE_MODEL), ["nano-banana-pro"])
-    CHAT_MODELS = model_list("CHAT_MODELS", os.getenv("CHAT_MODEL", CHAT_MODEL), ["gpt-4o-mini", "gemini-3.1-flash-image-preview-2k"])
-    VIDEO_MODELS = model_list("VIDEO_MODELS", "veo3-fast", [
-        "veo2", "veo2-fast", "veo2-pro",
-        "veo3", "veo3-fast", "veo3-pro",
-        "veo3.1", "veo3.1-fast", "veo3.1-quality", "veo3.1-lite",
-        "sora-2", "sora-2-pro",
-        "wan2.6-t2v", "wan2.6-i2v",
-        "wan2.5-t2v-preview", "wan2.5-i2v-preview",
-        "wan2.2-t2v-plus", "wan2.2-i2v-plus", "wan2.2-i2v-flash",
+    CHAT_MODELS = model_list(
+        "CHAT_MODELS", os.getenv("CHAT_MODEL", CHAT_MODEL), ["gpt-4o-mini", "gemini-3.1-flash-image-preview-2k"]
+    )
+    VIDEO_MODELS = model_list(
+        "VIDEO_MODELS",
+        "veo3-fast",
+        [
+            "veo2",
+            "veo2-fast",
+            "veo2-pro",
+            "veo3",
+            "veo3-fast",
+            "veo3-pro",
+            "veo3.1",
+            "veo3.1-fast",
+            "veo3.1-quality",
+            "veo3.1-lite",
+            "sora-2",
+            "sora-2-pro",
+            "wan2.6-t2v",
+            "wan2.6-i2v",
+            "wan2.5-t2v-preview",
+            "wan2.5-i2v-preview",
+            "wan2.2-t2v-plus",
+            "wan2.2-i2v-plus",
+            "wan2.2-i2v-flash",
+            "doubao-seedance-2-0-260128",
+            "doubao-seedance-2-0-fast-260128",
+            "doubao-seedance-1-5-pro-251215",
+            "doubao-seedance-1-0-pro-250528",
+            "doubao-seedance-1-0-lite-t2v-250428",
+            "doubao-seedance-1-0-lite-i2v-250428",
+        ],
+    )
+
+
+CHAT_MODELS = model_list("CHAT_MODELS", CHAT_MODEL, ["gpt-4o-mini", "gemini-3.1-flash-image-preview-2k"])
+IMAGE_MODELS = model_list("IMAGE_MODELS", IMAGE_MODEL, ["nano-banana-pro"])
+VIDEO_MODELS = model_list(
+    "VIDEO_MODELS",
+    "veo3-fast",
+    [
+        # —— Veo 系列 ——
+        "veo2",
+        "veo2-fast",
+        "veo2-pro",
+        "veo3",
+        "veo3-fast",
+        "veo3-pro",
+        "veo3.1",
+        "veo3.1-fast",
+        "veo3.1-quality",
+        "veo3.1-lite",
+        # —— Sora ——
+        "sora-2",
+        "sora-2-pro",
+        # —— 阿里 通义万相 ——
+        "wan2.6-t2v",
+        "wan2.6-i2v",
+        "wan2.5-t2v-preview",
+        "wan2.5-i2v-preview",
+        "wan2.2-t2v-plus",
+        "wan2.2-i2v-plus",
+        "wan2.2-i2v-flash",
+        # —— 火山 豆包 Seedance ——
         "doubao-seedance-2-0-260128",
         "doubao-seedance-2-0-fast-260128",
         "doubao-seedance-1-5-pro-251215",
         "doubao-seedance-1-0-pro-250528",
         "doubao-seedance-1-0-lite-t2v-250428",
         "doubao-seedance-1-0-lite-i2v-250428",
-    ])
+    ],
+)
 
-CHAT_MODELS = model_list("CHAT_MODELS", CHAT_MODEL, ["gpt-4o-mini", "gemini-3.1-flash-image-preview-2k"])
-IMAGE_MODELS = model_list("IMAGE_MODELS", IMAGE_MODEL, ["nano-banana-pro"])
-VIDEO_MODELS = model_list("VIDEO_MODELS", "veo3-fast", [
-    # —— Veo 系列 ——
-    "veo2", "veo2-fast", "veo2-pro",
-    "veo3", "veo3-fast", "veo3-pro",
-    "veo3.1", "veo3.1-fast", "veo3.1-quality", "veo3.1-lite",
-    # —— Sora ——
-    "sora-2", "sora-2-pro",
-    # —— 阿里 通义万相 ——
-    "wan2.6-t2v", "wan2.6-i2v",
-    "wan2.5-t2v-preview", "wan2.5-i2v-preview",
-    "wan2.2-t2v-plus", "wan2.2-i2v-plus", "wan2.2-i2v-flash",
-    # —— 火山 豆包 Seedance ——
-    "doubao-seedance-2-0-260128",
-    "doubao-seedance-2-0-fast-260128",
-    "doubao-seedance-1-5-pro-251215",
-    "doubao-seedance-1-0-pro-250528",
-    "doubao-seedance-1-0-lite-t2v-250428",
-    "doubao-seedance-1-0-lite-i2v-250428",
-])
 
 def connection_api_key(connection_id: str) -> str:
     """Return the API key for a canonical AI connection.
@@ -630,6 +738,7 @@ def connection_api_key(connection_id: str) -> str:
         return ""
     return get_connection_secret(connection_id, "api_key")
 
+
 def _protocol_connection_id(protocol: str) -> str:
     try:
         for connection in DatabaseAIRepository().connections():
@@ -639,8 +748,10 @@ def _protocol_connection_id(protocol: str) -> str:
         return ""
     return ""
 
+
 def volcengine_access_key_value() -> str:
     return get_connection_secret(_protocol_connection_id("volcengine"), "access_key_id")
+
 
 def volcengine_secret_key_value() -> str:
     return get_connection_secret(_protocol_connection_id("volcengine"), "secret_access_key")
@@ -652,11 +763,13 @@ def volcengine_provider_api_key(explicit_key: str = "") -> str:
         return explicit_key
     return connection_api_key(_protocol_connection_id("volcengine"))
 
+
 def mask_secret(value):
     if not value:
         return ""
     tail = value[-4:] if len(value) > 4 else value
     return f"••••••••{tail}"
+
 
 def strip_auth_scheme(value, scheme="Bearer"):
     text = str(value or "").strip()
@@ -665,13 +778,17 @@ def strip_auth_scheme(value, scheme="Bearer"):
     pattern = rf"^{re.escape(scheme)}\s+"
     return re.sub(pattern, "", text, flags=re.I).strip()
 
+
 def bearer_auth_value(value):
     token = strip_auth_scheme(value, "Bearer")
     return f"Bearer {token}" if token else ""
 
+
 def connection_endpoint_url(connection, key, default_path):
     from app.ai.transport import endpoint_for_connection
+
     return endpoint_for_connection(connection, key, default_path, fallback_base=AI_BASE_URL)
+
 
 def is_cloudwise_connection(provider) -> bool:
     """Return whether a connection targets Cloudwise's GPT Image gateway."""
@@ -680,12 +797,16 @@ def is_cloudwise_connection(provider) -> bool:
     base_url = str(item.get("base_url") or "").strip().lower()
     return provider_id == "cloudwise" or "api.cloudwise.ai" in base_url
 
+
 def runninghub_endpoint_url(provider, path):
     from app.ai.transport import endpoint_for_connection
+
     base_url = endpoint_for_connection(provider, "endpoint", "", fallback_base=RUNNINGHUB_DEFAULT_BASE_URL).rstrip("/")
     return runninghub_protocol_endpoint(validate_public_http_url(base_url, label="Connection Base URL"), path)
 
+
 import app.core.access_control as access_control
+
 
 def require_admin() -> str:
     uid = current_user_id()
@@ -715,7 +836,9 @@ def require_target_access(target, user_id: str) -> None:
     model = getattr(target, "model", None)
     connection_id = str(getattr(connection, "id", "") or "")
     upstream_model = str(getattr(model, "upstream_model", "") or "")
-    if not access_control.is_admin(user_id) and not access_control.is_model_allowed(user_id, connection_id, upstream_model):
+    if not access_control.is_admin(user_id) and not access_control.is_model_allowed(
+        user_id, connection_id, upstream_model
+    ):
         raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员开放。")
 
 
@@ -724,6 +847,7 @@ def env_quote(value):
     if not text or re.search(r"\s|#|['\"]", text):
         return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return text
+
 
 def update_env_values(updates):
     with GLOBAL_CONFIG_LOCK:
@@ -771,9 +895,11 @@ def update_env_values(updates):
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
             lock_file.close()
 
+
 BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 
 os.makedirs(STATIC_DIR, exist_ok=True)
+
 
 # 注意：此路由必须在 app.mount("/static", ...) 之前注册，
 # 否则 StaticFiles 挂载会先匹配 /static/*.html，导致无法动态注入版本号。
@@ -785,12 +911,14 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 async def api_version():
     return Response(current_app_version(), media_type="text/plain", headers={"Cache-Control": "no-store"})
 
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     logo_path = os.path.join(STATIC_DIR, "images", "logo.png")
     if os.path.isfile(logo_path):
         return FileResponse(logo_path, media_type="image/png")
     raise HTTPException(status_code=404)
+
 
 @app.get("/static/{page}.html")
 async def static_html_page(page: str):
@@ -869,16 +997,24 @@ from app.models import (
 
 # --- 负载均衡 ---
 
+
 def check_images_exist(backend_addr, images):
-    if not images: return True
+    if not images:
+        return True
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
     for img in images:
-        if not ComfyUIAssetTransport.input_exists(comfyui_url, backend_addr, img): return False
+        if not ComfyUIAssetTransport.input_exists(comfyui_url, backend_addr, img):
+            return False
     return True
+
 
 MEDIA_INPUT_KEYS = ("image", "video", "audio", "mask", "filename", "file")
 MEDIA_OUTPUT_KEYS = {"output_filename", "filename_prefix", "save_prefix"}
-MEDIA_INPUT_EXT_RE = re.compile(r"\.(png|jpe?g|webp|gif|bmp|tiff?|mp4|webm|mov|m4v|avi|mkv|mp3|wav|m4a|aac|ogg|flac)(?:\?|$)", re.I)
+MEDIA_INPUT_EXT_RE = re.compile(
+    r"\.(png|jpe?g|webp|gif|bmp|tiff?|mp4|webm|mov|m4v|avi|mkv|mp3|wav|m4a|aac|ogg|flac)(?:\?|$)", re.I
+)
+
 
 def is_comfy_input_media_value(input_name: str, value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
@@ -890,6 +1026,7 @@ def is_comfy_input_media_value(input_name: str, value: Any) -> bool:
         return True
     return bool(MEDIA_INPUT_EXT_RE.search(value))
 
+
 def collect_required_comfy_media(params: Dict[str, Any]) -> List[str]:
     required = []
     for node_inputs in (params or {}).values():
@@ -900,14 +1037,16 @@ def collect_required_comfy_media(params: Dict[str, Any]) -> List[str]:
                 required.append(value)
     return list(dict.fromkeys(required))
 
+
 def get_best_backend(required_images: List[str] = None):
     best_backend = COMFYUI_INSTANCES[0]
-    min_queue_size = float('inf')
+    min_queue_size = float("inf")
     backend_stats = {}
 
     for addr in COMFYUI_INSTANCES:
         try:
             from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
             remote_load = ComfyUIAssetTransport.queue_load(comfyui_url, addr)
             with LOAD_LOCK:
                 local_load = BACKEND_LOCAL_LOAD.get(addr, 0)
@@ -915,7 +1054,11 @@ def get_best_backend(required_images: List[str] = None):
             has_images = check_images_exist(addr, required_images)
             backend_stats[addr] = {"load": effective_load, "has_images": has_images}
         except Exception:
-            logger.warning("ComfyUI backend unreachable", exc_info=True, extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr})
+            logger.warning(
+                "ComfyUI backend unreachable",
+                exc_info=True,
+                extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr},
+            )
             continue
 
     if not backend_stats:
@@ -923,36 +1066,52 @@ def get_best_backend(required_images: List[str] = None):
 
     for addr, stats in backend_stats.items():
         load = stats["load"]
-        if load < min_queue_size or (load == min_queue_size and stats.get("has_images") and not backend_stats.get(best_backend, {}).get("has_images")):
+        if load < min_queue_size or (
+            load == min_queue_size
+            and stats.get("has_images")
+            and not backend_stats.get(best_backend, {}).get("has_images")
+        ):
             min_queue_size = load
             best_backend = addr
 
     return best_backend
+
 
 def reserve_best_backend(required_images: List[str] = None):
     backend_stats = {}
     for addr in COMFYUI_INSTANCES:
         try:
             from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
             remote_load = ComfyUIAssetTransport.queue_load(comfyui_url, addr)
             has_images = check_images_exist(addr, required_images)
             backend_stats[addr] = {"remote_load": remote_load, "has_images": has_images}
         except Exception:
-            logger.warning("ComfyUI backend unreachable", exc_info=True, extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr})
+            logger.warning(
+                "ComfyUI backend unreachable",
+                exc_info=True,
+                extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr},
+            )
             continue
     with LOAD_LOCK:
         best_backend = COMFYUI_INSTANCES[0]
-        min_load = float('inf')
+        min_load = float("inf")
         if backend_stats:
             for addr, stats in backend_stats.items():
                 load = max(stats["remote_load"], BACKEND_LOCAL_LOAD.get(addr, 0))
-                if load < min_load or (load == min_load and stats.get("has_images") and not backend_stats.get(best_backend, {}).get("has_images")):
+                if load < min_load or (
+                    load == min_load
+                    and stats.get("has_images")
+                    and not backend_stats.get(best_backend, {}).get("has_images")
+                ):
                     min_load = load
                     best_backend = addr
         BACKEND_LOCAL_LOAD[best_backend] = BACKEND_LOCAL_LOAD.get(best_backend, 0) + 1
         return best_backend
 
+
 # --- 辅助工具 ---
+
 
 async def _attach_quota_warning_async(response: dict) -> dict:
     """Async version — runs the DB-backed quota check in a thread with context."""
@@ -977,15 +1136,42 @@ def store_generated_media_bytes(payload: bytes, filename: str, kind: str, conten
     )
     return stored["url"]
 
+
 def comfy_output_extension(item):
     filename = str((item or {}).get("filename") or "")
     ext = os.path.splitext(filename)[1].lower()
     if ext in {
-        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff",
-        ".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv",
-        ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",
-        ".txt", ".json", ".csv", ".srt", ".vtt", ".md",
-        ".fbx", ".stl", ".obj", ".glb", ".gltf",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".mp4",
+        ".webm",
+        ".mov",
+        ".m4v",
+        ".avi",
+        ".mkv",
+        ".mp3",
+        ".wav",
+        ".m4a",
+        ".aac",
+        ".ogg",
+        ".flac",
+        ".txt",
+        ".json",
+        ".csv",
+        ".srt",
+        ".vtt",
+        ".md",
+        ".fbx",
+        ".stl",
+        ".obj",
+        ".glb",
+        ".gltf",
     }:
         return ext
     fmt = str((item or {}).get("format") or "").lower()
@@ -1011,10 +1197,12 @@ def comfy_output_extension(item):
         return ".fbx"
     return ext or ".bin"
 
+
 def is_video_output_item(item):
     ext = comfy_output_extension(item)
     fmt = str((item or {}).get("format") or "").lower()
     return ext in {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"} or "video" in fmt
+
 
 def comfy_output_kind(item):
     ext = comfy_output_extension(item)
@@ -1029,27 +1217,47 @@ def comfy_output_kind(item):
         return "text"
     return "file"
 
+
 def download_comfy_output(comfy_address, item, prefix="studio_"):
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
     ext = comfy_output_extension(item)
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
     try:
+
         async def fetch():
             transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
-            return await transport.download(comfy_address, str(item["filename"]), kind=str(item.get("type") or "output"), subfolder=str(item.get("subfolder") or ""))
+            return await transport.download(
+                comfy_address,
+                str(item["filename"]),
+                kind=str(item.get("type") or "output"),
+                subfolder=str(item.get("subfolder") or ""),
+            )
+
         payload, content_type = asyncio.run(fetch())
         return store_generated_media_bytes(payload, filename, comfy_output_kind(item), content_type)
     except Exception:
-        logger.exception("failed to download ComfyUI output", extra={"event": "comfyui_output_download_failed", "provider": "comfyui", "operation": "download"})
+        logger.exception(
+            "failed to download ComfyUI output",
+            extra={"event": "comfyui_output_download_failed", "provider": "comfyui", "operation": "download"},
+        )
         raise
 
-def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "", prefix: str = "studio_"):
+
+def download_comfy_output_by_name(
+    comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "", prefix: str = "studio_"
+):
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
     ext = os.path.splitext(str(comfy_filename or ""))[1].lower() or ".bin"
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
+
     async def fetch():
         transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
-        return await transport.download(comfy_address, str(comfy_filename or ""), kind=str(file_type or "output"), subfolder=str(subfolder or ""))
+        return await transport.download(
+            comfy_address, str(comfy_filename or ""), kind=str(file_type or "output"), subfolder=str(subfolder or "")
+        )
+
     payload, content_type = asyncio.run(fetch())
     kind = "file"
     if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}:
@@ -1063,13 +1271,20 @@ def download_comfy_output_by_name(comfy_address: str, comfy_filename: str, file_
     return store_generated_media_bytes(payload, filename, kind, content_type)
 
 
-def fetch_comfy_output_bytes_by_name(comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = "") -> bytes:
+def fetch_comfy_output_bytes_by_name(
+    comfy_address: str, comfy_filename: str, file_type: str = "output", subfolder: str = ""
+) -> bytes:
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
     async def fetch():
         transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
-        payload, _ = await transport.download(comfy_address, str(comfy_filename or ""), kind=str(file_type or "output"), subfolder=str(subfolder or ""))
+        payload, _ = await transport.download(
+            comfy_address, str(comfy_filename or ""), kind=str(file_type or "output"), subfolder=str(subfolder or "")
+        )
         return payload
+
     return asyncio.run(fetch())
+
 
 def save_comfy_text_output(value, prefix="studio_", name=""):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
@@ -1079,6 +1294,7 @@ def save_comfy_text_output(value, prefix="studio_", name=""):
         stem += ".txt"
     filename = f"{prefix}{uuid.uuid4().hex[:10]}_{stem}"
     return store_generated_media_bytes(text.encode("utf-8"), filename, "text", content_type_for_path(filename))
+
 
 def comfy_text_values_from_output(node_output):
     values = []
@@ -1102,6 +1318,7 @@ def comfy_text_values_from_output(node_output):
                 values.append((text, name))
     return values
 
+
 def comfy_history_error_message(history_data, prompt_id: str = ""):
     status = (history_data or {}).get("status") if isinstance(history_data, dict) else {}
     if not isinstance(status, dict) or status.get("status_str") != "error":
@@ -1123,6 +1340,7 @@ def comfy_history_error_message(history_data, prompt_id: str = ""):
     suffix = f"；prompt_id={prompt_id}" if prompt_id else ""
     return f"ComfyUI 工作流执行失败{suffix}"
 
+
 def collect_comfy_file_items(node_output):
     items = []
     for key, value in (node_output or {}).items():
@@ -1133,6 +1351,7 @@ def collect_comfy_file_items(node_output):
             if isinstance(item, dict) and item.get("filename"):
                 items.append((key, item))
     return items
+
 
 # --- 历史记录数据逻辑 ---
 # save_to_history / get_comfy_history 已迁移至 app/services/history.py（原样迁移）。
@@ -1149,6 +1368,7 @@ CANVAS_REQUEST_SOURCE = "canvas"
 def _is_canvas_sourced(payload) -> bool:
     return str(getattr(payload, "source", "") or "").strip().lower() == CANVAS_REQUEST_SOURCE
 
+
 # --- 用户身份解析 / 对话管理 ---
 # safe_user_id 已迁移至 app/core/auth.py；
 # 对话管理 helpers 与路由已迁移至 app/routers/conversations.py。
@@ -1162,9 +1382,11 @@ from app.routers.conversations import (
     list_conversations,
 )
 
+
 def display_title(text):
     title = re.sub(r"\s+", " ", text or "").strip()
     return title[:24] or "新对话"
+
 
 def api_headers(json_body=True, connection=None, model="", api_key=""):
     if connection:
@@ -1175,13 +1397,20 @@ def api_headers(json_body=True, connection=None, model="", api_key=""):
         api_key = str(api_key or connection.get("api_key") or "").strip()
         connection_name = connection.get("name") or connection.get("id") or "connection"
         if not api_key:
-            raise HTTPException(status_code=400, detail=f"未配置 {connection_name} 的 API Key，请在 API 平台管理中填写。")
+            raise HTTPException(
+                status_code=400, detail=f"未配置 {connection_name} 的 API Key，请在 API 平台管理中填写。"
+            )
     else:
         api_key = AI_API_KEY
         if not api_key:
             raise HTTPException(status_code=400, detail="未配置 COMFLY_API_KEY，请在 config/.env 中填写。")
     from app.ai.transport import headers_for_connection
-    headers = dict(headers_for_connection(connection or {"protocol": "openai", "api_key": api_key}, json_body=json_body, api_key=api_key))
+
+    headers = dict(
+        headers_for_connection(
+            connection or {"protocol": "openai", "api_key": api_key}, json_body=json_body, api_key=api_key
+        )
+    )
     # Most AI gateways accept this standard header, while gateways that do not
     # implement idempotency safely ignore it. It is stable for an HTTP request
     # or durable canvas task, so transport retries cannot create a second job.
@@ -1197,15 +1426,24 @@ def selected_model(requested, fallback):
         raise HTTPException(status_code=400, detail=f"模型名称不合法：{model}")
     return model
 
+
 def looks_like_vision_chat_model(model):
     lc = str(model or "").strip().lower()
     if not lc:
         return False
     vision_keys = [
-        "vision", "vl-", "-vl-", "internvl", "qvq", "qwen-vl",
-        "doubao-vision", "glm-4v", "minicpm-v",
+        "vision",
+        "vl-",
+        "-vl-",
+        "internvl",
+        "qvq",
+        "qwen-vl",
+        "doubao-vision",
+        "glm-4v",
+        "minicpm-v",
     ]
     return any(key in lc for key in vision_keys)
+
 
 def preferred_chat_model(provider):
     values = [str(item or "").strip() for item in (provider.get("chat_models") or [CHAT_MODEL])]
@@ -1220,6 +1458,7 @@ def preferred_chat_model(provider):
         if text_like_models:
             return text_like_models[0]
     return models[0]
+
 
 def text_from_chat_response(data):
     choices = data.get("choices") or []
@@ -1237,6 +1476,7 @@ def text_from_chat_response(data):
         return "\n".join(part for part in parts if part)
     return str(content)
 
+
 def text_delta_from_chat_chunk(data):
     choices = data.get("choices") or []
     if not choices:
@@ -1253,32 +1493,43 @@ def text_delta_from_chat_chunk(data):
         return "".join(parts)
     return str(content) if content else ""
 
+
 def sse_event(data):
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
 
 def images_api_unsupported(response):
     text = str(getattr(response, "text", "") or "").lower()
     return "images api is not supported" in text or "not supported for this platform" in text
 
+
 def is_gemini_connection(provider):
     return str((provider or {}).get("protocol") or "").strip().lower() == "gemini"
+
 
 def is_volcengine_connection(provider):
     return str((provider or {}).get("protocol") or "").strip().lower() == "volcengine"
 
+
 def is_runninghub_connection(provider):
-    return str((provider or {}).get("protocol") or "").strip().lower() == "runninghub" or str((provider or {}).get("id") or "").strip().lower() == "runninghub"
+    return (
+        str((provider or {}).get("protocol") or "").strip().lower() == "runninghub"
+        or str((provider or {}).get("id") or "").strip().lower() == "runninghub"
+    )
+
 
 def is_omnilojo_connection(provider):
     # Omnilojo 通过 OpenAI v1/chat/completions 协议返回图片（图片内嵌在聊天回复里）。
     base_url = str((provider or {}).get("base_url") or "").lower()
     return str((provider or {}).get("protocol") or "").strip().lower() == "omnilojo" or "omnilojo" in base_url
 
+
 # ---- 数字人/真人认证：平台无关分发 ----
 # 认证是一个跨平台功能。每个平台用不同的资产 API 实现，但对外是统一入口。
 # 新增平台时：在 avatar_platform_for_provider 里加一条识别，并把平台键加进
 # AVATAR_SUPPORTED_PLATFORMS，再在 register/avatar-status 端点里补一个分发分支即可。
 AVATAR_SUPPORTED_PLATFORMS = {"volcengine"}  # 已接入官方资产 API 的平台
+
 
 def avatar_platform_for_provider(provider) -> str:
     if not provider:
@@ -1287,18 +1538,22 @@ def avatar_platform_for_provider(provider) -> str:
         return "volcengine"
     return ""
 
+
 def extract_task_id_from_text(text):
     match = re.search(r"(?:task_id|taskId|task id)\s*[=:：]\s*([A-Za-z0-9_.:-]+)", str(text or ""), re.I)
     return match.group(1) if match else ""
+
 
 def image_task_url_for_connection(connection, task_id):
     base_url = (connection.get("base_url") if connection else AI_BASE_URL).rstrip("/")
     return f"{base_url}/images/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/images/tasks/{task_id}"
 
+
 def image_task_data(payload):
     if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
         return payload["data"]
     return payload if isinstance(payload, dict) else {}
+
 
 def image_task_status(payload):
     task_data = image_task_data(payload)
@@ -1313,15 +1568,26 @@ def log_net_error(message: str, exc: BaseException) -> None:
     """Log an upstream network failure without exposing credentials."""
     logger.warning(message, extra={"event": "upstream_network_error", "error_type": type(exc).__name__})
 
+
 def image_task_fail_reason(payload):
     task_data = image_task_data(payload)
     error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
-    return task_data.get("fail_reason") or task_data.get("message") or error.get("message") or (payload.get("message") if isinstance(payload, dict) else "") or "生图任务失败"
+    return (
+        task_data.get("fail_reason")
+        or task_data.get("message")
+        or error.get("message")
+        or (payload.get("message") if isinstance(payload, dict) else "")
+        or "生图任务失败"
+    )
+
 
 async def fetch_image_task_payload(client, task_id, provider=None):
-    response = await client.get(image_task_url_for_connection(provider, task_id), headers=api_headers(connection=provider))
+    response = await client.get(
+        image_task_url_for_connection(provider, task_id), headers=api_headers(connection=provider)
+    )
     response.raise_for_status()
     return response.json()
+
 
 async def wait_for_image_task(client, task_id, provider=None):
     timeout = IMAGE_TASK_TIMEOUT
@@ -1351,6 +1617,7 @@ async def wait_for_image_task(client, task_id, provider=None):
     raw_text = json.dumps(last_payload, ensure_ascii=False)[:800] if last_payload else ""
     extra = f"，最后响应：{raw_text}" if raw_text else ""
     raise HTTPException(status_code=504, detail=f"生图任务超时（已等待 {int(timeout)} 秒），task_id={task_id}{extra}")
+
 
 # MinIO media references are materialized to temporary cache files only when a
 # downstream API requires a filesystem path.
@@ -1386,12 +1653,17 @@ def media_response_item(url: str = "", name: str = "", kind: str = "") -> Dict[s
                     item["natural_w"] = int(image.width)
                     item["natural_h"] = int(image.height)
             except Exception:
-                logger.warning("failed to read media dimensions", exc_info=True, extra={"event": "media_dimensions_read_failed", "file_id": item["file_id"]})
+                logger.warning(
+                    "failed to read media dimensions",
+                    exc_info=True,
+                    extra={"event": "media_dimensions_read_failed", "file_id": item["file_id"]},
+                )
     return item
 
 
 def media_response_items(urls: List[str], kind: str = "") -> List[Dict[str, Any]]:
     return [media_response_item(url, kind=kind) for url in (urls or []) if url]
+
 
 # --- 素材库数据逻辑 ---
 # 已迁移至 app/services/assets.py（原样迁移），数据 CRUD 路由迁移至 app/routers/assets.py。
@@ -1441,6 +1713,7 @@ from app.core.shared import sanitize_asset_name
 # content_type_for_path 已迁移至 app/core/media.py（原样迁移），多域复用。
 from app.core.media import content_type_for_path
 
+
 def is_image_reference_value(value):
     if not isinstance(value, str) or not value:
         return False
@@ -1456,6 +1729,7 @@ def is_image_reference_value(value):
         return False
     return True
 
+
 def is_video_reference_value(value):
     if not isinstance(value, str) or not value:
         return False
@@ -1468,6 +1742,7 @@ def is_video_reference_value(value):
         return bool(path and content_type_for_path(path).startswith("video/"))
     clean = value.split("?", 1)[0].lower()
     return bool(re.search(r"\.(mp4|webm|mov|m4v|avi|mkv)$", clean))
+
 
 def convert_output_to_jpg(url, quality=88):
     path = output_file_from_url(url)
@@ -1491,6 +1766,7 @@ def convert_output_to_jpg(url, quality=88):
     except Exception:
         logger.exception("failed to convert image to JPEG", extra={"event": "image_jpeg_conversion_failed"})
         return url
+
 
 def reference_to_data_url(ref, max_size=None):
     """把本地输出文件转为 data URL（base64）。max_size 限制最长边像素，避免 payload 过大。"""
@@ -1518,10 +1794,13 @@ def reference_to_data_url(ref, max_size=None):
                 mime = "image/png" if fmt == "PNG" else "image/jpeg"
                 return f"data:{mime};base64,{encoded}"
         except Exception:
-            logger.warning("reference resize failed; using original", exc_info=True, extra={"event": "reference_resize_failed"})
+            logger.warning(
+                "reference resize failed; using original", exc_info=True, extra={"event": "reference_resize_failed"}
+            )
     with open(path, "rb") as f:
         encoded = base64.b64encode(f.read()).decode("ascii")
     return f"data:{content_type_for_path(path)};base64,{encoded}"
+
 
 def media_reference_to_url(value, max_image_size=None):
     if not isinstance(value, str) or not value:
@@ -1530,8 +1809,10 @@ def media_reference_to_url(value, max_image_size=None):
         return reference_to_data_url({"url": value}, max_size=max_image_size)
     return value
 
+
 def is_private_asset_url(value: str) -> bool:
     return isinstance(value, str) and value.strip().startswith("asset://")
+
 
 def volcengine_media_reference_url(value, max_image_size=1536):
     if not isinstance(value, str):
@@ -1545,6 +1826,7 @@ def volcengine_media_reference_url(value, max_image_size=1536):
         return reference_to_data_url({"url": value}, max_size=max_image_size)
     return value
 
+
 def looks_like_image_media_url(value: str) -> bool:
     text = str(value or "").strip().lower()
     if not text:
@@ -1556,11 +1838,18 @@ def looks_like_image_media_url(value: str) -> bool:
     path = urllib.parse.urlparse(text).path or text
     return bool(re.search(r"\.(png|jpe?g|webp|gif|bmp|tiff)$", path))
 
+
 def volcengine_content_role(role: str, kind: str = "image") -> Optional[str]:
     value = str(role or "").strip().lower()
     allowed = {
-        "first_frame", "last_frame", "reference_image",
-        "reference_video", "reference_audio", "video", "audio", "image"
+        "first_frame",
+        "last_frame",
+        "reference_image",
+        "reference_video",
+        "reference_audio",
+        "video",
+        "audio",
+        "image",
     }
     if value in allowed:
         if value == "audio" and kind == "audio":
@@ -1574,6 +1863,7 @@ def volcengine_content_role(role: str, kind: str = "image") -> Optional[str]:
     # 否则火山后端会误判为 r2v(参考图生视频)，导致 seedance/seedream 等生图模型失败。
     return None
 
+
 def volcengine_video_duration(duration) -> int:
     try:
         value = int(duration)
@@ -1581,26 +1871,31 @@ def volcengine_video_duration(duration) -> int:
         value = 5
     return max(1, min(60, value))
 
+
 def volcengine_video_resolution(value: str) -> str:
     text = str(value or "").strip().lower()
     aliases = {"": "", "auto": "", "480": "480p", "720": "720p", "1080": "1080p"}
     text = aliases.get(text, text)
     return text if text in {"480p", "720p", "1080p"} else ""
 
+
 def is_volcengine_seedance2_model(model: str) -> bool:
     value = str(model or "").strip().lower().replace("_", "-").replace(".", "-")
     return "seedance-2-0" in value
+
 
 async def volcengine_video_reference_content_items(value, max_frames=4, max_size=768):
     text = str(value or "").strip()
     if not text:
         return []
     if is_private_asset_url(text):
-        return [{
-            "type": "video_url",
-            "video_url": {"url": text},
-            "role": "reference_video",
-        }]
+        return [
+            {
+                "type": "video_url",
+                "video_url": {"url": text},
+                "role": "reference_video",
+            }
+        ]
     frame_urls = await video_reference_to_frame_data_urls(text, max_frames=max_frames, max_size=max_size)
     return [
         {
@@ -1612,6 +1907,7 @@ async def volcengine_video_reference_content_items(value, max_frames=4, max_size
         if frame_url
     ]
 
+
 async def video_reference_to_frame_data_urls(value, max_frames=6, max_size=768):
     if not isinstance(value, str) or not value:
         return []
@@ -1622,17 +1918,24 @@ async def video_reference_to_frame_data_urls(value, max_frames=6, max_size=768):
         fd, cleanup_path = tempfile.mkstemp(prefix="canvas_llm_video_", suffix=suffix)
         os.close(fd)
         try:
-            async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=10.0)) as client:
+            async with shared_http_client(
+                timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=10.0)
+            ) as client:
                 response = await client.get(value)
                 response.raise_for_status()
                 with open(cleanup_path, "wb") as f:
                     f.write(response.content)
             path = cleanup_path
         except Exception:
-            logger.exception("canvas LLM video download failed", extra={"event": "canvas_llm_video_download_failed", "operation": "download"})
+            logger.exception(
+                "canvas LLM video download failed",
+                extra={"event": "canvas_llm_video_download_failed", "operation": "download"},
+            )
             if cleanup_path and os.path.exists(cleanup_path):
-                try: os.remove(cleanup_path)
-                except OSError: pass
+                try:
+                    os.remove(cleanup_path)
+                except OSError:
+                    pass
             return []
     if not path or not os.path.exists(path):
         return []
@@ -1643,15 +1946,29 @@ async def video_reference_to_frame_data_urls(value, max_frames=6, max_size=768):
             return []
         pattern = os.path.join(frame_dir, "frame_%03d.jpg")
         cmd = [
-            ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-            "-i", path,
-            "-vf", f"fps=1,scale='min({max_size},iw)':-2",
-            "-frames:v", str(max(1, max_frames)),
-            pattern
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            path,
+            "-vf",
+            f"fps=1,scale='min({max_size},iw)':-2",
+            "-frames:v",
+            str(max(1, max_frames)),
+            pattern,
         ]
         proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=90)
         if proc.returncode != 0:
-            logger.error("canvas LLM frame extraction failed", extra={"event": "canvas_llm_frame_extract_failed", "operation": "frame_extract", "error_excerpt": proc.stderr[:300]})
+            logger.error(
+                "canvas LLM frame extraction failed",
+                extra={
+                    "event": "canvas_llm_frame_extract_failed",
+                    "operation": "frame_extract",
+                    "error_excerpt": proc.stderr[:300],
+                },
+            )
             return []
         frames = []
         for name in sorted(os.listdir(frame_dir)):
@@ -1664,8 +1981,11 @@ async def video_reference_to_frame_data_urls(value, max_frames=6, max_size=768):
     finally:
         shutil.rmtree(frame_dir, ignore_errors=True)
         if cleanup_path and os.path.exists(cleanup_path):
-            try: os.remove(cleanup_path)
-            except OSError: pass
+            try:
+                os.remove(cleanup_path)
+            except OSError:
+                pass
+
 
 def compress_data_url_image(value, max_size=1536, jpeg_quality=88):
     if not isinstance(value, str) or not value.startswith("data:image/") or ";base64," not in value:
@@ -1693,35 +2013,45 @@ def compress_data_url_image(value, max_size=1536, jpeg_quality=88):
                 img.save(buf, format=fmt, optimize=True)
             return f"data:{mime};base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
     except Exception:
-        logger.warning("data URL compression failed; using original", exc_info=True, extra={"event": "data_url_compression_failed"})
+        logger.warning(
+            "data URL compression failed; using original", exc_info=True, extra={"event": "data_url_compression_failed"}
+        )
         return value
+
 
 def valid_video_image_input(value: str) -> bool:
     if not isinstance(value, str):
         return False
     value = value.strip()
     return (
-        value.startswith("http://") or
-        value.startswith("https://") or
-        value.startswith("asset://") or
-        (value.startswith("data:image/") and ";base64," in value)
+        value.startswith("http://")
+        or value.startswith("https://")
+        or value.startswith("asset://")
+        or (value.startswith("data:image/") and ";base64," in value)
     )
+
 
 def public_base_url() -> str:
     value = (
-        os.getenv("PUBLIC_MEDIA_BASE_URL") or
-        PUBLIC_MEDIA_BASE_URL or
-        os.getenv("PUBLIC_BASE_URL") or
-        PUBLIC_BASE_URL or
-        ""
-    ).strip().rstrip("/")
+        (
+            os.getenv("PUBLIC_MEDIA_BASE_URL")
+            or PUBLIC_MEDIA_BASE_URL
+            or os.getenv("PUBLIC_BASE_URL")
+            or PUBLIC_BASE_URL
+            or ""
+        )
+        .strip()
+        .rstrip("/")
+    )
     if value and re.match(r"^https?://", value, re.I):
         return value
     return ""
 
+
 def public_media_url_suffix() -> str:
     token = str(os.getenv("PUBLIC_MEDIA_TOKEN") or "").strip()
     return f"?token={urllib.parse.quote(token)}" if token else ""
+
 
 def local_asset_public_url(value: str) -> str:
     text = str(value or "").strip()
@@ -1734,11 +2064,13 @@ def local_asset_public_url(value: str) -> str:
         return ""
     return f"{base}{urllib.parse.quote(text, safe='/:?&=%#.-_~')}{public_media_url_suffix()}"
 
+
 def invalid_video_image_preview(value: str) -> str:
     text = str(value or "")
     if text.startswith("data:"):
         return text.split(";base64,", 1)[0] + ";base64,..."
     return text[:120]
+
 
 # ---- 火山 Ark 私域素材资产（Assets）API：AK/SK 签名 V4 + CreateAssetGroup/CreateAsset/GetAsset ----
 VOLCENGINE_ARK_ASSET_HOST = "open.volcengineapi.com"
@@ -1746,14 +2078,21 @@ VOLCENGINE_ARK_ASSET_SERVICE = "ark"
 VOLCENGINE_ARK_ASSET_REGION = "cn-beijing"
 VOLCENGINE_ARK_ASSET_VERSION = "2024-01-01"
 
+
 def _volc_hmac(key: bytes, msg: str) -> bytes:
     return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
 
-def volcengine_sign_v4_headers(ak: str, sk: str, action: str, body_str: str,
-                               service: str = VOLCENGINE_ARK_ASSET_SERVICE,
-                               region: str = VOLCENGINE_ARK_ASSET_REGION,
-                               version: str = VOLCENGINE_ARK_ASSET_VERSION,
-                               host: str = VOLCENGINE_ARK_ASSET_HOST) -> Dict[str, str]:
+
+def volcengine_sign_v4_headers(
+    ak: str,
+    sk: str,
+    action: str,
+    body_str: str,
+    service: str = VOLCENGINE_ARK_ASSET_SERVICE,
+    region: str = VOLCENGINE_ARK_ASSET_REGION,
+    version: str = VOLCENGINE_ARK_ASSET_VERSION,
+    host: str = VOLCENGINE_ARK_ASSET_HOST,
+) -> Dict[str, str]:
     """火山引擎 OpenAPI 签名 V4（POST + JSON body）。返回需随请求发送的鉴权头。"""
     method = "POST"
     content_type = "application/json"
@@ -1763,28 +2102,26 @@ def volcengine_sign_v4_headers(ak: str, sk: str, action: str, body_str: str,
     payload_hash = hashlib.sha256(body_str.encode("utf-8")).hexdigest()
     # 查询串按键排序：Action < Version
     canonical_query = f"Action={urllib.parse.quote(action, safe='')}&Version={urllib.parse.quote(version, safe='')}"
-    canonical_headers = (
-        f"content-type:{content_type}\n"
-        f"host:{host}\n"
-        f"x-content-sha256:{payload_hash}\n"
-        f"x-date:{x_date}\n"
-    )
+    canonical_headers = f"content-type:{content_type}\nhost:{host}\nx-content-sha256:{payload_hash}\nx-date:{x_date}\n"
     signed_headers = "content-type;host;x-content-sha256;x-date"
     canonical_request = "\n".join([method, "/", canonical_query, canonical_headers, signed_headers, payload_hash])
     algorithm = "HMAC-SHA256"
     credential_scope = f"{short_date}/{region}/{service}/request"
-    string_to_sign = "\n".join([
-        algorithm, x_date, credential_scope,
-        hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
-    ])
+    string_to_sign = "\n".join(
+        [
+            algorithm,
+            x_date,
+            credential_scope,
+            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+        ]
+    )
     k_date = _volc_hmac(sk.encode("utf-8"), short_date)
     k_region = _volc_hmac(k_date, region)
     k_service = _volc_hmac(k_region, service)
     k_signing = _volc_hmac(k_service, "request")
     signature = hmac.new(k_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
     authorization = (
-        f"{algorithm} Credential={ak}/{credential_scope}, "
-        f"SignedHeaders={signed_headers}, Signature={signature}"
+        f"{algorithm} Credential={ak}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
     )
     return {
         "Content-Type": content_type,
@@ -1794,13 +2131,16 @@ def volcengine_sign_v4_headers(ak: str, sk: str, action: str, body_str: str,
         "Authorization": authorization,
     }
 
+
 async def volcengine_ark_asset_call(client, action: str, body: Dict[str, Any]) -> Dict[str, Any]:
     """调用一次火山 Ark Assets OpenAPI，返回 Result 内容；出错抛 HTTPException。"""
     # Secret storage is a synchronous bridge that rejects event-loop calls.
     ak = await asyncio.to_thread(volcengine_access_key_value)
     sk = await asyncio.to_thread(volcengine_secret_key_value)
     if not ak or not sk:
-        raise HTTPException(status_code=400, detail="未配置火山引擎 AK/SK，请在 API 设置中填写 Access Key ID / Secret Access Key。")
+        raise HTTPException(
+            status_code=400, detail="未配置火山引擎 AK/SK，请在 API 设置中填写 Access Key ID / Secret Access Key。"
+        )
     body_str = json.dumps(body, ensure_ascii=False)
     headers = volcengine_sign_v4_headers(ak, sk, action, body_str)
     url = f"https://{VOLCENGINE_ARK_ASSET_HOST}/?Action={urllib.parse.quote(action, safe='')}&Version={urllib.parse.quote(VOLCENGINE_ARK_ASSET_VERSION, safe='')}"
@@ -1808,7 +2148,9 @@ async def volcengine_ark_asset_call(client, action: str, body: Dict[str, Any]) -
     try:
         payload = resp.json()
     except Exception:
-        raise HTTPException(status_code=502, detail=f"火山 {action} 返回非 JSON（{resp.status_code}）：{resp.text[:300]}")
+        raise HTTPException(
+            status_code=502, detail=f"火山 {action} 返回非 JSON（{resp.status_code}）：{resp.text[:300]}"
+        )
     meta = payload.get("ResponseMetadata") if isinstance(payload, dict) else None
     if isinstance(meta, dict) and isinstance(meta.get("Error"), dict):
         err = meta["Error"]
@@ -1820,64 +2162,93 @@ async def volcengine_ark_asset_call(client, action: str, body: Dict[str, Any]) -
     result = payload.get("Result") if isinstance(payload, dict) and isinstance(payload.get("Result"), dict) else None
     return result if result is not None else (payload if isinstance(payload, dict) else {})
 
+
 async def volcengine_ensure_asset_group(client, project_name: str, group_name: str) -> str:
     """复用同名素材组合，没有则新建。返回 GroupId。"""
     name = (group_name or "可信素材").strip()[:60] or "可信素材"
     project_name = (project_name or "default").strip() or "default"
     # 先按 Name 模糊查找复用
     try:
-        listed = await volcengine_ark_asset_call(client, "ListAssetGroups", {
-            "Filter": {"Name": name, "GroupType": "AIGC"},
-            "PageNumber": 1, "PageSize": 10, "ProjectName": project_name,
-        })
-        for item in (listed.get("Items") or []):
-            if str(item.get("Name") or "").strip() == name and str(item.get("ProjectName") or "default") == project_name:
+        listed = await volcengine_ark_asset_call(
+            client,
+            "ListAssetGroups",
+            {
+                "Filter": {"Name": name, "GroupType": "AIGC"},
+                "PageNumber": 1,
+                "PageSize": 10,
+                "ProjectName": project_name,
+            },
+        )
+        for item in listed.get("Items") or []:
+            if (
+                str(item.get("Name") or "").strip() == name
+                and str(item.get("ProjectName") or "default") == project_name
+            ):
                 gid = str(item.get("Id") or "").strip()
                 if gid:
                     return gid
     except HTTPException:
         pass  # 查询失败不致命，继续走新建
-    created = await volcengine_ark_asset_call(client, "CreateAssetGroup", {
-        "Name": name, "Description": name, "ProjectName": project_name,
-    })
+    created = await volcengine_ark_asset_call(
+        client,
+        "CreateAssetGroup",
+        {
+            "Name": name,
+            "Description": name,
+            "ProjectName": project_name,
+        },
+    )
     gid = str(created.get("Id") or "").strip()
     if not gid:
         raise HTTPException(status_code=502, detail=f"火山 CreateAssetGroup 未返回 GroupId：{str(created)[:200]}")
     return gid
 
+
 def avatar_asset_type(kind: str) -> str:
     return {"video": "Video", "audio": "Audio"}.get(str(kind or "").lower(), "Image")
 
-async def submit_volcengine_avatar_asset(public_url: str, name: str, kind: str,
-                                         project_name: str = "default", group_name: str = "") -> str:
+
+async def submit_volcengine_avatar_asset(
+    public_url: str, name: str, kind: str, project_name: str = "default", group_name: str = ""
+) -> str:
     """把公网可访问素材提交到火山 Ark 私域素材库（异步）。返回 Asset Id 作为任务 ID。"""
     async with shared_http_client(timeout=120) as client:
         group_id = await volcengine_ensure_asset_group(client, project_name, group_name)
-        created = await volcengine_ark_asset_call(client, "CreateAsset", {
-            "GroupId": group_id,
-            "URL": public_url,
-            "AssetType": avatar_asset_type(kind),
-            "Name": (name or "asset")[:60],
-            "ProjectName": (project_name or "default").strip() or "default",
-        })
+        created = await volcengine_ark_asset_call(
+            client,
+            "CreateAsset",
+            {
+                "GroupId": group_id,
+                "URL": public_url,
+                "AssetType": avatar_asset_type(kind),
+                "Name": (name or "asset")[:60],
+                "ProjectName": (project_name or "default").strip() or "default",
+            },
+        )
     asset_id = str(created.get("Id") or "").strip()
     if not asset_id:
         raise HTTPException(status_code=502, detail=f"火山 CreateAsset 未返回 Asset Id：{str(created)[:200]}")
     return asset_id
 
+
 async def check_volcengine_avatar_task(asset_id: str, project_name: str = "default") -> Dict[str, Any]:
     """查询一次火山素材状态。返回 {status: Active/Processing/Failed, asset_uri, detail}。"""
     async with shared_http_client(timeout=60) as client:
-        info = await volcengine_ark_asset_call(client, "GetAsset", {
-            "Id": asset_id,
-            "ProjectName": (project_name or "default").strip() or "default",
-        })
+        info = await volcengine_ark_asset_call(
+            client,
+            "GetAsset",
+            {
+                "Id": asset_id,
+                "ProjectName": (project_name or "default").strip() or "default",
+            },
+        )
     status = str(info.get("Status") or "").strip()
     if status == "Active":
         return {"status": "Active", "asset_uri": f"asset://{asset_id}", "detail": ""}
     if status == "Failed":
         return {"status": "Failed", "asset_uri": "", "detail": "火山素材处理失败，无法用于推理。"}
     return {"status": "Processing", "asset_uri": "", "detail": "火山素材处理中"}
+
 
 def volcengine_public_asset_url(url: str) -> str:
     """火山 CreateAsset 要求 URL 公网可访问；本地文件需 PUBLIC_BASE_URL，否则返回 ERR:。"""
@@ -1888,6 +2259,7 @@ def volcengine_public_asset_url(url: str) -> str:
     if public:
         return public
     return "ERR:火山要求素材是公网可访问的 http/https URL；本地画布文件需配置 PUBLIC_BASE_URL/PUBLIC_MEDIA_BASE_URL 暴露为公网地址。"
+
 
 def local_media_path_for_cloud_upload(ref_url: str, allowed_prefixes=("image/", "video/")) -> str:
     ref_url = str(ref_url or "").strip()
@@ -1909,15 +2281,22 @@ def local_media_path_for_cloud_upload(ref_url: str, allowed_prefixes=("image/", 
         raise HTTPException(status_code=400, detail=f"媒体文件超过云端上传大小限制：{size} bytes")
     return path
 
+
 def local_video_path_for_cloud_upload(ref_url: str) -> str:
     return local_media_path_for_cloud_upload(ref_url, ("video/",))
 
+
 async def upload_video_to_litterbox(path: str, source_url: str) -> Dict[str, str]:
-    upload_url = os.getenv("LITTERBOX_UPLOAD_URL", "https://litterbox.catbox.moe/resources/internals/api.php").strip() or "https://litterbox.catbox.moe/resources/internals/api.php"
+    upload_url = (
+        os.getenv("LITTERBOX_UPLOAD_URL", "https://litterbox.catbox.moe/resources/internals/api.php").strip()
+        or "https://litterbox.catbox.moe/resources/internals/api.php"
+    )
     time_value = os.getenv("LITTERBOX_TIME", "72h").strip() or "72h"
     ct = content_type_for_path(path)
     try:
-        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=600.0, write=600.0, pool=20.0)) as client:
+        async with shared_http_client(
+            timeout=httpx.Timeout(connect=20.0, read=600.0, write=600.0, pool=20.0)
+        ) as client:
             with open(path, "rb") as fh:
                 files = {"fileToUpload": (os.path.basename(path), fh, ct)}
                 data = {"reqtype": "fileupload", "time": time_value}
@@ -1927,17 +2306,26 @@ async def upload_video_to_litterbox(path: str, source_url: str) -> Dict[str, str
         direct_url = response.text.strip().splitlines()[0].strip()
         if not re.match(r"^https?://", direct_url, re.I):
             raise HTTPException(status_code=502, detail=f"Litterbox 返回了无法识别的链接：{response.text[:300]}")
-        return {"url": direct_url, "source": source_url, "name": os.path.basename(path), "expires": time_value, "service": "litterbox"}
+        return {
+            "url": direct_url,
+            "source": source_url,
+            "name": os.path.basename(path),
+            "expires": time_value,
+            "service": "litterbox",
+        }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Litterbox 上传异常：{exc}") from exc
 
+
 async def upload_video_to_temp_sh(path: str, source_url: str) -> Dict[str, str]:
     upload_url = os.getenv("TEMP_SH_UPLOAD_URL", "https://temp.sh/upload").strip() or "https://temp.sh/upload"
     ct = content_type_for_path(path)
     try:
-        async with shared_http_client(timeout=httpx.Timeout(connect=20.0, read=600.0, write=600.0, pool=20.0)) as client:
+        async with shared_http_client(
+            timeout=httpx.Timeout(connect=20.0, read=600.0, write=600.0, pool=20.0)
+        ) as client:
             with open(path, "rb") as fh:
                 files = {"file": (os.path.basename(path), fh, ct)}
                 response = await client.post(upload_url, files=files)
@@ -1946,11 +2334,18 @@ async def upload_video_to_temp_sh(path: str, source_url: str) -> Dict[str, str]:
         direct_url = response.text.strip().splitlines()[0].strip()
         if not re.match(r"^https?://", direct_url, re.I):
             raise HTTPException(status_code=502, detail=f"Temp.sh 返回了无法识别的链接：{response.text[:300]}")
-        return {"url": direct_url, "source": source_url, "name": os.path.basename(path), "expires": "3 days", "service": "temp.sh"}
+        return {
+            "url": direct_url,
+            "source": source_url,
+            "name": os.path.basename(path),
+            "expires": "3 days",
+            "service": "temp.sh",
+        }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Temp.sh 上传异常：{exc}") from exc
+
 
 async def upload_local_video_to_cloud(ref_url: str, service: str = "auto") -> Dict[str, str]:
     ref_url = str(ref_url or "").strip()
@@ -1970,11 +2365,14 @@ async def upload_local_video_to_cloud(ref_url: str, service: str = "auto") -> Di
             errors.append(f"{name}: {exc.detail}")
     raise HTTPException(status_code=502, detail="云端上传失败：" + "；".join(errors))
 
+
 async def upload_local_video_to_temp_sh(ref_url: str) -> Dict[str, str]:
     return await upload_local_video_to_cloud(ref_url, "auto")
 
+
 # save_ai_image_to_output / save_remote_video_to_output 已迁移至 app/core/media.py（原样迁移）。
 from app.core.media import save_ai_image_to_output, save_remote_video_to_output
+
 
 def parse_size_pair(size):
     match = re.fullmatch(r"\s*(\d+)\s*[xX*]\s*(\d+)\s*", str(size or ""))
@@ -1982,10 +2380,12 @@ def parse_size_pair(size):
         return 0, 0
     return int(match.group(1)), int(match.group(2))
 
+
 def chat_system_prompt(payload):
     """Resolve the per-request system prompt with the application fallback."""
     prompt = str(getattr(payload, "system_prompt", "") or "").strip()
     return prompt or SYSTEM_PROMPT
+
 
 def snap_size_to_multiple(size, multiple=16):
     width, height = parse_size_pair(size)
@@ -1994,12 +2394,17 @@ def snap_size_to_multiple(size, multiple=16):
     step = max(1, int(multiple or 16))
     return f"{max(step, math.ceil(width / step) * step)}x{max(step, math.ceil(height / step) * step)}"
 
+
 CHAT_RATIO_SIZE_OPTIONS = {
-    "1:1": ("1024x1024", "1536x1536", "2048x2048"), "2:3": ("720x1080", "1024x1536", "1365x2048"),
-    "3:2": ("1080x720", "1536x1024", "2048x1365"), "3:4": ("1008x1344", "1536x2048", "2448x3264"),
-    "4:3": ("1344x1008", "2048x1536", "3264x2448"), "9:16": ("720x1280", "1080x1920", "1440x2560"),
+    "1:1": ("1024x1024", "1536x1536", "2048x2048"),
+    "2:3": ("720x1080", "1024x1536", "1365x2048"),
+    "3:2": ("1080x720", "1536x1024", "2048x1365"),
+    "3:4": ("1008x1344", "1536x2048", "2448x3264"),
+    "4:3": ("1344x1008", "2048x1536", "3264x2448"),
+    "9:16": ("720x1280", "1080x1920", "1440x2560"),
     "16:9": ("1280x720", "1920x1080", "2560x1440"),
 }
+
 
 def chat_prompt_size_override(message, current_size=""):
     text = str(message or "")
@@ -2021,9 +2426,11 @@ def chat_prompt_size_override(message, current_size=""):
         return options[1]
     return options[0]
 
+
 GPT_IMAGE2_MAX_EDGE = 3840
 GPT_IMAGE2_MAX_PIXELS = 8_294_400
 GPT_IMAGE2_MIN_PIXELS = 655_360
+
 
 def is_gpt_image_2_model(model):
     raw = str(model or "").strip().lower()
@@ -2038,6 +2445,7 @@ def is_gpt_image_2_model(model):
         or compact.startswith("gptimage2")
         or compact.endswith("gptimage2")
     )
+
 
 def normalize_gpt_image_2_size(size):
     width, height = parse_size_pair(size)
@@ -2063,6 +2471,7 @@ def normalize_gpt_image_2_size(size):
         height = int((height * grow + 15) // 16) * 16
     return f"{width}x{height}"
 
+
 def gpt_image_2_size_error_message(size):
     width, height = parse_size_pair(size)
     display_size = size or "未指定"
@@ -2078,14 +2487,15 @@ def gpt_image_2_size_error_message(size):
             "该尺寸超过 GPT 支持范围；如果要保留这个高分辨率，请切换到 nano-banana，"
             "或把 GPT 尺寸改成 2K / 3840x2160 / 2160x3840 这类更小规格。"
         )
-    return (
-        f"GPT-Image-2 不支持当前尺寸 {display_size}。"
-        "请换成 GPT 支持的分辨率，或切换到 nano-banana 生成更高分辨率。"
-    )
+    return f"GPT-Image-2 不支持当前尺寸 {display_size}。请换成 GPT 支持的分辨率，或切换到 nano-banana 生成更高分辨率。"
+
 
 def gpt_image_2_size_exceeds_supported(size):
     width, height = parse_size_pair(size)
-    return bool(width and height and (max(width, height) > GPT_IMAGE2_MAX_EDGE or width * height > GPT_IMAGE2_MAX_PIXELS))
+    return bool(
+        width and height and (max(width, height) > GPT_IMAGE2_MAX_EDGE or width * height > GPT_IMAGE2_MAX_PIXELS)
+    )
+
 
 VOLCENGINE_MAX_EDGE = 4096
 VOLCENGINE_MIN_PIXELS = 262144
@@ -2104,9 +2514,11 @@ VOLCENGINE_RATIO_CHOICES = [
     (4, 5, "4:5"),
 ]
 
+
 def is_volcengine_seedream_model(model):
     value = str(model or "").strip().lower()
     return "seedream" in value or "doubao-seedream" in value
+
 
 def normalize_volcengine_size(size, model=""):
     width, height = parse_size_pair(size)
@@ -2142,18 +2554,23 @@ def normalize_volcengine_size(size, model=""):
             break
     return f"{snapped_w}x{snapped_h}"
 
+
 def friendly_image_error_detail(text, size="", model=""):
     text = str(text or "")
     lower_text = text.lower()
     if is_gpt_image_2_model(model) and gpt_image_2_size_exceeds_supported(size):
         return gpt_image_2_size_error_message(size)
     mentions_size = any(token in lower_text for token in ["size", "resolution", "dimension"])
-    is_gpt_size_error = is_gpt_image_2_model(model) and mentions_size and (
-        "invalid" in lower_text
-        or "unsupported" in lower_text
-        or "not supported" in lower_text
-        or "exceed" in lower_text
-        or "must be one of" in lower_text
+    is_gpt_size_error = (
+        is_gpt_image_2_model(model)
+        and mentions_size
+        and (
+            "invalid" in lower_text
+            or "unsupported" in lower_text
+            or "not supported" in lower_text
+            or "exceed" in lower_text
+            or "must be one of" in lower_text
+        )
     )
     m = re.search(r"longest edge must be less than or equal to (\d+)", text)
     if m and is_gpt_image_2_model(model):
@@ -2166,13 +2583,25 @@ def friendly_image_error_detail(text, size="", model=""):
         pixel_match = re.search(r"at least (\d+) pixels", lower_text)
         pixels = pixel_match.group(1) if pixel_match else "3686400"
         return f"该模型要求更高分辨率，当前尺寸 {size or '过小'} 不满足最低像素要求（至少 {pixels} 像素）。火山 Seedream 5.0 建议从 2K 起步。"
-    if is_gpt_size_error or (("invalid size" in lower_text or "invalid_value" in lower_text) and is_gpt_image_2_model(model)):
+    if is_gpt_size_error or (
+        ("invalid size" in lower_text or "invalid_value" in lower_text) and is_gpt_image_2_model(model)
+    ):
         return gpt_image_2_size_error_message(size)
     if "invalid size" in lower_text or "invalid_value" in lower_text:
         return f"该模型不支持当前尺寸：{size or '未指定'}。请尝试更换分辨率或模型。"
-    if "inputtextsensitivecontentdetected" in lower_text or "policyviolation" in lower_text or "copyright restrictions" in lower_text:
+    if (
+        "inputtextsensitivecontentdetected" in lower_text
+        or "policyviolation" in lower_text
+        or "copyright restrictions" in lower_text
+    ):
         return "上游内容安全拦截了这段提示词，原因偏向版权/敏感内容限制。请改写提示词，避免直接出现具体 IP、角色名、品牌名、影视/动漫作品名，改成风格特征描述再试。"
-    if "rejected by the safety system" in lower_text or "image_generation_user_error" in lower_text or "safety system" in lower_text or "content_policy_violation" in lower_text or "content policy" in lower_text:
+    if (
+        "rejected by the safety system" in lower_text
+        or "image_generation_user_error" in lower_text
+        or "safety system" in lower_text
+        or "content_policy_violation" in lower_text
+        or "content policy" in lower_text
+    ):
         return "上游（Azure/OpenAI 系）内容安全系统拒绝了本次生图请求。可能是提示词或参考图触发了内容审核。请改写提示词、避免敏感/暴力/成人/名人/版权角色等描述；若使用了人物参考图，可换一张图再试。这是上游平台的审核策略，并非本系统报错。"
     if "rate limit" in lower_text or "429" in lower_text:
         return "请求过于频繁，已被上游限流，请稍后再试。"
@@ -2181,6 +2610,7 @@ def friendly_image_error_detail(text, size="", model=""):
     if "model_not_found" in lower_text or "channel not found" in lower_text:
         return f"上游平台找不到模型「{model}」可用通道。可能该模型未在此账号开通，请换一个已开通的模型。"
     return ""
+
 
 def parse_error_payload_text(text):
     body = str(text or "").strip()
@@ -2191,6 +2621,7 @@ def parse_error_payload_text(text):
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
 
 def friendly_chat_error_detail(text, model="", provider=None):
     raw_text = str(text or "")
@@ -2224,26 +2655,31 @@ def friendly_chat_error_detail(text, model="", provider=None):
         return "请求过于频繁，已被上游限流，请稍后再试。"
     return ""
 
+
 # ---- RunningHub task protocol helpers ----
 def runninghub_connection():
     from app.ai.database_repository import DatabaseAIRepository
+
     try:
         target = next(
-            item for item in DatabaseAIRepository().connections()
-            if item.enabled and item.protocol == "runninghub"
+            item for item in DatabaseAIRepository().connections() if item.enabled and item.protocol == "runninghub"
         )
     except StopIteration as exc:
         raise HTTPException(status_code=400, detail="未配置或已禁用 RunningHub 连接") from exc
     return canonical_connection_view(target)
 
+
 def runninghub_api_key(provider):
     # Async generation preloads the canonical secret into the transient
     # provider view. Reuse it so adapters never cross the sync DB bridge from
     # an event-loop task.
-    key = str((provider or {}).get("api_key") or "").strip() or connection_api_key((provider or {}).get("connection_id") or (provider or {}).get("id"))
+    key = str((provider or {}).get("api_key") or "").strip() or connection_api_key(
+        (provider or {}).get("connection_id") or (provider or {}).get("id")
+    )
     if not key:
         raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     return key
+
 
 async def runninghub_api_key_async(provider):
     """Read RunningHub credentials without blocking the ASGI event loop."""
@@ -2255,19 +2691,50 @@ async def runninghub_api_key_async(provider):
         raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     return key
 
+
 async def wait_for_runninghub_image_task(client, provider, task_id):
     from app.ai.adapters.runninghub_transport import RunningHubTransport
+
     key = await runninghub_api_key_async(provider)
-    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda api_key, body: runninghub_protocol_headers(api_key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0))
-    return await transport.poll(client, provider, key, task_id, timeout=IMAGE_TASK_TIMEOUT, interval=IMAGE_POLL_INTERVAL, status=runninghub_normalized_status, outputs=runninghub_extract_outputs, failure=runninghub_fail_reason)
+    transport = RunningHubTransport(
+        endpoint=runninghub_endpoint_url,
+        headers=lambda api_key, body: runninghub_protocol_headers(api_key, json_body=body),
+        client_factory=shared_http_client,
+        timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0),
+    )
+    return await transport.poll(
+        client,
+        provider,
+        key,
+        task_id,
+        timeout=IMAGE_TASK_TIMEOUT,
+        interval=IMAGE_POLL_INTERVAL,
+        status=runninghub_normalized_status,
+        outputs=runninghub_extract_outputs,
+        failure=runninghub_fail_reason,
+    )
+
 
 def runninghub_local_asset_path(source_url):
     return output_file_from_url(source_url)
 
+
 async def runninghub_store_remote_output(client, remote):
-    response = await client.get(validate_external_http_url(remote, label="RunningHub 输出地址")); response.raise_for_status()
-    filename = os.path.basename(urllib.parse.urlsplit(remote).path) or f"runninghub.{runninghub_output_ext(remote) or 'bin'}"
-    saved = await run_storage_io(save_media_bytes, "output", filename, response.content, original_name=filename, content_type=response.headers.get("content-type") or "", kind=runninghub_output_kind(runninghub_output_ext(remote)), source="generated")
+    response = await client.get(validate_external_http_url(remote, label="RunningHub 输出地址"))
+    response.raise_for_status()
+    filename = (
+        os.path.basename(urllib.parse.urlsplit(remote).path) or f"runninghub.{runninghub_output_ext(remote) or 'bin'}"
+    )
+    saved = await run_storage_io(
+        save_media_bytes,
+        "output",
+        filename,
+        response.content,
+        original_name=filename,
+        content_type=response.headers.get("content-type") or "",
+        kind=runninghub_output_kind(runninghub_output_ext(remote)),
+        source="generated",
+    )
     return saved["url"]
 
 
@@ -2287,6 +2754,7 @@ async def runninghub_store_remote_output_item(remote, *, persist=True, fallback_
         logger.warning("failed to persist RunningHub output; returning remote URL", exc_info=True)
         url = remote
     return url, await run_storage_io(media_response_item, url, "", kind)
+
 
 def _gemini_image_config(request):
     """Build the Gemini/Omnilojo image_config from a request.
@@ -2313,19 +2781,23 @@ async def generate_omnilojo_image(prompt, size, model, reference_images=None, pr
         image_options=_gemini_image_config,
         timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
     )
-    return await adapter.generate(ImageGenerationRequest(
-        prompt=prompt,
-        size=size,
-        quality="",
-        model=model,
-        reference_images=list(reference_images or []),
-        connection=connection,
-        resolution=resolution,
-        ratio=ratio,
-    ))
+    return await adapter.generate(
+        ImageGenerationRequest(
+            prompt=prompt,
+            size=size,
+            quality="",
+            model=model,
+            reference_images=list(reference_images or []),
+            connection=connection,
+            resolution=resolution,
+            ratio=ratio,
+        )
+    )
+
 
 async def generate_openai_image(prompt, size, quality, model, reference_images=None, provider=None):
     from app.ai.adapters.openai_images import OpenAIImagesExecutor
+
     connection = provider or {}
     executor = OpenAIImagesExecutor(
         endpoint=lambda value, setting, fallback: connection_endpoint_url(value, setting, fallback),
@@ -2341,8 +2813,27 @@ async def generate_openai_image(prompt, size, quality, model, reference_images=N
         timeout=AI_REQUEST_TIMEOUT,
         long_timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
     )
-    target = SimpleNamespace(connection=SimpleNamespace(id=connection.get("connection_id") or connection.get("id") or "", base_url=connection.get("base_url") or "", settings=connection), model=SimpleNamespace(id="", upstream_model=model), resource=None)
-    return await executor.generate(ImageGenerationRequest(prompt=prompt, size=size, quality=quality, model=model, reference_images=list(reference_images or []), connection=connection, target=target))
+    target = SimpleNamespace(
+        connection=SimpleNamespace(
+            id=connection.get("connection_id") or connection.get("id") or "",
+            base_url=connection.get("base_url") or "",
+            settings=connection,
+        ),
+        model=SimpleNamespace(id="", upstream_model=model),
+        resource=None,
+    )
+    return await executor.generate(
+        ImageGenerationRequest(
+            prompt=prompt,
+            size=size,
+            quality=quality,
+            model=model,
+            reference_images=list(reference_images or []),
+            connection=connection,
+            target=target,
+        )
+    )
+
 
 async def generate_gemini_image(prompt, size, model, reference_images=None, provider=None, resolution="", ratio=""):
     """Generate an image through Gemini's OpenAI-compatible chat facade."""
@@ -2356,18 +2847,29 @@ async def generate_gemini_image(prompt, size, model, reference_images=None, prov
         image_options=_gemini_image_config,
         timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
     )
-    return await adapter.generate(ImageGenerationRequest(
-        prompt=prompt, size=size, quality="", model=model,
-        reference_images=list(reference_images or []), connection=provider or {},
-        resolution=resolution, ratio=ratio,
-    ))
+    return await adapter.generate(
+        ImageGenerationRequest(
+            prompt=prompt,
+            size=size,
+            quality="",
+            model=model,
+            reference_images=list(reference_images or []),
+            connection=provider or {},
+            resolution=resolution,
+            ratio=ratio,
+        )
+    )
 
 
 async def generate_volcengine_image(prompt, size, model, reference_images=None, provider=None):
     """Generate an image through Volcengine's OpenAI Images-compatible API."""
     return await generate_openai_image(
-        prompt, normalize_volcengine_size(size, model), "", model,
-        reference_images, provider,
+        prompt,
+        normalize_volcengine_size(size, model),
+        "",
+        model,
+        reference_images,
+        provider,
     )
 
 
@@ -2398,42 +2900,65 @@ async def _image_adapter_runninghub(request: ImageGenerationRequest):
     )
     if request.target is None:
         raise ValueError("RunningHub image request requires a resolved target")
-    return await adapter.generate(request.target, prompt=request.prompt, model=request.model, references=request.reference_images)
+    return await adapter.generate(
+        request.target, prompt=request.prompt, model=request.model, references=request.reference_images
+    )
 
 
 async def _image_adapter_omnilojo(request: ImageGenerationRequest):
     return await generate_omnilojo_image(
-        request.prompt, request.size, request.model, request.reference_images, request.connection,
-        resolution=request.resolution, ratio=request.ratio,
+        request.prompt,
+        request.size,
+        request.model,
+        request.reference_images,
+        request.connection,
+        resolution=request.resolution,
+        ratio=request.ratio,
     )
 
 
 async def _image_adapter_gemini(request: ImageGenerationRequest):
     return await generate_gemini_image(
-        request.prompt, request.size, request.model, request.reference_images, request.connection,
-        resolution=request.resolution, ratio=request.ratio,
+        request.prompt,
+        request.size,
+        request.model,
+        request.reference_images,
+        request.connection,
+        resolution=request.resolution,
+        ratio=request.ratio,
     )
 
 
 async def _image_adapter_volcengine(request: ImageGenerationRequest):
     return await generate_volcengine_image(
-        request.prompt, request.size, request.model, request.reference_images, request.connection,
+        request.prompt,
+        request.size,
+        request.model,
+        request.reference_images,
+        request.connection,
     )
 
 
 async def _image_adapter_openai(request: ImageGenerationRequest):
     return await generate_openai_image(
-        request.prompt, request.size, request.quality, request.model, request.reference_images, request.connection,
+        request.prompt,
+        request.size,
+        request.quality,
+        request.model,
+        request.reference_images,
+        request.connection,
     )
 
 
-IMAGE_ADAPTERS = build_image_adapter_registry({
-    "runninghub": _image_adapter_runninghub,
-    "omnilojo": _image_adapter_omnilojo,
-    "gemini": _image_adapter_gemini,
-    "volcengine": _image_adapter_volcengine,
-    "openai": _image_adapter_openai,
-})
+IMAGE_ADAPTERS = build_image_adapter_registry(
+    {
+        "runninghub": _image_adapter_runninghub,
+        "omnilojo": _image_adapter_omnilojo,
+        "gemini": _image_adapter_gemini,
+        "volcengine": _image_adapter_volcengine,
+        "openai": _image_adapter_openai,
+    }
+)
 
 
 def canonical_connection_view(target) -> dict[str, Any]:
@@ -2451,11 +2976,17 @@ def canonical_connection_view(target) -> dict[str, Any]:
     model = getattr(target, "model", None)
     if model is not None:
         settings = dict(getattr(model, "settings", {}) or {})
-        if any(settings.get(key) is not None for key in ("input_per_million", "text_input_per_million", "image_input_per_million", "output_per_million")):
+        if any(
+            settings.get(key) is not None
+            for key in ("input_per_million", "text_input_per_million", "image_input_per_million", "output_per_million")
+        ):
             price = {
                 "input_per_million": settings.get("input_per_million", settings.get("text_input_per_million", 0)),
                 "text_input_per_million": settings.get("text_input_per_million", settings.get("input_per_million", 0)),
-                "cached_input_per_million": settings.get("cached_input_per_million", settings.get("input_per_million", settings.get("text_input_per_million", 0))),
+                "cached_input_per_million": settings.get(
+                    "cached_input_per_million",
+                    settings.get("input_per_million", settings.get("text_input_per_million", 0)),
+                ),
                 "output_per_million": settings.get("output_per_million", 0),
                 "image_input_per_million": settings.get("image_input_per_million", 0),
             }
@@ -2464,7 +2995,17 @@ def canonical_connection_view(target) -> dict[str, Any]:
     return view
 
 
-async def generate_ai_image_target(target, *, prompt: str, size: str, quality: str, reference_images=None, user_id: str = "", resolution: str = "", ratio: str = ""):
+async def generate_ai_image_target(
+    target,
+    *,
+    prompt: str,
+    size: str,
+    quality: str,
+    reference_images=None,
+    user_id: str = "",
+    resolution: str = "",
+    ratio: str = "",
+):
     """Execute image generation from an authoritative resolved target."""
     from app.ai.contracts import Actor, ImageCommand
     from app.ai.images import ImageGateway
@@ -2517,6 +3058,7 @@ async def assert_provider_budget_available(provider, user_id):
     if not (is_runninghub_connection(provider) or has_pricing):
         return
     from app.services.usage import assert_runninghub_budget_available
+
     try:
         await asyncio.to_thread(assert_runninghub_budget_available, user_id)
     except ValueError as exc:
@@ -2528,6 +3070,7 @@ async def assert_provider_budget_available(provider, user_id):
                 "contact_admin": True,
             },
         ) from None
+
 
 def upstream_message_from_record(item):
     role = item.get("role")
@@ -2543,15 +3086,53 @@ def upstream_message_from_record(item):
         return {"role": role, "content": content}
     return {"role": role, "content": item.get("content", "")}
 
+
 # --- Agent 意图路由与工具编排 ---
 
 AGENT_ACTIONS = {"chat", "generate_image", "edit_image"}
-AGENT_IMAGE_KEYWORDS = ("生成", "画", "出图", "生图", "图片", "图像", "海报", "头像", "壁纸", "插画", "照片", "photo", "image", "picture", "draw", "generate")
-AGENT_EDIT_KEYWORDS = ("修改", "改成", "换成", "调整", "优化", "编辑", "重绘", "上一张", "刚才", "这张", "那张", "参考图", "改图", "edit", "modify", "change", "revise")
+AGENT_IMAGE_KEYWORDS = (
+    "生成",
+    "画",
+    "出图",
+    "生图",
+    "图片",
+    "图像",
+    "海报",
+    "头像",
+    "壁纸",
+    "插画",
+    "照片",
+    "photo",
+    "image",
+    "picture",
+    "draw",
+    "generate",
+)
+AGENT_EDIT_KEYWORDS = (
+    "修改",
+    "改成",
+    "换成",
+    "调整",
+    "优化",
+    "编辑",
+    "重绘",
+    "上一张",
+    "刚才",
+    "这张",
+    "那张",
+    "参考图",
+    "改图",
+    "edit",
+    "modify",
+    "change",
+    "revise",
+)
 CN_NUMERAL_MAP = {"一": 1, "二": 2, "两": 2, "俩": 2, "三": 3, "四": 4}
+
 
 def image_references(refs):
     return [ref for ref in (refs or []) if isinstance(ref, dict) and ref.get("url")]
+
 
 def latest_chat_image_refs(conversation, limit=1):
     refs = []
@@ -2562,6 +3143,7 @@ def latest_chat_image_refs(conversation, limit=1):
             break
     return refs
 
+
 async def latest_chat_image_data_urls(conversation, limit=1):
     """Return recent generated images as provider-neutral data URLs."""
     result = []
@@ -2570,6 +3152,7 @@ async def latest_chat_image_data_urls(conversation, limit=1):
         if data_url and data_url not in result:
             result.append(data_url)
     return result
+
 
 def image_size_from_reference(ref):
     path = output_file_from_url(ref)
@@ -2581,13 +3164,17 @@ def image_size_from_reference(ref):
     except Exception:
         return ""
 
+
 def chat_requested_image_count(message):
     text = str(message or "")
-    match = re.search(r"(?<!\d)([1-4])\s*(?:张|幅|个|组|套)(?!\d)", text) or re.search(r"([一二两俩三四])\s*(?:张|幅|个|组|套)", text)
+    match = re.search(r"(?<!\d)([1-4])\s*(?:张|幅|个|组|套)(?!\d)", text) or re.search(
+        r"([一二两俩三四])\s*(?:张|幅|个|组|套)", text
+    )
     if not match:
         return 1
     value = match.group(1)
     return max(1, min(4, int(value) if value.isdigit() else CN_NUMERAL_MAP.get(value, 1)))
+
 
 def chat_split_parallel_prompts(prompt, count):
     text = str(prompt or "").strip()
@@ -2597,9 +3184,14 @@ def chat_split_parallel_prompts(prompt, count):
     if not noun_match:
         return [text] * count
     prefix, suffix = noun_match.group(1).strip(), noun_match.group(2)
-    prefix = re.sub(r"(?:再)?(?:生成|画|绘制|制作|创建)\s*[1-4一二两俩三四]?\s*(?:张|幅|个|组|套)?", "", prefix).strip(" ，,、")
-    candidates = [item.strip(" ，,、") for item in re.split(r"\s*(?:和|与|、|，|,|\+|＋)\s*", prefix) if item.strip(" ，,、")]
+    prefix = re.sub(r"(?:再)?(?:生成|画|绘制|制作|创建)\s*[1-4一二两俩三四]?\s*(?:张|幅|个|组|套)?", "", prefix).strip(
+        " ，,、"
+    )
+    candidates = [
+        item.strip(" ，,、") for item in re.split(r"\s*(?:和|与|、|，|,|\+|＋)\s*", prefix) if item.strip(" ，,、")
+    ]
     return [f"{item}的{suffix}" for item in candidates[:count]] if len(candidates) >= count else [text] * count
+
 
 def heuristic_agent_decision(message, refs, has_previous_image):
     text = str(message or "").lower()
@@ -2610,6 +3202,7 @@ def heuristic_agent_decision(message, refs, has_previous_image):
     if has_image and not has_edit:
         return {"action": "generate_image", "prompt": message, "reply": ""}
     return {"action": "chat", "prompt": message, "reply": ""}
+
 
 def parse_agent_decision(raw_text, message, refs, has_previous_image):
     data = None
@@ -2627,44 +3220,81 @@ def parse_agent_decision(raw_text, message, refs, has_previous_image):
         action = fallback["action"]
     if action == "edit_image" and not (refs or has_previous_image):
         action = fallback["action"]
-    return {"action": action, "prompt": str(data.get("prompt") or message).strip() or message, "reply": str(data.get("reply") or "").strip()}
+    return {
+        "action": action,
+        "prompt": str(data.get("prompt") or message).strip() or message,
+        "reply": str(data.get("reply") or "").strip(),
+    }
+
 
 async def decide_chat_agent_action(payload, conversation, refs):
     previous = bool(latest_chat_image_refs(conversation, 1))
     fallback = heuristic_agent_decision(payload.message, refs, previous)
     from app.ai.database_repository import DatabaseAIRepository
+
     if not (payload.model_id or payload.connection_id):
         raise HTTPException(status_code=400, detail="Agent 请求必须提供 connection_id、model_id 或 resource_id")
     try:
-        chat_target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.model_id, connection_id=payload.connection_id, model=payload.model, kind="chat")
+        chat_target = await asyncio.to_thread(
+            DatabaseAIRepository().resolve_model,
+            model_id=payload.model_id,
+            connection_id=payload.connection_id,
+            model=payload.model,
+            kind="chat",
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Agent 聊天模型或连接不存在或已禁用") from exc
     model = chat_target.model.upstream_model
     provider_cfg = {"id": chat_target.connection.id, "protocol": chat_target.protocol}
-    messages = [{"role": "system", "content": "你是图片创作聊天 Agent 的意图路由器。只返回 JSON，不要 Markdown。action 只能是 chat、generate_image、edit_image。generate_image 用于生成新图，edit_image 用于修改上传图或上一张图。prompt 是交给图片工具的完整提示词。"}]
+    messages = [
+        {
+            "role": "system",
+            "content": "你是图片创作聊天 Agent 的意图路由器。只返回 JSON，不要 Markdown。action 只能是 chat、generate_image、edit_image。generate_image 用于生成新图，edit_image 用于修改上传图或上一张图。prompt 是交给图片工具的完整提示词。",
+        }
+    ]
     for item in conversation.get("messages", [])[-10:]:
-        if item.get("role") == "user" and item.get("content") == payload.message and item is conversation.get("messages", [])[-1]:
+        if (
+            item.get("role") == "user"
+            and item.get("content") == payload.message
+            and item is conversation.get("messages", [])[-1]
+        ):
             continue
         msg = await run_storage_io(upstream_message_from_record, item)
         if msg:
             messages.append(msg)
-    current_content = [{"type": "text", "text": f"当前用户输入：{payload.message}\n用户系统提示词：{payload.system_prompt or '无'}\n上传参考图数量：{len(refs)}\n已有上一张图：{'是' if previous else '否'}\n请返回 JSON。"}]
+    current_content = [
+        {
+            "type": "text",
+            "text": f"当前用户输入：{payload.message}\n用户系统提示词：{payload.system_prompt or '无'}\n上传参考图数量：{len(refs)}\n已有上一张图：{'是' if previous else '否'}\n请返回 JSON。",
+        }
+    ]
     for data_url in await latest_chat_image_data_urls(conversation, 1):
         current_content.append({"type": "image_url", "image_url": {"url": data_url}})
     for ref in list(payload.reference_images or [])[:CHAT_ATTACHMENT_MAX]:
         data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
         if data_url:
             current_content.append({"type": "image_url", "image_url": {"url": data_url}})
-    messages.append({"role": "user", "content": current_content if len(current_content) > 1 else current_content[0]["text"]})
+    messages.append(
+        {"role": "user", "content": current_content if len(current_content) > 1 else current_content[0]["text"]}
+    )
     try:
         from app.ai.chat import ChatGateway
+
         chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
         raw = await chat_gateway.complete_target(target=chat_target, messages=messages, user_id=current_user_id())
         if provider_cfg.get("protocol") in {"omnilojo", "openai"}:
             from app.services.usage import record_openai_response_usage
+
             usage_payload = dict(raw) if isinstance(raw, dict) else {}
             usage_payload.setdefault("id", uuid.uuid4().hex)
-            await asyncio.to_thread(record_openai_response_usage, current_user_id(), provider_cfg, model, usage_payload, operation="agent_router")
+            await asyncio.to_thread(
+                record_openai_response_usage,
+                current_user_id(),
+                provider_cfg,
+                model,
+                usage_payload,
+                operation="agent_router",
+            )
         decision = parse_agent_decision(text_from_chat_response(raw), payload.message, refs, previous)
         decision["router_model"] = model
         return decision
@@ -2673,12 +3303,20 @@ async def decide_chat_agent_action(payload, conversation, refs):
         fallback["router_model"] = model
         return fallback
 
+
 async def build_chat_text_reply(payload, conversation):
     from app.ai.database_repository import DatabaseAIRepository
+
     if not (payload.model_id or payload.connection_id):
         raise HTTPException(status_code=400, detail="聊天请求必须提供 connection_id、model_id 或 resource_id")
     try:
-        chat_target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.model_id, connection_id=payload.connection_id, model=payload.model, kind="chat")
+        chat_target = await asyncio.to_thread(
+            DatabaseAIRepository().resolve_model,
+            model_id=payload.model_id,
+            connection_id=payload.connection_id,
+            model=payload.model,
+            kind="chat",
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="聊天模型或连接不存在或已禁用") from exc
     model = chat_target.model.upstream_model
@@ -2701,20 +3339,34 @@ async def build_chat_text_reply(payload, conversation):
     messages.append({"role": "user", "content": current_content if len(current_content) > 1 else payload.message})
     try:
         from app.ai.chat import ChatGateway
+
         chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
         raw = await chat_gateway.complete_target(target=chat_target, messages=messages, user_id=current_user_id())
     except httpx.HTTPStatusError as exc:
         body = exc.response.text or ""
         friendly = friendly_chat_error_detail(body, model, provider)
-        raise HTTPException(status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body[:300]}") from exc
+        raise HTTPException(
+            status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body[:300]}"
+        ) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游接口失败：{exc}") from exc
     if provider.get("protocol") in {"omnilojo", "openai"}:
         from app.services.usage import record_openai_response_usage
+
         usage_payload = dict(raw) if isinstance(raw, dict) else {}
         usage_payload.setdefault("id", uuid.uuid4().hex)
-        await asyncio.to_thread(record_openai_response_usage, current_user_id(), provider, model, usage_payload, operation="chat")
-    return {"id": uuid.uuid4().hex, "role": "assistant", "content": text_from_chat_response(raw).strip() or "接口返回了空回复。", "created_at": now_ms(), "model": model, "raw_usage": raw.get("usage") if isinstance(raw, dict) else None}
+        await asyncio.to_thread(
+            record_openai_response_usage, current_user_id(), provider, model, usage_payload, operation="chat"
+        )
+    return {
+        "id": uuid.uuid4().hex,
+        "role": "assistant",
+        "content": text_from_chat_response(raw).strip() or "接口返回了空回复。",
+        "created_at": now_ms(),
+        "model": model,
+        "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
+    }
+
 
 # --- 路由接口 ---
 
@@ -2722,16 +3374,18 @@ async def build_chat_text_reply(payload, conversation):
 # /、/login、/auth/register、/auth/login、/auth/logout、/auth/me 已迁移至
 # app/routers/pages.py（含 _issue_session_response）。auth_middleware 与 /ws/stats 仍在 main.py。
 
+
 @app.get("/api/view")
 async def view_image(filename: str, type: str = "input", subfolder: str = ""):
     # 先按原逻辑去各 ComfyUI 后端找
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
     transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
     for addr in COMFYUI_INSTANCES:
         try:
             r = await transport.view(addr, filename, kind=type, subfolder=subfolder)
             if r.status_code == 200:
-                return Response(content=r.content, media_type=r.headers.get('Content-Type'))
+                return Response(content=r.content, media_type=r.headers.get("Content-Type"))
         except Exception:
             continue
     # ComfyUI may have cleaned its input directory; fall back to the MinIO copy.
@@ -2743,11 +3397,14 @@ async def view_image(filename: str, type: str = "input", subfolder: str = ""):
                 return FileResponse(local_path, media_type=content_type_for_path(local_path))
     raise HTTPException(status_code=404, detail="Image not found on any available backend")
 
+
 # /api/download-output 路由已迁移至 app/routers/local_assets.py。
+
 
 @app.post("/api/upload")
 async def upload_image(files: List[UploadFile] = File(...)):
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
     uploaded_files = []
     files_content = []
     for file in files:
@@ -2760,12 +3417,17 @@ async def upload_image(files: List[UploadFile] = File(...)):
         last_result = None
         for addr in COMFYUI_INSTANCES:
             try:
-                response = await transport.upload(addr, file.filename or "upload.bin", content, file.content_type or "application/octet-stream")
+                response = await transport.upload(
+                    addr, file.filename or "upload.bin", content, file.content_type or "application/octet-stream"
+                )
                 if response.status_code == 200:
                     last_result = response.json()
                     success_count += 1
             except Exception:
-                logger.exception("ComfyUI upload failed", extra={"event": "upload_failed", "provider": "comfyui", "operation": "upload", "endpoint": addr})
+                logger.exception(
+                    "ComfyUI upload failed",
+                    extra={"event": "upload_failed", "provider": "comfyui", "operation": "upload", "endpoint": addr},
+                )
 
         if success_count > 0 and last_result:
             uploaded_files.append({"comfy_name": last_result.get("name", file.filename)})
@@ -2773,6 +3435,7 @@ async def upload_image(files: List[UploadFile] = File(...)):
             raise HTTPException(status_code=500, detail="Failed to upload to any backend")
 
     return {"files": uploaded_files}
+
 
 # /api/ai/upload、/api/local-assets(upload|list|delete) 路由及 _local_upload_* 助手
 # 已迁移至 app/routers/local_assets.py。
@@ -2782,6 +3445,7 @@ from app.services.pose_studio import (
 )
 
 SAM3D_WORKFLOW_JSON = "custom/Sam3DBody.json"
+
 
 def _sam3d_workflow_info() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     stored = get_comfy_workflow(SAM3D_WORKFLOW_JSON)
@@ -2802,8 +3466,12 @@ def _sam3d_workflow_info() -> Tuple[Optional[str], Optional[str], Optional[str]]
                 export_node_id = str(node_id)
         return SAM3D_WORKFLOW_JSON, image_node_id, export_node_id
     except Exception:
-        logger.exception("Pose Studio Sam3D workflow node lookup failed", extra={"event": "sam3d_workflow_node_lookup_failed", "provider": "comfyui"})
+        logger.exception(
+            "Pose Studio Sam3D workflow node lookup failed",
+            extra={"event": "sam3d_workflow_node_lookup_failed", "provider": "comfyui"},
+        )
     return SAM3D_WORKFLOW_JSON, None, None
+
 
 @app.post("/api/pose-studio/generate-fbx")
 async def pose_studio_generate_fbx(file: UploadFile = File(...)):
@@ -2827,10 +3495,13 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
     last_error = ""
     uploaded_image_name = comfy_image_name
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
     transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
     for addr in COMFYUI_INSTANCES:
         try:
-            response = await transport.upload(addr, comfy_image_name, content, file.content_type or "image/png", overwrite=True)
+            response = await transport.upload(
+                addr, comfy_image_name, content, file.content_type or "image/png", overwrite=True
+            )
             if response.status_code == 200:
                 try:
                     uploaded_image_name = str(response.json().get("name") or uploaded_image_name)
@@ -2841,7 +3512,15 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
                 last_error = response.text[:300]
         except Exception as exc:
             last_error = str(exc)
-            logger.exception("Pose Studio Sam3D input upload failed", extra={"event": "sam3d_input_upload_failed", "provider": "comfyui", "operation": "upload", "endpoint": addr})
+            logger.exception(
+                "Pose Studio Sam3D input upload failed",
+                extra={
+                    "event": "sam3d_input_upload_failed",
+                    "provider": "comfyui",
+                    "operation": "upload",
+                    "endpoint": addr,
+                },
+            )
     if success_count <= 0:
         raise HTTPException(status_code=502, detail=f"上传图片到 ComfyUI 失败：{last_error or 'no available backend'}")
 
@@ -2890,22 +3569,27 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
     }
     return registered
 
+
 @app.post("/api/pose-studio/upload-fbx")
 async def pose_studio_upload_fbx(file: UploadFile = File(...)):
     content = await file.read()
     return register_uploaded_fbx_model(content, file.filename or "uploaded-model")
+
 
 @app.post("/api/temp-sh/upload")
 async def temp_sh_upload(payload: TempShUploadRequest, request: Request):
     ensure_same_origin_request(request)
     return await upload_local_video_to_cloud(payload.url, "auto")
 
+
 @app.post("/api/cloud-video/upload")
 async def cloud_video_upload(payload: CloudVideoUploadRequest, request: Request):
     ensure_same_origin_request(request)
     return await upload_local_video_to_cloud(payload.url, payload.service)
 
+
 # /api/ai/import-local-image 路由已迁移至 app/routers/local_assets.py。
+
 
 @app.get("/api/runninghub/app-info")
 async def runninghub_app_info(webappId: str = ""):
@@ -2915,27 +3599,38 @@ async def runninghub_app_info(webappId: str = ""):
     provider = await asyncio.to_thread(runninghub_connection)
     api_key = await runninghub_api_key_async(provider)
     from app.ai.adapters.runninghub_transport import RunningHubTransport
-    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0))
+
+    transport = RunningHubTransport(
+        endpoint=runninghub_endpoint_url,
+        headers=lambda key, body: runninghub_protocol_headers(key, json_body=body),
+        client_factory=shared_http_client,
+        timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0),
+    )
     raw = await transport.app_info(provider, api_key, webapp_id)
     if isinstance(raw, dict) and raw.get("code") not in (0, "0", None):
         raise HTTPException(status_code=400, detail=raw.get("msg") or f"RunningHub 查询失败 code={raw.get('code')}")
     data = raw.get("data") if isinstance(raw, dict) else {}
     return {"success": True, "data": data or {}}
 
+
 @app.post("/api/runninghub/submit")
 async def runninghub_submit(payload: RunningHubSubmitRequest):
     user_id = current_user_id()
     from app.services.usage import record_runninghub_submission
+
     webapp_id = str(payload.webappId or "").strip()
     selected_resource = None
     if not payload.resource_id and not payload.connection_id:
         raise HTTPException(status_code=400, detail="RunningHub 任务必须指定 resource_id 或 connection_id")
     if payload.resource_id or payload.connection_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
             selected_resource = await asyncio.to_thread(
                 DatabaseAIRepository().resolve_executable,
-                resource_id=payload.resource_id, connection_id=payload.connection_id, kind="runninghub_app"
+                resource_id=payload.resource_id,
+                connection_id=payload.connection_id,
+                kind="runninghub_app",
             )
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
@@ -2954,9 +3649,17 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
     instance_type = str(payload.instanceType or "").strip()
     if instance_type:
         body["instanceType"] = instance_type
-    async with connection_operation(str(provider.get("connection_id") or provider.get("id") or "runninghub"), "app_generation", user_id=user_id):
+    async with connection_operation(
+        str(provider.get("connection_id") or provider.get("id") or "runninghub"), "app_generation", user_id=user_id
+    ):
         from app.ai.adapters.runninghub_transport import RunningHubTransport
-        transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0))
+
+        transport = RunningHubTransport(
+            endpoint=runninghub_endpoint_url,
+            headers=lambda key, body: runninghub_protocol_headers(key, json_body=body),
+            client_factory=shared_http_client,
+            timeout=httpx.Timeout(connect=20.0, read=180.0, write=120.0, pool=20.0),
+        )
         raw = await transport.submit(provider, api_key, body)
     if isinstance(raw, dict) and raw.get("code") in (804, "804"):
         raise HTTPException(
@@ -2968,8 +3671,11 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
         if not upstream_task_id:
             raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId：{raw}")
         await asyncio.to_thread(
-            record_runninghub_submission, user_id, upstream_task_id,
-            operation="ai_app", model=webapp_id,
+            record_runninghub_submission,
+            user_id,
+            upstream_task_id,
+            operation="ai_app",
+            model=webapp_id,
             connection_id=selected_resource.connection.id if selected_resource else "",
             resource_id=payload.resource_id or "",
         )
@@ -2986,19 +3692,32 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
                 "status": "queued",
             },
         )
-        return {"success": True, "data": {
-            "task_id": local_task_id,
-            "upstream_task_id": upstream_task_id,
-            "connection_id": selected_resource.connection.id if selected_resource else "",
-            "resource_id": payload.resource_id or "",
-            "raw": raw,
-        }}
-    raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
+        return {
+            "success": True,
+            "data": {
+                "task_id": local_task_id,
+                "upstream_task_id": upstream_task_id,
+                "connection_id": selected_resource.connection.id if selected_resource else "",
+                "resource_id": payload.resource_id or "",
+                "raw": raw,
+            },
+        }
+    raise HTTPException(
+        status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}"
+    )
+
 
 @app.get("/api/runninghub/query")
-async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connection_id: str = "", resource_id: str = "", local_task_id: str = ""):
+async def runninghub_query(
+    taskId: str = "",
+    persistOutputs: bool = True,
+    connection_id: str = "",
+    resource_id: str = "",
+    local_task_id: str = "",
+):
     user_id = current_user_id()
     from app.services.usage import settle_runninghub_usage
+
     task_id = str(taskId or "").strip()
     if not task_id:
         raise HTTPException(status_code=400, detail="taskId 必填")
@@ -3007,8 +3726,14 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connec
     provider = None
     if connection_id or resource_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
-            target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=resource_id, connection_id=connection_id, kind="runninghub_app")
+            target = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_executable,
+                resource_id=resource_id,
+                connection_id=connection_id,
+                kind="runninghub_app",
+            )
             provider = canonical_connection_view(target)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
@@ -3016,19 +3741,33 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connec
         raise HTTPException(status_code=404, detail="RunningHub 连接不存在或已禁用")
     api_key = await runninghub_api_key_async(provider)
     from app.ai.adapters.runninghub_transport import RunningHubTransport
-    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0))
+
+    transport = RunningHubTransport(
+        endpoint=runninghub_endpoint_url,
+        headers=lambda key, body: runninghub_protocol_headers(key, json_body=body),
+        client_factory=shared_http_client,
+        timeout=httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0),
+    )
     raw = await transport.query(provider, api_key, task_id)
     code = raw.get("code") if isinstance(raw, dict) else None
-    stored_outputs = await asyncio.gather(*(
-        runninghub_store_remote_output_item(remote, persist=persistOutputs, fallback_remote=True)
-        for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw)
-    ))
+    stored_outputs = await asyncio.gather(
+        *(
+            runninghub_store_remote_output_item(remote, persist=persistOutputs, fallback_remote=True)
+            for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw)
+        )
+    )
     urls = [item[0] for item in stored_outputs]
     media_items = [item[1] for item in stored_outputs]
     status = runninghub_normalized_status(raw, code, urls)
     await asyncio.to_thread(
-        settle_runninghub_usage, user_id, task_id, raw,
-        status=status, operation="ai_app", connection_id=connection_id, resource_id=resource_id,
+        settle_runninghub_usage,
+        user_id,
+        task_id,
+        raw,
+        status=status,
+        operation="ai_app",
+        connection_id=connection_id,
+        resource_id=resource_id,
     )
     # RunningHub app tasks are polled by the client (no canvas worker), so the
     # terminal lifecycle line is emitted here, keyed by the local task_id issued
@@ -3050,7 +3789,15 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connec
                 "error": "" if succeeded else str(runninghub_fail_reason(raw) or ""),
             },
         )
-    result_data = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}
+    result_data = {
+        "status": status,
+        "urls": urls,
+        "media_items": media_items,
+        "image_items": media_items,
+        "failReason": runninghub_fail_reason(raw),
+        "code": code,
+        "raw": raw,
+    }
     try:
         quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
         if quota_warning:
@@ -3058,6 +3805,7 @@ async def runninghub_query(taskId: str = "", persistOutputs: bool = True, connec
     except Exception:
         pass
     return {"success": True, "data": result_data}
+
 
 @app.post("/api/runninghub/upload-asset")
 async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
@@ -3067,8 +3815,14 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     if not payload.connection_id and not payload.resource_id:
         raise HTTPException(status_code=400, detail="RunningHub 素材上传必须指定 connection_id 或 resource_id")
     from app.ai.database_repository import DatabaseAIRepository
+
     try:
-        target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id, connection_id=payload.connection_id, kind="runninghub_app")
+        target = await asyncio.to_thread(
+            DatabaseAIRepository().resolve_executable,
+            resource_id=payload.resource_id,
+            connection_id=payload.connection_id,
+            kind="runninghub_app",
+        )
         provider = canonical_connection_view(target)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
@@ -3080,14 +3834,11 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
         entry = await run_storage_io(resolve_file_reference, url=source_url) if source_url else None
         path = None if entry else await run_storage_io(runninghub_local_asset_path, source_url)
         if entry:
-            filename = (
-                entry.get("original_name")
-                or entry.get("filename")
-                or entry.get("stored_name")
-                or filename
-            )
+            filename = entry.get("original_name") or entry.get("filename") or entry.get("stored_name") or filename
             content_type = entry.get("mime_type") or entry.get("content_type") or content_type
-            content = await run_storage_io(get_object_bytes, str(entry.get("bucket") or ""), str(entry.get("object_key") or ""))
+            content = await run_storage_io(
+                get_object_bytes, str(entry.get("bucket") or ""), str(entry.get("object_key") or "")
+            )
         elif path:
             filename = os.path.basename(path)
             content_type = content_type_for_path(path)
@@ -3105,20 +3856,44 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
         if not content:
             raise HTTPException(status_code=400, detail="素材为空，无法上传到 RunningHub")
     from app.ai.adapters.runninghub_transport import RunningHubTransport
-    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0))
+
+    transport = RunningHubTransport(
+        endpoint=runninghub_endpoint_url,
+        headers=lambda key, body: runninghub_protocol_headers(key, json_body=body),
+        client_factory=shared_http_client,
+        timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0),
+    )
     raw = await transport.upload(provider, api_key, filename, content, content_type)
-    if isinstance(raw, dict) and raw.get("code") in (0, "0") and isinstance(raw.get("data"), dict) and raw["data"].get("fileName"):
-        return {"success": True, "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type}}
-    raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}")
+    if (
+        isinstance(raw, dict)
+        and raw.get("code") in (0, "0")
+        and isinstance(raw.get("data"), dict)
+        and raw["data"].get("fileName")
+    ):
+        return {
+            "success": True,
+            "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type},
+        }
+    raise HTTPException(
+        status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}"
+    )
 
 
 @app.post("/api/runninghub/upload-asset-file")
-async def runninghub_upload_asset_file(file: UploadFile = File(...), connection_id: str = Form(""), resource_id: str = Form("")):
+async def runninghub_upload_asset_file(
+    file: UploadFile = File(...), connection_id: str = Form(""), resource_id: str = Form("")
+):
     if not connection_id and not resource_id:
         raise HTTPException(status_code=400, detail="RunningHub 素材上传必须指定 connection_id 或 resource_id")
     from app.ai.database_repository import DatabaseAIRepository
+
     try:
-        target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=resource_id, connection_id=connection_id, kind="runninghub_app")
+        target = await asyncio.to_thread(
+            DatabaseAIRepository().resolve_executable,
+            resource_id=resource_id,
+            connection_id=connection_id,
+            kind="runninghub_app",
+        )
         provider = canonical_connection_view(target)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
@@ -3132,15 +3907,34 @@ async def runninghub_upload_asset_file(file: UploadFile = File(...), connection_
     if not content:
         raise HTTPException(status_code=400, detail="素材为空，无法上传到 RunningHub")
     from app.ai.adapters.runninghub_transport import RunningHubTransport
-    transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0))
+
+    transport = RunningHubTransport(
+        endpoint=runninghub_endpoint_url,
+        headers=lambda key, body: runninghub_protocol_headers(key, json_body=body),
+        client_factory=shared_http_client,
+        timeout=httpx.Timeout(connect=20.0, read=240.0, write=240.0, pool=20.0),
+    )
     raw = await transport.upload(provider, api_key, filename, content, content_type)
-    if isinstance(raw, dict) and raw.get("code") in (0, "0") and isinstance(raw.get("data"), dict) and raw["data"].get("fileName"):
-        return {"success": True, "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type}}
-    raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}")
+    if (
+        isinstance(raw, dict)
+        and raw.get("code") in (0, "0")
+        and isinstance(raw.get("data"), dict)
+        and raw["data"].get("fileName")
+    ):
+        return {
+            "success": True,
+            "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type},
+        }
+    raise HTTPException(
+        status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}"
+    )
+
 
 @app.get("/api/config")
 async def ai_config():
-    preferred_chat_model = next((m for m in CHAT_MODELS if m == "gpt-5.5"), CHAT_MODELS[0] if CHAT_MODELS else CHAT_MODEL)
+    preferred_chat_model = next(
+        (m for m in CHAT_MODELS if m == "gpt-5.5"), CHAT_MODELS[0] if CHAT_MODELS else CHAT_MODEL
+    )
     return {
         "base_url": AI_BASE_URL,
         "chat_model": preferred_chat_model,
@@ -3152,9 +3946,11 @@ async def ai_config():
         "has_api_key": bool(AI_API_KEY),
     }
 
+
 @app.get("/api/models")
 async def ai_models():
     return {"chat_models": CHAT_MODELS, "image_models": IMAGE_MODELS, "video_models": VIDEO_MODELS}
+
 
 @app.get("/api/ai/resources")
 async def ai_resources():
@@ -3167,45 +3963,47 @@ async def ai_resources():
     from app.ai.database_repository import DatabaseAIRepository
 
     repository = DatabaseAIRepository()
+
     def read_resources():
         return {
             "connections": [
-            {
-                "id": item.id,
-                "protocol": item.protocol,
-                "name": item.name,
-                "base_url": item.base_url,
-                "primary": item.primary,
-            }
-            for item in repository.connections()
+                {
+                    "id": item.id,
+                    "protocol": item.protocol,
+                    "name": item.name,
+                    "base_url": item.base_url,
+                    "primary": item.primary,
+                }
+                for item in repository.connections()
             ],
             "models": [
-            {
-                "id": item.id,
-                "connection_id": item.connection_id,
-                "upstream_model": item.upstream_model,
-                "kind": item.kind,
-                "protocol": item.protocol,
-                "alias": item.alias,
-                "capabilities": sorted(item.capabilities),
-            }
-            for item in repository.models()
+                {
+                    "id": item.id,
+                    "connection_id": item.connection_id,
+                    "upstream_model": item.upstream_model,
+                    "kind": item.kind,
+                    "protocol": item.protocol,
+                    "alias": item.alias,
+                    "capabilities": sorted(item.capabilities),
+                }
+                for item in repository.models()
             ],
             "resources": [
-            {
-                "id": item.id,
-                "connection_id": item.connection_id,
-                "kind": item.kind,
-                "name": item.name,
-                "title": (dict(item.settings).get("title") or dict(item.settings).get("name") or item.name),
-                # Resource settings contain the workflow-owned RH field
-                # definitions. Connection secrets are stored separately and
-                # are never included here.
-                "settings": dict(item.settings),
-            }
-            for item in repository.executable_resources()
+                {
+                    "id": item.id,
+                    "connection_id": item.connection_id,
+                    "kind": item.kind,
+                    "name": item.name,
+                    "title": (dict(item.settings).get("title") or dict(item.settings).get("name") or item.name),
+                    # Resource settings contain the workflow-owned RH field
+                    # definitions. Connection secrets are stored separately and
+                    # are never included here.
+                    "settings": dict(item.settings),
+                }
+                for item in repository.executable_resources()
             ],
         }
+
     return await asyncio.to_thread(read_resources)
 
 
@@ -3213,7 +4011,14 @@ def _canonical_runninghub_settings(settings: Mapping[str, Any]) -> dict[str, Any
     """Return the canonical RH resource settings shape."""
     normalized = dict(settings or {})
     raw = normalized.get("raw") if isinstance(normalized.get("raw"), dict) else {}
-    app_id = str(normalized.get("app_id") or raw.get("webappId") or normalized.get("webappId") or normalized.get("appId") or normalized.get("id") or "").strip()
+    app_id = str(
+        normalized.get("app_id")
+        or raw.get("webappId")
+        or normalized.get("webappId")
+        or normalized.get("appId")
+        or normalized.get("id")
+        or ""
+    ).strip()
     if app_id:
         normalized["app_id"] = app_id
         for key in ("id", "appId", "webappId"):
@@ -3223,11 +4028,43 @@ def _canonical_runninghub_settings(settings: Mapping[str, Any]) -> dict[str, Any
 
 def _ai_configuration_payload(repository):
     return {
-        "connections": [{"id": item.id, "protocol": item.protocol, "name": item.name, "base_url": item.base_url, "enabled": item.enabled, "primary": item.primary, "settings": dict(item.settings)} for item in repository.connections(include_disabled=True)],
-        "models": [{"id": item.id, "connection_id": item.connection_id, "kind": item.kind, "upstream_model": item.upstream_model, "protocol": item.protocol, "alias": item.alias, "enabled": item.enabled, "capabilities": sorted(item.capabilities), "settings": dict(item.settings)} for item in repository.models(include_disabled=True)],
+        "connections": [
+            {
+                "id": item.id,
+                "protocol": item.protocol,
+                "name": item.name,
+                "base_url": item.base_url,
+                "enabled": item.enabled,
+                "primary": item.primary,
+                "settings": dict(item.settings),
+            }
+            for item in repository.connections(include_disabled=True)
+        ],
+        "models": [
+            {
+                "id": item.id,
+                "connection_id": item.connection_id,
+                "kind": item.kind,
+                "upstream_model": item.upstream_model,
+                "protocol": item.protocol,
+                "alias": item.alias,
+                "enabled": item.enabled,
+                "capabilities": sorted(item.capabilities),
+                "settings": dict(item.settings),
+            }
+            for item in repository.models(include_disabled=True)
+        ],
         "resources": [
-            {"id": item.id, "connection_id": item.connection_id, "kind": item.kind, "name": item.name, "enabled": item.enabled,
-             "settings": _canonical_runninghub_settings(item.settings) if item.kind == "runninghub_app" else dict(item.settings)}
+            {
+                "id": item.id,
+                "connection_id": item.connection_id,
+                "kind": item.kind,
+                "name": item.name,
+                "enabled": item.enabled,
+                "settings": _canonical_runninghub_settings(item.settings)
+                if item.kind == "runninghub_app"
+                else dict(item.settings),
+            }
             for item in repository.executable_resources(include_disabled=True)
         ],
     }
@@ -3238,6 +4075,7 @@ async def ai_configuration():
     """Authoritative editable configuration, without exposing connection secrets."""
     require_api_settings_access()
     from app.ai.database_repository import DatabaseAIRepository
+
     return await asyncio.to_thread(lambda: _ai_configuration_payload(DatabaseAIRepository()))
 
 
@@ -3252,16 +4090,22 @@ async def save_ai_configuration(payload: Dict[str, Any]):
         if isinstance(resource, dict) and resource.get("kind") == "runninghub_app":
             resource["settings"] = _canonical_runninghub_settings(resource.get("settings") or {})
     for item in connections:
-        if not isinstance(item, dict) or not str(item.get("id") or "").strip() or not str(item.get("protocol") or "").strip():
+        if (
+            not isinstance(item, dict)
+            or not str(item.get("id") or "").strip()
+            or not str(item.get("protocol") or "").strip()
+        ):
             raise HTTPException(status_code=400, detail="连接必须包含 id 和 protocol")
     try:
         from app.ai.database_repository import DatabaseAIRepository
         from app.services.connection_secrets import set_connection_secret
+
         def save():
             DatabaseAIRepository().replace(connections=connections, models=models, resources=resources)
             for item in connections:
                 if "api_key" in item:
                     set_connection_secret(str(item["id"]), "api_key", str(item.get("api_key") or ""))
+
         await asyncio.to_thread(save)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -3299,6 +4143,7 @@ async def ai_executable_resources(kind: str = "", connection_id: str = ""):
 @app.get("/api/ai/status")
 async def ai_gateway_status():
     from app.ai.features import gateway_enabled
+
     return {
         "chat": gateway_enabled("CHAT"),
         "images": gateway_enabled("IMAGES"),
@@ -3316,19 +4161,23 @@ async def ai_connection_discover(connection_id: str):
     from app.services.connection_secrets import get_connection_secret
 
     repository = DatabaseAIRepository()
+
     # The repository and secret store both use the synchronous database bridge,
     # which rejects event-loop calls. Read them together on a worker thread.
     def load():
         connection = next((item for item in repository.connections() if item.id == connection_id), None)
         return connection, get_connection_secret(connection_id, "api_key") if connection else ""
+
     target, api_key = await asyncio.to_thread(load)
     if target is None:
         raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用")
     if not api_key:
         raise HTTPException(status_code=400, detail="该连接未配置 API Key")
+
     async def discover(connection):
         async with connection_operation(connection.id, "model_discovery", user_id=current_user_id()):
             return await fetch_models_from_upstream(connection.base_url, api_key, connection.protocol)
+
     service = ConnectionDiscoveryService(
         connection_loader=lambda _id: target,
         discoverer=discover,
@@ -3345,11 +4194,13 @@ async def ai_connection_test(connection_id: str):
     require_api_settings_access()
     from app.ai.database_repository import DatabaseAIRepository
     from app.services.connection_secrets import get_connection_secret
+
     # Both lookups cross the synchronous database bridge, which rejects
     # event-loop calls. Resolve them on a worker thread.
     def load():
         connection = next((item for item in DatabaseAIRepository().connections() if item.id == connection_id), None)
         return connection, get_connection_secret(connection_id, "api_key") if connection else ""
+
     target, api_key = await asyncio.to_thread(load)
     if target is None:
         raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用")
@@ -3361,12 +4212,21 @@ async def ai_connection_test(connection_id: str):
         return {"ok": False, "status": exc.status_code, "message": str(exc.detail)}
     return {"ok": True, **result}
 
+
 @app.get("/api/canvas/capability-parameters")
-async def canvas_capability_parameters(capability: str, provider_id: str = "", model: str = "", connection_id: str = "", model_id: str = "", resource_id: str = ""):
+async def canvas_capability_parameters(
+    capability: str,
+    provider_id: str = "",
+    model: str = "",
+    connection_id: str = "",
+    model_id: str = "",
+    resource_id: str = "",
+):
     """The single field contract consumed by canvas UI and Canvas Agent tools."""
     if not any(str(value or "").strip() for value in (connection_id, model_id, resource_id)):
         raise HTTPException(status_code=400, detail="参数契约必须指定 connection_id、model_id 或 resource_id")
     from app.services.ai_parameters import capability_parameters
+
     try:
         return await asyncio.to_thread(
             capability_parameters,
@@ -3380,38 +4240,56 @@ async def canvas_capability_parameters(capability: str, provider_id: str = "", m
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+
 @app.get("/api/canvas/parameter-schema/definitions")
 async def canvas_parameter_schema_definitions():
     """Backend-owned editable definitions and their execution contract."""
     from app.services.ai_parameters import parameter_schema_definitions
+
     return {"schemas": parameter_schema_definitions()}
+
 
 @app.post("/api/canvas/parameter-schema/validate")
 async def validate_canvas_parameter_schema(payload: Dict[str, Any]):
     """Validate one Provider's model-scoped parameter overrides before save."""
     require_api_settings_access()
     from app.services.ai_parameters import normalize_parameter_schema
+
     try:
         return {"parameter_schema": normalize_parameter_schema(payload.get("parameter_schema"))}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 
 # --- 在线生图 (COMFLY) ---
 
 
 def upstream_models_url(base_url: str, protocol: str):
     from app.ai.transport import models_endpoint
+
     return models_endpoint(base_url, protocol)
+
 
 def upstream_model_headers(api_key: str, protocol: str):
     from app.ai.transport import model_headers
+
     return dict(model_headers(api_key, protocol))
 
+
 def volcengine_empty_model_payload(status=200, message="", raw=None):
-    return {"ok": True, "protocol": "volcengine", "status": status,
-            "message": message or "方舟任务接口可用，但模型列表接口未返回模型。",
-            "model_count": 0, "image_models": [], "chat_models": [],
-            "video_models": [], "all": [], "raw": raw}
+    return {
+        "ok": True,
+        "protocol": "volcengine",
+        "status": status,
+        "message": message or "方舟任务接口可用，但模型列表接口未返回模型。",
+        "model_count": 0,
+        "image_models": [],
+        "chat_models": [],
+        "video_models": [],
+        "all": [],
+        "raw": raw,
+    }
+
 
 def volcengine_task_probe_url(base_url: str):
     base = str(base_url or "").strip().rstrip("/")
@@ -3420,6 +4298,7 @@ def volcengine_task_probe_url(base_url: str):
     if base.endswith("/api/v3"):
         return f"{base}/contents/generations/tasks/healthcheck_probe_do_not_submit"
     return f"{base}/api/v3/contents/generations/tasks/healthcheck_probe_do_not_submit"
+
 
 async def probe_volcengine_task_endpoint(client, base_url: str, api_key: str):
     probe_url = volcengine_task_probe_url(base_url)
@@ -3433,10 +4312,19 @@ async def probe_volcengine_task_endpoint(client, base_url: str, api_key: str):
     if response.status_code in (401, 403):
         return False, {"status": response.status_code, "message": "方舟 API Key 无效或无权限", "raw": raw}
     if looks_like_html_response(response.text):
-        return False, {"status": response.status_code, "message": "任务接口返回 HTML，Base URL 可能不是 API 地址", "raw": raw}
+        return False, {
+            "status": response.status_code,
+            "message": "任务接口返回 HTML，Base URL 可能不是 API 地址",
+            "raw": raw,
+        }
     if response.status_code < 500:
         return True, {"status": response.status_code, "message": "方舟任务查询端点可达", "raw": raw}
-    return False, {"status": response.status_code, "message": f"方舟任务接口服务端错误 {response.status_code}", "raw": raw}
+    return False, {
+        "status": response.status_code,
+        "message": f"方舟任务接口服务端错误 {response.status_code}",
+        "raw": raw,
+    }
+
 
 def openai_compat_root_for_probe(base_url: str):
     base = str(base_url or "").strip().rstrip("/")
@@ -3445,6 +4333,7 @@ def openai_compat_root_for_probe(base_url: str):
     if base.endswith("/v1"):
         return base
     return f"{base}/v1" if base else ""
+
 
 async def probe_openai_compat_bearer_endpoint(client, base_url: str, api_key: str):
     root = openai_compat_root_for_probe(base_url)
@@ -3463,10 +4352,19 @@ async def probe_openai_compat_bearer_endpoint(client, base_url: str, api_key: st
     if response.status_code in (401, 403):
         return False, {"status": response.status_code, "message": "API Key 无效或无权限", "raw": raw}
     if looks_like_html_response(response.text):
-        return False, {"status": response.status_code, "message": "OpenAI 兼容入口返回 HTML，Base URL 可能不是 API 地址", "raw": raw}
+        return False, {
+            "status": response.status_code,
+            "message": "OpenAI 兼容入口返回 HTML，Base URL 可能不是 API 地址",
+            "raw": raw,
+        }
     if response.status_code < 500:
         return True, {"status": response.status_code, "message": "OpenAI 兼容 Bearer 鉴权入口可达", "raw": raw}
-    return False, {"status": response.status_code, "message": f"OpenAI 兼容入口服务端错误 {response.status_code}", "raw": raw}
+    return False, {
+        "status": response.status_code,
+        "message": f"OpenAI 兼容入口服务端错误 {response.status_code}",
+        "raw": raw,
+    }
+
 
 async def probe_openai_models_endpoint(client, base_url: str, api_key: str):
     url = upstream_models_url(base_url, "openai")
@@ -3478,13 +4376,25 @@ async def probe_openai_models_endpoint(client, base_url: str, api_key: str):
     if response.status_code in (301, 302, 303, 307, 308):
         location = response.headers.get("Location") or response.headers.get("location") or ""
         suffix = f"：{location}" if location else ""
-        return False, {"status": response.status_code, "message": f"OpenAI /v1/models 发生跳转{suffix}，请填写 API Base URL，不要填写网页登录地址", "raw": raw}
+        return False, {
+            "status": response.status_code,
+            "message": f"OpenAI /v1/models 发生跳转{suffix}，请填写 API Base URL，不要填写网页登录地址",
+            "raw": raw,
+        }
     if response.status_code in (401, 403):
         return False, {"status": response.status_code, "message": "OpenAI API Key 无效或无权限", "raw": raw}
     if looks_like_html_response(response.text):
-        return False, {"status": response.status_code, "message": "OpenAI /v1/models 返回网页 HTML，请检查请求地址是否为 API Base URL", "raw": raw}
+        return False, {
+            "status": response.status_code,
+            "message": "OpenAI /v1/models 返回网页 HTML，请检查请求地址是否为 API Base URL",
+            "raw": raw,
+        }
     if response.status_code < 300:
-        grouped, ids = parse_models_payload(raw, "openai") if isinstance(raw, dict) else ({"image": [], "chat": [], "video": []}, [])
+        grouped, ids = (
+            parse_models_payload(raw, "openai")
+            if isinstance(raw, dict)
+            else ({"image": [], "chat": [], "video": []}, [])
+        )
         return True, {
             "status": response.status_code,
             "message": f"OpenAI 兼容模型列表端点可用{f'，找到 {len(ids)} 个模型' if ids else ''}",
@@ -3496,8 +4406,17 @@ async def probe_openai_models_endpoint(client, base_url: str, api_key: str):
             "all": ids,
         }
     if 400 <= response.status_code < 500:
-        return False, {"status": response.status_code, "message": f"OpenAI /v1/models 不可用 (HTTP {response.status_code})", "raw": raw}
-    return False, {"status": response.status_code, "message": f"OpenAI /v1/models 服务端错误 {response.status_code}", "raw": raw}
+        return False, {
+            "status": response.status_code,
+            "message": f"OpenAI /v1/models 不可用 (HTTP {response.status_code})",
+            "raw": raw,
+        }
+    return False, {
+        "status": response.status_code,
+        "message": f"OpenAI /v1/models 服务端错误 {response.status_code}",
+        "raw": raw,
+    }
+
 
 async def probe_volcengine_auto_detect(client, base_url: str, api_key: str):
     task_ok, task_probe = await probe_volcengine_task_endpoint(client, base_url, api_key)
@@ -3520,29 +4439,54 @@ async def probe_volcengine_auto_detect(client, base_url: str, api_key: str):
         "raw": {"task_probe": task_probe, "openai_compat_probe": compat_probe.get("raw")},
     }
 
+
 async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str = "openai"):
     """从上游模型列表端点拉取模型，并按名称做轻量分类。"""
     protocol = protocol if protocol in SUPPORTED_PROVIDER_PROTOCOLS else "openai"
     base_url = validate_public_http_url(base_url, label="请求地址")
-    api_key = await asyncio.to_thread(volcengine_provider_api_key, api_key) if protocol == "volcengine" else (api_key or "").strip()
+    api_key = (
+        await asyncio.to_thread(volcengine_provider_api_key, api_key)
+        if protocol == "volcengine"
+        else (api_key or "").strip()
+    )
     if not api_key:
         key_name = "方舟 API Key" if protocol == "volcengine" else "API Key"
         raise HTTPException(status_code=400, detail=f"请先填写或保存 {key_name}")
     if protocol == "openai" and "api.cloudwise.ai" in base_url.lower():
         # Cloudwise's GPT Image endpoint documents a fixed model and does not
         # expose an OpenAI /v1/models discovery endpoint.
-        return {"total": 1, "protocol": "openai", "image_models": ["gpt-image-2"], "chat_models": [], "video_models": [], "all": ["gpt-image-2"]}
+        return {
+            "total": 1,
+            "protocol": "openai",
+            "image_models": ["gpt-image-2"],
+            "chat_models": [],
+            "video_models": [],
+            "all": ["gpt-image-2"],
+        }
     url = upstream_models_url(base_url, protocol)
     try:
         async with shared_http_client(timeout=30) as client:
             resp = await client.get(url, headers=upstream_model_headers(api_key, protocol))
-            endpoint_label = "/v1beta/models" if protocol == "gemini" else "/api/v3/models" if protocol == "volcengine" else "/openapi/v2/models" if protocol == "runninghub" else "/v1/models"
+            endpoint_label = (
+                "/v1beta/models"
+                if protocol == "gemini"
+                else "/api/v3/models"
+                if protocol == "volcengine"
+                else "/openapi/v2/models"
+                if protocol == "runninghub"
+                else "/v1/models"
+            )
             if resp.status_code in (301, 302, 303, 307, 308):
                 location = resp.headers.get("Location") or resp.headers.get("location") or ""
                 suffix = f"：{location}" if location else ""
-                raise HTTPException(status_code=400, detail=f"上游 {endpoint_label} 发生跳转{suffix}，请填写 API Base URL，不要填写网页登录地址")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"上游 {endpoint_label} 发生跳转{suffix}，请填写 API Base URL，不要填写网页登录地址",
+                )
             if looks_like_html_response(resp.text):
-                raise HTTPException(status_code=400, detail=f"上游 {endpoint_label} 返回网页 HTML，请检查请求地址是否为 API Base URL")
+                raise HTTPException(
+                    status_code=400, detail=f"上游 {endpoint_label} 返回网页 HTML，请检查请求地址是否为 API Base URL"
+                )
             if resp.status_code >= 400:
                 if protocol == "volcengine":
                     detected, probe = await probe_volcengine_auto_detect(client, base_url, api_key)
@@ -3578,7 +4522,9 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
                             "message": payload["message"],
                             "raw": payload["raw"],
                         }
-                raise HTTPException(status_code=resp.status_code, detail=f"上游 {endpoint_label} 失败：{resp.text[:300]}")
+                raise HTTPException(
+                    status_code=resp.status_code, detail=f"上游 {endpoint_label} 失败：{resp.text[:300]}"
+                )
             raw = resp.json()
     except httpx.HTTPError as e:
         if protocol == "volcengine":
@@ -3615,10 +4561,18 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
             "message": payload["message"],
             "raw": payload["raw"],
         }
-    return {"total": len(ids), "image_models": grouped["image"], "chat_models": grouped["chat"], "video_models": grouped["video"], "all": ids}
+    return {
+        "total": len(ids),
+        "image_models": grouped["image"],
+        "chat_models": grouped["chat"],
+        "video_models": grouped["video"],
+        "all": ids,
+    }
+
 
 async def build_online_image_result(payload: OnlineImageRequest):
     from app.ai.database_repository import DatabaseAIRepository
+
     try:
         target = await asyncio.to_thread(
             DatabaseAIRepository().resolve_model,
@@ -3634,28 +4588,32 @@ async def build_online_image_result(payload: OnlineImageRequest):
     max_count = max(1, min(8, int(os.getenv("AI_ONLINE_IMAGE_MAX_COUNT", "4"))))
     count = max(1, min(max_count, int(payload.n or 1)))
     enum_resolution, enum_ratio = canvas_image_enum_from_settings(_canvas_settings(payload))
+
     async def generate_one():
         image_data, raw_item = await generate_ai_image_target(
-            target, prompt=payload.prompt, size=payload.size, quality=payload.quality,
-            reference_images=refs, user_id=current_user_id(),
-            resolution=enum_resolution, ratio=enum_ratio,
+            target,
+            prompt=payload.prompt,
+            size=payload.size,
+            quality=payload.quality,
+            reference_images=refs,
+            user_id=current_user_id(),
+            resolution=enum_resolution,
+            ratio=enum_ratio,
         )
         local_url = await save_ai_image_to_output(image_data, prefix="online_")
         return local_url, raw_item
+
     try:
         generated = await asyncio.gather(*(generate_one() for _ in range(count)))
     except httpx.HTTPStatusError as exc:
-        text = exc.response.text or ''
+        text = exc.response.text or ""
         friendly = friendly_image_error_detail(text, payload.size, model)
         detail = friendly or f"上游生图接口错误：{text[:300]}"
         raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"请求上游生图接口失败：{exc}") from exc
 
-    media_items = [
-        await run_storage_io(media_response_item, url, "", "image")
-        for url, _raw in generated if url
-    ]
+    media_items = [await run_storage_io(media_response_item, url, "", "image") for url, _raw in generated if url]
     local_urls = [item["url"] for item in media_items if item.get("url")]
     raw = generated[0][1] if generated else {}
     if not local_urls:
@@ -3676,7 +4634,13 @@ async def build_online_image_result(payload: OnlineImageRequest):
         "resource_id": payload.resource_id or "",
         "task_id": extract_task_id(raw) if isinstance(raw, dict) else None,
         "request_id": raw.get("id") if isinstance(raw, dict) else None,
-        "params": {"model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
+        "params": {
+            "model": model,
+            "size": payload.size,
+            "quality": payload.quality,
+            "n": count,
+            "reference_images": refs,
+        },
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
     runtime_provider = canonical_connection_view(target)
@@ -3684,23 +4648,41 @@ async def build_online_image_result(payload: OnlineImageRequest):
         task_id = str(result.get("task_id") or "").strip()
         if task_id:
             from app.services.usage import settle_runninghub_usage
+
             await asyncio.to_thread(
-                settle_runninghub_usage, current_user_id(), task_id, raw,
-                status="succeeded", operation="image_generation", model=model,
-                connection_id=target.connection.id, model_id=target.model.id,
+                settle_runninghub_usage,
+                current_user_id(),
+                task_id,
+                raw,
+                status="succeeded",
+                operation="image_generation",
+                model=model,
+                connection_id=target.connection.id,
+                model_id=target.model.id,
                 resource_id=target.resource.id if target.resource else "",
             )
     elif isinstance(raw, dict) and raw.get("usage"):
         from app.services.usage import record_openai_response_usage
-        await asyncio.gather(*(
-            asyncio.to_thread(record_openai_response_usage, current_user_id(), runtime_provider, model, {**raw_item, "local_request_id": f"image:{uuid.uuid4().hex}"}, operation="image_generation")
-            for _url, raw_item in generated
-        ))
+
+        await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    record_openai_response_usage,
+                    current_user_id(),
+                    runtime_provider,
+                    model,
+                    {**raw_item, "local_request_id": f"image:{uuid.uuid4().hex}"},
+                    operation="image_generation",
+                )
+                for _url, raw_item in generated
+            )
+        )
     if not _is_canvas_sourced(payload):
         await asyncio.to_thread(save_to_history, result)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
     return result
+
 
 CANVAS_IMAGE_SIZE_MAP = {
     "1:1": {"1k": "1024x1024", "2k": "2048x2048", "4k": "2880x2880"},
@@ -3742,6 +4724,7 @@ def _canvas_bool(settings: dict, key: str, fallback: bool = False) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
 
 def canvas_image_enum_from_settings(settings: dict) -> tuple[str, str]:
     """Return the effective (resolution, ratio) enums for pixel-budget protocols.
@@ -3793,10 +4776,15 @@ def normalize_canvas_image_request(payload: OnlineImageRequest) -> OnlineImageRe
     model = str(payload.model or "")
     try:
         from app.services.ai_parameters import validate_run_settings
+
         resolved = validate_run_settings(
-            kind="image", provider_id="", model=model,
+            kind="image",
+            provider_id="",
+            model=model,
             settings=settings,
-            connection_id=payload.connection_id, model_id=payload.model_id, resource_id=payload.resource_id,
+            connection_id=payload.connection_id,
+            model_id=payload.model_id,
+            resource_id=payload.resource_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"画布图片参数不合法：{exc}") from exc
@@ -3815,13 +4803,16 @@ def normalize_canvas_image_request(payload: OnlineImageRequest) -> OnlineImageRe
 
 
 from app.ai.runtime import configure_canvas_runtime
+
 configure_canvas_runtime(
     # Resolve these globals when called so configuration reloads and existing
     # test/runtime overrides retain the same dynamic behavior as before.
     image_normalizer=lambda payload: normalize_canvas_image_request(payload),
     media_reference_resolver=lambda ref, max_size: reference_to_data_url(ref, max_size),
     target_authorizer=require_target_access,
-    connection_lookup=lambda connection_id: canonical_connection_view(next(item for item in DatabaseAIRepository().connections() if item.id == connection_id)),
+    connection_lookup=lambda connection_id: canonical_connection_view(
+        next(item for item in DatabaseAIRepository().connections() if item.id == connection_id)
+    ),
     connection_budget_authorizer=lambda connection, user_id: assert_provider_budget_available(connection, user_id),
 )
 
@@ -3834,10 +4825,15 @@ def normalize_canvas_video_request(payload: CanvasVideoRequest) -> CanvasVideoRe
     model = str(payload.model or "")
     try:
         from app.services.ai_parameters import validate_run_settings
+
         resolved = validate_run_settings(
-            kind="video", provider_id="", model=model,
+            kind="video",
+            provider_id="",
+            model=model,
             settings=settings,
-            connection_id=payload.connection_id, model_id=payload.model_id, resource_id=payload.resource_id,
+            connection_id=payload.connection_id,
+            model_id=payload.model_id,
+            resource_id=payload.resource_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"画布视频参数不合法：{exc}") from exc
@@ -3850,7 +4846,9 @@ def normalize_canvas_video_request(payload: CanvasVideoRequest) -> CanvasVideoRe
             updates[target] = values.get(field["id"])
     if updates.pop("frame_roles", False):
         updates["images"] = [
-            image.model_copy(update={"role": "first_frame" if index == 0 else "last_frame" if index == 1 else image.role})
+            image.model_copy(
+                update={"role": "first_frame" if index == 0 else "last_frame" if index == 1 else image.role}
+            )
             for index, image in enumerate(payload.images)
         ]
     return payload.model_copy(update=updates)
@@ -3862,18 +4860,30 @@ async def online_image(payload: OnlineImageRequest):
         raise HTTPException(status_code=400, detail="图片请求必须提供 connection_id、model_id 或 resource_id")
     if payload.model_id or payload.connection_id or payload.resource_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
             if payload.resource_id:
-                target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id)
+                target = await asyncio.to_thread(
+                    DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id
+                )
                 payload = payload.model_copy(update={"connection_id": target.connection.id})
             else:
-                target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.model_id, connection_id=payload.connection_id, model=payload.model, kind="image")
-                payload = payload.model_copy(update={"connection_id": target.connection.id, "model_id": target.model.id})
+                target = await asyncio.to_thread(
+                    DatabaseAIRepository().resolve_model,
+                    model_id=payload.model_id,
+                    connection_id=payload.connection_id,
+                    model=payload.model,
+                    kind="image",
+                )
+                payload = payload.model_copy(
+                    update={"connection_id": target.connection.id, "model_id": target.model.id}
+                )
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="图片模型或连接不存在或已禁用") from exc
     payload = await asyncio.to_thread(normalize_canvas_image_request, payload)
     await assert_provider_budget_available(canonical_connection_view(target), current_user_id())
     return await build_online_image_result(payload)
+
 
 @app.post("/api/image-task-query")
 async def query_image_task(payload: ImageTaskQueryRequest):
@@ -3882,13 +4892,18 @@ async def query_image_task(payload: ImageTaskQueryRequest):
     provider = None
     if payload.connection_id or payload.resource_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
-            target = await asyncio.to_thread(
-                DatabaseAIRepository().resolve_executable,
-                resource_id=payload.resource_id,
-                connection_id=payload.connection_id,
-                kind="runninghub_app" if payload.resource_id else "",
-            ) if payload.resource_id else await asyncio.to_thread(DatabaseAIRepository().connections)
+            target = (
+                await asyncio.to_thread(
+                    DatabaseAIRepository().resolve_executable,
+                    resource_id=payload.resource_id,
+                    connection_id=payload.connection_id,
+                    kind="runninghub_app" if payload.resource_id else "",
+                )
+                if payload.resource_id
+                else await asyncio.to_thread(DatabaseAIRepository().connections)
+            )
             if payload.resource_id:
                 provider = canonical_connection_view(target)
             else:
@@ -3930,10 +4945,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         local_url = await save_ai_image_to_output(image_item, prefix="online_")
         if local_url:
             local_urls.append(local_url)
-        media_items = [
-            await run_storage_io(media_response_item, url, "", "image")
-            for url in local_urls if url
-        ]
+        media_items = [await run_storage_io(media_response_item, url, "", "image") for url in local_urls if url]
         result = {
             "status": "succeeded",
             "prompt": "",
@@ -3948,7 +4960,10 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "resource_id": payload.resource_id or "",
             "task_id": task_id,
             "request_id": raw.get("id") if isinstance(raw, dict) else "",
-            "params": {"connection_id": provider.get("connection_id") or provider.get("id") or "", "resource_id": payload.resource_id or ""},
+            "params": {
+                "connection_id": provider.get("connection_id") or provider.get("id") or "",
+                "resource_id": payload.resource_id or "",
+            },
             "raw": raw,
         }
         if not _is_canvas_sourced(payload):
@@ -3974,6 +4989,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         "raw": raw,
     }
 
+
 async def canvas_task_lease_heartbeat(task_id: str, lease_token: str):
     interval = max(5, REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS)
     while True:
@@ -3990,7 +5006,14 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     started = time.perf_counter()
     task_logger.info(
         "canvas image task started",
-        extra={"event": "task_started", "connection_id": payload.connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "running"},
+        extra={
+            "event": "task_started",
+            "connection_id": payload.connection_id,
+            "model_id": payload.model_id,
+            "resource_id": payload.resource_id,
+            "operation": "image_generation",
+            "status": "running",
+        },
     )
     if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
         await release_canvas_task_claim(task_id, lease_token)
@@ -4009,12 +5032,23 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
         await update_claimed_canvas_task(task_id, lease_token, **task_data)
         task_logger.info(
             "canvas image task completed",
-            extra={"event": "task_completed", "connection_id": payload.connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "succeeded", "upstream_task_id": upstream_task_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_completed",
+                "connection_id": payload.connection_id,
+                "model_id": payload.model_id,
+                "resource_id": payload.resource_id,
+                "operation": "image_generation",
+                "status": "succeeded",
+                "upstream_task_id": upstream_task_id,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 413 if isinstance(exc, StorageQuotaExceeded) else 500)
-        budget_error = detail if isinstance(detail, dict) and detail.get("error_code") == "usage_budget_exceeded" else None
+        budget_error = (
+            detail if isinstance(detail, dict) and detail.get("error_code") == "usage_budget_exceeded" else None
+        )
         upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
         failure = {
             "status": "failed",
@@ -4024,25 +5058,39 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             "updated_at": time.time(),
         }
         if budget_error:
-            failure.update({
-                "error_code": "usage_budget_exceeded",
-                "contact_admin": bool(budget_error.get("contact_admin", True)),
-            })
+            failure.update(
+                {
+                    "error_code": "usage_budget_exceeded",
+                    "contact_admin": bool(budget_error.get("contact_admin", True)),
+                }
+            )
         if isinstance(exc, StorageQuotaExceeded):
-            failure.update({
-                "error_code": "storage_quota_exceeded",
-                "quota_bytes": exc.quota_bytes,
-                "used_bytes": exc.used_bytes,
-                "incoming_bytes": exc.incoming_bytes,
-            })
+            failure.update(
+                {
+                    "error_code": "storage_quota_exceeded",
+                    "quota_bytes": exc.quota_bytes,
+                    "used_bytes": exc.used_bytes,
+                    "incoming_bytes": exc.incoming_bytes,
+                }
+            )
         await update_claimed_canvas_task(task_id, lease_token, **failure)
         task_logger.exception(
             "canvas image task failed",
-            extra={"event": "task_failed", "connection_id": payload.connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_failed",
+                "connection_id": payload.connection_id,
+                "model_id": payload.model_id,
+                "resource_id": payload.resource_id,
+                "operation": "image_generation",
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
     finally:
         lease_heartbeat.cancel()
         await release_canvas_task_claim(task_id, lease_token)
+
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
@@ -4056,16 +5104,22 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
     resolved_connection_id = stable_connection_id
     if payload.resource_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
-            target_resource = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id)
+            target_resource = await asyncio.to_thread(
+                DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id
+            )
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="图片执行资源不存在或已禁用") from exc
         resolved_connection_id = target_resource.connection.id
-        payload = payload.model_copy(update={
-            "connection_id": target_resource.connection.id,
-        })
+        payload = payload.model_copy(
+            update={
+                "connection_id": target_resource.connection.id,
+            }
+        )
     if payload.model_id or stable_connection_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
             target = await asyncio.to_thread(
                 DatabaseAIRepository().resolve_model,
@@ -4077,15 +5131,20 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
         else:
-            payload = payload.model_copy(update={
-                "model_id": target.model.id if target.model else payload.model_id,
-                "model": target.model.upstream_model if target.model else payload.model,
-                "connection_id": target.connection.id,
-            })
+            payload = payload.model_copy(
+                update={
+                    "model_id": target.model.id if target.model else payload.model_id,
+                    "model": target.model.upstream_model if target.model else payload.model,
+                    "connection_id": target.connection.id,
+                }
+            )
             resolved_connection_id = target.connection.id
     if not resolved_connection_id:
         raise HTTPException(status_code=400, detail="图片任务未解析到有效连接")
-    await assert_provider_budget_available(canonical_connection_view(target if 'target' in locals() else target_resource), current_user_id())
+    await assert_provider_budget_available(
+        canonical_connection_view(target if "target" in locals() else target_resource), current_user_id()
+    )
+
     def canonical_request_snapshot(value: BaseModel) -> dict[str, Any]:
         snapshot = value.model_dump(mode="json")
         # Stable IDs are the persisted task contract. Legacy provider/model
@@ -4110,45 +5169,59 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
         for index in range(count):
             child_task_id = f"canvas_img_{uuid.uuid4().hex}"
             child_tasks.append(child_task_id)
-            await create_canvas_task({
-                "id": child_task_id,
-                "type": "online-image",
-                "status": "queued",
+            await create_canvas_task(
+                {
+                    "id": child_task_id,
+                    "type": "online-image",
+                    "status": "queued",
+                    "created_at": time.time(),
+                    "updated_at": time.time(),
+                    "result": None,
+                    "error": "",
+                    **resource_meta,
+                    "owner_id": owner_id,
+                    "parent_task_id": parent_task_id,
+                    "child_index": index,
+                    "request": child_request,
+                }
+            )
+        # The parent is metadata only. It is never enqueued, so recovery does
+        # not try to execute it as an image-generation task.
+        await create_canvas_task(
+            {
+                "id": parent_task_id,
+                "type": "online-image-batch",
+                "status": "batching",
                 "created_at": time.time(),
                 "updated_at": time.time(),
                 "result": None,
                 "error": "",
                 **resource_meta,
                 "owner_id": owner_id,
-                "parent_task_id": parent_task_id,
-                "child_index": index,
-                "request": child_request,
-            })
-        # The parent is metadata only. It is never enqueued, so recovery does
-        # not try to execute it as an image-generation task.
-        await create_canvas_task({
-            "id": parent_task_id,
-            "type": "online-image-batch",
-            "status": "batching",
-            "created_at": time.time(),
-            "updated_at": time.time(),
-            "result": None,
-            "error": "",
-            **resource_meta,
-            "owner_id": owner_id,
-            "child_task_ids": child_tasks,
-            "request": canonical_request_snapshot(payload),
-        })
+                "child_task_ids": child_tasks,
+                "request": canonical_request_snapshot(payload),
+            }
+        )
         for child_task_id in child_tasks:
             await enqueue_canvas_task(child_task_id)
         task_logger.info(
             "canvas image batch submitted",
-            extra={"event": "task_batch_submitted", "task_id": parent_task_id, "connection_id": resolved_connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "queued", "count": count},
+            extra={
+                "event": "task_batch_submitted",
+                "task_id": parent_task_id,
+                "connection_id": resolved_connection_id,
+                "model_id": payload.model_id,
+                "resource_id": payload.resource_id,
+                "operation": "image_generation",
+                "status": "queued",
+                "count": count,
+            },
         )
         return {"task_id": parent_task_id, "child_task_ids": child_tasks, "status": "queued", "count": count}
 
     task_id = f"canvas_img_{uuid.uuid4().hex}"
-    await create_canvas_task({
+    await create_canvas_task(
+        {
             "id": task_id,
             "type": "online-image",
             "status": "queued",
@@ -4159,10 +5232,19 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             **resource_meta,
             "owner_id": owner_id,
             "request": canonical_request_snapshot(payload),
-        })
+        }
+    )
     task_logger.info(
         "canvas image task submitted",
-        extra={"event": "task_submitted", "task_id": task_id, "connection_id": resolved_connection_id, "model_id": payload.model_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "queued"},
+        extra={
+            "event": "task_submitted",
+            "task_id": task_id,
+            "connection_id": resolved_connection_id,
+            "model_id": payload.model_id,
+            "resource_id": payload.resource_id,
+            "operation": "image_generation",
+            "status": "queued",
+        },
     )
     await enqueue_canvas_task(task_id)
     return {"task_id": task_id, "status": "queued", "count": count}
@@ -4213,13 +5295,23 @@ async def get_canvas_image_task(task_id: str):
     task.pop("request", None)
     return task
 
+
 async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
     lease_token = await claim_canvas_task(task_id, CLIENT_ID)
     if not lease_token:
         return
     bind_log_context(task_id=task_id)
     started = time.perf_counter()
-    task_logger.info("canvas ComfyUI task started", extra={"event": "task_started", "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "running"})
+    task_logger.info(
+        "canvas ComfyUI task started",
+        extra={
+            "event": "task_started",
+            "connection_id": payload.connection_id,
+            "resource_id": payload.resource_id,
+            "operation": "image_generation",
+            "status": "running",
+        },
+    )
     if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
         await release_canvas_task_claim(task_id, lease_token)
         return
@@ -4227,6 +5319,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
     try:
         from app.ai.adapters.comfyui_workflow import ComfyUIWorkflowAdapter
         from app.ai.contracts import Actor, WorkflowCommand
+
         try:
             comfy_target = await asyncio.to_thread(
                 DatabaseAIRepository().resolve_executable,
@@ -4252,14 +5345,24 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
         except Exception:
             quota_warning = None
-        upstream_task_id = str((result.get("task_id") or result.get("prompt_id") if isinstance(result, dict) else "") or "")
+        upstream_task_id = str(
+            (result.get("task_id") or result.get("prompt_id") if isinstance(result, dict) else "") or ""
+        )
         task_data = {"status": "succeeded", "result": result, "error": "", "upstream_task_id": upstream_task_id}
         if quota_warning:
             task_data["quota_warning"] = quota_warning
         await update_claimed_canvas_task(task_id, lease_token, **task_data)
         task_logger.info(
             "canvas ComfyUI task completed",
-            extra={"event": "task_completed", "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "succeeded", "upstream_task_id": upstream_task_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_completed",
+                "connection_id": payload.connection_id,
+                "resource_id": payload.resource_id,
+                "operation": "image_generation",
+                "status": "succeeded",
+                "upstream_task_id": upstream_task_id,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
@@ -4271,20 +5374,31 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             "updated_at": time.time(),
         }
         if isinstance(exc, StorageQuotaExceeded):
-            failure.update({
-                "error_code": "storage_quota_exceeded",
-                "quota_bytes": exc.quota_bytes,
-                "used_bytes": exc.used_bytes,
-                "incoming_bytes": exc.incoming_bytes,
-            })
+            failure.update(
+                {
+                    "error_code": "storage_quota_exceeded",
+                    "quota_bytes": exc.quota_bytes,
+                    "used_bytes": exc.used_bytes,
+                    "incoming_bytes": exc.incoming_bytes,
+                }
+            )
         await update_claimed_canvas_task(task_id, lease_token, **failure)
         task_logger.exception(
             "canvas ComfyUI task failed",
-            extra={"event": "task_failed", "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_failed",
+                "connection_id": payload.connection_id,
+                "resource_id": payload.resource_id,
+                "operation": "image_generation",
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
     finally:
         lease_heartbeat.cancel()
         await release_canvas_task_claim(task_id, lease_token)
+
 
 @app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(payload: GenerateRequest):
@@ -4293,8 +5407,14 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
     # Canvas-sourced ComfyUI generations must not be written to history.
     payload = payload.model_copy(update={"source": CANVAS_REQUEST_SOURCE})
     from app.ai.database_repository import DatabaseAIRepository
+
     try:
-        target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.resource_id, connection_id=payload.connection_id, kind="comfyui_workflow")
+        target = await asyncio.to_thread(
+            DatabaseAIRepository().resolve_executable,
+            resource_id=payload.resource_id,
+            connection_id=payload.connection_id,
+            kind="comfyui_workflow",
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="ComfyUI 工作流资源不存在或已禁用") from exc
     payload = payload.model_copy(update={"connection_id": target.connection.id, "resource_id": target.resource.id})
@@ -4303,7 +5423,8 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
         request_snapshot.pop(key, None)
     task_id = f"canvas_comfy_{uuid.uuid4().hex}"
     owner_id = current_user_id()
-    await create_canvas_task({
+    await create_canvas_task(
+        {
             "id": task_id,
             "type": "comfy",
             "status": "queued",
@@ -4317,13 +5438,22 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
             "model_id": payload.model_id,
             "owner_id": owner_id,
             "request": request_snapshot,
-        })
+        }
+    )
     task_logger.info(
         "canvas ComfyUI task submitted",
-        extra={"event": "task_submitted", "task_id": task_id, "connection_id": payload.connection_id, "resource_id": payload.resource_id, "operation": "image_generation", "status": "queued"},
+        extra={
+            "event": "task_submitted",
+            "task_id": task_id,
+            "connection_id": payload.connection_id,
+            "resource_id": payload.resource_id,
+            "operation": "image_generation",
+            "status": "queued",
+        },
     )
     await enqueue_canvas_task(task_id)
     return {"task_id": task_id, "status": "queued"}
+
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")
 async def get_canvas_comfy_task(task_id: str):
@@ -4361,7 +5491,14 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
     resource_id = str(payload.resource_id or "")
     task_logger.info(
         "canvas RunningHub task started",
-        extra={"event": "task_started", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "running", "upstream_task_id": existing_upstream_task_id},
+        extra={
+            "event": "task_started",
+            "connection_id": connection_id,
+            "resource_id": resource_id,
+            "operation": "app_generation",
+            "status": "running",
+            "upstream_task_id": existing_upstream_task_id,
+        },
     )
     if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
         await release_canvas_task_claim(task_id, lease_token)
@@ -4371,10 +5508,13 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
         from app.ai.database_repository import DatabaseAIRepository
         from app.ai.adapters.runninghub_transport import RunningHubTransport
         from app.services.usage import record_runninghub_submission, settle_runninghub_usage
+
         try:
             selected_resource = await asyncio.to_thread(
                 DatabaseAIRepository().resolve_executable,
-                resource_id=resource_id, connection_id=connection_id, kind="runninghub_app",
+                resource_id=resource_id,
+                connection_id=connection_id,
+                kind="runninghub_app",
             )
         except LookupError as exc:
             raise ValueError("RunningHub 资源不存在或已禁用") from exc
@@ -4386,7 +5526,12 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
         if not webapp_id:
             raise ValueError("RunningHub 资源缺少规范 app_id")
         api_key = await runninghub_api_key_async(provider)
-        transport = RunningHubTransport(endpoint=runninghub_endpoint_url, headers=lambda key, body: runninghub_protocol_headers(key, json_body=body), client_factory=shared_http_client, timeout=httpx.Timeout(connect=20.0, read=240.0, write=120.0, pool=20.0))
+        transport = RunningHubTransport(
+            endpoint=runninghub_endpoint_url,
+            headers=lambda key, body: runninghub_protocol_headers(key, json_body=body),
+            client_factory=shared_http_client,
+            timeout=httpx.Timeout(connect=20.0, read=240.0, write=120.0, pool=20.0),
+        )
 
         upstream_task_id = existing_upstream_task_id
         # Only submit when this run has no upstream task yet. A recovered run
@@ -4396,7 +5541,11 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
             instance_type = str(payload.instanceType or "").strip()
             if instance_type:
                 body["instanceType"] = instance_type
-            async with connection_operation(str(provider.get("connection_id") or provider.get("id") or "runninghub"), "app_generation", user_id=user_id):
+            async with connection_operation(
+                str(provider.get("connection_id") or provider.get("id") or "runninghub"),
+                "app_generation",
+                user_id=user_id,
+            ):
                 raw = await transport.submit(provider, api_key, body)
             if isinstance(raw, dict) and raw.get("code") in (804, "804"):
                 raise CanvasRunningHubKeyBusy("RunningHub 正在执行当前 API Key 的其他任务，请稍后重试。")
@@ -4408,8 +5557,11 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
             # Persist the upstream id immediately so recovery can resume polling.
             await update_claimed_canvas_task(task_id, lease_token, upstream_task_id=str(upstream_task_id))
             await asyncio.to_thread(
-                record_runninghub_submission, user_id, str(upstream_task_id),
-                operation="ai_app", model=webapp_id,
+                record_runninghub_submission,
+                user_id,
+                str(upstream_task_id),
+                operation="ai_app",
+                model=webapp_id,
                 connection_id=selected_resource.connection.id if selected_resource else "",
                 resource_id=resource_id,
             )
@@ -4429,10 +5581,9 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
             code = raw.get("code") if isinstance(raw, dict) else None
             current_outputs = runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw)
             new_outputs = [remote for remote in current_outputs if remote not in seen_remote_outputs]
-            stored_outputs = await asyncio.gather(*(
-                runninghub_store_remote_output_item(remote)
-                for remote in new_outputs
-            ))
+            stored_outputs = await asyncio.gather(
+                *(runninghub_store_remote_output_item(remote) for remote in new_outputs)
+            )
             for remote, (url, item) in zip(new_outputs, stored_outputs):
                 seen_remote_outputs.add(remote)
                 if url and url not in urls:
@@ -4444,22 +5595,48 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
             await asyncio.sleep(min(CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic())))
 
         await asyncio.to_thread(
-            settle_runninghub_usage, user_id, str(upstream_task_id), raw,
-            status=status, operation="ai_app", connection_id=connection_id, resource_id=resource_id,
+            settle_runninghub_usage,
+            user_id,
+            str(upstream_task_id),
+            raw,
+            status=status,
+            operation="ai_app",
+            connection_id=connection_id,
+            resource_id=resource_id,
         )
         if status == "SUCCESS":
             try:
                 quota_warning = await run_storage_io(check_storage_quota, 1, category="output")
             except Exception:
                 quota_warning = None
-            result = {"status": status, "urls": urls, "media_items": media_items, "image_items": media_items, "code": raw.get("code") if isinstance(raw, dict) else None}
-            task_data = {"status": "succeeded", "result": result, "error": "", "upstream_task_id": str(upstream_task_id)}
+            result = {
+                "status": status,
+                "urls": urls,
+                "media_items": media_items,
+                "image_items": media_items,
+                "code": raw.get("code") if isinstance(raw, dict) else None,
+            }
+            task_data = {
+                "status": "succeeded",
+                "result": result,
+                "error": "",
+                "upstream_task_id": str(upstream_task_id),
+            }
             if quota_warning:
                 task_data["quota_warning"] = quota_warning
             await update_claimed_canvas_task(task_id, lease_token, **task_data)
             task_logger.info(
                 "canvas RunningHub task completed",
-                extra={"event": "task_completed", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "succeeded", "upstream_task_id": str(upstream_task_id), "output_count": len(urls), "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+                extra={
+                    "event": "task_completed",
+                    "connection_id": connection_id,
+                    "resource_id": resource_id,
+                    "operation": "app_generation",
+                    "status": "succeeded",
+                    "upstream_task_id": str(upstream_task_id),
+                    "output_count": len(urls),
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                },
             )
         elif status == "FAILED":
             raise RuntimeError(str(runninghub_fail_reason(raw) or "RunningHub 任务失败"))
@@ -4467,24 +5644,50 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
             raise TimeoutError(f"RunningHub 任务超时：{upstream_task_id}")
     except CanvasRunningHubKeyBusy as exc:
         await update_claimed_canvas_task(
-            task_id, lease_token, status="failed", error=str(exc),
-            error_code="runninghub_key_busy", status_code=409,
-            upstream_task_id=existing_upstream_task_id, updated_at=time.time(),
+            task_id,
+            lease_token,
+            status="failed",
+            error=str(exc),
+            error_code="runninghub_key_busy",
+            status_code=409,
+            upstream_task_id=existing_upstream_task_id,
+            updated_at=time.time(),
         )
         task_logger.warning(
             "canvas RunningHub task failed (key busy)",
-            extra={"event": "task_failed", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "failed", "error_code": "runninghub_key_busy", "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_failed",
+                "connection_id": connection_id,
+                "resource_id": resource_id,
+                "operation": "app_generation",
+                "status": "failed",
+                "error_code": "runninghub_key_busy",
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
         await update_claimed_canvas_task(
-            task_id, lease_token, status="failed", error=str(detail),
-            status_code=status_code, upstream_task_id=str(existing_upstream_task_id or ""), updated_at=time.time(),
+            task_id,
+            lease_token,
+            status="failed",
+            error=str(detail),
+            status_code=status_code,
+            upstream_task_id=str(existing_upstream_task_id or ""),
+            updated_at=time.time(),
         )
         task_logger.exception(
             "canvas RunningHub task failed",
-            extra={"event": "task_failed", "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "failed", "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_failed",
+                "connection_id": connection_id,
+                "resource_id": resource_id,
+                "operation": "app_generation",
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
     finally:
         lease_heartbeat.cancel()
@@ -4496,10 +5699,13 @@ async def create_canvas_runninghub_task(payload: RunningHubSubmitRequest):
     if not (payload.resource_id or payload.connection_id):
         raise HTTPException(status_code=400, detail="RunningHub 任务必须指定 resource_id 或 connection_id")
     from app.ai.database_repository import DatabaseAIRepository
+
     try:
         selected_resource = await asyncio.to_thread(
             DatabaseAIRepository().resolve_executable,
-            resource_id=payload.resource_id, connection_id=payload.connection_id, kind="runninghub_app",
+            resource_id=payload.resource_id,
+            connection_id=payload.connection_id,
+            kind="runninghub_app",
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
@@ -4522,22 +5728,31 @@ async def create_canvas_runninghub_task(payload: RunningHubSubmitRequest):
     }
     task_id = f"canvas_rh_{uuid.uuid4().hex}"
     owner_id = current_user_id()
-    await create_canvas_task({
-        "id": task_id,
-        "type": "online-runninghub",
-        "status": "queued",
-        "created_at": time.time(),
-        "updated_at": time.time(),
-        "result": None,
-        "error": "",
-        "connection_id": connection_id,
-        "resource_id": resource_id,
-        "owner_id": owner_id,
-        "request": request_snapshot,
-    })
+    await create_canvas_task(
+        {
+            "id": task_id,
+            "type": "online-runninghub",
+            "status": "queued",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "result": None,
+            "error": "",
+            "connection_id": connection_id,
+            "resource_id": resource_id,
+            "owner_id": owner_id,
+            "request": request_snapshot,
+        }
+    )
     task_logger.info(
         "canvas RunningHub task submitted",
-        extra={"event": "task_submitted", "task_id": task_id, "connection_id": connection_id, "resource_id": resource_id, "operation": "app_generation", "status": "queued"},
+        extra={
+            "event": "task_submitted",
+            "task_id": task_id,
+            "connection_id": connection_id,
+            "resource_id": resource_id,
+            "operation": "app_generation",
+            "status": "queued",
+        },
     )
     await enqueue_canvas_task(task_id)
     return {"task_id": task_id, "status": "queued"}
@@ -4570,7 +5785,10 @@ async def admin_retry_canvas_task_dead_letter(entry_id: str):
     task = await get_canvas_task(entry["task_id"])
     if not task or not isinstance(task.get("request"), dict):
         raise HTTPException(status_code=409, detail="原始任务已过期或缺少可重试请求")
-    if not any(str(task.get(key) or task["request"].get(key) or "").strip() for key in ("connection_id", "model_id", "resource_id")):
+    if not any(
+        str(task.get(key) or task["request"].get(key) or "").strip()
+        for key in ("connection_id", "model_id", "resource_id")
+    ):
         raise HTTPException(status_code=409, detail="任务缺少已迁移的 connection_id/model_id/resource_id，无法重试")
     await update_canvas_task(task["id"], status="queued", error="", retry_requested_at=time.time())
     await enqueue_canvas_task(task["id"])
@@ -4601,16 +5819,25 @@ async def recover_canvas_tasks_once():
                 # RunningHub app tasks can be safely resumed: the upstream query
                 # is idempotent, so a run that already submitted (has an upstream
                 # task id) re-polls instead of resubmitting (no double charge).
-                if task.get("type") == "online-runninghub" and str(task.get("upstream_task_id") or "").strip() and isinstance(task.get("request"), dict):
+                if (
+                    task.get("type") == "online-runninghub"
+                    and str(task.get("upstream_task_id") or "").strip()
+                    and isinstance(task.get("request"), dict)
+                ):
                     requeued = await update_canvas_task(task["id"], expected_status="running", status="queued")
                     if requeued:
                         try:
                             await enqueue_canvas_task(task["id"])
                         except Exception:
-                            logger.exception("canvas task recovery failed", extra={"event": "task_recovery_failed", "task_id": task.get("id")})
+                            logger.exception(
+                                "canvas task recovery failed",
+                                extra={"event": "task_recovery_failed", "task_id": task.get("id")},
+                            )
                     continue
                 await update_canvas_task(
-                    task["id"], expected_status="running", status="interrupted",
+                    task["id"],
+                    expected_status="running",
+                    status="interrupted",
                     error="执行 worker 已失联；为避免重复提交上游任务，未自动重试。",
                 )
             continue
@@ -4621,7 +5848,9 @@ async def recover_canvas_tasks_once():
         try:
             await enqueue_canvas_task(task["id"])
         except Exception:
-            logger.exception("canvas task recovery failed", extra={"event": "task_recovery_failed", "task_id": task.get("id")})
+            logger.exception(
+                "canvas task recovery failed", extra={"event": "task_recovery_failed", "task_id": task.get("id")}
+            )
 
 
 async def canvas_task_recovery_loop():
@@ -4632,7 +5861,9 @@ async def canvas_task_recovery_loop():
         try:
             await recover_canvas_tasks_once()
         except RedisUnavailableError:
-            logger.exception("canvas task recovery storage unavailable", extra={"event": "task_recovery_storage_failed"})
+            logger.exception(
+                "canvas task recovery storage unavailable", extra={"event": "task_recovery_storage_failed"}
+            )
             await asyncio.sleep(retry_delay)
             retry_delay = min(max_retry_delay, retry_delay * 2)
             continue
@@ -4658,6 +5889,7 @@ async def execute_canvas_task(task_id: str):
     # tasks without migrated IDs are failed explicitly by the migration gate.
     try:
         from app.ai.database_repository import DatabaseAIRepository
+
         database_repository = DatabaseAIRepository()
         runtime_request = dict(request)
         if task.get("type") == "online-image":
@@ -4714,9 +5946,18 @@ async def execute_canvas_task(task_id: str):
                 resource_id=str(task.get("resource_id") or request.get("resource_id") or ""),
                 kind="comfyui_workflow",
             )
-            await update_canvas_task(task_id, connection_id=resolved.connection.id, resource_id=resolved.resource.id if resolved.resource else "")
+            await update_canvas_task(
+                task_id,
+                connection_id=resolved.connection.id,
+                resource_id=resolved.resource.id if resolved.resource else "",
+            )
         elif task.get("type") == "online-runninghub":
-            if not (task.get("resource_id") or request.get("resource_id") or task.get("connection_id") or request.get("connection_id")):
+            if not (
+                task.get("resource_id")
+                or request.get("resource_id")
+                or task.get("connection_id")
+                or request.get("connection_id")
+            ):
                 raise LookupError("RunningHub 任务缺少 resource_id 或 connection_id")
             resolved = await asyncio.to_thread(
                 database_repository.resolve_executable,
@@ -4724,7 +5965,11 @@ async def execute_canvas_task(task_id: str):
                 connection_id=str(task.get("connection_id") or request.get("connection_id") or ""),
                 kind="runninghub_app",
             )
-            await update_canvas_task(task_id, connection_id=resolved.connection.id, resource_id=resolved.resource.id if resolved.resource else "")
+            await update_canvas_task(
+                task_id,
+                connection_id=resolved.connection.id,
+                resource_id=resolved.resource.id if resolved.resource else "",
+            )
     except LookupError as exc:
         await update_canvas_task(task_id, expected_status="queued", status="failed", error=f"任务资源解析失败：{exc}")
         return
@@ -4749,15 +5994,26 @@ async def execute_canvas_task(task_id: str):
             timeout = max(timeout, CANVAS_RUNNINGHUB_POLL_TIMEOUT_SECONDS + 60)
         try:
             if task.get("type") == "online-image":
-                await asyncio.wait_for(run_canvas_image_task(task_id, OnlineImageRequest.model_validate(runtime_request)), timeout=timeout)
+                await asyncio.wait_for(
+                    run_canvas_image_task(task_id, OnlineImageRequest.model_validate(runtime_request)), timeout=timeout
+                )
             elif task.get("type") == "online-video":
-                await asyncio.wait_for(run_canvas_video_task(task_id, CanvasVideoRequest.model_validate(runtime_request)), timeout=timeout)
+                await asyncio.wait_for(
+                    run_canvas_video_task(task_id, CanvasVideoRequest.model_validate(runtime_request)), timeout=timeout
+                )
             elif task.get("type") == "comfy":
-                await asyncio.wait_for(run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request)), timeout=timeout)
+                await asyncio.wait_for(
+                    run_canvas_comfy_task(task_id, GenerateRequest.model_validate(request)), timeout=timeout
+                )
             elif task.get("type") == "online-runninghub":
-                await asyncio.wait_for(run_canvas_runninghub_task(task_id, RunningHubSubmitRequest.model_validate(request)), timeout=timeout)
+                await asyncio.wait_for(
+                    run_canvas_runninghub_task(task_id, RunningHubSubmitRequest.model_validate(request)),
+                    timeout=timeout,
+                )
             else:
-                await update_canvas_task(task_id, expected_status="queued", status="failed", error="不支持的画布任务类型")
+                await update_canvas_task(
+                    task_id, expected_status="queued", status="failed", error="不支持的画布任务类型"
+                )
         except asyncio.TimeoutError:
             await update_canvas_task(task_id, expected_status="running", status="timed_out", error="任务超过执行时限")
     finally:
@@ -4780,7 +6036,9 @@ async def _canvas_task_consumer_loop(consumer_id: str):
                     await acknowledge_canvas_task(message_id)
                     await release_canvas_task_dispatch(task_id)
                 except Exception as exc:
-                    logger.exception("canvas task worker execution failed", extra={"event": "task_worker_failed", "task_id": task_id})
+                    logger.exception(
+                        "canvas task worker execution failed", extra={"event": "task_worker_failed", "task_id": task_id}
+                    )
                     await dead_letter_canvas_task(message_id, task_id, str(exc))
         except RedisUnavailableError:
             logger.exception("canvas task worker storage unavailable", extra={"event": "task_worker_storage_failed"})
@@ -4795,26 +6053,35 @@ async def canvas_task_worker_loop():
     if CANVAS_TASK_WORKER_CONCURRENCY == 1:
         await _canvas_task_consumer_loop(CLIENT_ID)
         return
-    await asyncio.gather(*(
-        _canvas_task_consumer_loop(f"{CLIENT_ID}:{slot}")
-        for slot in range(CANVAS_TASK_WORKER_CONCURRENCY)
-    ))
+    await asyncio.gather(
+        *(_canvas_task_consumer_loop(f"{CLIENT_ID}:{slot}") for slot in range(CANVAS_TASK_WORKER_CONCURRENCY))
+    )
+
 
 # --- Canvas Video ---
 
+
 def video_api_root(provider):
-    base_url = validate_public_http_url((provider.get("base_url") or AI_BASE_URL).rstrip("/"), label="Connection Base URL")
+    base_url = validate_public_http_url(
+        (provider.get("base_url") or AI_BASE_URL).rstrip("/"), label="Connection Base URL"
+    )
     return video_protocol_api_root(base_url, "volcengine" if is_volcengine_connection(provider) else "openai")
+
 
 def looks_like_html_response(text: str) -> bool:
     sample = str(text or "").lstrip()[:200].lower()
     return sample.startswith("<!doctype html") or sample.startswith("<html") or "<head" in sample
 
+
 def video_submit_url_candidates(provider, base_url):
     return video_protocol_submit_urls(base_url, "volcengine" if is_volcengine_connection(provider) else "openai")
 
+
 def video_task_url_candidates(provider, base_url, task_id, submit_url=""):
-    return video_protocol_task_urls(base_url, "volcengine" if is_volcengine_connection(provider) else "openai", task_id, submit_url)
+    return video_protocol_task_urls(
+        base_url, "volcengine" if is_volcengine_connection(provider) else "openai", task_id, submit_url
+    )
+
 
 async def wait_for_video_task(client, provider, task_id, submit_url=""):
     base_url = video_api_root(provider)
@@ -4843,7 +6110,9 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
             raise HTTPException(status_code=502, detail=f"视频任务查询失败：{task_id}")
         last_payload = raw
         task_data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
-        status = str(task_data.get("status") or task_data.get("task_status") or raw.get("status") or raw.get("task_status") or "").upper()
+        status = str(
+            task_data.get("status") or task_data.get("task_status") or raw.get("status") or raw.get("task_status") or ""
+        ).upper()
         if status in VIDEO_TASK_SUCCESS_STATUSES:
             return raw
         # 部分上游 status 字段非标准或为空，但已经返回了视频 URL ——
@@ -4852,10 +6121,18 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
             return raw
         if status in VIDEO_TASK_FAILURE_STATUSES:
             error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
-            reason = task_data.get("fail_reason") or task_data.get("message") or error.get("message") or raw.get("error") or raw.get("message") or str(raw)
+            reason = (
+                task_data.get("fail_reason")
+                or task_data.get("message")
+                or error.get("message")
+                or raw.get("error")
+                or raw.get("message")
+                or str(raw)
+            )
             raise HTTPException(status_code=502, detail=humanize_video_task_failure(reason))
         delay = min(delay * 1.6, 12)
     raise HTTPException(status_code=504, detail=f"视频生成任务超时：{last_payload or task_id}")
+
 
 async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     base_url = video_api_root(provider)
@@ -4873,7 +6150,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     submit_url = submit_urls[0]
     try:
         async with shared_http_client(timeout=VIDEO_POLL_TIMEOUT) as client:
-                # OpenAI-compatible data URL request
+            # OpenAI-compatible data URL request
             if is_volcengine:
                 text = str(payload.prompt or "").strip()
                 volc_model = selected_model(runtime_model, "doubao-seedance-2-0-fast-260128")
@@ -4899,15 +6176,19 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     text_url = str(url or "").strip()
                     if not text_url:
                         continue
-                    media_url = await run_storage_io(volcengine_media_reference_url, text_url, 1536 if looks_like_image_media_url(text_url) else None)
+                    media_url = await run_storage_io(
+                        volcengine_media_reference_url, text_url, 1536 if looks_like_image_media_url(text_url) else None
+                    )
                     if not media_url:
                         continue
                     if media_url in image_like_urls or looks_like_image_media_url(media_url):
-                        content.append({
-                            "type": "image_url",
-                            "image_url": {"url": media_url},
-                            "role": "reference_image",
-                        })
+                        content.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": media_url},
+                                "role": "reference_image",
+                            }
+                        )
                         image_like_urls.add(media_url)
                         continue
                     video_items = await volcengine_video_reference_content_items(media_url)
@@ -4916,16 +6197,21 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     audio_url = await run_storage_io(volcengine_media_reference_url, url, None)
                     if not audio_url:
                         continue
-                    content.append({
-                        "type": "audio_url",
-                        "audio_url": {"url": audio_url},
-                        "role": volcengine_content_role("", "audio"),
-                    })
+                    content.append(
+                        {
+                            "type": "audio_url",
+                            "audio_url": {"url": audio_url},
+                            "role": volcengine_content_role("", "audio"),
+                        }
+                    )
                 body = volcengine_generation_body(
-                    model=volc_model, prompt=text,
+                    model=volc_model,
+                    prompt=text,
                     duration=volcengine_video_duration(payload.duration),
-                    ratio=payload.aspect_ratio, resolution=resolution,
-                    content=content, seed=payload.seed,
+                    ratio=payload.aspect_ratio,
+                    resolution=resolution,
+                    content=content,
+                    seed=payload.seed,
                     generate_audio=payload.generate_audio,
                 )
             else:
@@ -4957,12 +6243,15 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     body["generate_audio"] = True
             # Protocol submission and polling live in the canonical transport.
             from app.ai.adapters.video_transport import VideoTransport
+
             transport = VideoTransport(
                 submit_urls=lambda value: video_submit_url_candidates(value, video_api_root(value)),
                 headers=lambda value: api_headers(connection=value),
                 client_factory=shared_http_client,
                 extract_task_id=lambda value: extract_task_id(value) or value.get("task_id") or value.get("id"),
-                wait_task=lambda active_client, value, task_id, submit_url: wait_for_video_task(active_client, value, task_id, submit_url),
+                wait_task=lambda active_client, value, task_id, submit_url: wait_for_video_task(
+                    active_client, value, task_id, submit_url
+                ),
                 output_urls=video_output_urls,
                 looks_like_html=looks_like_html_response,
                 timeout=VIDEO_POLL_TIMEOUT,
@@ -4971,20 +6260,24 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
             urls = video_output_urls(result)
             local_urls = [await save_remote_video_to_output(url) for url in urls]
             video_items = await run_storage_io(media_response_items, local_urls, "video")
-            return await _attach_quota_warning_async({"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result})
+            return await _attach_quota_warning_async(
+                {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}
+            )
     except httpx.HTTPStatusError as exc:
         text = exc.response.text
         try:
             requested_model = body.get("model", "") or runtime_model or ""
         except NameError:
             requested_model = runtime_model
-        provider_name = provider['id']
+        provider_name = provider["id"]
         # 1) 模型名不在上游支持范围 → 从错误信息里抽取合法列表展示
         valid_models_match = re.search(r"not in\s*\[([^\]]+)\]", text)
         if valid_models_match:
             valid_models = [m.strip() for m in valid_models_match.group(1).split(",") if m.strip()]
             sample = valid_models[:30]
-            more = f"（共 {len(valid_models)} 个，仅显示前 {len(sample)} 个）" if len(valid_models) > len(sample) else ""
+            more = (
+                f"（共 {len(valid_models)} 个，仅显示前 {len(sample)} 个）" if len(valid_models) > len(sample) else ""
+            )
             hint = (
                 f"上游「{provider_name}」不识别模型「{requested_model}」。\n\n"
                 f"上游支持的视频模型清单{more}：\n  {', '.join(sample)}\n\n"
@@ -5009,7 +6302,11 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                 f"请把视频时长切回该模型支持的值，或改用支持更长时长的视频模型。"
             )
             raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
-        if "inputimagesensitivecontentdetected" in text.lower() or "privacyinformation" in text.lower() or "may contain real person" in text.lower():
+        if (
+            "inputimagesensitivecontentdetected" in text.lower()
+            or "privacyinformation" in text.lower()
+            or "may contain real person" in text.lower()
+        ):
             hint = (
                 f"上游「{provider_name}」拦截了输入参考图，原因是图片里可能包含真人身份/隐私信息。\n\n"
                 f"这不是代码协议错误，而是火山视频模型的内容安全策略。\n\n"
@@ -5056,6 +6353,7 @@ async def _run_video_generation(payload: CanvasVideoRequest, target):
     """
     from app.ai.contracts import Actor, VideoCommand
     from app.ai.videos import VideoGateway
+
     runtime_provider = _video_runtime_provider(target)
 
     async def dispatch_target(command):
@@ -5121,7 +6419,14 @@ async def run_canvas_video_task(task_id: str, payload: CanvasVideoRequest):
     started = time.perf_counter()
     task_logger.info(
         "canvas video task started",
-        extra={"event": "task_started", "task_id": task_id, "connection_id": payload.connection_id, "model_id": payload.model_id, "operation": "video_generation", "status": "running"},
+        extra={
+            "event": "task_started",
+            "task_id": task_id,
+            "connection_id": payload.connection_id,
+            "model_id": payload.model_id,
+            "operation": "video_generation",
+            "status": "running",
+        },
     )
     if not await update_claimed_canvas_task(task_id, lease_token, status="running"):
         await release_canvas_task_claim(task_id, lease_token)
@@ -5129,6 +6434,7 @@ async def run_canvas_video_task(task_id: str, payload: CanvasVideoRequest):
     lease_heartbeat = asyncio.create_task(canvas_task_lease_heartbeat(task_id, lease_token))
     try:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
             target = await asyncio.to_thread(
                 DatabaseAIRepository().resolve_model,
@@ -5142,15 +6448,28 @@ async def run_canvas_video_task(task_id: str, payload: CanvasVideoRequest):
         exec_payload = payload.model_copy(update={"model": "", "connection_id": target.connection.id})
         result = await _run_video_generation(exec_payload, target)
         upstream_task_id = str((result.get("task_id") if isinstance(result, dict) else "") or "")
-        await update_claimed_canvas_task(task_id, lease_token, status="succeeded", result=result, error="", upstream_task_id=upstream_task_id)
+        await update_claimed_canvas_task(
+            task_id, lease_token, status="succeeded", result=result, error="", upstream_task_id=upstream_task_id
+        )
         task_logger.info(
             "canvas video task completed",
-            extra={"event": "task_completed", "task_id": task_id, "connection_id": payload.connection_id, "model_id": payload.model_id, "operation": "video_generation", "status": "succeeded", "upstream_task_id": upstream_task_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_completed",
+                "task_id": task_id,
+                "connection_id": payload.connection_id,
+                "model_id": payload.model_id,
+                "operation": "video_generation",
+                "status": "succeeded",
+                "upstream_task_id": upstream_task_id,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
-        budget_error = detail if isinstance(detail, dict) and detail.get("error_code") == "usage_budget_exceeded" else None
+        budget_error = (
+            detail if isinstance(detail, dict) and detail.get("error_code") == "usage_budget_exceeded" else None
+        )
         upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
         failure = {
             "status": "failed",
@@ -5160,11 +6479,23 @@ async def run_canvas_video_task(task_id: str, payload: CanvasVideoRequest):
             "updated_at": time.time(),
         }
         if budget_error:
-            failure.update({"error_code": "usage_budget_exceeded", "contact_admin": bool(budget_error.get("contact_admin", True))})
+            failure.update(
+                {"error_code": "usage_budget_exceeded", "contact_admin": bool(budget_error.get("contact_admin", True))}
+            )
         await update_claimed_canvas_task(task_id, lease_token, **failure)
         task_logger.exception(
             "canvas video task failed",
-            extra={"event": "task_failed", "task_id": task_id, "connection_id": payload.connection_id, "model_id": payload.model_id, "operation": "video_generation", "status": "failed", "upstream_task_id": upstream_task_id, "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_failed",
+                "task_id": task_id,
+                "connection_id": payload.connection_id,
+                "model_id": payload.model_id,
+                "operation": "video_generation",
+                "status": "failed",
+                "upstream_task_id": upstream_task_id,
+                "error_type": type(exc).__name__,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
     finally:
         lease_heartbeat.cancel()
@@ -5176,6 +6507,7 @@ async def canvas_video(payload: CanvasVideoRequest):
     payload = await asyncio.to_thread(normalize_canvas_video_request, payload)
     from app.ai.database_repository import DatabaseAIRepository
     from app.ai.contracts import Actor, VideoCommand
+
     if not payload.model_id and not payload.connection_id:
         raise HTTPException(status_code=400, detail="视频任务必须指定 model_id 或 connection_id")
     try:
@@ -5217,40 +6549,52 @@ async def canvas_video(payload: CanvasVideoRequest):
         for index in range(count):
             child_task_id = f"canvas_vid_{uuid.uuid4().hex}"
             child_tasks.append(child_task_id)
-            await create_canvas_task({
-                "id": child_task_id,
-                "type": "online-video",
-                "status": "queued",
+            await create_canvas_task(
+                {
+                    "id": child_task_id,
+                    "type": "online-video",
+                    "status": "queued",
+                    "created_at": time.time(),
+                    "updated_at": time.time(),
+                    "result": None,
+                    "error": "",
+                    **video_resource_meta,
+                    "owner_id": owner_id,
+                    "parent_task_id": parent_task_id,
+                    "child_index": index,
+                    "request": child_request,
+                }
+            )
+        # The parent is metadata only. It is never enqueued, so recovery does
+        # not try to execute it as a video-generation task.
+        await create_canvas_task(
+            {
+                "id": parent_task_id,
+                "type": "online-video-batch",
+                "status": "batching",
                 "created_at": time.time(),
                 "updated_at": time.time(),
                 "result": None,
                 "error": "",
                 **video_resource_meta,
                 "owner_id": owner_id,
-                "parent_task_id": parent_task_id,
-                "child_index": index,
-                "request": child_request,
-            })
-        # The parent is metadata only. It is never enqueued, so recovery does
-        # not try to execute it as a video-generation task.
-        await create_canvas_task({
-            "id": parent_task_id,
-            "type": "online-video-batch",
-            "status": "batching",
-            "created_at": time.time(),
-            "updated_at": time.time(),
-            "result": None,
-            "error": "",
-            **video_resource_meta,
-            "owner_id": owner_id,
-            "child_task_ids": child_tasks,
-            "request": _video_request_snapshot(payload),
-        })
+                "child_task_ids": child_tasks,
+                "request": _video_request_snapshot(payload),
+            }
+        )
         for child_task_id in child_tasks:
             await enqueue_canvas_task(child_task_id)
         task_logger.info(
             "canvas video batch submitted",
-            extra={"event": "task_batch_submitted", "task_id": parent_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "queued", "count": count},
+            extra={
+                "event": "task_batch_submitted",
+                "task_id": parent_task_id,
+                "connection_id": target.connection.id,
+                "model_id": payload.model_id,
+                "operation": "video_generation",
+                "status": "queued",
+                "count": count,
+            },
         )
         return {"task_id": parent_task_id, "child_task_ids": child_tasks, "status": "queued", "count": count}
 
@@ -5260,23 +6604,32 @@ async def canvas_video(payload: CanvasVideoRequest):
     # mid-poll (no auto-retry for providers that already billed upstream).
     local_task_id = f"canvas_vid_{uuid.uuid4().hex}"
     request_snapshot = _video_request_snapshot(payload)
-    await create_canvas_task({
-        "id": local_task_id,
-        "type": "online-video",
-        "status": "running",
-        "created_at": time.time(),
-        "updated_at": time.time(),
-        "result": None,
-        "error": "",
-        **video_resource_meta,
-        "owner_id": owner_id,
-        "request": request_snapshot,
-    })
+    await create_canvas_task(
+        {
+            "id": local_task_id,
+            "type": "online-video",
+            "status": "running",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "result": None,
+            "error": "",
+            **video_resource_meta,
+            "owner_id": owner_id,
+            "request": request_snapshot,
+        }
+    )
     bind_log_context(task_id=local_task_id, operation_id=local_task_id)
     started = time.perf_counter()
     task_logger.info(
         "canvas video task started",
-        extra={"event": "task_started", "task_id": local_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "running"},
+        extra={
+            "event": "task_started",
+            "task_id": local_task_id,
+            "connection_id": target.connection.id,
+            "model_id": payload.model_id,
+            "operation": "video_generation",
+            "status": "running",
+        },
     )
     try:
         result = await _run_video_generation(payload, target)
@@ -5285,32 +6638,61 @@ async def canvas_video(payload: CanvasVideoRequest):
         status_code = getattr(exc, "status_code", 500)
         upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
         failed_record = await update_canvas_task(
-            local_task_id, expected_status="running", status="failed",
-            error=str(detail), status_code=status_code, upstream_task_id=upstream_task_id,
+            local_task_id,
+            expected_status="running",
+            status="failed",
+            error=str(detail),
+            status_code=status_code,
+            upstream_task_id=upstream_task_id,
         )
         if failed_record:
             await asyncio.to_thread(archive_ai_task, failed_record)
         task_logger.exception(
             "canvas video task failed",
-            extra={"event": "task_failed", "task_id": local_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "failed", "upstream_task_id": upstream_task_id, "error_type": type(exc).__name__, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            extra={
+                "event": "task_failed",
+                "task_id": local_task_id,
+                "connection_id": target.connection.id,
+                "model_id": payload.model_id,
+                "operation": "video_generation",
+                "status": "failed",
+                "upstream_task_id": upstream_task_id,
+                "error_type": type(exc).__name__,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
         )
         raise
     upstream_task_id = str((result.get("task_id") if isinstance(result, dict) else "") or "")
     succeeded_record = await update_canvas_task(
-        local_task_id, expected_status="running", status="succeeded",
-        result=result, error="", upstream_task_id=upstream_task_id,
+        local_task_id,
+        expected_status="running",
+        status="succeeded",
+        result=result,
+        error="",
+        upstream_task_id=upstream_task_id,
     )
     if succeeded_record:
         await asyncio.to_thread(archive_ai_task, succeeded_record)
     task_logger.info(
         "canvas video task completed",
-        extra={"event": "task_completed", "task_id": local_task_id, "connection_id": target.connection.id, "model_id": payload.model_id, "operation": "video_generation", "status": "succeeded", "upstream_task_id": upstream_task_id, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+        extra={
+            "event": "task_completed",
+            "task_id": local_task_id,
+            "connection_id": target.connection.id,
+            "model_id": payload.model_id,
+            "operation": "video_generation",
+            "status": "succeeded",
+            "upstream_task_id": upstream_task_id,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
     )
     if isinstance(result, dict):
         return {**result, "task_id": local_task_id, "upstream_task_id": upstream_task_id}
     return result
 
+
 # --- Caption / expand rules (compatibility API over unified prompt libraries) ---
+
 
 def _legacy_rules_from_library(kind: str):
     data = load_prompt_libraries()
@@ -5340,16 +6722,23 @@ def _save_legacy_rules(kind: str, rules):
     if not library:
         raise HTTPException(status_code=404, detail="提示词库不存在")
     builtin_items = [item for item in library.get("items", []) if str(item.get("id") or "").startswith("builtin_")]
-    custom_items = [normalize_prompt_library_item({
-        "id": item.get("id") or f"legacy_{kind}_{uuid.uuid4().hex[:10]}",
-        "name": item.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
-        "category": item.get("category") or "custom",
-        "prompt": item.get("content") or item.get("prompt") or "",
-    }) for item in (rules if isinstance(rules, list) else []) if isinstance(item, dict) and str(item.get("content") or item.get("prompt") or "").strip()]
+    custom_items = [
+        normalize_prompt_library_item(
+            {
+                "id": item.get("id") or f"legacy_{kind}_{uuid.uuid4().hex[:10]}",
+                "name": item.get("name") or ("反推规则" if kind == "caption" else "扩写规则"),
+                "category": item.get("category") or "custom",
+                "prompt": item.get("content") or item.get("prompt") or "",
+            }
+        )
+        for item in (rules if isinstance(rules, list) else [])
+        if isinstance(item, dict) and str(item.get("content") or item.get("prompt") or "").strip()
+    ]
     library["items"] = builtin_items + custom_items
     save_prompt_libraries(data)
     # Keep the old setting as a migration/rollback source for older clients.
     from app.services.business_metadata import set_user_setting
+
     set_user_setting(current_user_id(), f"{kind}_rules", rules if isinstance(rules, list) else [])
 
 
@@ -5379,6 +6768,7 @@ def save_expand_rules(payload: dict):
 
 # --- Canvas LLM ---
 
+
 async def _canvas_llm_impl(payload: CanvasLLMRequest):
     if not (payload.model_id or payload.connection_id):
         raise HTTPException(status_code=400, detail="Canvas LLM 请求必须指定 model_id 或 connection_id")
@@ -5387,6 +6777,7 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     chat_target = None
     if payload.model_id or payload.connection_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
             target = await asyncio.to_thread(
                 DatabaseAIRepository().resolve_model,
@@ -5410,12 +6801,12 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
         if role in {"user", "assistant"} and content:
             upstream_messages.append({"role": role, "content": content})
     # 构造用户消息：有图片/视频时用 OpenAI/Gemini 多模态格式
-    image_flags = await asyncio.gather(*(
-        run_storage_io(is_image_reference_value, img) for img in (payload.images or [])
-    ))
-    video_flags = await asyncio.gather(*(
-        run_storage_io(is_video_reference_value, video) for video in (payload.videos or [])
-    ))
+    image_flags = await asyncio.gather(
+        *(run_storage_io(is_image_reference_value, img) for img in (payload.images or []))
+    )
+    video_flags = await asyncio.gather(
+        *(run_storage_io(is_video_reference_value, video) for video in (payload.videos or []))
+    )
     image_inputs = [img for img, valid in zip(payload.images or [], image_flags) if valid]
     video_inputs = [video for video, valid in zip(payload.videos or [], video_flags) if valid]
     if image_inputs or video_inputs:
@@ -5436,7 +6827,12 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
             frame_urls = await video_reference_to_frame_data_urls(video, max_frames=6, max_size=768)
             if frame_urls:
                 ok_videos += 1
-                content_parts.append({"type": "text", "text": f"以下是视频 {ok_videos} 按时间顺序抽取的关键帧，请结合这些画面理解视频内容。"})
+                content_parts.append(
+                    {
+                        "type": "text",
+                        "text": f"以下是视频 {ok_videos} 按时间顺序抽取的关键帧，请结合这些画面理解视频内容。",
+                    }
+                )
                 for frame_url in frame_urls:
                     content_parts.append({"type": "image_url", "image_url": {"url": frame_url}})
             else:
@@ -5445,7 +6841,19 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
                     continue
                 content_parts.append({"type": "video_url", "video_url": {"url": ref_url}})
                 ok_videos += 1
-        logger.info("canvas LLM request prepared", extra={"event": "canvas_llm_request_prepared", "connection_id": chat_target.connection.id, "model_id": chat_target.model.id if chat_target.model else "", "text_length": len(payload.message), "image_count": ok_imgs, "image_requested_count": len(payload.images), "video_count": ok_videos, "video_requested_count": len(payload.videos)})
+        logger.info(
+            "canvas LLM request prepared",
+            extra={
+                "event": "canvas_llm_request_prepared",
+                "connection_id": chat_target.connection.id,
+                "model_id": chat_target.model.id if chat_target.model else "",
+                "text_length": len(payload.message),
+                "image_count": ok_imgs,
+                "image_requested_count": len(payload.images),
+                "video_count": ok_videos,
+                "video_requested_count": len(payload.videos),
+            },
+        )
         upstream_messages.append({"role": "user", "content": content_parts})
     else:
         upstream_messages.append({"role": "user", "content": payload.message})
@@ -5454,9 +6862,16 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     response_id = ""
     try:
         from app.ai.chat import ChatGateway
+
         chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
-        stream_options = {"stream_options": {"include_usage": True}} if _llm_provider.get("protocol") in {"omnilojo", "openai"} else {}
-        async for line in chat_gateway.stream_target(target=chat_target, messages=upstream_messages, user_id=current_user_id(), extra_body=stream_options):
+        stream_options = (
+            {"stream_options": {"include_usage": True}}
+            if _llm_provider.get("protocol") in {"omnilojo", "openai"}
+            else {}
+        )
+        async for line in chat_gateway.stream_target(
+            target=chat_target, messages=upstream_messages, user_id=current_user_id(), extra_body=stream_options
+        ):
             if not line:
                 continue
             if line.startswith("data:"):
@@ -5487,9 +6902,14 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
     text = "".join(content_parts_acc).strip() or "接口返回了空回复。"
     if _llm_provider.get("protocol") in {"omnilojo", "openai"}:
         from app.services.usage import record_openai_response_usage
+
         await asyncio.to_thread(
-            record_openai_response_usage, current_user_id(), _llm_provider, model,
-            {"id": response_id or uuid.uuid4().hex, "usage": raw_usage}, operation="canvas_llm",
+            record_openai_response_usage,
+            current_user_id(),
+            _llm_provider,
+            model,
+            {"id": response_id or uuid.uuid4().hex, "usage": raw_usage},
+            operation="canvas_llm",
         )
     return {"text": text, "model": model, "raw_usage": raw_usage}
 
@@ -5498,11 +6918,13 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
 async def canvas_llm(payload: CanvasLLMRequest):
     return await _canvas_llm_impl(payload)
 
+
 # --- 对话管理 ---
 # 路由已迁移至 app/routers/conversations.py，通过 app.include_router 注册。
 
 # --- 画布管理 ---
 # 路由已迁移至 app/routers/canvases.py，通过 app.include_router 注册。
+
 
 @app.get("/api/canvas/prompt-templates")
 async def smart_canvas_prompt_templates():
@@ -5511,6 +6933,7 @@ async def smart_canvas_prompt_templates():
     except Exception:
         logger.exception("failed to read prompt templates", extra={"event": "prompt_templates_load_failed"})
         return {"templates": []}
+
 
 @app.post("/api/canvas-assets/check")
 async def check_canvas_assets(payload: CanvasAssetCheckRequest):
@@ -5524,6 +6947,7 @@ async def check_canvas_assets(payload: CanvasAssetCheckRequest):
         else:
             result[text] = True
     return {"exists": result}
+
 
 @app.post("/api/canvas-assets/download")
 async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
@@ -5545,12 +6969,16 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
             content = None
             content_type = ""
             if path and os.path.isfile(path):
-                base = sanitize_export_filename(requested_name or os.path.basename(path), os.path.basename(path) or f"image-{count + 1}.png")
+                base = sanitize_export_filename(
+                    requested_name or os.path.basename(path), os.path.basename(path) or f"image-{count + 1}.png"
+                )
             else:
                 local_by_name = local_media_file_by_basename(filename_from_media_url(text, ""))
                 if local_by_name and os.path.isfile(local_by_name):
                     path = local_by_name
-                    base = sanitize_export_filename(requested_name or os.path.basename(path), os.path.basename(path) or f"image-{count + 1}.png")
+                    base = sanitize_export_filename(
+                        requested_name or os.path.basename(path), os.path.basename(path) or f"image-{count + 1}.png"
+                    )
                 else:
                     try:
                         remote = fetch_remote_media_bytes(text)
@@ -5559,7 +6987,10 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
                     if not remote:
                         continue
                     content, content_type = remote
-                    base = sanitize_export_filename(requested_name or filename_from_media_url(text, f"image-{count + 1}.bin"), f"image-{count + 1}.bin")
+                    base = sanitize_export_filename(
+                        requested_name or filename_from_media_url(text, f"image-{count + 1}.bin"),
+                        f"image-{count + 1}.bin",
+                    )
             name, ext = os.path.splitext(base)
             archive_name = base
             suffix = 2
@@ -5581,6 +7012,7 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
     encoded = urllib.parse.quote(filename)
     headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"}
     return Response(buffer.getvalue(), media_type="application/zip", headers=headers)
+
 
 # sanitize_export_filename 已迁移至 app/core/media.py（原样迁移），多域复用。
 from app.core.media import sanitize_export_filename
@@ -5658,12 +7090,14 @@ def build_canvas_workflow_archive(payload: CanvasWorkflowExportRequest) -> Tuple
                 archive_name = canvas_workflow_unique_archive_name(os.path.basename(path), used)
                 archive_path = f"resources/{archive_name}"
                 zf.write(path, archive_path)
-                resources.append({
-                    "url": url,
-                    "archive": archive_path,
-                    "name": os.path.basename(path),
-                    "size": os.path.getsize(path),
-                })
+                resources.append(
+                    {
+                        "url": url,
+                        "archive": archive_path,
+                        "name": os.path.basename(path),
+                        "size": os.path.getsize(path),
+                    }
+                )
         workflow = canvas_workflow_payload(nodes_payload, connections_payload, resources)
         zf.writestr("workflow.json", json.dumps(workflow, ensure_ascii=False, indent=2))
     buffer.seek(0)
@@ -5771,6 +7205,7 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
 # items PATCH(重命名) 路由已迁移至 app/routers/assets.py。
 # find_asset_item_in_library 已迁移至 app/services/assets.py（import-back，见上）。
 
+
 @app.post("/api/asset-library/items/{item_id}/register-avatar")
 async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
     lib = await asyncio.to_thread(load_asset_library)
@@ -5780,9 +7215,21 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
     provider = None
     if payload.connection_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
-            connection = next(item for item in await asyncio.to_thread(DatabaseAIRepository().connections) if item.id == payload.connection_id)
-            provider = {"id": connection.id, "connection_id": connection.id, "name": connection.name, "protocol": connection.protocol, "base_url": connection.base_url, **dict(connection.settings or {})}
+            connection = next(
+                item
+                for item in await asyncio.to_thread(DatabaseAIRepository().connections)
+                if item.id == payload.connection_id
+            )
+            provider = {
+                "id": connection.id,
+                "connection_id": connection.id,
+                "name": connection.name,
+                "protocol": connection.protocol,
+                "base_url": connection.base_url,
+                **dict(connection.settings or {}),
+            }
         except StopIteration as exc:
             raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用") from exc
     else:
@@ -5798,13 +7245,19 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
         kind = "image"
     if platform == "volcengine":
         # 火山以 API 设置里配置的 ProjectName 为准（必须与视频生成 key 的项目一致）
-        project_name = str(provider.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME
+        project_name = (
+            str(provider.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip()
+            or VOLCENGINE_DEFAULT_PROJECT_NAME
+        )
         public_url = volcengine_public_asset_url(target_item.get("url") or "")
         if public_url.startswith("ERR:"):
             raise HTTPException(status_code=400, detail=public_url[4:])
         task_id = await submit_volcengine_avatar_asset(
-            public_url, target_item.get("name") or "asset", kind,
-            project_name=project_name, group_name=payload.group_name or "",
+            public_url,
+            target_item.get("name") or "asset",
+            kind,
+            project_name=project_name,
+            group_name=payload.group_name or "",
         )
     else:
         raise HTTPException(status_code=400, detail="该平台的认证后端尚未接入。")
@@ -5825,6 +7278,7 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
     await asyncio.to_thread(save_asset_library, lib)
     return {"library": lib, "item": target_item}
 
+
 @app.post("/api/asset-library/items/{item_id}/avatar-status")
 async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
     lib = await asyncio.to_thread(load_asset_library)
@@ -5835,9 +7289,21 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
     provider = None
     if payload.connection_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
-            connection = next(item for item in await asyncio.to_thread(DatabaseAIRepository().connections) if item.id == payload.connection_id)
-            provider = {"id": connection.id, "connection_id": connection.id, "name": connection.name, "protocol": connection.protocol, "base_url": connection.base_url, **dict(connection.settings or {})}
+            connection = next(
+                item
+                for item in await asyncio.to_thread(DatabaseAIRepository().connections)
+                if item.id == payload.connection_id
+            )
+            provider = {
+                "id": connection.id,
+                "connection_id": connection.id,
+                "name": connection.name,
+                "protocol": connection.protocol,
+                "base_url": connection.base_url,
+                **dict(connection.settings or {}),
+            }
         except StopIteration as exc:
             raise HTTPException(status_code=404, detail="AI 连接不存在或已禁用") from exc
     else:
@@ -5853,7 +7319,8 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
         raise HTTPException(status_code=400, detail="该素材还没有提交到这个平台的认证审核。")
     if platform == "volcengine":
         result = await check_volcengine_avatar_task(
-            task_id, str(reg.get("project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME,
+            task_id,
+            str(reg.get("project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip() or VOLCENGINE_DEFAULT_PROJECT_NAME,
         )
     else:
         raise HTTPException(status_code=400, detail="该平台的认证后端尚未接入。")
@@ -5867,17 +7334,21 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
     await asyncio.to_thread(save_asset_library, lib)
     return {"library": lib, "item": target_item}
 
+
 # items DELETE / delete / move / crop 路由已迁移至 app/routers/assets.py。
 
 # 画布 PUT/DELETE 路由已迁移至 app/routers/canvases.py。
 
 # --- GPT 对话 ---
 
+
 @app.post("/api/chat")
 async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     if payload.mode != "image" and not (payload.model_id or payload.connection_id):
         raise HTTPException(status_code=400, detail="聊天请求必须指定 model_id 或 connection_id")
-    if payload.mode == "image" and not (payload.image_resource_id or payload.image_connection_id or payload.model_id or payload.connection_id):
+    if payload.mode == "image" and not (
+        payload.image_resource_id or payload.image_connection_id or payload.model_id or payload.connection_id
+    ):
         raise HTTPException(status_code=400, detail="生图请求必须指定 model_id、connection_id 或 resource_id")
     user_id = safe_user_id(x_user_id, request)
     if payload.conversation_id:
@@ -5907,13 +7378,22 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         image_target = None
         if payload.image_connection_id or payload.image_resource_id or payload.model_id:
             from app.ai.database_repository import DatabaseAIRepository
+
             try:
                 if payload.image_resource_id:
-                    target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.image_resource_id)
+                    target = await asyncio.to_thread(
+                        DatabaseAIRepository().resolve_executable, resource_id=payload.image_resource_id
+                    )
                     image_target = target
                     provider = canonical_connection_view(target)
                 else:
-                    target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.image_model_id or payload.model_id, connection_id=payload.image_connection_id, model=payload.image_model or payload.model, kind="image")
+                    target = await asyncio.to_thread(
+                        DatabaseAIRepository().resolve_model,
+                        model_id=payload.image_model_id or payload.model_id,
+                        connection_id=payload.image_connection_id,
+                        model=payload.image_model or payload.model,
+                        kind="image",
+                    )
                     image_target = target
                     provider = canonical_connection_view(target)
                     resolved_image_model = target.model.upstream_model
@@ -5928,7 +7408,14 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         try:
             if image_target is None:
                 raise HTTPException(status_code=400, detail="图片任务缺少稳定执行目标")
-            image_data, raw = await generate_ai_image_target(image_target, prompt=payload.message, size=payload.size, quality=payload.quality, reference_images=refs, user_id=user_id)
+            image_data, raw = await generate_ai_image_target(
+                image_target,
+                prompt=payload.message,
+                size=payload.size,
+                quality=payload.quality,
+                reference_images=refs,
+                user_id=user_id,
+            )
             local_url = await save_ai_image_to_output(image_data, prefix="chat_")
         except httpx.HTTPStatusError as exc:
             text = exc.response.text or ""
@@ -5948,13 +7435,17 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         }
         if isinstance(raw, dict) and isinstance(raw.get("usage"), dict):
             from app.services.usage import record_openai_response_usage
-            await asyncio.to_thread(record_openai_response_usage, user_id, provider, model, raw, operation="image_generation")
+
+            await asyncio.to_thread(
+                record_openai_response_usage, user_id, provider, model, raw, operation="image_generation"
+            )
     else:
         _conv_provider = None
         model = payload.model
         chat_target = None
         if payload.model_id or payload.connection_id:
             from app.ai.database_repository import DatabaseAIRepository
+
             try:
                 target = await asyncio.to_thread(
                     DatabaseAIRepository().resolve_model,
@@ -5985,15 +7476,20 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
             if data_url:
                 current_content.append({"type": "image_url", "image_url": {"url": data_url}})
-        upstream_messages.append({"role": "user", "content": current_content if len(current_content) > 1 else payload.message})
+        upstream_messages.append(
+            {"role": "user", "content": current_content if len(current_content) > 1 else payload.message}
+        )
         try:
             from app.ai.chat import ChatGateway
+
             chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
             raw = await chat_gateway.complete_target(target=chat_target, messages=upstream_messages, user_id=user_id)
         except httpx.HTTPStatusError as exc:
             body = exc.response.text or ""
             friendly = friendly_chat_error_detail(body, model, _conv_provider)
-            raise HTTPException(status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body}") from exc
+            raise HTTPException(
+                status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"请求上游接口失败：{exc}") from exc
         raw_data = raw
@@ -6007,14 +7503,18 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         }
         if _conv_provider.get("protocol") in {"omnilojo", "openai"}:
             from app.services.usage import record_openai_response_usage
+
             usage_payload = dict(raw_data) if isinstance(raw_data, dict) else {}
             usage_payload.setdefault("id", uuid.uuid4().hex)
-            await asyncio.to_thread(record_openai_response_usage, user_id, _conv_provider, model, usage_payload, operation="chat")
+            await asyncio.to_thread(
+                record_openai_response_usage, user_id, _conv_provider, model, usage_payload, operation="chat"
+            )
 
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
     await asyncio.to_thread(save_conversation, user_id, conversation)
     return {"conversation": conversation, "message": assistant_message}
+
 
 @app.post("/api/chat/agent")
 async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
@@ -6030,14 +7530,16 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
     if not conversation.get("messages"):
         conversation["title"] = display_title(payload.message)
     refs = image_references([ref.dict() for ref in payload.reference_images if ref.url])
-    conversation["messages"].append({
-        "id": uuid.uuid4().hex,
-        "role": "user",
-        "content": payload.message,
-        "created_at": now_ms(),
-        "attachments": refs,
-        "mode": "agent",
-    })
+    conversation["messages"].append(
+        {
+            "id": uuid.uuid4().hex,
+            "role": "user",
+            "content": payload.message,
+            "created_at": now_ms(),
+            "attachments": refs,
+            "mode": "agent",
+        }
+    )
     conversation["updated_at"] = now_ms()
     await asyncio.to_thread(save_conversation, user_id, conversation)
 
@@ -6053,18 +7555,29 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
 
     if action in {"generate_image", "edit_image"}:
         if not (payload.image_resource_id or payload.image_connection_id or payload.model_id):
-            raise HTTPException(status_code=400, detail="Agent 生图请求必须指定 image_connection_id、model_id 或 image_resource_id")
+            raise HTTPException(
+                status_code=400, detail="Agent 生图请求必须指定 image_connection_id、model_id 或 image_resource_id"
+            )
         image_provider = None
         model = payload.image_model or payload.model
         image_target = None
         if payload.image_resource_id or payload.image_connection_id or payload.model_id:
             from app.ai.database_repository import DatabaseAIRepository
+
             try:
                 if payload.image_resource_id:
-                    target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable, resource_id=payload.image_resource_id, kind="image")
+                    target = await asyncio.to_thread(
+                        DatabaseAIRepository().resolve_executable, resource_id=payload.image_resource_id, kind="image"
+                    )
                     image_target = target
                 else:
-                    target = await asyncio.to_thread(DatabaseAIRepository().resolve_model, model_id=payload.image_model_id or payload.model_id, connection_id=payload.image_connection_id or payload.connection_id, model=model, kind="image")
+                    target = await asyncio.to_thread(
+                        DatabaseAIRepository().resolve_model,
+                        model_id=payload.image_model_id or payload.model_id,
+                        connection_id=payload.image_connection_id or payload.connection_id,
+                        model=model,
+                        kind="image",
+                    )
                     image_target = target
                 image_provider = canonical_connection_view(target)
                 model = target.model.upstream_model if target.model else model
@@ -6073,7 +7586,12 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
         else:
             raise HTTPException(status_code=400, detail="Agent 图片请求必须指定有效的稳定资源标识")
         prompt = decision.get("prompt") or payload.message
-        image_size = chat_prompt_size_override(payload.message, payload.size) or chat_prompt_size_override(prompt, payload.size) or inherited_size or payload.size
+        image_size = (
+            chat_prompt_size_override(payload.message, payload.size)
+            or chat_prompt_size_override(prompt, payload.size)
+            or inherited_size
+            or payload.size
+        )
         image_size = snap_size_to_multiple(image_size, 16)
         count = 1 if action == "edit_image" else chat_requested_image_count(payload.message)
         prompts = chat_split_parallel_prompts(prompt, count)
@@ -6083,15 +7601,44 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
             for item_prompt in prompts:
                 if image_target is None:
                     raise HTTPException(status_code=400, detail="Agent 图片任务缺少稳定执行目标")
-                image_data, raw = await generate_ai_image_target(image_target, prompt=item_prompt, size=image_size, quality=payload.quality, reference_images=tool_refs, user_id=user_id)
+                image_data, raw = await generate_ai_image_target(
+                    image_target,
+                    prompt=item_prompt,
+                    size=image_size,
+                    quality=payload.quality,
+                    reference_images=tool_refs,
+                    user_id=user_id,
+                )
                 local_urls.append(await save_ai_image_to_output(image_data, prefix="chat_"))
                 raw_items.append(raw)
         except httpx.HTTPStatusError as exc:
             body = exc.response.text or ""
-            raise HTTPException(status_code=exc.response.status_code, detail=friendly_image_error_detail(body, image_size, model) or body[:300]) from exc
+            raise HTTPException(
+                status_code=exc.response.status_code,
+                detail=friendly_image_error_detail(body, image_size, model) or body[:300],
+            ) from exc
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"请求上游生图接口失败：{exc}") from exc
-        assistant_message = {"id": uuid.uuid4().hex, "role": "assistant", "type": "image", "content": prompt, "image_url": local_urls[0] if local_urls else "", "image_urls": local_urls, "created_at": now_ms(), "model": model, "connection_id": image_target.connection.id, "model_id": image_target.model.id if image_target.model else "", "resource_id": image_target.resource.id if image_target.resource else "", "size": image_size, "image_count": len(local_urls), "prompts": prompts, "agent_action": action, "agent_reply": decision.get("reply") or "", "used_references": tool_refs, "raw_usage": raw_items[0].get("usage") if raw_items and isinstance(raw_items[0], dict) else None}
+        assistant_message = {
+            "id": uuid.uuid4().hex,
+            "role": "assistant",
+            "type": "image",
+            "content": prompt,
+            "image_url": local_urls[0] if local_urls else "",
+            "image_urls": local_urls,
+            "created_at": now_ms(),
+            "model": model,
+            "connection_id": image_target.connection.id,
+            "model_id": image_target.model.id if image_target.model else "",
+            "resource_id": image_target.resource.id if image_target.resource else "",
+            "size": image_size,
+            "image_count": len(local_urls),
+            "prompts": prompts,
+            "agent_action": action,
+            "agent_reply": decision.get("reply") or "",
+            "used_references": tool_refs,
+            "raw_usage": raw_items[0].get("usage") if raw_items and isinstance(raw_items[0], dict) else None,
+        }
     else:
         assistant_message = await build_chat_text_reply(payload, conversation)
         assistant_message["agent_action"] = "chat"
@@ -6099,7 +7646,12 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
     await asyncio.to_thread(save_conversation, user_id, conversation)
-    return {"conversation": conversation, "message": assistant_message, "agent": {"action": action, "decision": decision}}
+    return {
+        "conversation": conversation,
+        "message": assistant_message,
+        "agent": {"action": action, "decision": decision},
+    }
+
 
 @app.post("/api/chat/stream")
 async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
@@ -6135,6 +7687,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     chat_target = None
     if payload.model_id or payload.connection_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
             target = await asyncio.to_thread(
                 DatabaseAIRepository().resolve_model,
@@ -6166,7 +7719,9 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         data_url = await run_storage_io(reference_to_data_url, ref.dict(), 1536)
         if data_url:
             current_content.append({"type": "image_url", "image_url": {"url": data_url}})
-    upstream_messages.append({"role": "user", "content": current_content if len(current_content) > 1 else payload.message})
+    upstream_messages.append(
+        {"role": "user", "content": current_content if len(current_content) > 1 else payload.message}
+    )
 
     async def stream():
         content_parts = []
@@ -6175,9 +7730,16 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         yield sse_event({"type": "meta", "conversation": conversation})
         try:
             from app.ai.chat import ChatGateway
+
             chat_gateway = ChatGateway(timeout=AI_REQUEST_TIMEOUT)
-            stream_options = {"stream_options": {"include_usage": True}} if _stream_provider.get("protocol") in {"omnilojo", "openai"} else {}
-            async for line in chat_gateway.stream_target(target=chat_target, messages=upstream_messages, user_id=user_id, extra_body=stream_options):
+            stream_options = (
+                {"stream_options": {"include_usage": True}}
+                if _stream_provider.get("protocol") in {"omnilojo", "openai"}
+                else {}
+            )
+            async for line in chat_gateway.stream_target(
+                target=chat_target, messages=upstream_messages, user_id=user_id, extra_body=stream_options
+            ):
                 if not line:
                     continue
                 if line.startswith("data:"):
@@ -6216,10 +7778,19 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         await asyncio.to_thread(save_conversation, user_id, conversation)
         if _stream_provider.get("protocol") in {"omnilojo", "openai"}:
             from app.services.usage import record_openai_response_usage
-            await asyncio.to_thread(record_openai_response_usage, user_id, _stream_provider, model, {"id": response_id or uuid.uuid4().hex, "usage": raw_usage}, operation="chat")
+
+            await asyncio.to_thread(
+                record_openai_response_usage,
+                user_id,
+                _stream_provider,
+                model,
+                {"id": response_id or uuid.uuid4().hex, "usage": raw_usage},
+                operation="chat",
+            )
         yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
 
 # --- 历史记录 ---
 
@@ -6227,6 +7798,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
 # GET /api/history、POST /api/history/save、POST /api/history/delete 路由已迁移至 app/routers/history.py。
 
 # --- 本地 ComfyUI 生图 ---
+
 
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
@@ -6248,6 +7820,7 @@ def generate(req: GenerateRequest):
 
         for image_name in required_images:
             from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
+
             need_sync = False
             need_sync = not ComfyUIAssetTransport.input_exists(comfyui_url, target_backend, image_name)
 
@@ -6255,7 +7828,8 @@ def generate(req: GenerateRequest):
                 image_content = None
                 image_type = "image/png"
                 for addr in COMFYUI_INSTANCES:
-                    if addr == target_backend: continue
+                    if addr == target_backend:
+                        continue
                     fetched = ComfyUIAssetTransport.download_sync(comfyui_url, addr, image_name, kind="input")
                     if fetched:
                         image_content, image_type = fetched
@@ -6264,9 +7838,20 @@ def generate(req: GenerateRequest):
                 if image_content:
                     try:
                         from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
-                        ComfyUIAssetTransport.upload_sync(comfyui_url, target_backend, image_name, image_content, image_type)
+
+                        ComfyUIAssetTransport.upload_sync(
+                            comfyui_url, target_backend, image_name, image_content, image_type
+                        )
                     except Exception:
-                        logger.exception("ComfyUI sync upload failed", extra={"event": "upload_failed", "provider": "comfyui", "operation": "sync_upload", "endpoint": target_backend})
+                        logger.exception(
+                            "ComfyUI sync upload failed",
+                            extra={
+                                "event": "upload_failed",
+                                "provider": "comfyui",
+                                "operation": "sync_upload",
+                                "endpoint": target_backend,
+                            },
+                        )
 
         stored_workflow = get_comfy_workflow(req.workflow_json)
         if not stored_workflow:
@@ -6332,16 +7917,18 @@ def generate(req: GenerateRequest):
         local_items = []
         local_urls = []
         current_timestamp = time.time()
-        if 'outputs' in history_data:
-            for node_id in history_data['outputs']:
-                node_output = history_data['outputs'][node_id]
+        if "outputs" in history_data:
+            for node_id in history_data["outputs"]:
+                node_output = history_data["outputs"][node_id]
                 for output_key, item in collect_comfy_file_items(node_output):
                     prefix = f"{req.type}_{int(current_timestamp)}_"
                     kind = comfy_output_kind(item)
                     local_path = download_comfy_output(target_backend, item, prefix=prefix)
                     if kind == "image" and req.convert_to_jpg:
                         local_path = convert_output_to_jpg(local_path)
-                    name = os.path.basename(str(item.get("filename") or "")) or os.path.basename(str(local_path).split("?", 1)[0])
+                    name = os.path.basename(str(item.get("filename") or "")) or os.path.basename(
+                        str(local_path).split("?", 1)[0]
+                    )
                     entry = {
                         "url": local_path,
                         "kind": kind,
@@ -6403,7 +7990,7 @@ def generate(req: GenerateRequest):
             "task_id": task_id,
             "prompt_id": prompt_id,
             "backend": target_backend,
-            "params": req.params
+            "params": req.params,
         }
         if not _is_canvas_sourced(req):
             save_to_history(result)
@@ -6418,6 +8005,8 @@ def generate(req: GenerateRequest):
             with LOAD_LOCK:
                 if BACKEND_LOCAL_LOAD.get(target_backend, 0) > 0:
                     BACKEND_LOCAL_LOAD[target_backend] -= 1
+
+
 # --- ComfyUI 工作流管理 ---
 
 # --- ComfyUI 工作流管理数据逻辑 ---
@@ -6426,6 +8015,7 @@ def generate(req: GenerateRequest):
 from app.routers.workflows import (
     WORKFLOW_NAME_RE,
 )
+
 
 def runninghub_normalize_field(raw, fallback=None):
     fallback = fallback or {}
@@ -6440,9 +8030,13 @@ def runninghub_normalize_field(raw, fallback=None):
         options = [str(item).strip() for item in options if str(item).strip()]
     else:
         options = []
-    field_id = str(raw.get("id") or raw.get("fieldId") or raw.get("key") or raw.get("nodeId") or fallback.get("id") or "").strip()
+    field_id = str(
+        raw.get("id") or raw.get("fieldId") or raw.get("key") or raw.get("nodeId") or fallback.get("id") or ""
+    ).strip()
     node_id = str(raw.get("nodeId") or fallback.get("nodeId") or raw.get("node_id") or "").strip()
-    field_name = str(raw.get("fieldName") or raw.get("inputName") or raw.get("name") or fallback.get("fieldName") or "").strip()
+    field_name = str(
+        raw.get("fieldName") or raw.get("inputName") or raw.get("name") or fallback.get("fieldName") or ""
+    ).strip()
     field_value = raw.get("fieldValue")
     if field_value is None:
         field_value = raw.get("defaultValue")
@@ -6476,9 +8070,11 @@ def runninghub_normalize_field(raw, fallback=None):
         "required": bool(raw.get("required", fallback.get("required", False))),
     }
 
+
 @app.get("/api/comfyui/instances")
 def get_comfyui_instances():
     return {"instances": COMFYUI_INSTANCES}
+
 
 @app.put("/api/comfyui/instances")
 def save_comfyui_instances(payload: ComfyInstancesPayload):
@@ -6512,9 +8108,11 @@ def save_comfyui_instances(payload: ComfyInstancesPayload):
     BACKEND_LOCAL_LOAD = new_load
     return {"instances": COMFYUI_INSTANCES}
 
+
 # --- ComfyUI 工作流管理 ---
 # GET /api/workflows、GET/POST /api/workflows、PUT .../config、DELETE ... 共 5 个路由
 # 已迁移至 app/routers/workflows.py。/api/workflows/{name}/run 仍在下方（调用 generate）。
+
 
 @app.post("/api/workflows/{name:path}/run")
 def run_workflow(name: str, payload: WorkflowRunRequest):
@@ -6524,6 +8122,7 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
         raise HTTPException(status_code=404, detail="Workflow not found")
     if payload.resource_id or payload.connection_id:
         from app.ai.database_repository import DatabaseAIRepository
+
         try:
             target = DatabaseAIRepository().resolve_executable(
                 resource_id=payload.resource_id,
@@ -6532,7 +8131,9 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
             )
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="ComfyUI 工作流资源不存在或已禁用") from exc
-        configured_name = str(target.resource.settings.get("workflow_name") or target.resource.settings.get("name") or "").strip()
+        configured_name = str(
+            target.resource.settings.get("workflow_name") or target.resource.settings.get("name") or ""
+        ).strip()
         if configured_name and configured_name != name:
             raise HTTPException(status_code=409, detail="工作流资源与请求的工作流名称不匹配")
     # 根据 config 的字段把值映射成 params 节点覆盖
@@ -6555,9 +8156,9 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
                 if isinstance(value, str):
                     s = value.strip()
                     try:
-                        if s and ('.' in s or 'e' in s.lower()):
+                        if s and ("." in s or "e" in s.lower()):
                             value = float(s)
-                        elif s and (s.lstrip('-').isdigit()):
+                        elif s and (s.lstrip("-").isdigit()):
                             value = int(s)
                     except (ValueError, TypeError):
                         pass
@@ -6622,6 +8223,7 @@ app.include_router(user_data_migration_router.router)
 
 if __name__ == "__main__":
     import argparse, uvicorn
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3000)

@@ -7,6 +7,7 @@
 凡是会被 `global xxx` 重新赋值的标量（如 GLOBAL_LOOP / NEXT_TASK_ID），
 统一通过本模块的函数访问，避免「import 时拷贝出一份独立副本」的陷阱。
 """
+
 from typing import Any, Optional
 
 # 事件循环（启动时由 startup 事件设置）。
@@ -14,6 +15,7 @@ GLOBAL_LOOP: Optional[Any] = None
 
 # 画布图像任务自增 ID。
 NEXT_TASK_ID: int = 1
+
 
 def set_global_loop(loop: Any) -> None:
     global GLOBAL_LOOP

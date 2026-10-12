@@ -8,7 +8,15 @@ from app.ai import transport
 
 
 def test_runninghub_app_headers_do_not_override_request_host(monkeypatch):
-    target = ResolvedTarget(connection=Connection(id="runninghub-connection", protocol="runninghub", name="RunningHub", base_url="https://www.runninghub.cn", enabled=True))
+    target = ResolvedTarget(
+        connection=Connection(
+            id="runninghub-connection",
+            protocol="runninghub",
+            name="RunningHub",
+            base_url="https://www.runninghub.cn",
+            enabled=True,
+        )
+    )
     monkeypatch.setattr(transport, "get_connection_secret", lambda *_: "test-key")
 
     headers = transport.headers_for_target(target)
@@ -70,8 +78,16 @@ def test_runninghub_output_kind_uses_media_extension():
 def test_runninghub_query_returns_remote_output_when_local_mirror_fails(monkeypatch):
     remote_url = "https://example.com/result.png"
     target = ResolvedTarget(
-        connection=Connection(id="runninghub-connection", protocol="runninghub", name="RunningHub", base_url="https://www.runninghub.cn", enabled=True),
-        resource=ExecutableResource(id="runninghub-resource", connection_id="runninghub-connection", kind="runninghub_app", name="App"),
+        connection=Connection(
+            id="runninghub-connection",
+            protocol="runninghub",
+            name="RunningHub",
+            base_url="https://www.runninghub.cn",
+            enabled=True,
+        ),
+        resource=ExecutableResource(
+            id="runninghub-resource", connection_id="runninghub-connection", kind="runninghub_app", name="App"
+        ),
     )
 
     from app.ai.database_repository import DatabaseAIRepository

@@ -6,10 +6,12 @@ from app.routers import user_data_migration as migration
 class Cursor:
     def __init__(self):
         self.executed = []
-        self._rows = iter((
-            {"id": "local-user", "username": "Local User"},
-            {"id": "ou_9991ec9cb01e04251020a5f7ca518944"},
-        ))
+        self._rows = iter(
+            (
+                {"id": "local-user", "username": "Local User"},
+                {"id": "ou_9991ec9cb01e04251020a5f7ca518944"},
+            )
+        )
 
     def execute(self, query, params=None):
         self.executed.append((str(query), params))

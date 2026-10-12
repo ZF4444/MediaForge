@@ -37,7 +37,25 @@ def create_feedback(payload: Dict[str, Any], user_id: str, username: str) -> Dic
         "updated_at": now,
     }
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO feedback_entries(id,user_id,username,type,content,page,user_agent,status,admin_note,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", tuple(item[key] for key in ("id","user_id","username","type","content","page","user_agent","status","admin_note","created_at","updated_at")))
+        cur.execute(
+            "INSERT INTO feedback_entries(id,user_id,username,type,content,page,user_agent,status,admin_note,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            tuple(
+                item[key]
+                for key in (
+                    "id",
+                    "user_id",
+                    "username",
+                    "type",
+                    "content",
+                    "page",
+                    "user_agent",
+                    "status",
+                    "admin_note",
+                    "created_at",
+                    "updated_at",
+                )
+            ),
+        )
     return item
 
 
@@ -60,23 +78,36 @@ def list_feedback(
     clauses, params = [], []
     for column, value in (("status", status_filter), ("type", type_filter), ("user_id", user_filter)):
         if value:
-            clauses.append(f"{column}=%s"); params.append(value)
+            clauses.append(f"{column}=%s")
+            params.append(value)
     if query:
-        clauses.append("LOWER(content || ' ' || username || ' ' || user_id || ' ' || page || ' ' || admin_note) LIKE %s"); params.append(f"%{query}%")
+        clauses.append(
+            "LOWER(content || ' ' || username || ' ' || user_id || ' ' || page || ' ' || admin_note) LIKE %s"
+        )
+        params.append(f"%{query}%")
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT COUNT(*) AS count FROM feedback_entries{where}", tuple(params)); total = int(cur.fetchone()["count"])
-        cur.execute(f"SELECT * FROM feedback_entries{where} ORDER BY created_at DESC LIMIT %s OFFSET %s", tuple(params + [limit, offset])); items = cur.fetchall()
+        cur.execute(f"SELECT COUNT(*) AS count FROM feedback_entries{where}", tuple(params))
+        total = int(cur.fetchone()["count"])
+        cur.execute(
+            f"SELECT * FROM feedback_entries{where} ORDER BY created_at DESC LIMIT %s OFFSET %s",
+            tuple(params + [limit, offset]),
+        )
+        items = cur.fetchall()
     return {"items": items, "total": total}
 
 
 def update_feedback(feedback_id: str, *, status: Optional[str], admin_note: Optional[str]) -> Optional[Dict[str, Any]]:
     updates, params = [], []
     if status is not None and (normalized := normalize_feedback_status(status)):
-        updates.append("status=%s"); params.append(normalized)
+        updates.append("status=%s")
+        params.append(normalized)
     if admin_note is not None:
-        updates.append("admin_note=%s"); params.append(str(admin_note or "").strip()[:1000])
-    updates.append("updated_at=%s"); params.append(now_ms()); params.append(feedback_id)
+        updates.append("admin_note=%s")
+        params.append(str(admin_note or "").strip()[:1000])
+    updates.append("updated_at=%s")
+    params.append(now_ms())
+    params.append(feedback_id)
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute(f"UPDATE feedback_entries SET {','.join(updates)} WHERE id=%s RETURNING *", tuple(params))
         return cur.fetchone()

@@ -1,4 +1,5 @@
 """Storage usage, cleanup, and quota management routes."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, Set
@@ -38,10 +39,7 @@ def _require_user_management() -> str:
 
 def _registered_users() -> List[Dict[str, str]]:
     with USERS_LOCK:
-        items = [
-            {"user_id": uid, "username": (info or {}).get("username") or uid}
-            for uid, info in USERS.items()
-        ]
+        items = [{"user_id": uid, "username": (info or {}).get("username") or uid} for uid, info in USERS.items()]
     items.sort(key=lambda item: item["user_id"])
     return items
 
@@ -60,33 +58,50 @@ def _prune_media_refs_value(value: Any, deleted_ids: Set[str], deleted_urls: Set
             return [item for item in value if not _is_media_ref(item, deleted_ids, deleted_urls)]
         return [_prune_media_refs_value(item, deleted_ids, deleted_urls) for item in value]
     if isinstance(value, dict):
-        return {
-            key: _prune_media_refs_value(item, deleted_ids, deleted_urls)
-            for key, item in value.items()
-        }
+        return {key: _prune_media_refs_value(item, deleted_ids, deleted_urls) for key, item in value.items()}
     return value
 
 
 def _prune_user_media_references(entries: List[Dict[str, Any]]) -> None:
-    deleted_ids = {str(entry.get("file_id") or "").strip() for entry in entries if str(entry.get("file_id") or "").strip()}
+    deleted_ids = {
+        str(entry.get("file_id") or "").strip() for entry in entries if str(entry.get("file_id") or "").strip()
+    }
     deleted_urls = {str(entry.get("url") or "").strip() for entry in entries if str(entry.get("url") or "").strip()}
     if not deleted_ids and not deleted_urls:
         return
     from app.services.assets import sync_asset_library_rows
     from app.services.business_metadata import json_value, metadata_connection
+
     uid = current_user_id()
     ids = list(deleted_ids)
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("DELETE FROM history_record_files rf USING history_records r WHERE rf.history_record_id=r.id AND r.user_id=%s AND rf.file_id = ANY(%s)", (uid, ids))
-        cur.execute("DELETE FROM history_records r WHERE r.user_id=%s AND NOT EXISTS (SELECT 1 FROM history_record_files rf WHERE rf.history_record_id=r.id)", (uid,))
-        cur.execute("DELETE FROM conversation_message_files mf USING conversation_messages m, conversations c WHERE mf.message_id=m.id AND m.conversation_id=c.id AND c.user_id=%s AND mf.file_id = ANY(%s)", (uid, ids))
-        cur.execute("DELETE FROM smart_canvas_node_files nf USING smart_canvas_nodes n, smart_canvases c WHERE nf.node_id=n.id AND n.canvas_id=c.id AND c.user_id=%s AND nf.file_id = ANY(%s)", (uid, ids))
+        cur.execute(
+            "DELETE FROM history_record_files rf USING history_records r WHERE rf.history_record_id=r.id AND r.user_id=%s AND rf.file_id = ANY(%s)",
+            (uid, ids),
+        )
+        cur.execute(
+            "DELETE FROM history_records r WHERE r.user_id=%s AND NOT EXISTS (SELECT 1 FROM history_record_files rf WHERE rf.history_record_id=r.id)",
+            (uid,),
+        )
+        cur.execute(
+            "DELETE FROM conversation_message_files mf USING conversation_messages m, conversations c WHERE mf.message_id=m.id AND m.conversation_id=c.id AND c.user_id=%s AND mf.file_id = ANY(%s)",
+            (uid, ids),
+        )
+        cur.execute(
+            "DELETE FROM smart_canvas_node_files nf USING smart_canvas_nodes n, smart_canvases c WHERE nf.node_id=n.id AND n.canvas_id=c.id AND c.user_id=%s AND nf.file_id = ANY(%s)",
+            (uid, ids),
+        )
         cur.execute("SELECT id,viewport_json FROM smart_canvases WHERE user_id=%s", (uid,))
         for canvas in cur.fetchall():
             pruned = _prune_media_refs_value(canvas["viewport_json"], deleted_ids, deleted_urls)
             if pruned != canvas["viewport_json"]:
-                cur.execute("UPDATE smart_canvases SET viewport_json=%s WHERE id=%s", (json_value(pruned), canvas["id"]))
-        cur.execute("SELECT n.id,n.data_json FROM smart_canvas_nodes n JOIN smart_canvases c ON c.id=n.canvas_id WHERE c.user_id=%s", (uid,))
+                cur.execute(
+                    "UPDATE smart_canvases SET viewport_json=%s WHERE id=%s", (json_value(pruned), canvas["id"])
+                )
+        cur.execute(
+            "SELECT n.id,n.data_json FROM smart_canvas_nodes n JOIN smart_canvases c ON c.id=n.canvas_id WHERE c.user_id=%s",
+            (uid,),
+        )
         for node in cur.fetchall():
             pruned = _prune_media_refs_value(node["data_json"], deleted_ids, deleted_urls)
             if pruned != node["data_json"]:
@@ -99,8 +114,7 @@ def _prune_user_media_references(entries: List[Dict[str, Any]]) -> None:
 
 
 @router.get("/api/storage/usage")
-def get_storage_usage(
-):
+def get_storage_usage():
     usage = storage_usage_summary_for_user()
     return {
         **usage,
@@ -161,7 +175,7 @@ def _batch_delete_storage_entries_sync(raw, payload: StorageBatchDeletePayload):
         raise HTTPException(status_code=400, detail="没有选择文件。")
     removed_ids: List[str] = []
     for offset in range(0, len(file_ids), 500):
-        batch_ids = file_ids[offset:offset + 500]
+        batch_ids = file_ids[offset : offset + 500]
         entries_by_id = get_user_files_by_ids(batch_ids)
         entries = [entries_by_id[file_id] for file_id in batch_ids if file_id in entries_by_id]
         if not entries:
@@ -190,11 +204,13 @@ def get_storage_quota_config():
     users = []
     for item in _registered_users():
         user_id = item["user_id"]
-        users.append({
-            **item,
-            "used_bytes": storage_quota_bytes_for_user(user_id),
-            "effective_quota_bytes": storage_quota_limit_bytes_for_user(user_id),
-        })
+        users.append(
+            {
+                **item,
+                "used_bytes": storage_quota_bytes_for_user(user_id),
+                "effective_quota_bytes": storage_quota_limit_bytes_for_user(user_id),
+            }
+        )
     users.sort(key=lambda item: int(item.get("used_bytes") or 0), reverse=True)
     return {"config": load_storage_quota_config(), "users": users}
 
@@ -205,10 +221,7 @@ def put_storage_quota_config(payload: StorageQuotaConfigPayload):
     data = {
         "enabled": bool(payload.enabled),
         "default_quota_bytes": payload.default_quota_bytes,
-        "users": {
-            user_id: {"quota_bytes": entry.quota_bytes}
-            for user_id, entry in (payload.users or {}).items()
-        },
+        "users": {user_id: {"quota_bytes": entry.quota_bytes} for user_id, entry in (payload.users or {}).items()},
     }
     saved = save_storage_quota_config(data)
     audit_event(

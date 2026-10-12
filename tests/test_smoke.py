@@ -3,6 +3,7 @@
 这些行为由 auth_middleware 决定，是用户可感知的页面/接口行为。
 重构（拆分模块）不应改变它们。断言值来自重构前的真实响应基线。
 """
+
 import pytest
 from fastapi.testclient import TestClient
 

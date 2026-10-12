@@ -3,6 +3,7 @@
 重构安全网：测试仅依赖 `main:app` 的对外契约（路由表 + 关键接口行为），
 不依赖 main.py 的内部实现，因此后端逐模块拆分后这些测试应保持通过。
 """
+
 import os
 import sys
 
@@ -17,6 +18,7 @@ if ROOT not in sys.path:
 @pytest.fixture(scope="session")
 def app():
     import main
+
     return main.app
 
 

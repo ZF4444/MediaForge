@@ -9,7 +9,9 @@ REGISTRY = CollectorRegistry()
 
 DB_POOL_SIZE = Gauge("mediaforge_pg_pool_size", "Current PostgreSQL pool size.", registry=REGISTRY)
 DB_POOL_AVAILABLE = Gauge("mediaforge_pg_pool_available", "Idle PostgreSQL pool connections.", registry=REGISTRY)
-DB_POOL_WAITING = Gauge("mediaforge_pg_pool_waiting", "Requests currently waiting for a PostgreSQL connection.", registry=REGISTRY)
+DB_POOL_WAITING = Gauge(
+    "mediaforge_pg_pool_waiting", "Requests currently waiting for a PostgreSQL connection.", registry=REGISTRY
+)
 DB_POOL_WAIT_SECONDS = Histogram(
     "mediaforge_pg_pool_wait_seconds",
     "Time spent waiting to check out a PostgreSQL connection.",
@@ -29,7 +31,9 @@ DB_SLOW_QUERIES = Counter(
     ("operation",),
     registry=REGISTRY,
 )
-DB_ACTIVE_CONNECTIONS = Gauge("mediaforge_pg_active_connections", "Active PostgreSQL sessions for the current database.", registry=REGISTRY)
+DB_ACTIVE_CONNECTIONS = Gauge(
+    "mediaforge_pg_active_connections", "Active PostgreSQL sessions for the current database.", registry=REGISTRY
+)
 DB_LOCK_WAITING = Gauge("mediaforge_pg_lock_waiting", "PostgreSQL sessions waiting on locks.", registry=REGISTRY)
 
 REDIS_AVAILABLE = Gauge(
