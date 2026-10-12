@@ -12,6 +12,7 @@
 // renderDynamicParams/bindDynamicParams/loadConfig 等核心函数强依赖真实
 // DOM 与网络请求，跟 M5/M7/M8 核心批次一样不适合单元测试，不在本文件
 // 覆盖范围内。
+import vm from 'node:vm';
 import { describe, it, expect } from 'vitest';
 import { createGenerationSettingsSandbox } from './generation-settings-sandbox.js';
 
@@ -273,5 +274,59 @@ describe('ratioLabel', () => {
             settings: { ratio: 'custom', customRatio: '5:7' },
         });
         expect(ratioLabel()).toBe('5:7');
+    });
+});
+
+
+describe('RunningHub request parameters', () => {
+    const fields = [
+        { nodeId: '1', fieldName: 'image', fieldType: 'IMAGE', fieldValue: 'default.png', enabled: true },
+        { nodeId: '2', fieldName: 'text', fieldType: 'PROMPT', fieldValue: '默认提示词', enabled: true },
+        { nodeId: '3', fieldName: 'steps', fieldType: 'INT', fieldValue: '20', enabled: true },
+        { nodeId: '3', fieldName: 'seed', fieldType: 'INT', fieldValue: '12345', enabled: false },
+        { nodeId: '4', fieldName: 'negative', fieldType: 'STRING', fieldValue: 'blurry\r\nlow quality', enabled: false },
+        { nodeId: '5', fieldName: 'hires', fieldType: 'BOOLEAN', fieldValue: 'false', enabled: false },
+    ];
+    // The selected-app lookup needs the whole settings/connection graph; stub it
+    // so the request builder is tested in isolation.
+    const setup = (entryFields = fields, params = {}) => {
+        const ctx = createGenerationSettingsSandbox({ settings: { rhParams: params } });
+        ctx.selectedRunningHubRef = () => ({ id: 'app-1', entry: { fields: entryFields } });
+        ctx.runningHubTarget = () => ({ connection_id: 'c', resource_id: 'r' });
+        ctx.rhUploadValueIfNeeded = async value => value;
+        return ctx;
+    };
+    const build = async (ctx, media = {}) => vm.runInContext('rhBuildNodeInfoList', ctx)(media, ctx.settings, {});
+    const byName = list => Object.fromEntries(list.map(item => [item.fieldName, item.fieldValue]));
+
+    it('sends every parameter, including ones not exposed on the canvas', async () => {
+        const list = await build(setup());
+        expect(list.map(item => item.fieldName).sort()).toEqual(['hires', 'image', 'negative', 'seed', 'steps', 'text']);
+    });
+
+    it('sends the saved default for parameters that are not exposed', async () => {
+        const values = byName(await build(setup()));
+        expect(values.seed).toBe(12345);
+        expect(values.hires).toBe('false');
+        // text is normalised the same way as exposed text
+        expect(values.negative).toBe('blurry\nlow quality');
+    });
+
+    it('ignores canvas user input for parameters that are not exposed', async () => {
+        const params = { '3::seed': { value: '999' }, '4::negative': { value: 'user typed' } };
+        const values = byName(await build(setup(fields, params)));
+        expect(values.seed).toBe(12345);
+        expect(values.negative).toBe('blurry\nlow quality');
+    });
+
+    it('still uses the user value for exposed parameters', async () => {
+        const values = byName(await build(setup(fields, { '3::steps': { value: '35' } })));
+        expect(values.steps).toBe(35);
+    });
+
+    it('rhAllFields includes unexposed fields; rhActiveFields only exposed', () => {
+        const ctx = setup();
+        expect(vm.runInContext('rhAllFields().length', ctx)).toBe(6);
+        expect(vm.runInContext('rhActiveFields().map(f => f.fieldName)', ctx).sort()).toEqual(['image', 'steps', 'text']);
     });
 });

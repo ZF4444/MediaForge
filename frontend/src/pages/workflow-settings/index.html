@@ -4,26 +4,41 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>工作流设置</title>
+  <script type="module" blocking="render" src="/static/dist/shared/theme-bootstrap-early.js"></script>
 </head>
 <body>
-  <main class="workflow-settings-shell">
-    <header class="workflow-settings-head">
-      <div class="head-copy">
-        <div class="eyebrow"><span class="eyebrow-dot"></span>工作区设置</div>
-        <h1>工作流</h1>
-        <p>集中管理可用于画布生成的工作流与 AI 应用。</p>
+  <main class="workflow-settings-shell wf-shell">
+    <header class="wf-hero">
+      <div class="wf-hero-copy">
+        <h1 class="wf-title">工作流</h1>
+        <p class="wf-lead">管理可用于画布生成的工作流与 AI 应用。启用后才会出现在画布的生成选择中。</p>
       </div>
-      <div class="head-actions">
-        <span class="head-status"><i data-lucide="check-circle-2"></i>服务正常</span>
-        <button id="newWorkflowBtn" class="primary-btn" type="button"><i data-lucide="plus"></i><span>新建工作流</span></button>
-      </div>
+      <button id="newWorkflowBtn" class="wf-btn wf-btn-primary" type="button"><i data-lucide="plus"></i><span>新建工作流</span></button>
     </header>
-    <section id="workflowListView" class="workflow-list-view">
-      <div class="list-toolbar">
-        <div><h2>工作流列表</h2><span id="workflowCount" class="list-count">0 个</span><p>启用后才会出现在画布的生成选择中</p></div>
-        <button id="refreshWorkflowsBtn" class="icon-btn" type="button" title="刷新工作流" aria-label="刷新工作流"><i data-lucide="refresh-cw"></i></button>
+
+    <div class="wf-bar" role="search">
+      <label class="wf-search">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input id="workflowSearch" type="search" placeholder="搜索名称或说明" aria-label="搜索工作流" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="wf-chips" role="group" aria-label="按来源筛选" data-filter-group="source">
+        <button class="wf-chip" type="button" data-value="all" aria-pressed="true">全部来源</button>
+        <button class="wf-chip" type="button" data-value="comfyui" aria-pressed="false">ComfyUI</button>
+        <button class="wf-chip" type="button" data-value="runninghub" aria-pressed="false">RH 应用</button>
       </div>
-      <div id="workflowList" class="workflow-grid" aria-live="polite"></div>
+      <div class="wf-chips" role="group" aria-label="按状态筛选" data-filter-group="status">
+        <button class="wf-chip" type="button" data-value="all" aria-pressed="true">全部<span class="wf-chip-count" data-count="all"></span></button>
+        <button class="wf-chip" type="button" data-value="on" aria-pressed="false">已启用<span class="wf-chip-count" data-count="on"></span></button>
+        <button class="wf-chip" type="button" data-value="off" aria-pressed="false">已停用<span class="wf-chip-count" data-count="off"></span></button>
+      </div>
+      <button id="refreshWorkflowsBtn" class="wf-icon-btn" type="button" title="刷新" aria-label="刷新工作流"><i data-lucide="refresh-cw"></i></button>
+    </div>
+
+    <div id="workflowNotice" class="wf-notice" role="alert" hidden></div>
+
+    <section id="workflowListView" class="workflow-list-view" aria-label="工作流列表">
+      <p class="wf-summary"><span id="workflowCount" class="list-count">0 个</span></p>
+      <div id="workflowList" class="workflow-grid" aria-live="polite" aria-busy="true"></div>
     </section>
   </main>
   <script type="module" src="/src/workflow-settings/main.js"></script>

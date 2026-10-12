@@ -43,7 +43,7 @@ const i18nFeatureFiles = [
   'i18n/canvas-features.js', 'i18n/comfyui-settings.js',
 ];
 const comfyUiActionExports = [
-  'closeImagePreview', 'closeNodePopup', 'graphFit', 'graphZoom', 'onSave',
+  'closeImagePreview', 'closeNodePopup', 'openNodePopup', 'graphFit', 'graphZoom', 'onSave',
   'selectWorkflow', 'setWorkspaceMode', 'toggleNodeCard', 'toggleNodeList', 'updateWorkflowTitle',
   'addComfyInstance', 'removeComfyInstance', 'updateComfyInstance',
   'addMiniNode', 'onRun', 'openImagePreview', 'pickImage', 'pickMiniImage', 'removeMiniNode',
@@ -60,7 +60,9 @@ const rhWorkflowActionExports = [
   'updateRhWorkflowEditorMeta', 'closeRhNodePopover', 'openRhAppEditor',
   'openRhAppFieldPopover', 'pickRhPreviewMedia', 'pickRhThumbnail', 'removeRhEntry',
   'testRhMappedPreview', 'toggleRhPreviewRandom', 'toggleRhWorkflowEditorField',
-  'updateRhEntry', 'updateRhPreviewValue', 'updateRhWorkflowEditorField',
+  'updateRhEntry', 'updateRhPreviewValue', 'updateRhWorkflowEditorField', 'setRhWorkflowMedia',
+  'setRhFieldQuery', 'setRhFieldKindFilter', 'toggleRhOnlyEnabled', 'clearRhFieldFilters',
+  'setRhVisibleFieldsEnabled', 'setRhRightTab',
 ];
 
 function assetManagerFeatures() {

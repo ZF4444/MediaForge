@@ -205,8 +205,9 @@ async function runApiGeneration(prompt, refs, runSettings=settings){
 async function submitRunningHubGeneration(prompt, refs, runSettings=settings){
     const ref = selectedRunningHubRef(runSettings);
     if(!ref) throw new Error(tr('smart.rhNeedConfig'));
-    const fields = rhActiveFields(runSettings);
-    if(!fields.length) throw new Error(tr('smart.rhNeedFields'));
+    // Unexposed parameters are sent with their defaults, so only an app with no
+    // saved parameters at all is a configuration error.
+    if(!rhAllFields(runSettings).length) throw new Error(tr('smart.rhNeedFields'));
     const randomValues = {};
     const media = rhMediaForRun(prompt, refs);
     const nodeInfoList = await rhBuildNodeInfoList(media, runSettings, randomValues);

@@ -33,4 +33,35 @@ describe('RunningHub workflow settings page entry', () => {
     expect(sources).not.toMatch(/input\.onchange\s*=/);
     expect(sources).toContain("input.addEventListener('change'");
   });
+
+  it('reports editor feedback inline instead of blocking alert() dialogs', () => {
+    const sources = [
+      'src/rh-workflow-settings/main.js',
+      'src/workflow-settings/rh-workflow-editor.js',
+    ].map(path => readFileSync(resolve(process.cwd(), path), 'utf8')).join('\n');
+    expect(sources).not.toMatch(/\balert\(/);
+    expect(sources).toContain('function rhNotice(');
+  });
+
+  it('registers every field-list action with the page runtime', () => {
+    const config = readFileSync(resolve(process.cwd(), 'vite.config.js'), 'utf8');
+    for (const action of ['setRhFieldQuery', 'setRhFieldKindFilter', 'toggleRhOnlyEnabled',
+      'clearRhFieldFilters', 'setRhVisibleFieldsEnabled', 'setRhRightTab', 'setRhWorkflowMedia']) {
+      expect(config).toContain(`'${action}'`);
+    }
+  });
+
+  it('does not run actions on click for form controls (a select would be rebuilt while opening)', () => {
+    for (const file of ['src/rh-workflow-settings/runtime.js', 'src/comfyui-settings/runtime.js']) {
+      const runtime = readFileSync(resolve(process.cwd(), file), 'utf8');
+      expect(runtime, file).toContain('isValueControl');
+      expect(runtime, file).toMatch(/if \(isValueControl\(target\)\) return;/);
+    }
+  });
+
+  it('keeps the field detail in-page rather than a floating window', () => {
+    const editor = readFileSync(resolve(process.cwd(), 'src/workflow-settings/rh-workflow-editor.js'), 'utf8');
+    expect(editor).not.toContain('document.body.appendChild(pop)');
+    expect(editor).toContain('id="rhNodePopover" class="rh-app-detail');
+  });
 });

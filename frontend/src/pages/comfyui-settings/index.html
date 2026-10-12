@@ -56,16 +56,17 @@
                                 <button id="workspaceCanvasTab" type="button" data-action="setWorkspaceMode" data-action-arg="canvas" data-i18n="comfy.testCanvas">测试画布</button>
                             </div>
                         </div>
-                        <div class="graph-svg-wrap graph-svg-wrap-relative">
-                            <svg id="graphSvg" class="graph-svg"></svg>
-                            <div class="graph-controls">
-                                <div class="graph-ctrl-btn" data-action="graphZoom" data-action-arg="-1" title="缩小" data-i18n-title="canvas.decrease"><i data-lucide="zoom-out" class="w-4 h-4"></i></div>
-                                <div id="zoomPill" class="graph-zoom-pill">100%</div>
-                                <div class="graph-ctrl-btn" data-action="graphZoom" data-action-arg="1" title="放大" data-i18n-title="canvas.increase"><i data-lucide="zoom-in" class="w-4 h-4"></i></div>
-                                <div class="graph-ctrl-btn" data-action="graphFit" title="适应窗口"><i data-lucide="maximize" class="w-4 h-4"></i></div>
+                        <div class="graph-workspace">
+                            <div class="graph-svg-wrap graph-svg-wrap-relative">
+                                <svg id="graphSvg" class="graph-svg"></svg>
+                                <div class="graph-controls">
+                                    <div class="graph-ctrl-btn" data-action="graphZoom" data-action-arg="-1" title="缩小" data-i18n-title="canvas.decrease"><i data-lucide="zoom-out" class="w-4 h-4"></i></div>
+                                    <div id="zoomPill" class="graph-zoom-pill">100%</div>
+                                    <div class="graph-ctrl-btn" data-action="graphZoom" data-action-arg="1" title="放大" data-i18n-title="canvas.increase"><i data-lucide="zoom-in" class="w-4 h-4"></i></div>
+                                    <div class="graph-ctrl-btn" data-action="graphFit" title="适应窗口"><i data-lucide="maximize" class="w-4 h-4"></i></div>
+                                </div>
                             </div>
-                            <div id="popupBackdrop" class="popup-backdrop page-display-none" data-action="closeNodePopup"></div>
-                            <div id="nodePopup" class="popup-panel page-display-none"></div>
+                            <aside id="nodePopup" class="popup-panel node-detail is-empty" aria-label="节点参数配置" aria-live="polite"></aside>
                         </div>
                         <div id="miniCanvasHost" class="page-display-none"></div>
                     </div>

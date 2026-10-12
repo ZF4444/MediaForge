@@ -4,57 +4,76 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>工作流配置</title>
+  <script type="module" blocking="render" src="/static/dist/shared/theme-bootstrap-early.js"></script>
   <link rel="stylesheet" href="/static/dist/styles/theme.css">
   <link rel="stylesheet" href="/static/dist/styles/workflow-settings.css">
 </head>
 <body>
-  <main class="workflow-config-view">
-    <div class="config-toolbar">
-      <button id="backToListBtn" class="back-btn">返回列表</button>
-      <div id="configTitle" class="config-title">工作流配置</div>
-      <button id="saveMetaBtn" class="save-meta-btn">保存设置</button>
-    </div>
-    <div class="config-meta">
-      <label class="meta-field">
-        <span>工作流来源</span>
-        <select id="workflowSource">
-          <option value="comfyui">ComfyUI 工作流</option>
-          <option value="runninghub">RH 应用</option>
-        </select>
-      </label>
-      <div class="meta-field">
-        <span>媒体类型</span>
-        <div class="segmented">
-          <button type="button" data-media="image" class="active">图片</button>
-          <button type="button" data-media="video">视频</button>
+  <main class="workflow-config-view wf-config">
+    <header class="config-toolbar wf-topbar">
+      <button id="backToListBtn" class="back-btn wf-back" type="button" aria-label="返回工作流列表">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        <span>工作流</span>
+      </button>
+      <div class="wf-topbar-title">
+        <h1 id="configTitle" class="config-title">工作流配置</h1>
+        <span id="dirtyBadge" class="wf-badge" hidden>未保存</span>
+      </div>
+      <div class="wf-topbar-actions">
+        <div id="enabledMeta" class="wf-inline-switch" hidden>
+          <span id="enabledLabel">已启用</span>
+          <button id="workflowEnabledSwitch" class="workflow-switch" type="button" role="switch" aria-checked="true" aria-label="启用该工作流"><span></span></button>
         </div>
+        <button id="saveMetaBtn" class="save-meta-btn wf-btn wf-btn-primary" type="button" title="保存 (Ctrl/⌘ + S)">保存</button>
       </div>
-      <div class="meta-field workflow-cover-field">
-        <span>工作流封面</span>
-        <label id="workflowCoverPicker" class="workflow-cover-picker">
-          <input id="workflowCoverInput" type="file" accept="image/*">
-          <span>添加封面</span>
+    </header>
+
+    <div class="wf-config-body">
+      <section class="config-meta wf-panel" aria-label="工作流属性">
+        <label class="meta-field">
+          <span>来源</span>
+          <select id="workflowSource" class="wf-select">
+            <option value="comfyui">ComfyUI 工作流</option>
+            <option value="runninghub">RH 应用</option>
+          </select>
         </label>
-        <button id="removeWorkflowCoverBtn" class="workflow-cover-remove" type="button" hidden>移除</button>
-      </div>
-      <div id="comfyUploadMeta" class="meta-field">
-        <span>工作流文件</span>
-        <label class="upload-meta-btn">
-          <span>上传 JSON</span>
-          <input id="workflowUploadInput" type="file" accept="application/json">
-        </label>
-      </div>
-      <div id="rhUrlMeta" class="meta-field" hidden>
-        <span>RH应用ID</span>
-        <div class="rh-url-row">
-          <input id="rhAppUrlInput" class="rh-url-input" placeholder="输入 RH 应用 ID">
-          <button id="openRhUrlBtn" class="upload-meta-btn" type="button">打开应用</button>
+        <div class="meta-field">
+          <span class="meta-label" id="mediaLabel">媒体类型</span>
+          <div class="segmented" role="group" aria-labelledby="mediaLabel">
+            <button type="button" data-media="image" class="active" aria-pressed="true">图片</button>
+            <button type="button" data-media="video" aria-pressed="false">视频</button>
+          </div>
         </div>
+        <div class="meta-field workflow-cover-field">
+          <span>封面</span>
+          <label id="workflowCoverPicker" class="workflow-cover-picker">
+            <input id="workflowCoverInput" type="file" accept="image/*">
+            <span>添加封面</span>
+          </label>
+          <button id="removeWorkflowCoverBtn" class="workflow-cover-remove" type="button" hidden>移除</button>
+        </div>
+        <div id="comfyUploadMeta" class="meta-field">
+          <span>工作流文件</span>
+          <label class="upload-meta-btn">
+            <span>上传 JSON</span>
+            <input id="workflowUploadInput" type="file" accept="application/json">
+          </label>
+        </div>
+        <div id="rhUrlMeta" class="meta-field" hidden>
+          <span>RH 应用 ID</span>
+          <div class="rh-url-row">
+            <input id="rhAppUrlInput" class="rh-url-input" placeholder="输入 RH 应用 ID" autocomplete="off" spellcheck="false">
+            <button id="openRhUrlBtn" class="upload-meta-btn" type="button">打开应用</button>
+          </div>
+        </div>
+        <p id="configHint" class="config-hint" role="status" aria-live="polite">选择来源后，在下方配置具体工作流。</p>
+      </section>
+
+      <div class="embedded-config">
+        <div id="frameLoading" class="wf-frame-loading" hidden>正在加载配置…</div>
+        <div id="frameEmpty" class="wf-frame-empty" hidden><strong id="frameEmptyTitle">还没有可配置的内容</strong><span id="frameEmptyText"></span></div>
+        <iframe id="workflowConfigFrame" title="工作流具体配置"></iframe>
       </div>
-      <div id="configHint" class="config-hint">选择来源后，在下方配置具体工作流。</div>
-    </div>
-    <div class="embedded-config">
-      <iframe id="workflowConfigFrame" title="工作流具体配置"></iframe>
     </div>
   </main>
   <script type="module" src="../../workflow-config/main.js"></script>

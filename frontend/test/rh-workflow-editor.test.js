@@ -234,3 +234,42 @@ describe('rhPreviewRandomValue', () => {
         expect(result).toBeLessThanOrEqual(1);
     });
 });
+
+
+describe('RH field list filtering', () => {
+    const fields = [
+        { nodeId: '1', fieldName: 'image', label: '输入图', fieldType: 'IMAGE', enabled: true },
+        { nodeId: '2', fieldName: 'prompt', label: '提示词', fieldType: 'PROMPT', enabled: false },
+        { nodeId: '3', fieldName: 'steps', label: '步数', fieldType: 'INT', enabled: true },
+        { nodeId: '3', fieldName: 'sampler', label: '采样器', fieldType: 'SELECT', enabled: false },
+    ];
+    const setup = (ui = {}) => {
+        const ctx = createRhWorkflowEditorSandbox();
+        vm.runInContext('rhWorkflowEditorState.config = { fields: ' + JSON.stringify(fields) + ' }', ctx);
+        Object.entries(ui).forEach(([key, value]) => vm.runInContext(`rhWorkflowEditorState.${key} = ${JSON.stringify(value)}`, ctx));
+        return ctx;
+    };
+    const names = ctx => run(ctx, 'rhVisibleFields().map(f => f.fieldName)');
+
+    it('shows everything by default', () => {
+        expect(names(setup())).toEqual(['image', 'prompt', 'steps', 'sampler']);
+    });
+
+    it('filters by kind group', () => {
+        expect(names(setup({ fieldKindFilter: 'MEDIA' }))).toEqual(['image']);
+        expect(names(setup({ fieldKindFilter: 'TEXT' }))).toEqual(['prompt']);
+        expect(names(setup({ fieldKindFilter: 'PARAM' }))).toEqual(['steps', 'sampler']);
+    });
+
+    it('searches label, field name and node id case-insensitively', () => {
+        expect(names(setup({ fieldQuery: '步数' }))).toEqual(['steps']);
+        expect(names(setup({ fieldQuery: 'SAMP' }))).toEqual(['sampler']);
+        expect(names(setup({ fieldQuery: '3' }))).toEqual(['steps', 'sampler']);
+        expect(names(setup({ fieldQuery: 'nothing' }))).toEqual([]);
+    });
+
+    it('can show only exposed fields and combines with other filters', () => {
+        expect(names(setup({ onlyEnabled: true }))).toEqual(['image', 'steps']);
+        expect(names(setup({ onlyEnabled: true, fieldKindFilter: 'PARAM' }))).toEqual(['steps']);
+    });
+});

@@ -129,6 +129,11 @@ function renderGraph(){
     svg.setAttribute('viewBox', `0 0 ${wrap.clientWidth} ${wrap.clientHeight}`);
     attachPanZoom(svg, wrap);
     updateZoomPill();
+    // The detail panel is part of the page, so a re-render (e.g. after toggling a
+    // field) must keep the selected node highlighted instead of losing it.
+    if(popupNodeId && !currentWorkflow[popupNodeId]) popupNodeId = null;
+    if(popupNodeId) svg.querySelectorAll('.gnode').forEach(g => g.classList.toggle('is-active', g.dataset.nodeId === popupNodeId));
+    else renderNodeDetailEmpty();
 }
 
 // 缩放/平移状态
@@ -205,29 +210,40 @@ function attachPanZoom(svg, wrap){
     });
 }
 let popupNodeId = null;
-let popupWheelHandler = null;
+
+// The node detail ("parameter configuration") lives in a panel beside the graph
+// rather than a floating window, so it stays part of the page layout.
+function renderNodeDetailEmpty(){
+    const panel = document.getElementById('nodePopup');
+    if(!panel) return;
+    panel.classList.add('is-empty');
+    panel.innerHTML = `
+        <div class="node-detail-empty">
+            <i data-lucide="mouse-pointer-click" class="w-5 h-5"></i>
+            <strong>${tr('comfy.nodeDetailTitle')}</strong>
+            <span>${tr('comfy.nodeDetailEmpty')}</span>
+        </div>`;
+    refreshIcons();
+}
 
 function openNodePopup(nodeId, gEl){
-    popupNodeId = nodeId;
-    document.querySelectorAll('.gnode').forEach(g => g.classList.toggle('is-active', g.dataset.nodeId === nodeId));
     const node = currentWorkflow[nodeId];
     if(!node) return;
-    const popup = document.getElementById('nodePopup');
-    const backdrop = document.getElementById('popupBackdrop');
+    popupNodeId = nodeId;
+    document.querySelectorAll('.gnode').forEach(g => g.classList.toggle('is-active', g.dataset.nodeId === nodeId));
+    const panel = document.getElementById('nodePopup');
     const inputs = Object.entries(node.inputs || {}).filter(([k,v]) => {
         return !(Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'number');
     });
-    const icon = nodeIcon(node);
-    const label = nodeLabel(node);
-    const sub = nodeSub(node);
-    popup.innerHTML = `
+    panel.classList.remove('is-empty');
+    panel.innerHTML = `
         <div class="popup-head">
-            <span class="popup-icon">${icon}</span>
+            <span class="popup-icon">${nodeIcon(node)}</span>
             <div style="min-width:0;flex:1">
-                <div class="popup-title">${escapeHtml(label)}</div>
-                <div class="popup-sub">${escapeHtml(sub)} · #${escapeHtml(nodeId)}</div>
+                <div class="popup-title">${escapeHtml(nodeLabel(node))}</div>
+                <div class="popup-sub">${escapeHtml(nodeSub(node))} · #${escapeHtml(nodeId)}</div>
             </div>
-            <div class="popup-close" data-action="closeNodePopup"><i data-lucide="x" class="w-4 h-4"></i></div>
+            <div class="popup-close" data-action="closeNodePopup" role="button" tabindex="0" aria-label="取消选择"><i data-lucide="x" class="w-4 h-4"></i></div>
         </div>
         <div class="popup-body">
             ${inputs.length === 0
@@ -235,44 +251,15 @@ function openNodePopup(nodeId, gEl){
                 : inputs.map(([key, value]) => renderInputRow(nodeId, key, value)).join('')}
         </div>
     `;
-    // 定位：尽量贴在节点右侧；若超出则放左侧；若上下放不下则居中
-    const wrap = document.querySelector('.graph-svg-wrap');
-    const wrapRect = wrap.getBoundingClientRect();
-    const gRect = gEl.getBoundingClientRect();
-    const POP_W = 380;
-    const POP_H_MAX = Math.min(wrap.clientHeight - 40, window.innerHeight * 0.7);
-    backdrop.classList.add('is-visible');
-    backdrop.classList.remove('page-display-none');
-    popup.classList.add('is-visible');
-    popup.classList.remove('page-display-none');
-    popup.style.maxHeight = POP_H_MAX + 'px';
-    // 相对 wrap 的坐标（含滚动）
-    let left = gRect.right - wrapRect.left + wrap.scrollLeft + 12;
-    // 不够位置就放左侧
-    if(left + POP_W > wrap.scrollLeft + wrap.clientWidth - 8){
-        left = gRect.left - wrapRect.left + wrap.scrollLeft - POP_W - 12;
-    }
-    if(left < wrap.scrollLeft + 8) left = wrap.scrollLeft + 8;
-    let top = gRect.top - wrapRect.top + wrap.scrollTop;
-    // 防止溢出底部
-    const maxTop = wrap.scrollTop + wrap.clientHeight - POP_H_MAX - 8;
-    if(top > maxTop) top = Math.max(wrap.scrollTop + 8, maxTop);
-    popup.style.left = left + 'px';
-    popup.style.top = top + 'px';
-    if(popupWheelHandler) popup.removeEventListener('wheel', popupWheelHandler);
-    popupWheelHandler = e => e.stopPropagation();
-    popup.addEventListener('wheel', popupWheelHandler);
-    popup.querySelector('.popup-body')?.addEventListener('wheel', e => e.stopPropagation(), { passive:true });
     refreshIcons();
+    // Stacked (narrow) layout puts the panel below the graph; bring it into view.
+    if(window.matchMedia('(max-width:1100px)').matches) panel.scrollIntoView({ block:'nearest', behavior:'smooth' });
 }
 
 function closeNodePopup(){
     popupNodeId = null;
     document.querySelectorAll('.gnode').forEach(g => g.classList.remove('is-active'));
-    document.getElementById('nodePopup').classList.remove('is-visible');
-    document.getElementById('nodePopup').classList.add('page-display-none');
-    document.getElementById('popupBackdrop').classList.remove('is-visible');
-    document.getElementById('popupBackdrop').classList.add('page-display-none');
+    renderNodeDetailEmpty();
 }
 
 function toggleNodeList(){

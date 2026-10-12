@@ -3,13 +3,17 @@ import { apiJson } from './http.js';
 const workflowUrl = name => `/api/workflows/${encodeURIComponent(name)}`;
 
 export async function listWorkflowSources() {
+  // The two sources load independently; `failed` tells the page which one is
+  // missing so it can warn instead of silently showing a partial list.
+  const failed = [];
   const [comfy, configuration] = await Promise.all([
-    apiJson('/api/workflows').catch(() => ({ workflows: [] })),
-    apiJson('/api/ai/configuration').catch(() => ({ resources: [] })),
+    apiJson('/api/workflows').catch(() => { failed.push('comfyui'); return { workflows: [] }; }),
+    apiJson('/api/ai/configuration').catch(() => { failed.push('resources'); return { resources: [] }; }),
   ]);
   return {
     workflows: comfy.workflows || [],
     resources: configuration.resources || [],
+    failed,
   };
 }
 

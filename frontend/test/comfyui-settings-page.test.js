@@ -48,11 +48,10 @@ describe('ComfyUI settings page entry', () => {
     expect(sources).not.toContain('window.onmouseup');
     expect(sources).not.toContain('canvas.onwheel');
     expect(sources).not.toContain('canvas.onmousedown');
-    expect(sources).not.toContain('popup.onwheel');
     expect(sources).not.toMatch(/input\.onchange\s*=/);
+    // The node detail is an in-page panel now, not a floating window.
+    expect(sources).not.toContain('popupWheelHandler');
     expect(sources).toContain("input.addEventListener('change'");
-    expect(sources).toContain("popup.addEventListener('wheel', popupWheelHandler)");
-    expect(sources).toContain("popup.removeEventListener('wheel', popupWheelHandler)");
     expect(sources).toContain("canvas.addEventListener('wheel', miniCanvasWheelHandler");
     expect(sources).toContain("canvas.addEventListener('mousedown', miniCanvasMouseDownHandler");
     expect(sources).toContain("miniCanvasElement.removeEventListener('wheel', miniCanvasWheelHandler)");

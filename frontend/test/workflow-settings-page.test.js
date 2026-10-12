@@ -23,7 +23,7 @@ describe('workflow settings page entry', () => {
 
   it('limits the icon package import to the icons used by this page', () => {
     const entry = readFileSync(entryPath, 'utf8');
-    expect(entry).toContain('CheckCircle2, Plus, RefreshCw, Trash2');
+    expect(entry).toContain('Inbox, Plus, RefreshCw, Search, Trash2, TriangleAlert');
     expect(entry).not.toContain("import { createIcons, icons }");
   });
 

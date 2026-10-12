@@ -35,6 +35,7 @@ const isEmbeddedMode = comfySettingsQuery.get('embedded') === '1' || (() => {
     catch { return false; }
 })();
 if(isSingleWorkflowMode) document.body.classList.add('single-workflow-mode');
+if(isEmbeddedMode) document.body.classList.add('is-embedded');
 function typeLabel(type){
     const item = TYPES.find(t => t.v === type);
     return item ? item.zh : type;
@@ -258,6 +259,7 @@ async function selectWorkflow(name){
         });
         previewRandomActive = {};
         runResult = null;
+        popupNodeId = null;
         graphView = { k: 1, x: 0, y: 0 };
         miniView = { k: 1, x: 0, y: 0 };
         miniTestNodes = defaultMiniTestNodes();
@@ -378,7 +380,7 @@ document.addEventListener('keydown', e => {
 // frontend/src/comfyui-settings/mini-canvas.js。
 
 function renderWorkspaceView(){
-    const graphWrap = document.querySelector('.graph-svg-wrap');
+    const graphWrap = document.querySelector('.graph-workspace');
     const nodesToggle = document.getElementById('nodesToggle');
     document.getElementById('workspaceGraphTab')?.classList.toggle('active', workspaceMode === 'graph');
     document.getElementById('workspaceCanvasTab')?.classList.toggle('active', workspaceMode === 'canvas');
@@ -393,7 +395,7 @@ function renderWorkspaceView(){
         if(nodesToggle) nodesToggle.style.display = 'none';
         renderMiniCanvasPreview(miniCanvasHost, true);
     } else {
-        if(graphWrap) graphWrap.style.display = 'block';
+        if(graphWrap) graphWrap.style.display = 'grid';
         if(miniCanvasHost) miniCanvasHost.style.display = 'none';
         if(nodesToggle) nodesToggle.style.display = 'flex';
     }
@@ -490,7 +492,10 @@ async function onSave(){
     // 校验
     for(const f of currentConfig.fields){
         if(!f.name || !f.name.trim()){
-            alert(tf('comfy.saveMissingName', {field:f.input})); return false;
+            const message = tf('comfy.saveMissingName', {field:f.input});
+            // Embedded: the parent page reports errors inline instead of alert().
+            if(isEmbeddedMode) throw new Error(message);
+            alert(message); return false;
         }
     }
     setStatus(tr('comfy.saving'));
@@ -500,7 +505,11 @@ async function onSave(){
         await loadList();
         new BroadcastChannel('studio-api').postMessage({ type: 'workflows-changed' });
         return true;
-    } catch(e){ alert(e.message || tr('comfy.saveFailed')); setStatus(tr('comfy.saveFailed')); return false; }
+    } catch(e){
+        setStatus(tr('comfy.saveFailed'));
+        if(isEmbeddedMode) throw new Error(e.message || tr('comfy.saveFailed'));
+        alert(e.message || tr('comfy.saveFailed')); return false;
+    }
 }
 
 async function onDelete(){

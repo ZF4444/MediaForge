@@ -3,6 +3,11 @@ import 'virtual:mediaforge-i18n';
 import 'virtual:mediaforge-theme';
 import * as comfyUiActions from 'virtual:comfyui-settings-features';
 
+// The embedding workflow-config page drives saving through this same-origin
+// iframe boundary (iframe.contentWindow.onSave). Module exports are not window
+// properties, so expose the one entry point it needs explicitly.
+window.onSave = comfyUiActions.onSave;
+
 const actionArgs = (element, event) => {
   let args = [];
   if (element.dataset.actionArgs) {
@@ -28,10 +33,17 @@ const dispatchAction = (target, event) => {
   if (target.classList.contains('pfield-bool-track')) target.classList.toggle('on', Boolean(args[1]));
 };
 
+// Form controls are driven by their own input / change events. Running the action
+// on click as well re-renders the panel while a <select> is opening, which makes
+// the dropdown flash and disappear.
+const isValueControl = el => /^(SELECT|TEXTAREA)$/.test(el.tagName)
+  || (el.tagName === 'INPUT' && !/^(button|submit|checkbox|radio|range|color|file)$/i.test(el.type));
+
 document.addEventListener('click', event => {
   const target = event.target.closest('[data-action]');
   if (event.target.closest('[data-stop-propagation]')) event.stopPropagation();
   if (!target) return;
+  if (isValueControl(target)) return;
   dispatchAction(target, event);
 });
 document.addEventListener('input', event => {

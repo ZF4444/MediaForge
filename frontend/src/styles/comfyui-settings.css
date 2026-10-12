@@ -72,12 +72,8 @@ body.studio-theme-dark .gnode.cat-image     rect { fill:#0f3825; stroke:#34d399;
 body.studio-theme-dark .gnode.cat-output    rect { fill:#2a2d35; stroke:#9ca3af; }
 body.studio-theme-dark .gnode.cat-latent    rect { fill:#3a1d2c; stroke:#f472b6; }
 body.studio-theme-dark .gnode.cat-controlnet rect { fill:#3a2410; stroke:#fb923c; }
-/* 浮窗参数编辑面板 */
-.popup-backdrop { position:absolute; inset:0; background:rgba(15,23,42,.35); border-radius:10px; z-index:5; }
-.popup-backdrop.is-visible { display:block; }
-body.studio-theme-dark .popup-backdrop { background:rgba(0,0,0,.5); }
-.popup-panel { position:absolute; width:380px; max-height:70vh; background:var(--panel); border:1px solid var(--line-strong); border-radius:14px; box-shadow:0 24px 60px rgba(15,23,42,.22); z-index:10; display:flex; flex-direction:column; overflow:hidden; overscroll-behavior:contain; }
-body.studio-theme-dark .popup-panel { box-shadow:0 24px 60px rgba(0,0,0,.5); }
+/* 节点参数配置面板：页面内的固定侧栏，不再是浮窗 */
+
 .popup-head { display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line); background:var(--soft); }
 .popup-icon { font-size:20px; line-height:1; flex:0 0 auto; }
 .popup-title { font-size:14px; font-weight:850; color:var(--text); letter-spacing:-.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
@@ -228,7 +224,74 @@ body.studio-theme-dark .pfield-bool-track:not(.on) .pfield-bool-thumb { backgrou
 .mini-run { margin-top:10px; }
 @media (max-width:1100px) { .layout { grid-template-columns:1fr; } .sidebar, .preview { position:static; } }
 .page-display-none { display:none; }
-.popup-panel.is-visible { display:flex; }
 .icon-muted { color:var(--muted); }
 .workflow-title-column { min-width:0; flex:1; }
 .graph-svg-wrap-relative { position:relative; }
+
+/* ---- Embedded in workflow-config: the parent owns title, save and chrome. ---- */
+body.is-embedded { --accent:#0066cc; background:#f5f5f7; }
+html.studio-theme-dark body.is-embedded { background:#000 !important; }
+body.is-embedded .page { padding:16px 16px 32px; min-height:0; }
+body.is-embedded .page-head { display:none; }
+body.is-embedded .layout { gap:16px; }
+body.is-embedded .side-card,
+body.is-embedded .graph-card,
+body.is-embedded .node-card { border-radius:18px; box-shadow:none; }
+body.is-embedded .graph-svg-wrap,
+body.is-embedded .mini-canvas { border-radius:12px; }
+body.is-embedded .action-btn,
+body.is-embedded .run-btn,
+body.is-embedded .workspace-mode-tabs,
+body.is-embedded .workspace-mode-tabs button { border-radius:9999px; }
+body.is-embedded .run-btn { background:#0066cc; color:#fff; font-weight:600; letter-spacing:-.224px; }
+body.is-embedded .run-btn:hover { transform:none; box-shadow:none; }
+body.is-embedded .run-btn:active:not(:disabled), body.is-embedded .action-btn:active { transform:scale(.95); }
+body.is-embedded .workspace-mode-tabs { width:auto; display:inline-grid; margin:0 0 0 0; }
+body.is-embedded .workspace-mode-tabs button.active { box-shadow:inset 0 0 0 1.5px #0071e3; color:inherit; font-weight:600; }
+html.studio-theme-dark body.is-embedded .run-btn { background:#0071e3 !important; color:#fff !important; }
+html.studio-theme-dark body.is-embedded .workspace-mode-tabs button.active { box-shadow:inset 0 0 0 1.5px #2997ff; }
+body.is-embedded .workflow-title-input { font-family:"SF Pro Display",system-ui,-apple-system,Inter,"PingFang SC","Microsoft YaHei",sans-serif; font-size:21px; font-weight:600; letter-spacing:.231px; }
+body.is-embedded .check-toggle.checked,
+body.is-embedded .pfield-bool-track.on { background:#0066cc; border-color:#0066cc; color:#fff; }
+html.studio-theme-dark body.is-embedded .check-toggle.checked,
+html.studio-theme-dark body.is-embedded .pfield-bool-track.on { background:#0071e3 !important; border-color:#0071e3 !important; color:#fff !important; }
+html.studio-theme-dark body.is-embedded .workflow-title-input { background:transparent !important; border-color:transparent !important; border-bottom:1px dashed rgba(255,255,255,.24) !important; }
+
+/* ---- Node detail: a page section beside the graph, not a floating window. ---- */
+.graph-workspace { display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:16px; align-items:start; }
+.graph-workspace .graph-svg-wrap { height:min(760px, calc(100vh - 220px)); min-height:480px; }
+.popup-panel { display:flex; flex-direction:column; min-width:0; position:sticky; top:16px; height:min(760px, calc(100vh - 220px)); min-height:480px; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; overscroll-behavior:contain; }
+.popup-panel .popup-body { flex:1; min-height:0; }
+.popup-panel.is-empty { align-items:center; justify-content:center; border-style:dashed; background:var(--soft); }
+.node-detail-empty { display:flex; flex-direction:column; align-items:center; gap:8px; max-width:260px; padding:24px; text-align:center; color:var(--muted); }
+.node-detail-empty strong { color:var(--text); font-size:14px; font-weight:800; }
+.node-detail-empty span { font-size:12px; line-height:1.5; font-weight:600; }
+.gnode.is-active rect { stroke-width:2.5; filter:drop-shadow(0 0 0 transparent); }
+@media (max-width:1100px) {
+  .graph-workspace { grid-template-columns:1fr; }
+  .graph-workspace .graph-svg-wrap { height:480px; min-height:0; }
+  .popup-panel { position:static; height:auto; max-height:none; min-height:200px; }
+  .popup-panel .popup-body { max-height:none; }
+}
+
+body.is-embedded .popup-panel { border-radius:18px; }
+body.is-embedded .popup-panel.is-empty { border-color:rgba(128,128,128,.35); }
+body.is-embedded .gnode.is-active rect { stroke:#0071e3; stroke-width:2.5; }
+
+/* ---- Embedded: no inner scroll areas. The parent sizes the iframe to this
+   document's content height, so the whole page scrolls as one. Avoid vh units
+   here: they would resolve against the iframe and feed back into its height. ---- */
+html:has(body.is-embedded), body.is-embedded { overflow:hidden !important; height:auto !important; min-height:0 !important; background:transparent !important; }
+html.studio-theme-dark body.is-embedded, html.theme-dark body.is-embedded { background:transparent !important; }
+body.is-embedded .page { min-height:0; padding:0 0 8px; }
+body.is-embedded .wrap { max-width:none; }
+body.is-embedded .layout { align-items:start; }
+body.is-embedded .sidebar { position:static; max-height:none; overflow:visible; }
+body.is-embedded .graph-workspace .graph-svg-wrap { height:640px; min-height:0; }
+body.is-embedded .mini-canvas.large { height:640px; }
+body.is-embedded .popup-panel { position:static; height:auto; min-height:240px; max-height:none; overflow:visible; }
+body.is-embedded .popup-panel.is-empty { min-height:240px; }
+body.is-embedded .popup-body { overflow:visible; flex:none; }
+body.is-embedded .mini-settings-list { max-height:none; overflow:visible; }
+html:has(body.is-embedded), body.is-embedded { background-image:none !important; }
+body.is-embedded::before, body.is-embedded::after { display:none !important; }

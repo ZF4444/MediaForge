@@ -39,6 +39,8 @@
         "comfy.acceptsPrompt": { zh: "接收提示词", en: "accepts prompt" },
         "comfy.noPromptField": { zh: "无提示词字段", en: "no prompt field" },
         "comfy.otherParamsHere": { zh: "其他暴露字段会在这里调整", en: "Other exposed fields appear here" },
+        "comfy.nodeDetailTitle": { zh: "节点参数配置", en: "Node settings" },
+        "comfy.nodeDetailEmpty": { zh: "点击左侧工作流中的节点，在这里勾选并配置要暴露到画布的字段。", en: "Select a node in the workflow to choose and configure the fields exposed to the canvas." },
         "comfy.noConfigFields": { zh: "此节点没有可配置字段（所有输入都来自连线）", en: "This node has no configurable fields; all inputs come from links." },
         "comfy.noConfigInputs": { zh: "此节点没有可配置字段（输入都来自连线）", en: "This node has no configurable fields; inputs come from links." },
         "comfy.fieldCount": { zh: "{count} 个字段", en: "{count} field(s)" },

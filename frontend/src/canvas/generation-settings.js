@@ -224,6 +224,13 @@ function rhActiveFields(sourceSettings=settings){
     fields = fields.filter(f => f.enabled === true);
     return sortRunningHubFields(fields);
 }
+// Every parameter of the app, in a stable order. Parameters that are not exposed
+// on the canvas are still sent to RunningHub with their saved default value, so
+// the app always receives a complete nodeInfoList.
+function rhAllFields(sourceSettings=settings){
+    const ref = selectedRunningHubRef(sourceSettings);
+    return sortRunningHubFields(rhEntryFields(ref?.entry).filter(f => f && f.fieldName));
+}
 function sortRunningHubFields(fields){
     return [...(fields || [])].sort((a, b) => {
         const ak = rhFieldKind(a), bk = rhFieldKind(b);
@@ -1507,12 +1514,15 @@ async function rhUploadValueIfNeeded(value, sourceSettings=settings){
     return data.data?.fileName || text;
 }
 async function rhBuildNodeInfoList(media, sourceSettings=settings, randomValues=smartRhRandomValues){
-    const fields = rhActiveFields(sourceSettings);
+    const exposed = rhActiveFields(sourceSettings);
+    const exposedKeys = new Set(exposed.map(field => rhParamKey(field.nodeId, field.fieldName)));
     const result = [];
-    for(const field of fields){
+    for(const field of rhAllFields(sourceSettings)){
         const kind = rhFieldKind(field);
-        let value = rhParamValue(field, media, sourceSettings, fields, randomValues);
-        if(rhFieldRole(field) === 'prompt' && !String(value || '').trim()) value = rhDefaultValue(field);
+        const isExposed = exposedKeys.has(rhParamKey(field.nodeId, field.fieldName));
+        // Not exposed on the canvas: send the saved default, never user input.
+        let value = isExposed ? rhParamValue(field, media, sourceSettings, exposed, randomValues) : rhDefaultValue(field);
+        if(isExposed && rhFieldRole(field) === 'prompt' && !String(value || '').trim()) value = rhDefaultValue(field);
         if(['image','video','audio'].includes(kind)) value = await rhUploadValueIfNeeded(value, sourceSettings);
         if(['number','slider'].includes(kind) && String(value ?? '').trim() !== '' && !Number.isNaN(Number(value))) value = Number(value);
         if(typeof value === 'string') value = normalizeRhTextValue(value);

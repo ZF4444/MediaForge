@@ -21,6 +21,7 @@ describe('workflow settings service', () => {
     await expect(listWorkflowSources()).resolves.toEqual({
       workflows: [{ name: 'local.json' }],
       resources: [{ id: 'rh-1' }],
+      failed: [],
     });
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/workflows', '/api/ai/configuration',

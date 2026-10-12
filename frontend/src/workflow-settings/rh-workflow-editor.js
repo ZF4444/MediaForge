@@ -91,7 +91,7 @@ function withRhEditorScrollPreserved(callback){
     return result;
 }
 function findRhAppFieldCard(key){
-    return Array.from(document.querySelectorAll('.rh-app-field-card')).find(el => el.dataset.fieldKey === String(key || ''));
+    return Array.from(document.querySelectorAll('.rh-field-row')).find(el => el.dataset.fieldKey === String(key || ''));
 }
 function normalizeRhEntries(values, kind){
     const seen = new Set();
@@ -331,7 +331,7 @@ function pickRhThumbnail(kind, index){
             renderRunningHubCards();
             setStatus('缩略图已更新，点保存生效');
         } catch(e) {
-            alert(e.message || '上传缩略图失败');
+            rhNotice(e.message || '上传缩略图失败', 'error');
         }
     });
     input.click();
@@ -348,7 +348,7 @@ async function openRhAppEditor(index){
         if(resource) entry = {...entry, _resource_id:resource.id};
         item.rh_apps[index] = entry;
     }
-    rhWorkflowEditorState = { open:true, index, resourceId:entry._resource_id || '', entry, config:null, expanded:{}, activeNodeId:'app', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
+    rhWorkflowEditorState = { open:true, index, resourceId:entry._resource_id || '', entry, config:null, expanded:{}, activeNodeId:'app', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[], activeFieldKey:'', fieldQuery:'', fieldKindFilter:'all', onlyEnabled:false, rightTab:'config' };
     if(rhWorkflowEditorOverlay) rhWorkflowEditorOverlay.classList.add('open');
     renderRhWorkflowEditorLoading('正在加载应用参数...');
     refreshIcons();
@@ -503,8 +503,20 @@ function updateRhWorkflowEditorMeta(prop, value){
     if(prop === 'description') config.description = value;
     withRhEditorScrollPreserved(() => renderRhMappedPreview());
 }
+// The field detail is an in-page panel next to the field list (not a floating
+// window). "Closing" it just clears the selection back to the empty hint.
+function renderRhFieldDetailEmpty(){
+    const panel = document.getElementById('rhNodePopover');
+    if(!panel) return;
+    delete panel.dataset.fieldKey;
+    panel.classList.add('is-empty');
+    panel.innerHTML = '<div class="rh-detail-empty"><i data-lucide="mouse-pointer-click" class="w-5 h-5"></i><strong>选择一个参数</strong><span>点击左侧列表中的参数，在这里设置它在画布上的显示方式。用右侧的开关决定是否暴露。</span></div>';
+    refreshIcons();
+}
 function closeRhNodePopover(){
-    document.getElementById('rhNodePopover')?.remove();
+    rhWorkflowEditorState.activeFieldKey = '';
+    document.querySelectorAll('.rh-field-row.is-active').forEach(el => { el.classList.remove('is-active'); el.setAttribute('aria-pressed', 'false'); });
+    renderRhFieldDetailEmpty();
 }
 function toggleRhWorkflowEditorField(key){
     const config = rhWorkflowEditorState.config;
@@ -514,9 +526,11 @@ function toggleRhWorkflowEditorField(key){
             if(rhWorkflowFieldKey(field) !== key) return field;
             return {...field, enabled: field.enabled !== true};
         });
-        renderRhWorkflowEditor();
-        const active = findRhAppFieldCard(key);
-        if(active) openRhAppFieldPopover(key, active);
+        rhNotifyFieldsChanged();
+        refreshRhFieldList();
+        renderRhMappedPreview();
+        // Keep the open detail in sync (its "expose" switch) without changing the selection.
+        if(rhWorkflowEditorState.activeFieldKey === key) openRhAppFieldPopover(key);
     });
 }
 function updateRhWorkflowEditorField(key, prop, value){
@@ -524,16 +538,30 @@ function updateRhWorkflowEditorField(key, prop, value){
     if(!config) return;
     config.fields = (config.fields || []).map(field => {
         if(rhWorkflowFieldKey(field) !== key) return field;
-        const nextValue = prop === 'imageOrder' ? Math.max(1, Number(value) || 1) : prop === 'required' ? Boolean(value) : value;
+        let nextValue = value;
+        if(prop === 'imageOrder') nextValue = value === null || value === '' ? 0 : Math.max(1, Math.floor(Number(value)) || 1);
+        else if(prop === 'required') nextValue = Boolean(value);
+        else if(prop === 'options') nextValue = String(value || '').split(/\r?\n/).map(option => option.trim()).filter(Boolean);
         return {...field, [prop]: nextValue};
     });
-    if(prop === 'random_enabled' || prop === 'fieldType' || prop === 'required' || prop === 'sourceFromUpstream'){
+    rhNotifyFieldsChanged();
+    if(prop === 'random_enabled' || prop === 'fieldType' || prop === 'required'){
+        // These change which controls the detail shows, so rebuild it.
         withRhEditorScrollPreserved(() => {
-            renderRhWorkflowEditor();
-            const active = findRhAppFieldCard(key);
-            if(active) openRhAppFieldPopover(key, active);
+            refreshRhFieldList();
+            renderRhMappedPreview();
+            openRhAppFieldPopover(key);
         });
+        return;
     }
+    // Text edits: keep the focused input untouched; refresh only the list label and preview.
+    if(prop === 'label'){
+        const field = config.fields.find(item => rhWorkflowFieldKey(item) === key);
+        const head = document.querySelector('#rhNodePopover .rh-popover-head strong');
+        if(head && field) head.textContent = field.label || field.fieldName;
+        refreshRhFieldList();
+    }
+    renderRhMappedPreview();
 }
 function setRhWorkflowSaveButtonState(state, text){
     if(!rhWorkflowSaveBtn) return;
@@ -571,7 +599,7 @@ function parseRhWorkflowParameterImport(value){
 }
 function exportRhWorkflowJson(){
     const config = rhWorkflowEditorState.config;
-    if(!config){ alert('请先加载应用参数'); return false; }
+    if(!config){ rhNotice('请先加载应用参数', 'error'); return false; }
     const payload = JSON.stringify(rhWorkflowParameterExportPayload(config), null, 2);
     const blob = new Blob([payload], {type:'application/json;charset=utf-8'});
     const url = URL.createObjectURL(blob);
@@ -581,6 +609,7 @@ function exportRhWorkflowJson(){
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
     setStatus('参数 JSON 已导出');
+    rhNotice('参数 JSON 已导出', 'success');
     return true;
 }
 function importRhWorkflowJson(file){
@@ -602,21 +631,23 @@ function importRhWorkflowJson(file){
             rhWorkflowEditorState.previewParams = {};
             renderRhWorkflowEditor();
             setStatus('参数 JSON 已导入，点击保存生效');
+            rhNotifyFieldsChanged();
+            rhNotice(`已导入 ${imported.fields.length} 个参数，保存后生效`, 'success');
         } catch(error) {
             setStatus(`导入失败：${error.message || 'JSON 格式无效'}`);
-            alert(error.message || '参数 JSON 导入失败');
+            rhNotice(error.message || '参数 JSON 导入失败', 'error');
         }
     }, {once:true});
     reader.addEventListener('error', () => {
         setStatus('导入失败：无法读取文件');
-        alert('参数 JSON 导入失败：无法读取文件');
+        rhNotice('参数 JSON 导入失败：无法读取文件', 'error');
     }, {once:true});
     reader.readAsText(file);
 }
 async function saveRhWorkflowEditor(){
     const state = rhWorkflowEditorState;
     const config = state.config;
-    if(!config){ alert('请先加载应用参数'); return false; }
+    if(!config){ rhNotice('请先加载应用参数', 'error'); return false; }
     setRhWorkflowSaveButtonState('saving', '保存中...');
     config.title = rhWorkflowEditName?.value.trim() || config.title || config.appId;
     config.description = rhWorkflowEditNote?.value.trim() || config.description || '';
@@ -646,7 +677,9 @@ async function saveRhWorkflowEditor(){
         return true;
     } catch(err) {
         setRhWorkflowSaveButtonState('idle', '保存');
-        alert(err.message || '保存失败');
+        // Embedded: the parent page reports the error inline (no blocking dialog).
+        if(rhWorkflowEmbedded) throw err;
+        rhNotice(err.message || '保存失败', 'error');
         return false;
     }
 }
@@ -663,9 +696,15 @@ function renderRhWorkflowEditor(){
 }
 function renderRhMappedPreview(){
     const config = rhWorkflowEditorState.config;
-    if(!config || !rhWorkflowEditorSummary || !rhWorkflowEditorNodeList) return;
+    if(!config) return;
     renderRhWorkflowEditorSummary();
-    rhWorkflowEditorNodeList.innerHTML = renderRhMappedPreviewHtml(config);
+    const pane = document.getElementById('rhPreviewPane');
+    if(pane){
+        // Preserve typing focus in preview inputs across re-renders of this pane.
+        pane.innerHTML = renderRhMappedPreviewHtml(config);
+    }
+    // The old left-column preview form is gone; keep the node list host empty.
+    if(rhWorkflowEditorNodeList) rhWorkflowEditorNodeList.innerHTML = '';
     refreshIcons();
 }
 function renderRhMappedPreviewHtml(config){
@@ -684,7 +723,7 @@ function renderRhMappedPreviewHtml(config){
     });
     const fieldsHtml = enabledFields.length
         ? enabledFields.map(field => renderRhPreviewControl(field)).join('')
-        : `<div class="rh-preview-empty">勾选右侧参数后，这里会显示画布节点上的效果</div>`;
+        : `<div class="rh-preview-empty">在左侧启用参数后，这里会显示它们在画布节点上的样子</div>`;
     const statusHtml = rhWorkflowEditorState.previewStatus
         ? `<div class="rh-preview-status">${escapeHtml(rhWorkflowEditorState.previewStatus)}</div>`
         : '';
@@ -724,9 +763,6 @@ function renderRhPreviewControl(field){
     const label = escapeHtml(field.label || field.fieldName);
     const kind = rhWorkflowFieldKind(field);
     const previewState = rhWorkflowEditorState.previewParams[key] || {};
-    if(field.sourceFromUpstream === false && !['IMAGE','VIDEO','AUDIO'].includes(kind)){
-        return `<div class="rh-preview-field keep-original"><div class="rh-preview-label">${label}</div><div class="rh-preview-keep"><i data-lucide="lock" class="w-3.5 h-3.5"></i><span>保留应用原设置</span></div></div>`;
-    }
     const randomActive = field.random_enabled === true && previewState.randomActive !== false;
     const value = previewState.value ?? field.fieldValue ?? '';
     const options = Array.isArray(field.options) ? field.options : [];
@@ -797,7 +833,7 @@ async function pickRhPreviewMedia(key, kind){
         } catch(err) {
             rhWorkflowEditorState.previewParams[key] = {...(rhWorkflowEditorState.previewParams[key] || {}), uploading:false};
             withRhEditorScrollPreserved(() => renderRhMappedPreview());
-            alert(err.message || '上传失败');
+            rhNotice(err.message || '上传失败', 'error');
         }
     });
     input.click();
@@ -842,19 +878,22 @@ async function rhPreviewUploadValueIfNeeded(value){
     if(data.success === false) throw new Error(data.detail || data.error || 'RunningHub 素材上传失败');
     return data.data?.fileName || text;
 }
+// Mirrors the canvas request: every parameter is sent. Exposed ones use the value
+// entered in the preview; parameters not exposed on the canvas use their saved default.
 async function buildRhPreviewNodeInfoList(){
     const config = rhWorkflowEditorState.config;
-    const fields = rhEditorSortedFields((config?.fields || []).filter(field => field.enabled === true));
+    const fields = rhEditorSortedFields(config?.fields || []);
     const result = [];
     for(const field of fields){
+        if(!field?.fieldName) continue;
         const key = rhWorkflowFieldKey(field);
         const kind = rhWorkflowFieldKind(field);
-        if(field.sourceFromUpstream === false && !['IMAGE','VIDEO','AUDIO'].includes(kind)) continue;
-        const preview = rhWorkflowEditorState.previewParams[key] || {};
+        const exposed = field.enabled === true;
+        const preview = exposed ? (rhWorkflowEditorState.previewParams[key] || {}) : {};
         let value = preview.value ?? field.fieldValue ?? '';
         if(['IMAGE','VIDEO','AUDIO'].includes(kind)){
             value = await rhPreviewUploadValueIfNeeded(preview.url || value);
-        } else if(kind === 'NUMBER' && field.random_enabled === true && preview.randomActive !== false) {
+        } else if(exposed && kind === 'NUMBER' && field.random_enabled === true && preview.randomActive !== false) {
             value = rhPreviewRandomValue(field);
         } else if(['NUMBER','SLIDER'].includes(kind) && String(value ?? '').trim() !== '' && !Number.isNaN(Number(value))) {
             value = Number(value);
@@ -909,7 +948,7 @@ async function testRhMappedPreview(){
     } catch(err) {
         rhWorkflowEditorState.previewStatus = err.message || String(err);
         setStatus(rhWorkflowEditorState.previewStatus);
-        alert(rhWorkflowEditorState.previewStatus);
+        rhNotice(rhWorkflowEditorState.previewStatus, 'error');
     } finally {
         rhWorkflowEditorState.previewRunning = false;
         renderRhMappedPreview();
@@ -918,110 +957,250 @@ async function testRhMappedPreview(){
 function renderRhEditorSourcePane(){
     renderRhAppFieldCards();
 }
+// ---- Field list / detail (in-page, no floating window) -------------------
+// UI-only state lives on rhWorkflowEditorState: fieldQuery, fieldKindFilter,
+// onlyEnabled, rightTab ('config' | 'preview').
+var RH_KIND_FILTERS = [
+    {value:'all', label:'全部'},
+    {value:'MEDIA', label:'媒体', kinds:['IMAGE','VIDEO','AUDIO']},
+    {value:'TEXT', label:'文本', kinds:['TEXT','PROMPT']},
+    {value:'PARAM', label:'参数', kinds:['NUMBER','SLIDER','SELECT','BOOLEAN']}
+];
+var RH_KIND_ICON = {IMAGE:'image', VIDEO:'video', AUDIO:'music', PROMPT:'message-square-text', TEXT:'type', NUMBER:'hash', SLIDER:'sliders-horizontal', SELECT:'list', BOOLEAN:'toggle-right'};
+function rhFieldMatchesFilter(field){
+    const state = rhWorkflowEditorState;
+    if(state.onlyEnabled && field.enabled !== true) return false;
+    const filter = RH_KIND_FILTERS.find(item => item.value === (state.fieldKindFilter || 'all'));
+    if(filter?.kinds && !filter.kinds.includes(rhWorkflowFieldKind(field))) return false;
+    const q = String(state.fieldQuery || '').trim().toLowerCase();
+    if(!q) return true;
+    return `${field.label} ${field.fieldName} ${field.nodeId} ${field.note}`.toLowerCase().includes(q);
+}
+function rhVisibleFields(){
+    return (rhWorkflowEditorState.config?.fields || []).filter(rhFieldMatchesFilter);
+}
 function renderRhWorkflowEditorSummary(){
     const config = rhWorkflowEditorState.config;
     if(!config || !rhWorkflowEditorSummary) return;
     const fields = config.fields || [];
-    const enabled = fields.filter(field => field.enabled === true).length;
+    const enabled = fields.filter(field => field.enabled === true);
+    const count = kinds => enabled.filter(field => kinds.includes(rhWorkflowFieldKind(field))).length;
     rhWorkflowEditorSummary.innerHTML = `
-        <div><span>应用</span><strong>1</strong></div>
-        <div><span>字段</span><strong>${enabled} / ${fields.length}</strong></div>
+        <div class="rh-stat rh-stat-main"><strong>${enabled.length}<small> / ${fields.length}</small></strong><span>已暴露到画布</span></div>
+        <div class="rh-stat"><strong>${count(['IMAGE','VIDEO','AUDIO'])}</strong><span>媒体输入</span></div>
+        <div class="rh-stat"><strong>${count(['TEXT','PROMPT'])}</strong><span>文本</span></div>
+        <div class="rh-stat"><strong>${enabled.length - count(['IMAGE','VIDEO','AUDIO','TEXT','PROMPT'])}</strong><span>参数</span></div>
     `;
 }
-function renderRhWorkflowEditorField(field){
+function renderRhFieldPicker(field){
     const key = rhWorkflowFieldKey(field);
-    const checked = field.enabled === true;
-    const type = rhWorkflowFieldKind(field);
-    const optionsText = Array.isArray(field.options) ? field.options.join('\n') : '';
-    const randomOn = field.random_enabled === true;
-    const keepOriginal = field.sourceFromUpstream === false;
+    const kind = rhWorkflowFieldKind(field);
+    const on = field.enabled === true;
+    const active = rhWorkflowEditorState.activeFieldKey === key;
     return `
-        <div class="rh-editor-field-row ${checked ? 'active' : ''}">
-            <button class="rh-editor-check ${checked ? 'checked' : ''}" type="button" data-action="toggleRhWorkflowEditorField" data-action-arg="${escapeAttr(key)}">${checked ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}</button>
-            <div class="rh-editor-field-main">
-                <div class="rh-editor-field-name">${escapeHtml(field.label || field.fieldName)}</div>
-                <div class="rh-editor-field-meta">${escapeHtml(field.fieldName)} · ${escapeHtml(type)}</div>
-                <button class="rh-editor-keep ${keepOriginal ? 'active' : ''}" type="button" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'sourceFromUpstream', !keepOriginal]))}'>
-                    <span class="check-dot"></span>${keepOriginal ? '保留应用原设置' : '暴露并覆盖参数'}
-                </button>
-                <div class="rh-editor-field-controls">
-                    <input type="text" value="${escapeAttr(field.label || '')}" placeholder="显示名称" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'label']))}' data-action-value="true">
-                    <select data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'fieldType']))}' data-action-value="true">
-                        ${['TEXT','PROMPT','NUMBER','SLIDER','BOOLEAN','SELECT','IMAGE','VIDEO','AUDIO'].map(option => `<option value="${option}" ${String(field.fieldType || type).toUpperCase() === option ? 'selected' : ''}>${rhWorkflowFieldTypeLabel(option)}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="rh-editor-field-controls rh-editor-wide-controls">
-                    <textarea placeholder="下拉选项：每行一个，例如 1024x1024" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'options']))}' data-action-value="true">${escapeHtml(optionsText)}</textarea>
-                </div>
-                <div class="rh-editor-random-row">
-                    <button class="rh-editor-random ${randomOn ? 'active' : ''}" type="button" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'random_enabled', !randomOn]))}'><i data-lucide="dice-5" class="w-3.5 h-3.5"></i><span>随机数</span></button>
-                    <input type="number" value="${escapeAttr(field.min ?? '')}" placeholder="最小" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'min']))}' data-action-value="true" data-action-value-type="float">
-                    <input type="number" value="${escapeAttr(field.max ?? '')}" placeholder="最大" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'max']))}' data-action-value="true" data-action-value-type="float">
-                    <input type="number" value="${escapeAttr(field.step ?? '')}" placeholder="步长" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'step']))}' data-action-value="true" data-action-value-type="float">
-                </div>
+        <div class="rh-field-row ${on ? 'is-on' : 'is-off'} ${active ? 'is-active' : ''}" data-field-key="${escapeAttr(key)}" role="button" tabindex="0" aria-pressed="${active}" data-action="openRhAppFieldPopover" data-action-arg="${escapeAttr(key)}">
+            <span class="rh-field-icon kind-${kind.toLowerCase()}"><i data-lucide="${RH_KIND_ICON[kind] || 'type'}" class="w-4 h-4"></i></span>
+            <span class="rh-field-main">
+                <strong>${escapeHtml(field.label || field.fieldName)}</strong>
+                <small>${escapeHtml(field.fieldName)} · ${escapeHtml(rhWorkflowFieldTypeLabel(kind))}</small>
+            </span>
+            <button class="rh-switch" type="button" role="switch" aria-checked="${on}" aria-label="${on ? '取消暴露' : '暴露到画布'} ${escapeAttr(field.label || field.fieldName)}" data-stop-propagation data-action="toggleRhWorkflowEditorField" data-action-arg="${escapeAttr(key)}"><span></span></button>
+        </div>`;
+}
+function renderRhFieldToolbar(){
+    const state = rhWorkflowEditorState;
+    const fields = state.config?.fields || [];
+    const visible = rhVisibleFields();
+    const onCount = fields.filter(field => field.enabled === true).length;
+    const allVisibleOn = visible.length > 0 && visible.every(field => field.enabled === true);
+    return `
+        <div class="rh-toolbar">
+            <label class="rh-search"><i data-lucide="search" class="w-4 h-4"></i><input id="rhFieldSearch" type="search" value="${escapeAttr(state.fieldQuery || '')}" placeholder="搜索参数名称" aria-label="搜索参数" autocomplete="off" spellcheck="false" data-action="setRhFieldQuery"></label>
+            <div class="rh-chips" role="group" aria-label="按类型筛选">
+                ${RH_KIND_FILTERS.map(item => `<button type="button" class="rh-chip" aria-pressed="${(state.fieldKindFilter || 'all') === item.value}" data-action="setRhFieldKindFilter" data-action-arg="${item.value}">${item.label}</button>`).join('')}
+                <button type="button" class="rh-chip" aria-pressed="${state.onlyEnabled === true}" data-action="toggleRhOnlyEnabled">仅已启用 <span class="rh-chip-count">${onCount}</span></button>
             </div>
-        </div>
-    `;
+            <div class="rh-bulk">
+                <button type="button" class="rh-link" data-action="setRhVisibleFieldsEnabled" data-action-arg="${allVisibleOn ? 'false' : 'true'}" ${visible.length ? '' : 'disabled'}>${allVisibleOn ? '取消全选' : '全选'}${(state.fieldQuery || state.fieldKindFilter && state.fieldKindFilter !== 'all' || state.onlyEnabled) ? '当前结果' : ''}</button>
+            </div>
+        </div>`;
+}
+function renderRhFieldList(){
+    const visible = rhVisibleFields();
+    if(!(rhWorkflowEditorState.config?.fields || []).length) return '<div class="rh-editor-empty">没有拉取到应用参数。可点击右上角「重新拉取」，或导入参数 JSON。</div>';
+    if(!visible.length) return '<div class="rh-editor-empty">没有匹配的参数。<button type="button" class="rh-link" data-action="clearRhFieldFilters">清除筛选</button></div>';
+    return `<div class="rh-field-list">${rhEditorSortedFields(visible).map(renderRhFieldPicker).join('')}</div>`;
 }
 function renderRhAppFieldCards(){
     const config = rhWorkflowEditorState.config;
     if(!rhWorkflowEditorGraphWrap || !config) return;
-    closeRhNodePopover();
     rhWorkflowEditorGraphWrap.classList.add('rh-app-field-wrap');
+    const tab = rhWorkflowEditorState.rightTab === 'preview' ? 'preview' : 'config';
     rhWorkflowEditorGraphWrap.innerHTML = `
-        <div class="rh-app-field-list">
-            ${(config.fields || []).length
-                ? (config.fields || []).map(field => renderRhAppFieldCard(field)).join('')
-                : `<div class="rh-editor-empty">没有拉取到应用参数</div>`}
+        <div class="rh-app-layout">
+            <section class="rh-fields-pane" aria-label="参数列表">
+                <div id="rhFieldToolbar">${renderRhFieldToolbar()}</div>
+                <div id="rhFieldListHost">${renderRhFieldList()}</div>
+            </section>
+            <aside class="rh-side-pane">
+                <div class="rh-tabs" role="tablist">
+                    <button type="button" role="tab" class="rh-tab" aria-selected="${tab === 'config'}" data-action="setRhRightTab" data-action-arg="config">参数配置</button>
+                    <button type="button" role="tab" class="rh-tab" aria-selected="${tab === 'preview'}" data-action="setRhRightTab" data-action-arg="preview">画布效果与测试</button>
+                </div>
+                <div id="rhNodePopover" class="rh-app-detail is-empty" ${tab === 'config' ? '' : 'hidden'} aria-live="polite"></div>
+                <div id="rhPreviewPane" class="rh-preview-pane" ${tab === 'preview' ? '' : 'hidden'}></div>
+            </aside>
         </div>
     `;
+    const activeKey = rhWorkflowEditorState.activeFieldKey;
+    if(activeKey && (config.fields || []).some(field => rhWorkflowFieldKey(field) === activeKey)) openRhAppFieldPopover(activeKey);
+    else renderRhFieldDetailEmpty();
+    renderRhMappedPreview();
     refreshIcons();
 }
-function renderRhAppFieldCard(field){
-    const key = rhWorkflowFieldKey(field);
-    const checked = field.enabled === true;
-    return `
-        <div class="rh-app-field-card ${checked ? 'active' : ''}" data-field-key="${escapeAttr(key)}" data-action="openRhAppFieldPopover" data-action-arg="${escapeAttr(key)}" data-action-target="true">
-            <button class="rh-editor-check ${checked ? 'checked' : ''}" type="button" data-stop-propagation data-action="toggleRhWorkflowEditorField" data-action-arg="${escapeAttr(key)}">${checked ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}</button>
-            <div>
-                <strong>${escapeHtml(field.label || field.fieldName)}</strong>
-                <span>${escapeHtml(field.fieldName)} · ${escapeHtml(rhWorkflowFieldKind(field))}</span>
-            </div>
-            <i data-lucide="settings-2" class="w-4 h-4"></i>
-        </div>
-    `;
+// Re-render the list and the toolbar controls, but never replace the search
+// <input> itself: swapping it out mid-typing drops focus and the next keystrokes.
+function refreshRhFieldList(){
+    const toolbar = document.getElementById('rhFieldToolbar');
+    const host = document.getElementById('rhFieldListHost');
+    if(!toolbar || !host) return;
+    const search = toolbar.querySelector('#rhFieldSearch');
+    if(search){
+        if(search.value !== (rhWorkflowEditorState.fieldQuery || '')) search.value = rhWorkflowEditorState.fieldQuery || '';
+        const holder = document.createElement('div');
+        holder.innerHTML = renderRhFieldToolbar();
+        // swap only the chips + bulk controls, keep the existing search box
+        toolbar.querySelector('.rh-chips').replaceWith(holder.querySelector('.rh-chips'));
+        toolbar.querySelector('.rh-bulk').replaceWith(holder.querySelector('.rh-bulk'));
+    } else {
+        toolbar.innerHTML = renderRhFieldToolbar();
+    }
+    host.innerHTML = renderRhFieldList();
+    renderRhWorkflowEditorSummary();
+    refreshIcons();
 }
-function openRhAppFieldPopover(key, anchorEl){
+function setRhFieldQuery(value){ rhWorkflowEditorState.fieldQuery = String(value || ''); refreshRhFieldList(); }
+function setRhFieldKindFilter(value){ rhWorkflowEditorState.fieldKindFilter = String(value || 'all'); refreshRhFieldList(); }
+function toggleRhOnlyEnabled(){ rhWorkflowEditorState.onlyEnabled = rhWorkflowEditorState.onlyEnabled !== true; refreshRhFieldList(); }
+function clearRhFieldFilters(){
+    Object.assign(rhWorkflowEditorState, {fieldQuery:'', fieldKindFilter:'all', onlyEnabled:false});
+    refreshRhFieldList();
+}
+function setRhVisibleFieldsEnabled(enabled){
+    const config = rhWorkflowEditorState.config;
+    if(!config) return;
+    const keys = new Set(rhVisibleFields().map(rhWorkflowFieldKey));
+    if(!keys.size) return;
+    config.fields = config.fields.map(field => keys.has(rhWorkflowFieldKey(field)) ? {...field, enabled:enabled === true} : field);
+    rhNotifyFieldsChanged();
+    refreshRhFieldList();
+    renderRhMappedPreview();
+    const active = rhWorkflowEditorState.activeFieldKey;
+    if(active) openRhAppFieldPopover(active);
+    rhNotice(`已${enabled === true ? '暴露' : '取消暴露'} ${keys.size} 个参数`, 'success');
+}
+function setRhRightTab(tab){
+    rhWorkflowEditorState.rightTab = tab === 'preview' ? 'preview' : 'config';
+    document.querySelectorAll('.rh-tab').forEach(el => el.setAttribute('aria-selected', String(el.dataset.actionArg === rhWorkflowEditorState.rightTab)));
+    const detail = document.getElementById('rhNodePopover');
+    const preview = document.getElementById('rhPreviewPane');
+    if(detail) detail.hidden = rhWorkflowEditorState.rightTab !== 'config';
+    if(preview) preview.hidden = rhWorkflowEditorState.rightTab !== 'preview';
+}
+function rhNotifyFieldsChanged(){
+    // The embedding page treats edits inside the iframe as "unsaved".
+    try { window.parent?.postMessage({type:'workflow-dirty'}, location.origin); } catch(e) { /* standalone */ }
+}
+
+// Inline, non-blocking feedback (replaces window.alert).
+var rhNoticeTimer = 0;
+function rhNotice(text, kind='info'){
+    const el = document.getElementById('rhEditorNotice');
+    if(!el){ setStatus(text); return; }
+    el.textContent = text || '';
+    el.dataset.kind = kind;
+    el.hidden = !text;
+    clearTimeout(rhNoticeTimer);
+    if(text && kind !== 'error') rhNoticeTimer = setTimeout(() => { el.hidden = true; }, 3200);
+}
+
+function rhFieldHint(kind){
+    return ({
+        IMAGE:'画布上显示为图片上传位，按「图片顺序」依次接收上游图片。',
+        VIDEO:'画布上显示为视频上传位。',
+        AUDIO:'画布上显示为音频上传位。',
+        PROMPT:'画布上显示为多行提示词输入框。',
+        TEXT:'画布上显示为单行文本输入。',
+        NUMBER:'画布上显示为数字输入，可开启随机数。',
+        SLIDER:'画布上显示为滑块，需设置最小/最大/步长。',
+        SELECT:'画布上显示为下拉框，选项每行一个。',
+        BOOLEAN:'画布上显示为开关。'
+    })[kind] || '';
+}
+function renderRhWorkflowEditorField(field){
+    const key = rhWorkflowFieldKey(field);
+    const type = rhWorkflowFieldKind(field);
+    const on = field.enabled === true;
+    const isMedia = ['IMAGE','VIDEO','AUDIO'].includes(type);
+    const optionsText = Array.isArray(field.options) ? field.options.join('\n') : '';
+    const argsOf = prop => escapeAttr(JSON.stringify([key, prop]));
+    const input = (prop, value, attrs='') => `data-action="updateRhWorkflowEditorField" data-action-args='${argsOf(prop)}' data-action-value="true" ${attrs}`;
+    const num = (prop, label, value) => `<label class="rh-mini"><span>${label}</span><input type="number" value="${escapeAttr(value ?? '')}" ${input(prop, value, 'data-action-value-type="float"')}></label>`;
+    const showRange = ['NUMBER','SLIDER'].includes(type);
+    const showOptions = type === 'SELECT';
+    const showRandom = type === 'NUMBER';
+    return `
+        <div class="rh-detail-section rh-detail-expose">
+            <div>
+                <strong>暴露到画布</strong>
+                <small>${on ? '已暴露，用户可在画布节点上修改' : '未暴露：画布上不显示，运行时发送下方默认值'}</small>
+            </div>
+            <button class="rh-switch" type="button" role="switch" aria-checked="${on}" aria-label="暴露到画布" data-action="toggleRhWorkflowEditorField" data-action-arg="${escapeAttr(key)}"><span></span></button>
+        </div>
+        <div class="rh-detail-fields ${on ? '' : 'is-dim'}">
+            <label class="rh-field"><span>显示名称</span><input type="text" value="${escapeAttr(field.label || '')}" placeholder="${escapeAttr(field.fieldName)}" ${input('label')}></label>
+            <label class="rh-field"><span>控件类型</span>
+                <select ${input('fieldType')}>
+                    ${['TEXT','PROMPT','NUMBER','SLIDER','BOOLEAN','SELECT','IMAGE','VIDEO','AUDIO'].map(option => `<option value="${option}" ${type === option ? 'selected' : ''}>${rhWorkflowFieldTypeLabel(option)}</option>`).join('')}
+                </select>
+                <small class="rh-hint">${escapeHtml(rhFieldHint(type))}</small>
+            </label>
+            ${isMedia ? `<div class="rh-grid-2">
+                <label class="rh-mini"><span>图片顺序</span><input type="number" min="1" step="1" value="${escapeAttr(field.imageOrder || '')}" placeholder="自动" ${input('imageOrder', field.imageOrder, 'data-action-value-type="number"')}></label>
+                <div class="rh-mini"><span>必填</span><button class="rh-switch" type="button" role="switch" aria-checked="${field.required === true}" aria-label="必填" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'required', field.required !== true]))}'><span></span></button></div>
+            </div>` : ''}
+            ${showOptions ? `<label class="rh-field"><span>下拉选项</span><textarea rows="4" placeholder="每行一个，例如 1024x1024" ${input('options')}>${escapeHtml(optionsText)}</textarea></label>` : ''}
+            ${showRange ? `<div class="rh-grid-3">${num('min','最小值',field.min)}${num('max','最大值',field.max)}${num('step','步长',field.step)}</div>` : ''}
+            ${showRandom ? `<div class="rh-detail-inline"><div><strong>随机数</strong><small>每次运行自动生成范围内的随机值</small></div><button class="rh-switch" type="button" role="switch" aria-checked="${field.random_enabled === true}" aria-label="随机数" data-action="updateRhWorkflowEditorField" data-action-args='${escapeAttr(JSON.stringify([key, 'random_enabled', field.random_enabled !== true]))}'><span></span></button></div>` : ''}
+            <label class="rh-field"><span>默认值</span><input type="text" value="${escapeAttr(field.fieldValue)}" ${input('fieldValue')}><small class="rh-hint">${on ? '用户未修改时使用此值。' : '参数未暴露时，运行会直接发送此值。'}</small></label>
+            <div class="rh-meta-line"><span>节点 ${escapeHtml(field.nodeId || '—')}</span><span>字段 ${escapeHtml(field.fieldName)}</span></div>
+        </div>`;
+}
+function openRhAppFieldPopover(key){
     const config = rhWorkflowEditorState.config;
     const field = (config?.fields || []).find(item => rhWorkflowFieldKey(item) === key);
-    if(!field) return;
-    closeRhNodePopover();
-    const pop = document.createElement('div');
-    pop.id = 'rhNodePopover';
-    pop.className = 'rh-node-popover rh-app-popover';
-    pop.dataset.fieldKey = String(key || '');
-    pop.innerHTML = `
+    const panel = document.getElementById('rhNodePopover');
+    if(!field || !panel) return;
+    rhWorkflowEditorState.activeFieldKey = String(key || '');
+    document.querySelectorAll('.rh-field-row').forEach(el => {
+        const on = el.dataset.fieldKey === String(key || '');
+        el.classList.toggle('is-active', on);
+        el.setAttribute('aria-pressed', String(on));
+    });
+    panel.dataset.fieldKey = String(key || '');
+    panel.classList.remove('is-empty');
+    // Selecting a field while looking at the preview tab switches back to its settings.
+    if(rhWorkflowEditorState.rightTab === 'preview') setRhRightTab('config');
+    panel.innerHTML = `
         <div class="rh-popover-head">
-            <div>
-                <strong>${escapeHtml(field.label || field.fieldName)}</strong>
-                <span>${escapeHtml(field.fieldName)}</span>
-            </div>
-            <button type="button" data-action="closeRhNodePopover"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+            <div><strong>${escapeHtml(field.label || field.fieldName)}</strong><span>${escapeHtml(field.fieldName)}</span></div>
+            <button type="button" data-action="closeRhNodePopover" aria-label="取消选择"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
         </div>
         <div class="rh-popover-body">${renderRhWorkflowEditorField(field)}</div>
     `;
-    document.body.appendChild(pop);
-    const rect = anchorEl?.getBoundingClientRect?.();
-    const modalRect = rhWorkflowEditorOverlay?.getBoundingClientRect?.() || {left:0, top:0, right:window.innerWidth, bottom:window.innerHeight};
-    const width = 390;
-    let left = rect ? rect.left : window.innerWidth / 2 - 190;
-    let top = rect ? rect.bottom + 10 : window.innerHeight / 2 - 180;
-    if(left + width > modalRect.right - 16) left = modalRect.right - width - 16;
-    if(top + 420 > modalRect.bottom - 16) top = Math.max(modalRect.top + 74, (rect?.top || top) - 420);
-    pop.style.left = `${Math.max(modalRect.left + 16, left)}px`;
-    pop.style.top = `${top}px`;
     refreshIcons();
 }
+
 function renderRunningHubCards(){
     const item = runningHubState();
     if(!item || item.id !== 'runninghub'){
