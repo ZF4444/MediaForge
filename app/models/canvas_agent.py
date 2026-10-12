@@ -156,11 +156,6 @@ class SemanticPlan(ProtocolModel):
     confirmation: PlanConfirmation = Field(default_factory=PlanConfirmation, description="User confirmation gate before the plan runs.")
 
 
-class IntentDecision(ProtocolModel):
-    """First-stage routing result for a Canvas Agent message."""
-    intent: Literal["canvas_action", "chat", "clarification"]
-    reply: str = ""
-
 class PatchOperation(ProtocolModel):
     op: Literal["add_node", "update_node_params", "replace_node_content", "add_connection", "remove_connection", "add_group", "move_node", "run_node", "run_group"]
     client_ref: str = ""

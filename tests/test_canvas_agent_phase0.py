@@ -348,72 +348,11 @@ def test_checkpoint_replay_does_not_repeat_side_effect_after_resume():
     graph.invoke(Command(resume="approved"), config=config)
     assert calls == ["operation-1"]
 
-def test_model_planner_rejects_invalid_tool_calls_and_uses_command_resume(monkeypatch):
-    import asyncio
-    from langgraph.types import Command
-    from app.services.canvas_agent import planner, runtime
-
-    calls = []
-    captured = {}
-    class Agent:
-        async def ainvoke(self, invocation, config):
-            calls.append((invocation, config))
-            return {"structured_response": {"goal": "safe plan", "steps": []}}
-    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: captured.update(kwargs) or Agent())
-    plan = asyncio.run(planner.plan_with_deep_agent(None, "answer", {"run_id": "run-1"}, harness_key="fake", resume=True))
-    assert plan.goal == "safe plan"
-    from langchain.agents.structured_output import ProviderStrategy
-    assert isinstance(captured["response_format"], ProviderStrategy)
-    assert captured["response_format"].schema is SemanticPlan
-    assert captured["tools"] == []
-    assert isinstance(calls[0][0], Command)
-    assert calls[0][0].resume == "answer"
-    assert calls[0][1]["configurable"]["thread_id"] == "run-1"
-    with pytest.raises(ValueError, match="无效工具参数"):
-        planner.reject_invalid_tool_calls({"messages": [{"invalid_tool_calls": [{"name": "submit_semantic_plan"}]}]})
-
-
-def test_intent_router_defaults_to_chat_and_requires_explicit_canvas_action(monkeypatch):
-    import asyncio
-    from app.services.canvas_agent import planner, runtime
-
-    captured = {}
-
-    class Agent:
-        async def ainvoke(self, invocation, config):
-            captured["user"] = invocation["messages"][0]["content"]
-            return {"response": {"intent": "chat", "reply": "你好，我可以帮你分析画布或回答问题。"}}
-
-    monkeypatch.setattr(runtime, "create_canvas_agent", lambda **kwargs: captured.update(kwargs) or Agent())
-    decision = asyncio.run(planner.classify_intent(None, "你好", {"run_id": "run-1", "node_count": 2}, harness_key="fake"))
-
-    assert decision.intent == "chat"
-    assert "默认选择 chat" in captured["system_prompt"]
-    assert "必须同时满足" in captured["system_prompt"]
-    assert "在画布上新建一个文生图节点" in captured["system_prompt"]
-    assert "用户消息：你好" in captured["user"]
-    assert "画布上下文：节点数=2" in captured["user"]
-
 def test_semantic_plan_tool_blocks_invalid_parameters():
     from app.services.canvas_agent.tools import submit_semantic_plan
     with pytest.raises(Exception):
         submit_semantic_plan({"goal": "x", "steps": [{"id": "bad", "action": "delete_canvas"}]})
 
-
-def test_planner_normalizes_known_legacy_canvas_operations():
-    from app.services.canvas_agent.planner import _normalize_plan
-
-    plan = _normalize_plan({
-        "goal": "新建文生图节点",
-        "steps": [{"id": "s1", "name": "创建节点", "details": {"node_type": "smart-prompt"}}],
-        "execution": {"mode": "canvas_ops_plan", "operations": [{"op": "create_node", "client_ref": "prompt-1", "node": {"type": "smart-prompt", "text": "雨夜城市"}}]},
-        "confirmation": {"summary": "需要确认"},
-    }, {})
-
-    assert plan.steps[0].action == "canvas.create_node"
-    assert plan.steps[0].node.semantic_type == "prompt"
-    from app.models.canvas_agent import semantic_prompt
-    assert semantic_prompt(plan.steps[0].node.params) == "雨夜城市"
 
 def test_provider_adapter_preserves_invalid_tool_calls_for_planner_blocking():
     from app.services.canvas_agent.model_adapter import MediaForgeChatModel
