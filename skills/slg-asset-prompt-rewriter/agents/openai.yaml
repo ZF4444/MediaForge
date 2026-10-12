@@ -1,4 +1,4 @@
 interface:
   display_name: "SLG 场景资产提示词改写"
   short_description: "将单一场景资产请求改写为英文提示词，保留结构约束并适配画幅比例"
-  default_prompt: "使用 $slg-asset-prompt-rewriter，将我的生图请求改写为一段描述单一环境资产的英文提示词。"
+  default_prompt: "使用 $slg-asset-prompt-rewriter，根据以下场景单体描述和输出图像宽高比，生成一段英文提示词。"
