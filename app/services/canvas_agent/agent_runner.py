@@ -1,4 +1,4 @@
-"""Public entry points for the tool-calling Canvas Agent."""
+"""Canvas Agent 运行入口：组装用户消息（含画布引用图片）并调用 agent 图。"""
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +11,7 @@ from .tools import build_canvas_tools
 
 
 async def run_canvas_agent(model: Any, message: str, context: dict[str, Any], *, checkpointer: Any = None,
-                           emit_progress=None, tools=None, execute_patch=None, dispatch_tasks=None) -> dict[str, Any]:
+                           emit_progress=None, execute_patch=None, dispatch_tasks=None) -> dict[str, Any]:
     run_id = str(context.get("run_id") or "canvas-agent")
     user_id = str(context.get("user_id") or "")
     canvas_id = str(context.get("canvas_id") or "")

@@ -50,7 +50,7 @@ from app.services.canvas_agent.canvas_cost_estimate import (
     enforce_budget,
     estimate_plan_cost,
 )
-from app.services.canvas_agent.planner import run_canvas_agent
+from app.services.canvas_agent.agent_runner import run_canvas_agent
 from app.services.canvas_agent.reliability import (
     DEFAULT_RUN_LIMITS,
     canvas_structure_fingerprint,
