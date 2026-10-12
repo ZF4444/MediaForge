@@ -5,7 +5,7 @@ import pytest
 from app.models.canvas_agent import SemanticPlan
 from app.services.canvas_agent.canvas_adapter import semantic_plan_to_patch
 from app.services.canvas_agent.canvas_capabilities import Capability, CapabilityRegistry
-from app.services.canvas_agent.policy import assess_patch, validate_patch
+from app.services.canvas_agent.canvas_patch_policy import assess_patch, validate_patch
 from app.services.canvas_agent.runtime import create_canvas_agent
 
 def test_semantic_plan_converts_to_versioned_patch():

@@ -10,7 +10,7 @@ from app.services.business_metadata import _file_refs, json_value, metadata_conn
 from app.core.logging import audit_event
 from app.core.metrics import AGENT_OPERATION_SECONDS
 import time
-from .policy import validate_patch
+from .canvas_patch_policy import validate_patch
 
 class PatchConflictError(RuntimeError): pass
 class PatchPermissionError(PermissionError): pass

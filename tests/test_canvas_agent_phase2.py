@@ -1,7 +1,7 @@
 import pytest
 
 from app.models.canvas_agent import CanvasPatch, SemanticPlan
-from app.services.canvas_agent.policy import validate_patch
+from app.services.canvas_agent.canvas_patch_policy import validate_patch
 from app.services.canvas_agent.reliability import canvas_structure_fingerprint, classify_failure, enforce_plan_limits
 from app.routers.canvas_agent import _hydrate_plan_nodes
 
