@@ -150,7 +150,7 @@ result_json        完成摘要，不存大对象
 | 命令 | `operation.accepted`、`operation.queued`、`operation.started`、`operation.succeeded`、`operation.failed`、`operation.cancelled` |
 | 编排 | `progress.context`、`progress.model`、`progress.agent`、`progress.tool_started`、`progress.tool_completed`、`progress.tool_failed`、`progress.validation`、`progress.confirmation`、`progress.execution` |
 | 业务结果 | `message.replied`、`plan.created`、`patch.applied`、`tasks.queued`、`task.progress`、`task.succeeded`、`task.failed`、`run.completed`、`run.blocked`、`run.failed` |
-| 协作 | `orchestration.proposed`、`template.instantiated` |
+| 协作 | `orchestration.proposed` |
 
 `progress` 不能再是一个只有自由文本的事件。为兼容已有客户端，可在迁移期同时写旧 `progress`，但前端优先使用上述类型与 `payload.message`。
 
@@ -194,8 +194,8 @@ HTTP 入口只做鉴权、请求校验、幂等去重、Operation 入库、Run �
 
 以下动作在低延迟且无长链路时保持同步；每个成功、拒绝和失败结果均经 AREB 写事件：
 
-- `POST /runs`、`/cancel`、`/retry`、`/redo`、`/review`
-- Template 实例化、编排方案生成
+- `POST /runs`、`/cancel`
+- 编排方案生成
 
 若这些接口将来引入外部 HTTP、批量数据库处理或生成任务，也必须迁入异步命令平面。
 
@@ -306,7 +306,7 @@ class AgentEventService:
 3. **前端时序修复**：发送前启动消费；分离 `runSummary` 与 `lastEvent`；显示工具名、错误和确认状态。
 4. **异步消息与回答**：`/messages`、`/answers` 迁为 202 Command，由 Agent Worker 执行。
 5. **异步确认**：`/confirm` 迁为 202 Command，覆盖 LangGraph resume、Patch、任务提交。
-6. **其余接口接入**：任务重试、审阅、模板等统一事件类型与 Operation 记录。
+6. **其余接口接入**：任务重试等统一事件类型与 Operation 记录。
 7. **清理兼容逻辑**：删除旧 `progress` 自由文本消费、路由中的直连广播和同步长请求路径。
 
 迁移期间后端同时发布旧 `progress` 和新 `progress.*`；前端优先新协议。完成全量发布并观察稳定后删除旧协议。

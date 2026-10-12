@@ -236,8 +236,8 @@ finished_at       BIGINT NULL
 
 按风险由低到高接入：
 
-1. `cancel`、`retry`、`redo`、`review`。
-2. Template 实例化、编排提案。
+1. `cancel`、画布任务 `retry`。
+2. 编排提案。
 3. 与 Agent Run 关联的 canvas task retry/terminal event。
 
 每个入口要求：使用 `AgentEventService`，关联现有或新建 Operation，事件类型落在注册表内，失败不向客户端泄露供应商原始响应。

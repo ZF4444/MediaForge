@@ -18,7 +18,6 @@ from app.core.logging import audit_event, get_logger
 from app.core.metrics import (
     AGENT_EVENT_PRESENTATION_UNKNOWN_TARGETS,
     AGENT_FAILURES,
-    AGENT_OPERATION_SECONDS,
     AGENT_RUNS,
 )
 from app.core.utils import now_ms
@@ -27,13 +26,7 @@ from app.models import (
     CanvasAgentAnswerRequest,
     CanvasAgentConfirmRequest,
     CanvasAgentMessageRequest,
-    CanvasAgentRedoRequest,
-    CanvasAgentRetryRequest,
-    CanvasAgentReviewRequest,
     CanvasAgentRunCreateRequest,
-    CanvasCostEstimateRequest,
-    CanvasTemplateCreateRequest,
-    CanvasTemplateInstantiateRequest,
 )
 from app.services.canvas_agent.schemas import SemanticPlan, with_semantic_prompt
 from app.services.business_metadata import load_canvas_payload
@@ -63,24 +56,16 @@ from app.services.canvas_agent.reliability_helpers import (
     classify_failure,
     enforce_plan_limits,
 )
-from app.services.canvas_agent.skills import (
-    get_enabled_skill,
-    list_enabled_skill_summaries,
-    read_skill,
-)
 from app.services.canvas_agent.store import (
     append_message,
     create_run,
-    create_template,
     delete_run,
     get_run,
-    get_template,
     latest_plan,
     list_events,
     list_messages,
     list_operations,
     list_runs,
-    list_templates,
     rename_run,
     replace_plan_content,
     request_run_command_cancellation,
@@ -89,7 +74,7 @@ from app.services.canvas_agent.store import (
     submit_command,
     update_run,
 )
-from app.services.canvas_agent.task_dispatch import submit_run_requests
+from app.services.canvas_agent.canvas_task_dispatch import submit_run_requests
 from app.services.canvas_tasks import (
     enqueue_canvas_task,
     get_canvas_task,
@@ -1078,116 +1063,6 @@ async def cancel_agent_run(run_id: str, request: Request, x_user_id: str = Heade
     return {"run": await asyncio.to_thread(get_run, user_id, run_id)}
 
 
-@router.post("/api/canvas-agent/runs/{run_id}/retry")
-async def retry_agent_run(
-    run_id: str, payload: CanvasAgentRetryRequest, request: Request, x_user_id: str = Header(default="")
-):
-    user_id = _user(request, x_user_id)
-    run = await _require_run(user_id, run_id)
-    metadata = run.get("metadata_json") or {}
-    retries = int(metadata.get("auto_repairs", 0) or 0)
-    max_repairs = int((metadata.get("limits") or {}).get("max_auto_repairs", DEFAULT_RUN_LIMITS["max_auto_repairs"]))
-    if retries >= max_repairs:
-        await asyncio.to_thread(
-            update_run,
-            user_id,
-            run_id,
-            status="blocked",
-            phase="reviewing",
-            metadata_json={"blocked_reason": "auto_repair_quota_exceeded"},
-        )
-        raise HTTPException(status_code=409, detail="Run 自动修复次数已用尽")
-    await asyncio.to_thread(
-        update_run, user_id, run_id, status="planning", phase="planning", metadata_json={"auto_repairs": retries + 1}
-    )
-    await emit_agent_event(user_id, run_id, "run.retrying", {"operation_id": payload.operation_id})
-    return {"run": await asyncio.to_thread(get_run, user_id, run_id)}
-
-
-@router.post("/api/canvas-agent/runs/{run_id}/redo")
-async def redo_agent_node(
-    run_id: str, payload: CanvasAgentRedoRequest, request: Request, x_user_id: str = Header(default="")
-):
-    """Create a child Run for a local prompt replacement and rerun branch."""
-    user_id = _user(request, x_user_id)
-    parent = await _require_run(user_id, run_id)
-    canvas = await asyncio.to_thread(load_canvas_payload, user_id, parent["canvas_id"])
-    if not canvas or not any(
-        str(node.get("id")) == payload.node_id for node in canvas.get("nodes", []) if isinstance(node, dict)
-    ):
-        raise HTTPException(status_code=404, detail="目标节点不存在")
-    child = await asyncio.to_thread(
-        create_run,
-        user_id,
-        parent["canvas_id"],
-        mode=parent.get("mode", "fast_track"),
-        conversation_id=parent.get("conversation_id", ""),
-        base_canvas_version=int(canvas.get("version") or 1),
-        max_steps=int(parent.get("max_steps") or 12),
-    )
-    await asyncio.to_thread(
-        update_run,
-        user_id,
-        child["id"],
-        metadata_json={
-            "parent_run_id": run_id,
-            "redo_node_id": payload.node_id,
-            "limits": (parent.get("metadata_json") or {}).get("limits", DEFAULT_RUN_LIMITS),
-        },
-    )
-    await asyncio.to_thread(
-        append_message,
-        user_id,
-        child["id"],
-        "user",
-        payload.prompt,
-        {"kind": "local_redo", "parent_run_id": run_id, "node_id": payload.node_id},
-    )
-    plan = SemanticPlan(
-        mode="fast_track",
-        goal=payload.prompt,
-        steps=[
-            {
-                "id": "replace",
-                "action": "canvas.replace_node_content",
-                "target_node_id": payload.node_id,
-                "node": {"semantic_type": "prompt", "content": payload.prompt},
-            },
-            {"id": "rerun", "action": "canvas.run_node", "target_node_id": payload.node_id},
-        ],
-        confirmation={"required": True, "reason": "局部重做将替换目标节点内容并重新提交生成任务"},
-        execution={
-            "auto_run": True,
-            "parallelism": 1,
-            "capabilities": ["canvas.replace_node_content", "canvas.run_node"],
-            "estimated_cost": 1,
-        },
-    )
-    saved = await asyncio.to_thread(
-        save_plan, user_id, child["id"], plan.model_dump(mode="json"), status="awaiting_confirmation"
-    )
-    await asyncio.to_thread(
-        update_run,
-        user_id,
-        child["id"],
-        status="awaiting_confirmation",
-        phase="planning",
-        metadata_json={"planned_canvas_fingerprint": canvas_structure_fingerprint(canvas)},
-    )
-    await emit_agent_event(
-        user_id,
-        child["id"],
-        "plan.created",
-        {
-            "plan_version": saved["version"],
-            "plan": plan.model_dump(mode="json"),
-            "parent_run_id": run_id,
-            "local_redo": True,
-        },
-    )
-    return {"run": await asyncio.to_thread(get_run, user_id, child["id"]), "plan": saved, "parent_run_id": run_id}
-
-
 @router.post("/api/canvas-agent/runs/{run_id}/tasks/{task_id}/retry")
 async def retry_agent_task(run_id: str, task_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = _user(request, x_user_id)
@@ -1226,28 +1101,6 @@ async def retry_agent_task(run_id: str, task_id: str, request: Request, x_user_i
     return {"task": queued}
 
 
-@router.post("/api/canvas-agent/runs/{run_id}/review")
-async def review_agent_run(
-    run_id: str, payload: CanvasAgentReviewRequest, request: Request, x_user_id: str = Header(default="")
-):
-    user_id = _user(request, x_user_id)
-    run = await _require_run(user_id, run_id)
-    status = str(payload.status or "approved").strip().lower()
-    if status not in {"approved", "rejected", "needs_revision"}:
-        raise HTTPException(status_code=422, detail="无效的 Review 状态")
-    next_status = "completed" if status == "approved" else "blocked"
-    await asyncio.to_thread(
-        update_run,
-        user_id,
-        run_id,
-        status=next_status,
-        phase="reviewing",
-        metadata_json={"review_status": status, "review_note": payload.note},
-    )
-    await emit_agent_event(user_id, run_id, "run.reviewed", {"status": status, "note": payload.note})
-    return {"run": await asyncio.to_thread(get_run, user_id, run_id)}
-
-
 @router.get("/api/canvas-agent/runs/{run_id}/events")
 async def get_agent_events(
     run_id: str, request: Request, after_sequence: int = 0, limit: int = 500, x_user_id: str = Header(default="")
@@ -1261,65 +1114,3 @@ async def get_agent_events(
         "next_sequence": int(events[-1]["sequence"]) if events else int(after_sequence),
         "has_more": len(events) >= min(max(1, limit), 2000),
     }
-
-
-@router.get("/api/canvas-agent/skills")
-async def list_agent_skills():
-    return {"skills": [summary.__dict__ for summary in list_enabled_skill_summaries()]}
-
-
-@router.get("/api/canvas-agent/skills/{name}")
-async def read_agent_skill(name: str):
-    if not get_enabled_skill(name):
-        raise HTTPException(status_code=404, detail="Skill 不存在或未启用")
-    return {"name": name, "content": read_skill(name)}
-
-
-@router.post("/api/canvas-agent/runs/{run_id}/cost-estimate")
-async def estimate_agent_run_cost(
-    run_id: str, payload: CanvasCostEstimateRequest, request: Request, x_user_id: str = Header(default="")
-):
-    user_id = _user(request, x_user_id)
-    await _require_run(user_id, run_id)
-    plan = await asyncio.to_thread(latest_plan, user_id, run_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="尚无可估算成本的计划")
-    return {"estimate": estimate_plan_cost(plan["content_json"], budget=payload.budget)}
-
-
-@router.get("/api/canvas-agent/templates")
-async def get_agent_templates(request: Request, x_user_id: str = Header(default="")):
-    return {"templates": await asyncio.to_thread(list_templates, _user(request, x_user_id))}
-
-
-@router.post("/api/canvas-agent/templates")
-async def create_agent_template(
-    payload: CanvasTemplateCreateRequest, request: Request, x_user_id: str = Header(default="")
-):
-    user_id = _user(request, x_user_id)
-    if payload.source_run_id:
-        await _require_run(user_id, payload.source_run_id)
-    template = await asyncio.to_thread(
-        create_template,
-        user_id,
-        payload.name,
-        payload.content,
-        description=payload.description,
-        source_run_id=payload.source_run_id,
-    )
-    return {"template": template}
-
-
-@router.post("/api/canvas-agent/templates/{template_id}/instantiate")
-async def instantiate_agent_template(
-    template_id: str, payload: CanvasTemplateInstantiateRequest, request: Request, x_user_id: str = Header(default="")
-):
-    user_id = _user(request, x_user_id)
-    await _require_run(user_id, payload.run_id)
-    template = await asyncio.to_thread(get_template, user_id, template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="模板不存在")
-    await emit_agent_event(
-        user_id, payload.run_id, "template.instantiated", {"template_id": template_id, "version": template["version"]}
-    )
-    return {"template": template, "content": template["content_json"]}

@@ -190,10 +190,6 @@ def read_skill_document(
     return SkillDocument(skill.name, skill.description, body, digest)
 
 
-def read_skill(name: str, *, root: str = "") -> str:
-    return read_skill_document(name, root=root).content
-
-
 def read_skill_resource(
     name: str,
     path: str,

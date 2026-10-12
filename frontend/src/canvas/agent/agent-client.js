@@ -25,11 +25,5 @@
     confirm: (planVersion, approved, clientRequestId='') => request(runPath('/confirm'), {method:'POST', body:JSON.stringify({plan_version:planVersion, approved, client_request_id:clientRequestId || requestId()})}),
     cancel: () => request(runPath('/cancel'), {method:'POST', body:'{}'}),
     retryTask: taskId => request(runPath(`/tasks/${encodeURIComponent(taskId)}/retry`), {method:'POST', body:'{}'}),
-    review: (status, note='') => request(runPath('/review'), {method:'POST', body:JSON.stringify({status, note})}),
-    redo: (nodeId, prompt) => request(runPath('/redo'), {method:'POST', body:JSON.stringify({node_id:nodeId, prompt})}),
-    estimateCost: budget => request(runPath('/cost-estimate'), {method:'POST', body:JSON.stringify({budget})}),
-    templates: () => request('/api/canvas-agent/templates'),
-    createTemplate: body => request('/api/canvas-agent/templates', {method:'POST', body:JSON.stringify(body)}),
-    instantiateTemplate: (id, runId) => request(`/api/canvas-agent/templates/${encodeURIComponent(id)}/instantiate`, {method:'POST', body:JSON.stringify({run_id:runId})}),
   };
 })();

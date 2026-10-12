@@ -17,7 +17,11 @@ def test_canvas_agent_api_lifecycle_conflict_tasks_events_and_permissions(monkey
     from fastapi.testclient import TestClient
     from app.routers import canvas_agent
     from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
-    from app.services.canvas_agent.store import append_event, create_run, save_plan, update_run
+    from app.services.canvas_agent.event_bus import AgentEventService
+    from app.services.canvas_agent.store import create_run, save_plan, update_run
+
+    def append_event(user_id, run_id, event_type, payload=None):
+        return AgentEventService.append_sync(user_id=user_id, run_id=run_id, event_type=event_type, payload=payload)
 
     async def persist_event(user_id, run_id, event_type, payload=None, **_kwargs):
         return await asyncio.to_thread(append_event, user_id, run_id, event_type, payload)
@@ -116,12 +120,6 @@ def test_canvas_agent_api_lifecycle_conflict_tasks_events_and_permissions(monkey
                     headers=headers,
                 )
                 assert rejected.status_code == 409
-                assert (
-                    client.post(
-                        f"/api/canvas-agent/runs/{conflict_run['id']}/retry", json={}, headers=headers
-                    ).status_code
-                    == 200
-                )
                 assert (
                     client.post(
                         f"/api/canvas-agent/runs/{conflict_run['id']}/messages",

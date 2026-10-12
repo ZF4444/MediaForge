@@ -75,14 +75,8 @@ def test_patch_transaction_and_idempotency():
 def test_agent_store_persists_versioned_business_facts():
     from app.core.database import close_database_pool, open_database_pool
     from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
-    from app.services.canvas_agent.store import (
-        append_event,
-        append_message,
-        begin_operation,
-        create_run,
-        finish_operation,
-        save_plan,
-    )
+    from app.services.canvas_agent.event_bus import AgentEventService
+    from app.services.canvas_agent.store import append_message, create_run, save_plan, submit_command
 
     def run_sync():
         initialize_business_metadata()
@@ -99,17 +93,14 @@ def test_agent_store_persists_versioned_business_facts():
             run = create_run(uid, canvas_id)
             assert append_message(uid, run["id"], "user", "hello")["sequence"] == 1
             assert save_plan(uid, run["id"], {"goal": "hello"})["content_json"]["schema_version"] == 1
-            operation = begin_operation(uid, run["id"], run["id"] + ":op", "canvas.apply_patch", {"patch": {}})
+            operation, created = submit_command(uid, run["id"], "agent.message", "req-1", {"content": "again"})
+            assert created and operation["input_json"]["schema_version"] == 1
+            duplicate, created_again = submit_command(uid, run["id"], "agent.message", "req-1", {"content": "again"})
+            assert not created_again and duplicate["id"] == operation["id"]
             assert (
-                finish_operation(operation["idempotency_key"], status="succeeded", result={"ok": True})["result_json"][
-                    "schema_version"
-                ]
-                == 1
-            )
-            assert (
-                append_event(uid, run["id"], "agent.plan.created", {"plan_version": 1})["payload_json"][
-                    "schema_version"
-                ]
+                AgentEventService.append_sync(
+                    user_id=uid, run_id=run["id"], event_type="agent.plan.created", payload={"plan_version": 1}
+                )["payload_json"]["schema_version"]
                 == 1
             )
         finally:
@@ -209,43 +200,6 @@ def test_expired_tool_group_is_closed_once_across_concurrent_reconcilers():
     async def run():
         from app.core.database import close_database_pool, open_database_pool
 
-        await open_database_pool()
-        try:
-            await asyncio.to_thread(run_sync)
-        finally:
-            await close_database_pool()
-
-    asyncio.run(run())
-
-
-def test_phase4_templates_are_owner_scoped():
-    from app.core.database import close_database_pool, open_database_pool
-    from app.services.business_metadata import initialize_business_metadata, json_value, metadata_connection
-    from app.services.canvas_agent.store import create_run, create_template, list_templates
-
-    def run_sync():
-        initialize_business_metadata()
-        uid = "phase4-owner-" + uuid.uuid4().hex[:12]
-        other = "phase4-other-" + uuid.uuid4().hex[:12]
-        canvas_id = "phase4-canvas-" + uuid.uuid4().hex[:12]
-        now = 1000000000000
-        try:
-            with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-                for user_id in (uid, other):
-                    cur.execute("INSERT INTO users(id,username,created_at) VALUES(%s,%s,%s)", (user_id, user_id, now))
-                cur.execute(
-                    "INSERT INTO smart_canvases(id,user_id,title,created_at,updated_at,version,viewport_json) VALUES(%s,%s,%s,%s,%s,1,%s)",
-                    (canvas_id, uid, "phase4", now, now, json_value({"viewport": {}, "payload": {}})),
-                )
-            run = create_run(uid, canvas_id)
-            template = create_template(uid, "product-launch", {"goal": "launch"}, source_run_id=run["id"])
-            assert list_templates(uid)[0]["id"] == template["id"]
-            assert list_templates(other) == []
-        finally:
-            with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-                cur.execute("DELETE FROM users WHERE id IN (%s,%s)", (uid, other))
-
-    async def run():
         await open_database_pool()
         try:
             await asyncio.to_thread(run_sync)

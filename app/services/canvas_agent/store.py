@@ -260,39 +260,6 @@ def set_plan_status(user_id: str, run_id: str, version: int, status: str) -> dic
         return cur.fetchone()
 
 
-def begin_operation(
-    user_id: str,
-    run_id: str,
-    idempotency_key: str,
-    operation_type: str,
-    input_data: dict[str, Any],
-    *,
-    risk: str = "safe",
-) -> dict[str, Any]:
-    now = now_ms()
-    body = _json(input_data)
-    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM canvas_agent_runs WHERE id=%s AND user_id=%s FOR UPDATE", (run_id, user_id))
-        if not cur.fetchone():
-            raise PermissionError("run not found")
-        cur.execute(
-            "INSERT INTO canvas_agent_operations(id,run_id,idempotency_key,type,risk,status,input_json,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,'pending',%s,%s,%s) ON CONFLICT(idempotency_key) DO UPDATE SET updated_at=canvas_agent_operations.updated_at RETURNING *",
-            (new_id(), run_id, idempotency_key, operation_type, risk, json_value(body), now, now),
-        )
-        return cur.fetchone()
-
-
-def finish_operation(
-    idempotency_key: str, *, status: str, result: dict[str, Any] | None = None, error: str | None = None
-) -> dict[str, Any] | None:
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "UPDATE canvas_agent_operations SET status=%s,result_json=%s,error=%s,updated_at=%s WHERE idempotency_key=%s RETURNING *",
-            (status, json_value(_json(result)), error, now_ms(), idempotency_key),
-        )
-        return cur.fetchone()
-
-
 def submit_command(
     user_id: str, run_id: str, operation_type: str, client_request_id: str, input_data: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
@@ -426,13 +393,6 @@ def request_run_command_cancellation(user_id: str, run_id: str) -> list[dict[str
         return cur.fetchall()
 
 
-def append_event(user_id: str, run_id: str, event_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Compatibility API; new code must use ``AgentEventService`` directly."""
-    from .event_bus import AgentEventService
-
-    return AgentEventService.append_sync(user_id=user_id, run_id=run_id, event_type=event_type, payload=payload)
-
-
 def list_events(user_id: str, run_id: str, *, after_sequence: int = 0, limit: int = 500) -> list[dict[str, Any]]:
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute(
@@ -440,42 +400,3 @@ def list_events(user_id: str, run_id: str, *, after_sequence: int = 0, limit: in
             (run_id, user_id, after_sequence, max(1, min(limit, 2000))),
         )
         return cur.fetchall()
-
-
-def create_template(
-    user_id: str, name: str, content: dict[str, Any], *, description: str = "", source_run_id: str = ""
-) -> dict[str, Any]:
-    now = now_ms()
-    with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute(
-            "SELECT COALESCE(MAX(version),0)+1 AS version FROM canvas_agent_templates WHERE user_id=%s AND name=%s",
-            (user_id, name),
-        )
-        version = int(cur.fetchone()["version"])
-        cur.execute(
-            "INSERT INTO canvas_agent_templates(id,user_id,name,description,version,content_json,source_run_id,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (
-                new_id(),
-                user_id,
-                name,
-                description,
-                version,
-                json_value(_json(content)),
-                source_run_id or None,
-                now,
-                now,
-            ),
-        )
-        return cur.fetchone()
-
-
-def list_templates(user_id: str) -> list[dict[str, Any]]:
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM canvas_agent_templates WHERE user_id=%s ORDER BY updated_at DESC", (user_id,))
-        return cur.fetchall()
-
-
-def get_template(user_id: str, template_id: str) -> dict[str, Any] | None:
-    with metadata_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM canvas_agent_templates WHERE id=%s AND user_id=%s", (template_id, user_id))
-        return cur.fetchone()

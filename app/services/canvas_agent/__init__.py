@@ -13,9 +13,6 @@ from .store import (
     list_messages,
     latest_plan,
     save_plan,
-    begin_operation,
-    finish_operation,
-    append_event,
     list_events,
 )
 
@@ -35,8 +32,5 @@ __all__ = [
     "list_messages",
     "latest_plan",
     "save_plan",
-    "begin_operation",
-    "finish_operation",
-    "append_event",
     "list_events",
 ]

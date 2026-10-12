@@ -257,35 +257,6 @@ class CanvasAgentConfirmRequest(BaseModel):
     client_request_id: str = Field(default="", max_length=128)
 
 
-class CanvasAgentRetryRequest(BaseModel):
-    operation_id: str = ""
-
-
-class CanvasAgentRedoRequest(BaseModel):
-    node_id: str = Field(min_length=1, max_length=128)
-    prompt: str = Field(min_length=1, max_length=20000)
-
-
-class CanvasAgentReviewRequest(BaseModel):
-    status: str = "approved"
-    note: str = Field(default="", max_length=4000)
-
-
-class CanvasCostEstimateRequest(BaseModel):
-    budget: float | None = Field(default=None, ge=0)
-
-
-class CanvasTemplateCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=160)
-    description: str = Field(default="", max_length=2000)
-    content: Dict[str, Any] = {}
-    source_run_id: str = Field(default="", max_length=128)
-
-
-class CanvasTemplateInstantiateRequest(BaseModel):
-    run_id: str = Field(min_length=1, max_length=128)
-
-
 class CanvasAssetCheckRequest(BaseModel):
     urls: List[str] = []
 
