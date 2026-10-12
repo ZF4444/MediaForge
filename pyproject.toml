@@ -26,7 +26,26 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "ruff==0.17.0",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["static", "frontend", "data", "logs", "skills"]
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: isort. Start narrow; extend gradually.
+select = ["E", "W", "F", "I"]
+# E501: long lines are intentional (SQL, LLM-facing Field descriptions).
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Re-exports and star imports are the public surface of these modules.
+"__init__.py" = ["F401", "F403"]
+
+[tool.ruff.format]
+quote-style = "double"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

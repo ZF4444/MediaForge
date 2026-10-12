@@ -167,6 +167,51 @@ cd frontend
 npm test
 ```
 
+## 后端代码规范（Ruff）
+
+后端使用 [Ruff](https://docs.astral.sh/ruff/) 做代码检查和格式化，版本固定在 `pyproject.toml` 的
+`dev` 依赖组中，配置位于 `[tool.ruff]`。首次使用先执行 `uv sync` 安装开发依赖。
+
+```bash
+# 格式化（修改文件）
+uv run ruff format .
+
+# 仅检查格式，不修改文件（适合 CI）
+uv run ruff format --check .
+
+# 代码检查
+uv run ruff check .
+
+# 按规则统计告警数量
+uv run ruff check . --statistics
+```
+
+当前约定：
+
+- 行宽 120，双引号，目标版本 Python 3.11。`E501`（行过长）已关闭，因为 SQL 和面向 LLM 的
+  `Field(description=...)` 文本需要保持完整。
+- 启用规则为 `E`、`W`、`F`、`I`（pycodestyle、pyflakes、导入排序）。`__init__.py` 豁免 `F401`/`F403`，
+  因为这些文件用于再导出。
+- 已排除 `static/`、`frontend/`、`data/`、`logs/`、`skills/`。
+- 全量格式化已经完成，新代码提交前请执行 `uv run ruff format <改动的文件>`。
+
+`ruff check` 目前仍有一批历史告警（主要是 `I001` 导入排序、`F401` 未使用导入、`E402` 导入位置、
+`F841` 未使用变量）。它们不影响运行，需要分批清理：
+
+- `uv run ruff check --fix <文件>` 会自动修复导入排序等安全项。
+- **不要对全库直接执行 `--fix`**：`F401` 会删除"未使用"的导入，而部分导入用于再导出，或被测试通过
+  `monkeypatch` 按模块路径引用，自动删除可能破坏行为。修复后务必运行 `uv run pytest`。
+- 不要使用 `--unsafe-fixes`，除非逐项审查了 diff。
+
+全量格式化产生的大批改动会影响 `git blame`。提交该次格式化时，把提交哈希追加到根目录
+`.git-blame-ignore-revs`，并执行一次：
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+之后 `git blame` 会跳过这次纯格式化提交。
+
 ## 版本更新与发布
 
 当前应用版本记录在根目录 `VERSION` 文件中。发布新版本时，在项目根目录执行：
