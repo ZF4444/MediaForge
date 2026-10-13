@@ -436,9 +436,16 @@ function bindInputThumbsDrag(node, items, container=inputThumbsRow){
         const index = Number(el.dataset.thumbIndex || -1);
         const canReorder = items.length > 1 && Boolean(items[index]?.nodeId);
         el.draggable = canReorder;
+        el.addEventListener('mousedown', () => {
+            if(container === inputThumbsRow) saveMentionRange();
+        });
         el.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
+            if(container !== inputThumbsRow || e.target.closest('.input-thumb-x') || thumbDragIndex >= 0) return;
+            const image=items[index];
+            if(!image?.url || promptInput.getAttribute('contenteditable') === 'false') return;
+            insertMentionToken({...image,alias:image.name || `图片${index + 1}`}, {removeAt:false});
         });
         const videoPreview = el.querySelector('.input-thumb-video-preview');
         if(videoPreview){
@@ -1153,17 +1160,23 @@ function maybeOpenMentionPicker(){
     if(/@$/.test(before)) showMentionPicker();
     else closeMentionPicker();
 }
-function insertMentionToken(img){
+function insertMentionToken(img, {removeAt=true}={}){
     if(!img?.url) return;
+    const savedRange=mentionRange?.cloneRange();
     promptInput.focus();
     const sel = window.getSelection();
-    if(mentionRange){
+    const validRange=savedRange && promptInput.contains(savedRange.startContainer) && promptInput.contains(savedRange.endContainer);
+    if(validRange){
         sel.removeAllRanges();
-        sel.addRange(mentionRange);
+        sel.addRange(savedRange);
     }
     const range = sel.rangeCount ? sel.getRangeAt(0) : document.createRange();
+    if(!validRange || !promptInput.contains(range.commonAncestorContainer)){
+        range.selectNodeContents(promptInput);
+        range.collapse(false);
+    }
     let removedAt = false;
-    if(range.startContainer?.nodeType === Node.TEXT_NODE && range.startOffset > 0){
+    if(removeAt && range.startContainer?.nodeType === Node.TEXT_NODE && range.startOffset > 0){
         const text = range.startContainer.textContent || '';
         if(text[range.startOffset - 1] === '@'){
             range.setStart(range.startContainer, range.startOffset - 1);
@@ -1171,7 +1184,7 @@ function insertMentionToken(img){
             removedAt = true;
         }
     }
-    if(!removedAt) {
+    if(removeAt && !removedAt) {
         const walker = document.createTreeWalker(promptInput, NodeFilter.SHOW_TEXT);
         let lastText = null;
         while(walker.nextNode()) lastText = walker.currentNode;
@@ -1202,6 +1215,8 @@ function insertMentionToken(img){
     sel.addRange(range);
     closeMentionPicker();
     promptInput.focus();
+    saveMentionRange();
+    promptInput.dispatchEvent(new Event('input', {bubbles:true}));
     renderInputThumbsRow(selectedNode());
 }
 function collectPromptParts(){
