@@ -14,7 +14,11 @@
         if (!global.marked || !global.DOMPurify) {
             return '<p>' + escapeHtml(source).replace(/\r?\n/g, '<br>') + '</p>';
         }
-        var parsed = global.marked.parse(source, {
+        // 原始 HTML 一律按字面文本显示，避免 <image1> 等占位符被 DOMPurify 当作未知标签丢弃。
+        var parser = global.marked.Marked
+            ? new global.marked.Marked({renderer: {html: function (token) { return escapeHtml(token.text != null ? token.text : token.raw); }}})
+            : global.marked;
+        var parsed = parser.parse(source, {
             async: false,
             breaks: true,
             gfm: true,

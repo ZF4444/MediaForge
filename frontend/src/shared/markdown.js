@@ -1,4 +1,4 @@
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import DOMPurify from 'dompurify';
 
 export function escapeHtml(value) {
@@ -7,11 +7,16 @@ export function escapeHtml(value) {
   }[character]));
 }
 
+// 原始 HTML 一律按字面文本显示：模型回复里的 <image1> 等占位符否则会被 DOMPurify 当作未知标签丢弃。
+const markdownParser = new Marked({
+  renderer: { html: token => escapeHtml(token.text ?? token.raw ?? '') },
+});
+
 export function renderMarkdown(markdown, { emptyText = '暂无内容' } = {}) {
   const source = String(markdown ?? '').trim();
   if (!source) return `<p class="md-empty">${escapeHtml(emptyText)}</p>`;
 
-  const parsed = marked.parse(source, { async: false, breaks: true, gfm: true });
+  const parsed = markdownParser.parse(source, { async: false, breaks: true, gfm: true });
   const clean = DOMPurify.sanitize(parsed, {
     USE_PROFILES: { html: true },
     ADD_ATTR: ['target'],
