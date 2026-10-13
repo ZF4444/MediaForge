@@ -14,7 +14,7 @@
   let referencePickerSource = 'canvas';
   let agentDropRange = null;
   let agentDropDepth = 0;
-  const status = value => { $('canvasAgentStatus').textContent=value || ''; };
+  const status = value => { lastLiveStatus=String(value || ''); renderLiveStatus(); };
   const planDecisionKey = (runId, version) => `${runId || ''}:${version || ''}`;
   const planStatusLabel = status => ({confirmed:'已确认',rejected:'已取消'})[String(status || '')] || '';
   const timeLabel = () => new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit'}).format(new Date());
@@ -112,7 +112,8 @@
   };
   const message = (content, kind='agent', references=[]) => {
     if (!content) return;
-    if (kind === 'agent') sealLiveStatus();
+    if (!rebuildingMessages && kind === 'agent') sealLiveStatus();
+    if (!rebuildingMessages && kind === 'user') clearLiveStatus();
     const el=document.createElement('div'); el.className=`canvas-agent-message ${kind}`;
     const body=document.createElement('div'); body.className='canvas-agent-message-body'; if(kind==='user')renderUserMessageContent(body,content,references); else { renderMarkdownMessageContent(body,content); appendMessageReferences(body,references); } el.appendChild(body);
     if (kind === 'user') { const time=document.createElement('div'); time.className='canvas-agent-message-time'; time.textContent=timeLabel(); el.appendChild(time); }
@@ -139,17 +140,17 @@
   };
   const orderedEvents = events => [...events].sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
   const renderLiveIcons = root => { if(window.lucide) window.lucide.createIcons({root}); };
-  const createLiveStatus = events => {
+  const createLiveStatus = (events, completed=false, summary='') => {
     const el=document.createElement('div'); el.className='canvas-agent-live-status';
     const groupKey=eventGroupKey(events);
     let expanded=expandedEventGroups.has(groupKey);
     const render = () => {
     el.innerHTML='';
     const ordered=orderedEvents(events);
-    const first=ordered[0] || {type:'status',message:lastLiveStatus,data:{}};
+    const first=ordered[ordered.length-1] || {type:'status',message:lastLiveStatus,data:{}};
     const toggle=document.createElement('button'); toggle.type='button'; toggle.className='canvas-agent-live-toggle'; toggle.setAttribute('aria-expanded', String(expanded));
     const icon=document.createElement('i'); icon.setAttribute('data-lucide', liveEventIcon(first.type));
-    const text=document.createElement('span'); text.className='canvas-agent-live-text'; text.textContent=liveEventText(first.type, first.data, first.message);
+    const text=document.createElement('span'); text.className='canvas-agent-live-text'; text.textContent=completed ? '已处理' : (summary || liveEventText(first.type, first.data, first.message));
     const duration=document.createElement('span'); duration.className='canvas-agent-live-duration'; duration.textContent=liveEventDuration(first.data);
     const chevron=document.createElement('i'); chevron.className='canvas-agent-live-chevron'; chevron.setAttribute('data-lucide', expanded ? 'chevron-up' : 'chevron-down');
     toggle.append(icon, text, duration, chevron); toggle.addEventListener('click', () => { expanded=!expanded; if(expanded) expandedEventGroups.add(groupKey); else expandedEventGroups.delete(groupKey); render(); }); el.appendChild(toggle);
@@ -170,8 +171,9 @@
   const renderLiveStatus = () => {
     const box=$('canvasAgentMessages'); let el=box.querySelector('.canvas-agent-live-status.is-active');
     if (!liveEvents.length && !lastLiveStatus) { el?.remove(); return; }
-    const next=createLiveStatus(liveEvents.length ? liveEvents : [{type:'status',message:lastLiveStatus,data:{}}]);
+    const next=createLiveStatus(liveEvents.length ? liveEvents : [{type:'status',message:lastLiveStatus,data:{}}],false,lastLiveStatus);
     next.classList.add('is-active');
+    next.setAttribute('aria-live', 'polite');
     if(el) el.replaceWith(next); else box.appendChild(next);
     renderLiveIcons(next);
     if(!rebuildingMessages && messageFollow) box.scrollTop=box.scrollHeight;
@@ -188,8 +190,16 @@
     renderLiveStatus();
   };
   const liveStatus = content => { if (!content) return; lastLiveStatus=content; renderLiveStatus(); };
-  const sealLiveStatus = () => { $('canvasAgentMessages').querySelector('.canvas-agent-live-status.is-active')?.classList.remove('is-active'); liveEvents=[]; lastLiveStatus=''; };
-  const clearLiveStatus = () => { lastLiveStatus=''; liveEvents=[]; $('canvasAgentMessages').querySelectorAll('.canvas-agent-live-status').forEach(el=>el.remove()); };
+  const sealLiveStatus = () => {
+    const box=$('canvasAgentMessages');
+    const events=liveEvents.length ? liveEvents : [{type:'status',message:lastLiveStatus || '已处理',data:{}}];
+    const next=createLiveStatus(events,true);
+    const current=box.querySelector('.canvas-agent-live-status.is-active');
+    if(current) current.replaceWith(next); else box.appendChild(next);
+    renderLiveIcons(next);
+    liveEvents=[]; lastLiveStatus='';
+  };
+  const clearLiveStatus = () => { lastLiveStatus=''; liveEvents=[]; renderLiveStatus(); };
   const system = content => message(content, 'system');
   const modelStorageKey = () => `canvas-agent-model:${window.CanvasAgentBridge.canvasId()}`;
   function modelSelection() {
@@ -233,6 +243,7 @@
     plan.innerHTML=''; plan.hidden=true; artifacts.innerHTML=''; artifacts.hidden=true;
     messages.append(plan, artifacts);
     state.plan=null; state.tasks=[];
+    renderLiveStatus();
   }
   function renderSkills() { const box=$('canvasAgentSkills'); box.innerHTML=''; state.skills.forEach(skill=>{const tag=document.createElement('span');tag.className='canvas-agent-skill';tag.textContent=`${skill.name}${skill.version ? ` v${skill.version}` : ''}`;box.appendChild(tag);});box.hidden=!state.skills.length; }
   function renderMentions() {
@@ -260,7 +271,6 @@
     if(run.id){ state.runId=run.id; window.CanvasAgentEvents.saveRun(); }
     if(data.plan?.version && data.plan.version !== state.plan?.version) confirmationAccepted=false;
     if(run.status !== 'awaiting_confirmation') confirmationAccepted=false;
-    if(!state.operationId) status(`${run.status || 'unknown'} · ${run.phase || ''}`);
     const activeOperation=(data.operations||[]).find(item=>['accepted','queued','running'].includes(item.status));
     state.sequence=Math.max(state.sequence,...(data.events||[]).map(event=>Number(event.sequence)||0));
     state.operationId=activeOperation?.id || '';
@@ -276,7 +286,7 @@
     if(renderKey===lastRunRenderKey) return;
     lastRunRenderKey=renderKey;
     const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'), artifactsBox=$('canvasAgentArtifacts'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
-    const loaded=new Map(), planStates=new Map(planDecisions); const persistedPlanStatus=planStatusLabel(data.plan?.status); if(persistedPlanStatus) planStates.set(planDecisionKey(run.id,data.plan.version),persistedPlanStatus); let latestProgress=''; const timeline=[];
+    const loaded=new Map(), planStates=new Map(planDecisions); const persistedPlanStatus=planStatusLabel(data.plan?.status); if(persistedPlanStatus) planStates.set(planDecisionKey(run.id,data.plan.version),persistedPlanStatus); const timeline=[];
     (data.messages||[]).forEach(item=>timeline.push({kind:'message',at:Number(item.created_at)||0,item}));
     (data.events||[]).forEach(event=>{
       const type=String(event.type||'').replace(/^agent\./,''); const payload=event.payload||event.payload_json||{};
@@ -284,15 +294,16 @@
       if(type==='plan.confirmed')planStates.set(planDecisionKey(run.id,payload.plan_version),'已确认');
       if(type==='plan.rejected')planStates.set(planDecisionKey(run.id,payload.plan_version),'已取消');
       const projection=eventProjector()?.project?.({type,payload});
-      const historyVisible=projection?.progress ? projection.progress.history : true;
-      if(historyVisible && isConversationEvent(type,payload)) timeline.push({kind:'event',at:Number(event.created_at)||0,item:live});
+      // Restore transient progress too, so every reply retains its status row.
+      if(projection?.progress) timeline.push({kind:'event',at:Number(event.created_at)||0,item:live});
       if(type==='plan.created' && payload.plan) timeline.push({kind:'plan',at:Number(event.created_at)||0,item:{version:payload.plan_version,content_json:payload.plan}});
       if(projection?.skillBadge?.name) loaded.set(`${projection.skillBadge.name}:${projection.skillBadge.version||''}`,projection.skillBadge);
     });
-    timeline.sort((a,b)=>a.at-b.at || (a.kind==='event' ? -1 : 1));
-    const activePlan=run.status==='awaiting_confirmation'&&!confirmationAccepted; let pending=[]; let turnOpen=false; let planRendered=false; const renderedPlanVersions=new Set();
+    const timelineRank=entry=>entry.kind==='message' ? (entry.item.role==='user' ? 0 : 3) : entry.kind==='event' ? 1 : 2;
+    timeline.sort((a,b)=>a.at-b.at || timelineRank(a)-timelineRank(b) || Number(a.item.sequence||0)-Number(b.item.sequence||0));
+    const activePlan=run.status==='awaiting_confirmation'&&!confirmationAccepted; let planRendered=false; const renderedPlanVersions=new Set();
     timeline.forEach(entry=>{
-      if(entry.kind==='event'){ if(turnOpen){ pending.push(entry.item); latestProgress=liveEventText(entry.item.type,entry.item.data,entry.item.message); } return; }
+      if(entry.kind==='event'){ liveEvents.push(entry.item); return; }
       if(entry.kind==='plan'){
         const planVersion=String(entry.item.version||'');
         if(renderedPlanVersions.has(planVersion)) return;
@@ -304,13 +315,14 @@
         messages.appendChild(snapshot); window.CanvasAgentPlan.render(data.plan&&String(entry.item.version||'')===String(data.plan.version||'')?data.plan:entry.item,{interactive:false,container:snapshot,status:planStates.get(planDecisionKey(run.id,entry.item.version))||''}); planRendered=true; return;
       }
       const kind=entry.item.role==='user'?'user':entry.item.role==='system'?'system':'agent';
-      if(kind==='user'){ pending=[]; turnOpen=true; }
-      if(kind==='agent' && pending.length){ const liveStatus=createLiveStatus(pending); messages.appendChild(liveStatus); renderLiveIcons(liveStatus); pending=[]; }
+      if(kind==='user'){ liveEvents=[]; lastLiveStatus=''; }
+      if(kind==='agent') sealLiveStatus();
       message(entry.item.content,kind,entry.item.metadata_json?.media_references||[]);
-      if(kind==='agent' || kind==='system') turnOpen=false;
     });
-    liveEvents=turnOpen ? pending : [];
-    if(liveEvents.length){ lastLiveStatus=latestProgress; renderLiveStatus(); }
+    liveEvents=orderedEvents(liveEvents).slice(-80);
+    const latest=liveEvents[liveEvents.length-1];
+    lastLiveStatus=latest ? liveEventText(latest.type,latest.data,latest.message) : '';
+    renderLiveStatus();
     state.skills=[...loaded.values()]; renderSkills();
     // The plan and artifacts live in the message flow. Restore their DOM nodes
     // before their renderers resolve them by id after rebuilding the timeline.

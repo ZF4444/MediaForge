@@ -216,10 +216,6 @@ class PlanConfirmation(ProtocolModel):
 
 
 class SemanticPlan(ProtocolModel):
-    mode: Literal["fast_track"] = Field(
-        default="fast_track",
-        description="Execution strategy. fast_track: execute steps directly with minimal LLM calls.",
-    )
     goal: str = Field(
         min_length=1,
         description="One-sentence description of what this plan achieves, written from the user's perspective.",

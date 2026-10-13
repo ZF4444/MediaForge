@@ -38,9 +38,12 @@
       });
     }
     if (['operation.succeeded','operation.failed','operation.cancelled'].includes(type)) state.operationId = '';
-    if (data.message) window.CanvasAgentPanel.status(data.message);
-    else if (type.startsWith('operation.')) window.CanvasAgentPanel.status(type);
-    else window.CanvasAgentPanel.status(type || '处理中');
+    // Structured progress already updates the unified conversation status.
+    // Lifecycle events must not replace it with internal event names or add
+    // another status row after the assistant reply.
+    if (!projection.progress && data.message && !projection.notice && !['operation.succeeded','operation.failed','operation.cancelled'].includes(type)) {
+      window.CanvasAgentPanel.status(data.message);
+    }
     if (type === 'message.replied' && data.reply) {
       window.CanvasAgentPanel.message(data.reply, 'agent', data.media_references || []);
     }

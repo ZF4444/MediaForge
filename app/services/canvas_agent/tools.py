@@ -318,11 +318,13 @@ def build_canvas_tools(
         )
 
     tools = [
-        # read_canvas_context,
-        # read_capability_registry, read_capability_parameters,
+        read_canvas_context,
+        read_capability_registry,
+        read_capability_parameters,
         read_canvas_skill,
         read_canvas_skill_file,
-        # propose_canvas_patch, request_clarification,
+        propose_canvas_patch,
+        # request_clarification,  # TODO 目前没有联动前端，呈现给用户的还是文字，无意义
     ]
     # Planning graphs must not expose the mutation tool. The graph only adds
     # it to its deterministic post-confirmation ToolNode.
