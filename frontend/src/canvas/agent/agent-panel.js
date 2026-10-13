@@ -206,7 +206,7 @@
   function ensureModelsLoaded() { if (!modelLoadPromise) modelLoadPromise=loadModels().finally(()=>{ modelLoadPromise=null; }); return modelLoadPromise; }
   function onModelChange(event) { const option=event.target.selectedOptions[0]; state.modelName=option?.dataset.model || ''; state.modelConnection=option?.dataset.connection || ''; state.modelId=option?.dataset.modelId || ''; saveModelSelection(); }
   const runTitle = run => String(run.title || run.message_title || '').trim().replace(/\s+/g,' ');
-  const runLabel = run => { const title=runTitle(run); const short=title ? (title.length > 34 ? `${title.slice(0,34)}…` : title) : '新建对话'; return `${short} · ${run.status || 'created'}`; };
+  const runLabel = run => { const title=runTitle(run); const short=title ? (title.length > 34 ? `${title.slice(0,34)}…` : title) : '未命名对话'; return `${short} · ${run.status || 'created'}`; };
   async function refreshRuns() {
     const select=$('canvasAgentRunSelect'), menu=$('canvasAgentRunMenu');
     let runs=[];
