@@ -1,0 +1,4 @@
+interface:
+  display_name: "平台工作流执行"
+  short_description: "重写场景资产提示词并正确执行已配置的图像工作流（当前支持 X2）"
+  default_prompt: "使用 $mediaforge-workflow-runner，解析场景资产需求，重写提示词并执行匹配的图像工作流；当前优先使用 X2 场景单体文生图。"
