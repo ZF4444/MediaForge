@@ -234,8 +234,14 @@ function imageLayout(images, scale=1, node=null){
         const pending = Number(node?.pending) > 0 || Boolean(node?.queued);
         const explicitW = pending ? Number(node?.w) : NaN;
         const explicitH = pending ? Number(node?.h) : NaN;
-        const fallbackW = pending ? 260 * s : EMPTY_GENERATION_NODE_WIDTH;
-        const fallbackH = pending ? 180 * s : EMPTY_GENERATION_NODE_HEIGHT;
+        // Agent tasks enter the queue on the server and do not execute the
+        // manual-run initializer. Reuse its sizing for workflow placeholders.
+        const workflowPendingBox = pending && ['runninghub','comfy'].includes(node?.runSettings?.engine)
+            && typeof pendingBoxSize === 'function'
+            ? pendingBoxSize(node.pending, {sourceNode:node, candidatePool:node.pendingCandidatePool, runSettings:node.runSettings})
+            : null;
+        const fallbackW = workflowPendingBox?.w || (pending ? 260 * s : EMPTY_GENERATION_NODE_WIDTH);
+        const fallbackH = workflowPendingBox?.h || (pending ? 180 * s : EMPTY_GENERATION_NODE_HEIGHT);
         return {
             cols:1,
             rows:1,

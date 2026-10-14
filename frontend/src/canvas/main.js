@@ -2523,15 +2523,15 @@ function ratioBoxSize(sourceSettings=settings){
         ? {w:base, h:Math.max(1, Math.round(base / aspect))}
         : {w:Math.max(1, Math.round(base * aspect)), h:base};
 }
-function expectedOutputSize(){
-    if(settings.engine === 'comfy'){
+function expectedOutputSize(runSettings=settings){
+    if(runSettings.engine === 'comfy'){
         return {w:1024, h:1024};
     }
-    if(settings.engine === 'runninghub') return {w:1024, h:1024};
+    if(runSettings.engine === 'runninghub') return {w:1024, h:1024};
     return ratioBoxSize();
 }
-function explicitRequestOutputSizeForPending(){
-    if(isApiLikeEngine(settings.engine) && settings.apiKind !== 'video'){
+function explicitRequestOutputSizeForPending(runSettings=settings){
+    if(isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'){
         return ratioBoxSize();
     }
     return null;
@@ -2566,12 +2566,12 @@ function displayBoxFromNaturalSize(size){
     return {w:layout.width, h:layout.height};
 }
 function pendingBaseBoxSize(options={}){
-    const requestSize = explicitRequestOutputSizeForPending();
+    const requestSize = explicitRequestOutputSizeForPending(options.runSettings || settings);
     if(requestSize) return displayBoxFromNaturalSize(requestSize);
     const sourceSize = pendingSourceBoxSize(options);
     if(sourceSize?.display) return {w:sourceSize.w, h:sourceSize.h};
     if(sourceSize) return displayBoxFromNaturalSize(sourceSize);
-    return displayBoxFromNaturalSize(expectedOutputSize());
+    return displayBoxFromNaturalSize(expectedOutputSize(options.runSettings || settings));
 }
 function pendingBoxSize(count, options={}){
     const base = pendingBaseBoxSize(options);

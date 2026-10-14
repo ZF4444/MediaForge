@@ -63,6 +63,53 @@ def _image_request_for_node(
     return request
 
 
+def _runninghub_request(node: dict[str, Any], target: Any) -> dict[str, Any]:
+    settings = node.get("runSettings") or {}
+    resource = target.resource.settings
+    values = settings.get("rhParams") or {}
+    prompt = settings.get("prompt") or node.get("text") or ""
+    fields = []
+    for field in resource.get("fields") or []:
+        if field.get("enabled") is False:
+            continue
+        node_id, name = str(field.get("nodeId") or ""), str(field.get("fieldName") or "")
+        key = str(field.get("id") or f"{node_id}::{name}")
+        value = values.get(key, field.get("fieldValue", ""))
+        if isinstance(value, dict):
+            value = value.get("value", "")
+        if str(field.get("fieldType") or "").upper() == "PROMPT" and prompt:
+            value = prompt
+        fields.append({"nodeId": node_id, "fieldName": name, "fieldValue": str(value)})
+    return {"connection_id": target.connection.id, "resource_id": target.resource.id,
+            "webappId": resource["app_id"], "nodeInfoList": fields,
+            "instanceType": settings.get("rhInstanceType") or ""}
+
+
+async def _submit_runninghub_node(user_id: str, run_id: str, node: dict[str, Any]) -> dict[str, Any]:
+    from app.ai.database_repository import DatabaseAIRepository
+    from .event_factory import task_lifecycle
+    from .events import emit_agent_event
+
+    settings = node.get("runSettings") or {}
+    target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable,
+        resource_id=settings.get("resource_id", ""),
+        connection_id=settings.get("connection_id", ""), kind="runninghub_app")
+    await authorize_target_task(target, user_id)
+    request = _runninghub_request(node, target)
+    task_id = f"canvas_agent_rh_{uuid.uuid4().hex}"
+    await create_canvas_task({"id": task_id, "type": "online-runninghub", "status": "queued",
+        "connection_id": target.connection.id, "resource_id": target.resource.id,
+        "owner_id": user_id, "agent_run_id": run_id, "agent_node_id": node["id"],
+        "deadline_at": time.time() + CANVAS_TASK_TIMEOUT_SECONDS, "attempt": 1, "request": request})
+    event = task_lifecycle("queued", {"task_id": task_id, "node_id": node["id"],
+        "status": "queued", "connection_id": target.connection.id,
+        "resource_id": target.resource.id, "kind": "image"})
+    await emit_agent_event(user_id, run_id, event.event_type, event.payload,
+        phase=event.phase, severity=event.severity)
+    await enqueue_canvas_task(task_id)
+    return {"task_id": task_id, "node_id": node["id"], "status": "queued"}
+
+
 async def submit_run_requests(
     user_id: str,
     canvas_id: str,
@@ -91,6 +138,9 @@ async def submit_run_requests(
             raise ValueError("提示词节点不能直接执行生图，请指定生图节点")
         if node.get("type") != "smart-image":
             raise ValueError("指定节点不是生图节点")
+        if (node.get("runSettings") or {}).get("engine") == "runninghub":
+            submitted.append(await _submit_runninghub_node(user_id, run_id, node))
+            continue
         if capability is None:
             raise ValueError("当前没有可用的生图模型")
         task_id = f"canvas_agent_img_{uuid.uuid4().hex}"

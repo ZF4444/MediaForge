@@ -294,7 +294,24 @@
     const promptRow=document.createElement('div');promptRow.className='prompt-row';const content=document.createElement('textarea');content.className='canvas-agent-config-prompt prompt-input';content.value=values.content;content.disabled=!interactive&&!history;content.readOnly=history;content.placeholder='提示词';content.style.setProperty('--prompt-h','124px');if(history){content.classList.add('canvas-agent-history-prompt');content.setAttribute('aria-expanded','false');content.title='点击展开提示词';content.addEventListener('click',()=>{const expanded=content.classList.toggle('expanded');content.setAttribute('aria-expanded',String(expanded));content.title=expanded?'点击收起提示词':'点击展开提示词';});}content.addEventListener('input',()=>{values.content=content.value;writePrompt(values.params,content.value);});promptRow.appendChild(content);card.appendChild(promptRow);
     const controls=document.createElement('div');controls.className='canvas-agent-config-controls dynamic-params param-row';card.appendChild(controls);
     if(withActions&&interactive){const footer=document.createElement('div');footer.className='canvas-agent-confirm-actions';const authorization=document.createElement('label');authorization.className='setting-check';authorization.innerHTML='<input type="checkbox" id="canvasAgentAuthorizeNodes"><span class="check-box"></span><span>允许本轮修改引用的用户节点</span>';authorization.querySelector('input').addEventListener('change',event=>authorization.classList.toggle('active',event.target.checked));footer.appendChild(authorization);const buttons=document.createElement('div');buttons.className='canvas-agent-plan-actions';[['取消',false,'cascade-run-btn','x'],['确认',true,'run-btn','play']].forEach(([caption,approved,klass,icon])=>{const button=document.createElement('button');button.type='button';button.className=`canvas-agent-action ${klass}`;button.textContent=caption;const glyph=document.createElement('i');glyph.setAttribute('data-lucide',icon);button.prepend(glyph);button.addEventListener('click',()=>window.CanvasAgentPanel.confirm(approved));buttons.appendChild(button);});footer.appendChild(buttons);card.appendChild(footer);}
-    card._override=()=>({step_id:values.step_id,title:values.title,content:values.content,params:values.params});void populateSchema(card,step,values,interactive,request,history,content);return card;
+    card._override=()=>step.node?({step_id:values.step_id,title:values.title,content:values.content,params:values.params}):null;void populateSchema(card,step,values,interactive,request,history,content);return card;
+  }
+  // Execution steps reference the same node; they are operations, not another
+  // editable configuration. Keep standalone runs visible for existing nodes.
+  function configurationSteps(steps){
+    const configurable=new Set(['canvas.create_node','canvas.update_node_params','canvas.replace_node_content','canvas.run_node','canvas.run_group']);
+    const target=step=>step.action==='canvas.create_node'?step.id:(step.target_node_id||step.from_step);
+    const configured=new Set(steps.filter(step=>step.node&&!['canvas.run_node','canvas.run_group'].includes(step.action)).map(target).filter(Boolean));
+    const shownRuns=new Set();
+    return steps.filter(step=>{
+      if(!step.node&&!configurable.has(step.action))return false;
+      if(['canvas.run_node','canvas.run_group'].includes(step.action)){
+        const id=target(step);
+        if(id&&(configured.has(id)||shownRuns.has(id)))return false;
+        if(id)shownRuns.add(id);
+      }
+      return true;
+    });
   }
   function render(row,options={}){
     const box=options.container||document.getElementById('canvasAgentPlan'),interactive=options.interactive!==false,renderKey=`${row?.version||''}:${interactive?'interactive':'readonly'}`;
@@ -302,8 +319,7 @@
     closePopovers();const request=++schemaRequest;box.innerHTML='';if(!options.container)state.plan=row||null;const plan=row?.content_json||{},steps=Array.isArray(plan.steps)?plan.steps:[];if(!row){box.hidden=true;return;}box.dataset.planVersion=renderKey;
     const title=document.createElement('h4');title.textContent=plan.goal||'Agent 计划';box.appendChild(title);
     const history=Boolean(options.container)||Boolean(options.history);
-    const configurableActions=new Set(['canvas.create_node','canvas.update_node_params','canvas.replace_node_content','canvas.run_node','canvas.run_group']);
-    const nodeSteps=steps.filter(step=>step.node||configurableActions.has(step.action));const configs=nodeSteps.map((step,index)=>config(step,interactive,request,interactive&&index===nodeSteps.length-1,history,options.status||''));if(configs.length)configs.forEach(item=>box.appendChild(item));else{const summary=document.createElement('div');summary.className='canvas-agent-plan-meta';summary.textContent=steps.map(text).join('；');box.appendChild(summary);}if(!interactive)box.hidden=false;else box.hidden=false;
+    const nodeSteps=configurationSteps(steps);const configs=nodeSteps.map((step,index)=>config(step,interactive,request,interactive&&index===nodeSteps.length-1,history,options.status||''));if(configs.length)configs.forEach(item=>box.appendChild(item));else{const summary=document.createElement('div');summary.className='canvas-agent-plan-meta';summary.textContent=steps.map(text).join('；');box.appendChild(summary);}if(!interactive)box.hidden=false;else box.hidden=false;
     window.lucide?.createIcons();
   }
   const collectOverrides=()=>[...document.querySelectorAll('#canvasAgentPlan .canvas-agent-node-config')].map(card=>card._override?.()).filter(Boolean);

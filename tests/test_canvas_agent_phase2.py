@@ -296,3 +296,40 @@ def test_rejected_plan_resumes_graph_and_keeps_run_available(monkeypatch):
 )
 def test_failure_classification(error, category):
     assert classify_failure(error) == category
+
+
+def test_runninghub_workflow_dispatch_uses_native_task_queue(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.services.canvas_agent import canvas_task_dispatch as dispatch
+    from app.ai.database_repository import DatabaseAIRepository
+    from app.services.canvas_agent import events
+
+    target = SimpleNamespace(connection=SimpleNamespace(id='rh'), resource=SimpleNamespace(
+        id='x2', settings={'app_id': 'upstream-x2', 'fields': [
+            {'id': '492::text', 'nodeId': '492', 'fieldName': 'text', 'fieldType': 'PROMPT'},
+            {'id': '13::aspect_ratio', 'nodeId': '13', 'fieldName': 'aspect_ratio', 'fieldValue': '1:1 (Square)'},
+        ]}))
+    node = {'id': 'volcano', 'type': 'smart-image', 'genKind': 'workflow', 'runSettings': {
+        'engine': 'runninghub', 'resource_id': 'x2', 'prompt': '火山',
+        'rhParams': {'13::aspect_ratio': {'value': '3:2'}}}}
+    monkeypatch.setattr(dispatch, 'load_canvas_payload', lambda *args: {'nodes': [node]})
+    monkeypatch.setattr(dispatch, 'from_repository', lambda: SimpleNamespace(get=lambda name: None))
+    monkeypatch.setattr(DatabaseAIRepository, 'resolve_executable', lambda *args, **kwargs: target)
+    authorize, create, enqueue, emit = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(dispatch, 'authorize_target_task', authorize)
+    monkeypatch.setattr(dispatch, 'create_canvas_task', create)
+    monkeypatch.setattr(dispatch, 'enqueue_canvas_task', enqueue)
+    monkeypatch.setattr(events, 'emit_agent_event', emit)
+    result = asyncio.run(dispatch.submit_run_requests('user', 'canvas', 'run',
+        [{'op': 'run_node', 'node_id': 'volcano'}], prompt='request'))
+    task = create.call_args.args[0]
+    assert task['type'] == 'online-runninghub'
+    assert task['agent_node_id'] == 'volcano'
+    assert task['request']['webappId'] == 'upstream-x2'
+    assert task['request']['nodeInfoList'] == [
+        {'nodeId': '492', 'fieldName': 'text', 'fieldValue': '火山'},
+        {'nodeId': '13', 'fieldName': 'aspect_ratio', 'fieldValue': '3:2'}]
+    authorize.assert_awaited_once()
+    enqueue.assert_awaited_once_with(result[0]['task_id'])

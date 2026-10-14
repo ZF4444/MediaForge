@@ -56,3 +56,18 @@ html.studio-theme-dark .canvas-agent-modelbar select, body.studio-theme-dark .ca
 .canvas-agent-node-config .canvas-agent-smart-control.pinned .canvas-agent-options-popover:popover-open{opacity:1;visibility:visible;pointer-events:auto;transform:none;}
 .canvas-agent-node-config .canvas-agent-smart-control .canvas-agent-options-popover:not(:popover-open){display:none;}
 .canvas-agent-node-config .canvas-agent-options-popover::after{display:none;}
+
+/* Result references remain compact capsules inside Markdown replies. */
+.canvas-agent-message-body .canvas-agent-message-references .mention-image-token > img,
+.canvas-agent-message-body .canvas-agent-message-references .mention-image-token > video {
+  display:block;
+  width:18px;
+  height:18px;
+  min-width:18px;
+  max-width:18px;
+  max-height:18px;
+  margin:0;
+  border-radius:999px;
+  object-fit:cover;
+  flex:0 0 18px;
+}

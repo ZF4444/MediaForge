@@ -167,7 +167,7 @@ class SemanticStep(ProtocolModel):
     )
     target_node_id: str = Field(
         default="",
-        description="Real id of an existing canvas node for update_node_params, replace_node_content, and run_node actions, or an existing group id for run_group. Leave empty when creating a new node; connect actions use from_step/to_step instead.",
+        description="Target existing node/group id, or the create step id when running a node created in this plan. Required for update_node_params, replace_node_content, run_node and run_group. Leave empty for create/connect actions.",
     )
     from_step: str = Field(
         default="",

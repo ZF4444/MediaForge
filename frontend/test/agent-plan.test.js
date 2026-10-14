@@ -12,7 +12,7 @@ function planSandbox(stableCanvasTarget, resources = []) {
     URLSearchParams,
   };
   vm.createContext(context);
-  vm.runInContext(source.replace('CanvasAgentPlan={render,collectOverrides};', 'CanvasAgentPlan={resolveStableTarget,planValues,schemaUrl};'), context);
+  vm.runInContext(source.replace('CanvasAgentPlan={render,collectOverrides};', 'CanvasAgentPlan={resolveStableTarget,planValues,schemaUrl,configurationSteps};'), context);
   return context.CanvasAgentPlan;
 }
 const targetResolver = resolver => planSandbox(resolver).resolveStableTarget;
@@ -60,4 +60,39 @@ describe('Agent confirmation parameter schema target', () => {
     const { planValues } = planSandbox();
     expect(planValues({node:{semantic_type:'image_generation',capability:'image.text_to_image',params:{runSettings:{engine:'api',model:'gpt-image-2'}}}}).workflow).toBe(false);
   });
+});
+
+
+describe('Agent confirmation configurations', () => {
+  it('shows one configuration for create and run, even if run repeats the node', () => {
+    const { configurationSteps } = planSandbox();
+    const create = {id:'create',action:'canvas.create_node',node:{title:'X2'}};
+    const steps = [create,{id:'run',action:'canvas.run_node',target_node_id:'create',node:{title:'X2'}}];
+    expect(configurationSteps(steps).map(step=>step.id)).toEqual(['create']);
+    expect(steps).toHaveLength(2);
+  });
+  it('keeps distinct nodes even when their workflow and title match', () => {
+    const { configurationSteps } = planSandbox();
+    const steps = ['a','b'].map(id=>({id,action:'canvas.create_node',node:{title:'X2'}}));
+    expect(configurationSteps(steps)).toHaveLength(2);
+  });
+  it('retains standalone runs and merges update followed by run', () => {
+    const { configurationSteps } = planSandbox();
+    const steps = [
+      {id:'update',action:'canvas.update_node_params',target_node_id:'existing',node:{params:{}}},
+      {id:'run',action:'canvas.run_node',target_node_id:'existing'},
+      {id:'other',action:'canvas.run_node',target_node_id:'other-node'},
+    ];
+    expect(configurationSteps(steps).map(step=>step.id)).toEqual(['update','other']);
+  });
+});
+
+
+it('merges the actual X2 create/run plan using from_step', () => {
+  const { configurationSteps } = planSandbox();
+  const steps = [
+    {id:'step_create_volcano_node',action:'canvas.create_node',node:{title:'X2场景单体-喷发火山'}},
+    {id:'step_run_volcano_node',action:'canvas.run_node',target_node_id:'',from_step:'step_create_volcano_node',node:null},
+  ];
+  expect(configurationSteps(steps).map(step=>step.id)).toEqual(['step_create_volcano_node']);
 });

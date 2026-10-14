@@ -298,7 +298,7 @@ def semantic_plan_to_patch(
             operations.append(
                 {
                     "op": step.action.removeprefix("canvas."),
-                    "node_id": step.target_node_id,
+                    "node_id": step.target_node_id or (step.from_step if step.action in {"canvas.run_node", "canvas.run_group"} else ""),
                     "params": (step.node.params if step.node else {}),
                     "content": (semantic_prompt(step.node.params) if step.node else ""),
                 }

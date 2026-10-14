@@ -615,3 +615,14 @@ def test_semantic_plan_native_schema_is_azure_strict_compatible():
     )
     assert plan.steps[0].node.params == {"model": "demo"}
     assert plan.steps[0].placement == {"x": 1}
+
+
+def test_run_created_node_accepts_from_step_reference():
+    plan = SemanticPlan.model_validate({"goal": "create and run X2", "steps": [
+        {"id": "create", "action": "canvas.create_node", "node": {
+            "semantic_type": "workflow_generation", "title": "X2", "params": {}}},
+        {"id": "run", "action": "canvas.run_node", "target_node_id": "", "from_step": "create"},
+    ]})
+    patch = semantic_plan_to_patch(plan, "canvas-1", 1)
+    assert patch.operations[1].node_id == patch.operations[0].client_ref
+    assert patch.operations[1].op == "run_node"

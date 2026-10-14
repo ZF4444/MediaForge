@@ -185,3 +185,19 @@ describe('nodeRect', () => {
         expect(rect.y).toBe(0);
     });
 });
+
+describe('workflow pending layout', () => {
+    it('uses the manual-run placeholder sizing with the node workflow settings', () => {
+        const sandbox = createNodeLayoutSandbox();
+        const node = {type:'smart-image', pending:4, pendingCandidatePool:true, runSettings:{engine:'runninghub'}};
+        sandbox.pendingBoxSize = (count, options) => {
+            expect(count).toBe(4);
+            expect(options.runSettings).toBe(node.runSettings);
+            expect(options.candidatePool).toBe(true);
+            return {w:440,h:440};
+        };
+        expect(sandbox.imageLayout([],1,node)).toMatchObject({width:440,height:440});
+        node.w=320; node.h=240;
+        expect(sandbox.imageLayout([],1,node)).toMatchObject({width:320,height:240});
+    });
+});
