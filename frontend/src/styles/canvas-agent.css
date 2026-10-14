@@ -52,3 +52,7 @@ html.studio-theme-dark .canvas-agent-session-actions button:hover, body.studio-t
 html.studio-theme-dark .canvas-agent-runbar select, body.studio-theme-dark .canvas-agent-runbar select,
 html.studio-theme-dark .canvas-agent-modelbar select, body.studio-theme-dark .canvas-agent-modelbar select{border-color:#38383e;color:#d7d7da;background:#151517}
 .canvas-agent-compose{position:relative}.canvas-agent-mentions{padding:0 0 4px 5px}.canvas-agent-mentions .input-thumb{display:inline-block;margin:0 6px 4px 0}
+.canvas-agent-node-config .canvas-agent-smart-control .canvas-agent-options-popover{position:fixed;inset:auto;margin:0;box-sizing:border-box;min-width:min(190px,calc(100vw - 24px));width:max-content;overflow:auto;overscroll-behavior:contain;transform:none;transition:opacity .14s ease;}
+.canvas-agent-node-config .canvas-agent-smart-control.pinned .canvas-agent-options-popover:popover-open{opacity:1;visibility:visible;pointer-events:auto;transform:none;}
+.canvas-agent-node-config .canvas-agent-smart-control .canvas-agent-options-popover:not(:popover-open){display:none;}
+.canvas-agent-node-config .canvas-agent-options-popover::after{display:none;}

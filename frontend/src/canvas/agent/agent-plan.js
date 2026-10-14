@@ -15,7 +15,8 @@
   // dialog fetches the same parameter schema the real node would.
   function resolveStableTarget(settings){
     const engine=String(settings.engine||'').toLowerCase();
-    const target={connection_id:String(settings.connection_id||''),model_id:String(settings.model_id||''),resource_id:String(settings.resource_id||''),model:String(settings.model||settings.videoModel||'')};
+    const video=settings.apiKind==='video'||Boolean(settings.videoModel);
+    const target={connection_id:String((video?settings.videoConnectionId:settings.connection_id)||''),model_id:String((video?settings.videoModelId:settings.model_id)||''),resource_id:String((video?settings.videoResourceId:settings.resource_id)||''),model:String((video?settings.videoModel:settings.model)||'')};
     if(target.connection_id||target.model_id||target.resource_id)return target;
     try{
       if(engine==='runninghub'&&typeof selectedRunningHubRef==='function'&&typeof runningHubTarget==='function'){
@@ -25,6 +26,8 @@
         // ComfyUI workflows resolve by workflow name; the backend keys the
         // schema on `model` rather than a stable resource id.
         target.model=String(settings.comfyWorkflow||target.model||'');
+      }else if(typeof stableCanvasTarget==='function'){
+        Object.assign(target,stableCanvasTarget(video?'video':'image',video?settings.videoProvider:settings.provider_id,target.model));
       }
     }catch(_){/* resolvers unavailable (e.g. tests); fall back to legacy model */}
     return target;
@@ -73,8 +76,27 @@
     if(['9:16','9:21'].includes(String(value))) return 'r-story';
     return String(value)==='source'?'r-source':String(value)==='custom'?'r-custom':'';
   }
-  function closePopovers(except=null){document.querySelectorAll('#canvasAgentPlan .canvas-agent-smart-control.pinned').forEach(control=>{if(control!==except)control.classList.remove('pinned');});}
+  function closePopovers(except=null){document.querySelectorAll('#canvasAgentPlan .canvas-agent-smart-control.pinned').forEach(control=>{if(control!==except){control.querySelector('[popover]')?.hidePopover();control.classList.remove('pinned');control.querySelector('.smart-pill')?.setAttribute('aria-expanded','false');}});}
+  function openPopover(wrapper){
+    const popover=wrapper.querySelector('[popover]'),pill=wrapper.querySelector('.smart-pill');
+    if(!popover)return;
+    wrapper.classList.add('pinned');pill.setAttribute('aria-expanded','true');popover.showPopover();
+    const anchor=pill.getBoundingClientRect(),panel=wrapper.closest('.canvas-agent-panel')?.getBoundingClientRect();
+    const margin=12,gap=8,viewportWidth=document.documentElement.clientWidth,viewportHeight=document.documentElement.clientHeight;
+    const leftBound=Math.max(margin,panel?.left+margin||margin),rightBound=Math.min(viewportWidth-margin,panel?.right-margin||viewportWidth-margin);
+    popover.style.maxWidth=`${Math.max(0,rightBound-leftBound)}px`;
+    popover.style.maxHeight=`${Math.max(0,viewportHeight-margin*2)}px`;
+    const size=popover.getBoundingClientRect(),below=Math.max(0,viewportHeight-margin-anchor.bottom-gap),above=Math.max(0,anchor.top-margin-gap);
+    const upwards=size.height>below&&above>below,available=upwards?above:below;
+    popover.style.maxHeight=`${available}px`;
+    const height=Math.min(size.height,available);
+    popover.style.left=`${Math.max(leftBound,Math.min(anchor.left,rightBound-size.width))}px`;
+    popover.style.top=`${upwards?anchor.top-gap-height:anchor.bottom+gap}px`;
+  }
   document.addEventListener('pointerdown',event=>{if(!event.target.closest('#canvasAgentPlan .canvas-agent-smart-control'))closePopovers();},true);
+  document.addEventListener('keydown',event=>{if(event.key==='Escape')closePopovers();});
+  document.addEventListener('scroll',event=>{if(!event.target.closest?.('.canvas-agent-options-popover'))closePopovers();},true);
+  window.addEventListener('resize',()=>closePopovers());
   function appendIcon(parent,name,klass=''){const icon=document.createElement('i');icon.setAttribute('data-lucide',name);if(klass)icon.className=klass;parent.appendChild(icon);}
   function choiceButton(value,caption,active,onPick,klass=''){
     const button=document.createElement('button');button.type='button';button.dataset.agentValue=String(value);button.className=`${klass} ${active?'active':''}`.trim();button.textContent=caption;button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();onPick(value);});return button;
@@ -85,9 +107,9 @@
     type=String(field.type||type);const configurable=interactive&&(field.ui?.configurable!==false||['model','videoModel'].includes(id));
     if(type==='dropdown'){
       const values=options(field),current=String(value??'');const wrapper=document.createElement('div');wrapper.className=`canvas-agent-smart-control smart-control ${String(field.id||'')}-control`;
-      const pill=document.createElement('button');pill.type='button';pill.className='smart-pill';pill.title=label(field);pill.disabled=!configurable;appendIcon(pill,fieldIcon(field));const summary=document.createElement('span');summary.className='sub';summary.textContent=String(values.find(option=>String(option.value)===current)?.label??current??'');pill.appendChild(summary);appendIcon(pill,'chevron-down','pill-caret');pill.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const open=!wrapper.classList.contains('pinned');closePopovers(wrapper);wrapper.classList.toggle('pinned',open);});wrapper.appendChild(pill);
+      const pill=document.createElement('button');pill.type='button';pill.className='smart-pill';pill.title=label(field);pill.disabled=!configurable;pill.setAttribute('aria-expanded','false');appendIcon(pill,fieldIcon(field));const summary=document.createElement('span');if(['model','videoModel'].includes(id))summary.className='sub';summary.textContent=String(values.find(option=>String(option.value)===current)?.label??current??'');pill.appendChild(summary);pill.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const open=!wrapper.classList.contains('pinned');closePopovers();if(open)openPopover(wrapper);});wrapper.appendChild(pill);
       if(configurable){
-        const popover=document.createElement('div');popover.className='smart-popover compact-popover';const title=document.createElement('div');title.className='smart-popover-title';title.textContent=label(field);popover.appendChild(title);
+        const popover=document.createElement('div');popover.className='smart-popover compact-popover canvas-agent-options-popover';popover.setAttribute('popover','manual');const title=document.createElement('div');title.className='smart-popover-title';title.textContent=label(field);popover.appendChild(title);
         const pick=next=>{onChange(next);summary.textContent=String(values.find(option=>String(option.value)===String(next))?.label??next);popover.querySelectorAll('[data-agent-value]').forEach(button=>button.classList.toggle('active',button.dataset.agentValue===String(next)));closePopovers();};
         if(id==='ratio'||id==='videoAspect'){
           const grid=document.createElement('div');grid.className='ratio-grid';values.forEach(option=>{const button=choiceButton(option.value,option.label,String(option.value)===current,pick,'ratio-option');const glyph=document.createElement('span');glyph.className=`ratio-icon ${ratioIcon(option.value)}`;const text=document.createElement('span');text.textContent=String(option.label);button.textContent='';button.append(glyph,text);grid.appendChild(button);});popover.appendChild(grid);
@@ -149,13 +171,32 @@
     return connection?.protocol==='runninghub';
   }
   function fallbackFields(values,interactive){
+    const settings=values.settings||{};
+    if(!isRunningHubTarget(settings)&&String(settings.engine||'').toLowerCase()!=='comfy'){
+      const kind=settings.apiKind==='video'||settings.videoModel?'video':'image';
+      const modelId=kind==='video'?'videoModel':'model';
+      const entries=kind==='video'
+        ? (typeof apiVideoModelEntries==='function'?apiVideoModelEntries():[])
+        : (typeof apiImageModelEntries==='function'?apiImageModelEntries():[]);
+      const selected=entries.find(entry=>entry.model===settings[modelId]&&(entry.providerId===(kind==='video'?settings.videoProvider:settings.provider_id)))||entries.find(entry=>entry.model===settings[modelId]);
+      const model=selected?.model||settings[modelId]||'';
+      const defaults=typeof defaultCanvasParameterSchema==='function'?defaultCanvasParameterSchema(kind).fields:kind==='image'?[
+        {id:'resolution',default:'1k',options:['1k','2k','4k','custom']},
+        {id:'ratio',default:'1:1',options:['1:1','2:3','3:2','3:4','4:3','9:16','16:9','21:9','9:21','source','custom']},
+        {id:'quality',default:'auto',options:['auto','low','medium','high']},
+        {id:'count',default:1,min:1,max:4}
+      ]:[];
+      const names={model:'模型',videoModel:'模型',resolution:'分辨率',ratio:'比例',quality:'质量',count:'数量',videoDuration:'时长',videoAspect:'比例',videoResolution:'分辨率'};
+      const fields=[{id:modelId,default:model,options:model?[model]:[],option_labels:[selected?.label||model],ui:{configurable:false}},...defaults];
+      return fields.map(field=>schemaField({...field,name:names[field.id]||field.id,type:field.options?'dropdown':'number'},values,values.params.runSettings?'runSettings':'',interactive));
+    }
     // These keys are structural/meta or are surfaced elsewhere (prompt box,
     // node connections), so they must never appear as editable param chips
     // even when the schema lookup fails and we fall back to walking params.
     const excludedLeaf=new Set(['runSettingsSchemaVersion','schema_version','prompt','engine','apiKind','genKind','connection_id','model_id','resource_id','rhConfigKey','workflowSource','comfyWorkflow']);
     const excludedName=new Set(['text','prompt','image','video','audio']);
     const excluded=path=>{const leaf=String(path).split('.').pop();return excludedLeaf.has(leaf)||excludedName.has(String(leaf).includes('::')?String(leaf).split('::').pop():leaf);};
-    const fields=[];const walk=(object,prefix='')=>Object.entries(object||{}).forEach(([key,value])=>{const path=prefix?`${prefix}.${key}`:key;if(value&&typeof value==='object'&&!Array.isArray(value))walk(value,path);else if(primitive(value)&&!excluded(path))fields.push({id:path,name:path,type:typeof value==='boolean'?'boolean':typeof value==='number'?'number':'text',default:value,ui:{configurable:true}});});walk(values.params);return fields.map(field=>schemaField(field,values,'',interactive));
+    const fields=[];const walk=(object,prefix='')=>Object.entries(object||{}).forEach(([key,value])=>{const path=prefix?`${prefix}.${key}`:key;if(value&&typeof value==='object'&&!Array.isArray(value))walk(value,path);else if(primitive(value)&&!excluded(path))fields.push({id:path,name:key,type:typeof value==='boolean'?'boolean':typeof value==='number'?'number':'text',default:value,ui:{configurable:true}});});walk(values.params);return fields.map(field=>schemaField(field,values,'',interactive));
   }
   async function populateSchema(card,step,values,interactive,request,history=false,promptEl=null){
     const node=step.node||{},settings=values.settings||{};
@@ -164,13 +205,15 @@
     if(!capability){fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));return;}
     try{
       const apiJson=globalThis.__MediaForgeRuntimeServices?.apiJson;const schema=apiJson ? await apiJson(schemaUrl(capability,settings),{credentials:'same-origin'}) : await fetch(schemaUrl(capability,settings),{credentials:'same-origin'}).then(async response=>{if(!response.ok)throw new Error();return response.json();});if((request!==schemaRequest&&!history)||!card.isConnected)return;
+      if(!Array.isArray(schema?.fields)||!schema.fields.length)throw new Error('Missing parameter schema');
       const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');
       // A RunningHub app exposes its prompt through a prompt-role field. Mirror
       // the canvas node: surface that text in the top prompt box (and write it
       // back there) instead of rendering a duplicate parameter control.
       const bindPrompt=field=>{if(!promptEl)return;const store=fieldStore(field,values,paramsPath);const initial=String(store.get()??readPrompt(values.params)??'');if(initial){promptEl.value=initial;values.content=initial;store.set(initial);writePrompt(values.params,initial);}const handler=()=>{store.set(promptEl.value);writePrompt(values.params,promptEl.value);values.content=promptEl.value;};promptEl.removeEventListener('input',promptEl._agentPromptHandler||(()=>{}));promptEl._agentPromptHandler=handler;promptEl.addEventListener('input',handler);};
-      const renderFields=()=>{controls.innerHTML='';
-        (schema.fields||[])
+      const renderFields=()=>{closePopovers();controls.innerHTML='';
+        const orderedFields=[...schema.fields].sort((a,b)=>{const order=['model','resolution','ratio','quality','count'];const rank=field=>{const index=order.indexOf(String(field.id));return index<0?order.length:index;};return rank(a)-rank(b);});
+        orderedFields
           .filter(field=>!['provider_id','videoProvider'].includes(String(field.id||'')))
           .filter(field=>visible(field,pathValue(values.params,paramsPath)||{}))
           .forEach(field=>{
@@ -180,11 +223,15 @@
             // connections, not editable parameters. Match the canvas node,
             // which excludes them from the parameter panel entirely.
             if(['image','video','audio'].includes(role))return;
+            if(['model','videoModel'].includes(String(field.id))){
+              const entries=field.id==='videoModel'?(typeof apiVideoModelEntries==='function'?apiVideoModelEntries():[]):(typeof apiImageModelEntries==='function'?apiImageModelEntries():[]);
+              field={...field,option_labels:(field.options||[]).map((model,index)=>entries.find(entry=>entry.model===model&&entry.providerId===(field.id==='videoModel'?settings.videoProvider:settings.provider_id))?.label||field.option_labels?.[index]||model)};
+            }
             controls.appendChild(schemaField(field,values,paramsPath,interactive,fieldId=>{if(['model','videoModel'].includes(fieldId))void populateSchema(card,step,values,interactive,request,history,promptEl);else if(['resolution','ratio','msResolution','msRatio'].includes(fieldId))renderFields();}));
           });
         window.lucide?.createIcons();};renderFields();
       if(!controls.childElementCount){fallbackFields(values,interactive).forEach(item=>controls.appendChild(item));window.lucide?.createIcons();}
-    }catch(_){if((request===schemaRequest||history)&&card.isConnected)fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));}
+    }catch(_){if((request===schemaRequest||history)&&card.isConnected){const controls=card.querySelector('.canvas-agent-config-controls');controls.replaceChildren(...fallbackFields(values,interactive));window.lucide?.createIcons();}}
   }
   function config(step,interactive,request,withActions=false,history=false,status=''){
     const values=planValues(step);const card=document.createElement('section');card.className=`canvas-agent-node-config composer-card${history?' canvas-agent-node-config-history':''}`;
@@ -197,7 +244,7 @@
   function render(row,options={}){
     const box=options.container||document.getElementById('canvasAgentPlan'),interactive=options.interactive!==false,renderKey=`${row?.version||''}:${interactive?'interactive':'readonly'}`;
     if(!options.force&&!options.container&&row&&state.plan?.version===row.version&&box.dataset.planVersion===renderKey)return;
-    const request=++schemaRequest;box.innerHTML='';if(!options.container)state.plan=row||null;const plan=row?.content_json||{},steps=Array.isArray(plan.steps)?plan.steps:[];if(!row){box.hidden=true;return;}box.dataset.planVersion=renderKey;
+    closePopovers();const request=++schemaRequest;box.innerHTML='';if(!options.container)state.plan=row||null;const plan=row?.content_json||{},steps=Array.isArray(plan.steps)?plan.steps:[];if(!row){box.hidden=true;return;}box.dataset.planVersion=renderKey;
     const title=document.createElement('h4');title.textContent=plan.goal||'Agent 计划';box.appendChild(title);
     const history=Boolean(options.container)||Boolean(options.history);
     const configurableActions=new Set(['canvas.create_node','canvas.update_node_params','canvas.replace_node_content','canvas.run_node','canvas.run_group']);
