@@ -333,3 +333,41 @@ def test_runninghub_workflow_dispatch_uses_native_task_queue(monkeypatch):
         {'nodeId': '13', 'fieldName': 'aspect_ratio', 'fieldValue': '3:2'}]
     authorize.assert_awaited_once()
     enqueue.assert_awaited_once_with(result[0]['task_id'])
+
+
+@pytest.mark.parametrize('command', ['message', 'answer'])
+def test_plain_reply_does_not_reopen_rejected_plan(monkeypatch, command):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.routers import canvas_agent as router
+    from app.models import CanvasAgentMessageRequest, CanvasAgentAnswerRequest
+
+    run = {'id': 'run', 'canvas_id': 'canvas', 'status': 'planning', 'metadata_json': {}}
+    previous = {'version': 3, 'status': 'rejected', 'content_json': {'goal': 'old'}}
+    @asynccontextmanager
+    async def checkpointer():
+        yield None
+    monkeypatch.setattr(router, '_require_run', AsyncMock(return_value=run))
+    monkeypatch.setattr(router, '_emit_event_spec', AsyncMock())
+    monkeypatch.setattr(router, 'build_canvas_context', lambda *args, **kwargs: {'canvas_version': 1})
+    monkeypatch.setattr(router, 'resolve_canvas_agent_model', lambda **kwargs: object())
+    monkeypatch.setattr(router, 'create_async_checkpointer', checkpointer)
+    monkeypatch.setattr(router, 'run_canvas_agent', AsyncMock(return_value={
+        'messages': [SimpleNamespace(content='你好！请问有什么可以帮你的？')]}))
+    monkeypatch.setattr(router, 'latest_plan', lambda *args: previous)
+    append = []
+    monkeypatch.setattr(router, 'append_message', lambda *args: append.append(args))
+    monkeypatch.setattr(router, 'emit_agent_event', AsyncMock())
+    monkeypatch.setattr(router, 'update_run', lambda *args, **kwargs: run.update(kwargs))
+    monkeypatch.setattr(router, 'get_run', lambda *args: run)
+    monkeypatch.setattr(router, 'save_plan', lambda *args, **kwargs: pytest.fail('must not recreate old plan'))
+    if command == 'message':
+        result = asyncio.run(router.execute_message_command('user', 'run', CanvasAgentMessageRequest(content='你好')))
+    else:
+        result = asyncio.run(router.execute_answer_command('user', 'run', CanvasAgentAnswerRequest(answer='你好')))
+    assert result['reply'] == '你好！请问有什么可以帮你的？'
+    assert 'plan' not in result
+    assert append[0][3] == result['reply']
+    assert run['status'] == 'completed'

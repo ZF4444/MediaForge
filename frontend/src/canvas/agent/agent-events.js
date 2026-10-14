@@ -65,7 +65,7 @@
     if (!saved) { window.CanvasAgentPanel.status('就绪 · 新对话'); return; }
     state.runId = saved;
     window.CanvasAgentPanel.status('正在恢复会话');
-    try { const data = await window.CanvasAgentClient.getRun(); window.CanvasAgentPanel.renderRun(data); saveRun(); await window.CanvasAgentPanel.refreshRuns(); await catchUp(); if (active(data.run?.status)) start(); else stop(); }
+    try { const data = await window.CanvasAgentClient.getRun(); window.CanvasAgentPanel.renderRun(data); saveRun(); await window.CanvasAgentPanel.refreshRuns(); await catchUp(); window.CanvasAgentPanel.finishRecovery(); if (active(data.run?.status)) start(); else stop(); }
     catch (error) {
       if (error.status === 404) {
         localStorage.removeItem(`canvas-agent-run:${window.CanvasAgentBridge.canvasId()}`);

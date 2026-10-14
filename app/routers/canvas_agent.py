@@ -695,6 +695,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
                 user_id, run_id, run["canvas_id"], execution_result, model=model
             )
 
+        previous_plan = await asyncio.to_thread(latest_plan, user_id, run_id)
         async with create_async_checkpointer() as checkpointer:
             graph_result = await run_canvas_agent(
                 model,
@@ -706,7 +707,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
                 dispatch_tasks=dispatch_tasks,
             )
         latest = await asyncio.to_thread(latest_plan, user_id, run_id)
-        if not latest:
+        if not latest or (previous_plan and latest["version"] <= previous_plan["version"]):
             # The graph answered conversationally without producing a plan.
             messages = graph_result.get("messages") or []
             reply = (
@@ -716,6 +717,7 @@ async def execute_message_command(user_id: str, run_id: str, payload: CanvasAgen
             )
             await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"kind": "tool_agent_reply"})
             await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
+            await asyncio.to_thread(update_run, user_id, run_id, status="completed", phase="reviewing")
             return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": reply}
         plan = SemanticPlan.model_validate(latest["content_json"])
         await asyncio.to_thread(
@@ -819,6 +821,7 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
                 user_id, run_id, run["canvas_id"], execution_result, model=model
             )
 
+        previous_plan = await asyncio.to_thread(latest_plan, user_id, run_id)
         async with create_async_checkpointer() as checkpointer:
             graph_result = await run_canvas_agent(
                 model,
@@ -830,8 +833,13 @@ async def execute_answer_command(user_id: str, run_id: str, payload: CanvasAgent
                 dispatch_tasks=dispatch_tasks,
             )
         latest = await asyncio.to_thread(latest_plan, user_id, run_id)
-        if not latest:
-            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": "请补充你希望对画布执行的操作。"}
+        if not latest or (previous_plan and latest["version"] <= previous_plan["version"]):
+            messages = graph_result.get("messages") or []
+            reply = str(getattr(messages[-1], "content", "请补充你希望对画布执行的操作。")) if messages else "请补充你希望对画布执行的操作。"
+            await asyncio.to_thread(append_message, user_id, run_id, "assistant", reply, {"kind": "tool_agent_reply"})
+            await emit_agent_event(user_id, run_id, "message.replied", {"reply": reply})
+            await asyncio.to_thread(update_run, user_id, run_id, status="completed", phase="reviewing")
+            return {"run": await asyncio.to_thread(get_run, user_id, run_id), "reply": reply}
         plan = SemanticPlan.model_validate(latest["content_json"])
         plan_json = _hydrate_plan_nodes(
             plan.model_dump(mode="json"), await asyncio.to_thread(load_canvas_payload, user_id, run["canvas_id"])

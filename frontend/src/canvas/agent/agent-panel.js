@@ -25,6 +25,7 @@
   let agentDropRange = null;
   let agentDropDepth = 0;
   const status = value => { lastLiveStatus=String(value || ''); renderLiveStatus(); };
+  const finishRecovery = () => { if(lastLiveStatus==='正在恢复会话'){lastLiveStatus='';renderLiveStatus();} };
   const planDecisionKey = (runId, version) => `${runId || ''}:${version || ''}`;
   const planStatusLabel = status => ({confirmed:'已确认',rejected:'已取消'})[String(status || '')] || '';
   const timeLabel = () => new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit'}).format(new Date());
@@ -34,7 +35,25 @@
   const attachAuxiliaryPanels = () => {
     const messages=$('canvasAgentMessages');
     messages.append($('canvasAgentPlan'));
-    messages.addEventListener('scroll',()=>{if(!rebuildingMessages)messageFollow=isNearMessageBottom(messages);});
+    // Content grows after rendering (async parameter controls, image loads).
+    // Only explicit user scrolling should disable following the latest reply.
+    messages.addEventListener('wheel',event=>{if(event.deltaY<0)messageFollow=false;else if(isNearMessageBottom(messages))messageFollow=true;},{passive:true});
+    messages.addEventListener('pointerdown',()=>{
+      const update=()=>{if(!rebuildingMessages)messageFollow=isNearMessageBottom(messages);};
+      messages.addEventListener('scroll',update);
+      window.addEventListener('pointerup',()=>messages.removeEventListener('scroll',update),{once:true});
+    });
+    messages.addEventListener('keydown',event=>{
+      if(['ArrowUp','PageUp','Home'].includes(event.key))messageFollow=false;
+      if(event.key==='End')messageFollow=true;
+    });
+    const followLatest=()=>{if(messageFollow&&!rebuildingMessages)messages.scrollTop=messages.scrollHeight;};
+    const resizeObserver=new ResizeObserver(followLatest);
+    new MutationObserver(()=>{
+      resizeObserver.disconnect();
+      [...messages.children].forEach(child=>resizeObserver.observe(child));
+      followLatest();
+    }).observe(messages,{childList:true,subtree:true});
   };
   const eventProjector = () => window.CanvasAgentEventProjector;
   const isConversationEvent = (type, data) => eventProjector()?.isConversationEvent?.({type, payload:data}) || false;
@@ -470,5 +489,5 @@
   async function init() { try { const apiJson=globalThis.__MediaForgeRuntimeServices?.apiJson; const me=apiJson ? await apiJson('/api/access-control/me',{credentials:'same-origin',allowErrorResponse:true}) : await fetch('/api/access-control/me',{credentials:'same-origin'}).then(async response=>response.ok ? response.json() : {}); if(!Array.isArray(me.pages)||!me.pages.includes('canvas-agent')){ $('canvasAgentToggle')?.remove(); panel?.remove(); return; } $('canvasAgentToggle').hidden=false; } catch (_) { $('canvasAgentToggle')?.remove(); panel?.remove(); return; } attachAuxiliaryPanels(); initPanelResize(); loadModelSelection(); $('canvasAgentToggle').addEventListener('click',()=>{panel.hidden=!panel.hidden;if(!panel.hidden){messageFollow=true;ensureModelsLoaded();refreshRuns();window.CanvasAgentEvents.recover();requestAnimationFrame(()=>{const messages=$('canvasAgentMessages');if(messages)messages.scrollTop=messages.scrollHeight;});}}); ['pointerdown','mousedown','dblclick'].forEach(type=>panel.addEventListener(type,event=>event.stopPropagation())); panel.addEventListener('click', event=>{ const link=event.target.closest('.canvas-agent-node-link'); if(link){ event.preventDefault(); event.stopPropagation(); window.CanvasAgentBridge.focusNode(link.dataset.nodeId); } else event.stopPropagation(); }); panel.addEventListener('wheel', event=>event.stopPropagation(), {capture:true,passive:true}); $('canvasAgentClose').addEventListener('click',()=>{panel.hidden=true; window.CanvasAgentBridge.endReferencePicking();}); $('canvasAgentRunSelect').addEventListener('change',event=>window.CanvasAgentEvents.switchRun(event.target.value)); $('canvasAgentNewRun').addEventListener('click',newRun); $('canvasAgentModelSelect').addEventListener('change',onModelChange); $('canvasAgentSend').addEventListener('click',()=>actionMode==='cancel'?cancel():send()); $('canvasAgentAddCanvasContent').addEventListener('click',toggleCanvasReferencePicking); $('canvasAgentInput').addEventListener('input',handleInput); $('canvasAgentInput').addEventListener('keydown',handleInputKeydown); $('canvasAgentInput').addEventListener('mouseover',previewReferenceMention); $('canvasAgentInput').addEventListener('mouseout',hideReferenceMentionPreview); const agentInput=$('canvasAgentInput'); agentInput?.addEventListener('dragenter',agentInputDragEnter); agentInput?.addEventListener('dragover',agentInputDragOver); agentInput?.addEventListener('dragleave',agentInputDragLeave); agentInput?.addEventListener('drop',agentInputDrop); window.addEventListener('canvas-agent-reference-picking-changed',event=>setCanvasReferencePicking(event.detail?.active)); window.addEventListener('beforeunload',()=>{window.CanvasAgentEvents.stop();window.CanvasAgentBridge.endReferencePicking();}); renderMentions(); ensureModelsLoaded(); refreshRuns(); window.CanvasAgentEvents.recover(); }
   document.addEventListener('mousedown',event=>{const picker=$('canvasAgentReferencePicker'),input=$('canvasAgentInput');if(referencePickerOpen&&!picker?.contains(event.target)&&!input?.contains(event.target))closeReferencePicker(); const menu=$('canvasAgentRunMenu'),button=$('canvasAgentRunSelect');if(menu&&!menu.hidden&&!menu.contains(event.target)&&event.target!==button&&!button?.contains(event.target)){menu.hidden=true;button?.setAttribute('aria-expanded','false');}}, {capture:true});
   $('canvasAgentRunSelect')?.addEventListener('click',()=>{const menu=$('canvasAgentRunMenu'),button=$('canvasAgentRunSelect');if(menu){menu.hidden=!menu.hidden;button.setAttribute('aria-expanded',String(!menu.hidden));}});
-  CanvasAgentPanel={init,status,message,liveStatus,liveEvent,clearLiveStatus,isConversationEvent,system,renderRun,clearRun,refreshRuns,refreshCurrentRun,send,answer,confirm,confirmationFailed,resetConfirmationState,cancel}; init();
+  CanvasAgentPanel={init,status,finishRecovery,message,liveStatus,liveEvent,clearLiveStatus,isConversationEvent,system,renderRun,clearRun,refreshRuns,refreshCurrentRun,send,answer,confirm,confirmationFailed,resetConfirmationState,cancel}; init();
 })();
