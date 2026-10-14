@@ -94,3 +94,17 @@ body:has(#canvasAgentPanel:not([hidden])) .canvas-top-actions{right:calc(var(--c
 .canvas-agent-node-config.composer-card:has(.workflow-params-control) .canvas-agent-config-controls{flex-wrap:wrap;row-gap:6px}
 .canvas-agent-node-config.composer-card:has(.workflow-params-control) .canvas-agent-config-controls > *{flex:0 0 auto}
 .canvas-agent-node-config.composer-card:has(.workflow-params-control) .workflow-control{flex:0 0 124px}
+
+.canvas-agent-compose-actions{align-items:center}
+.canvas-agent-compose-actions .canvas-agent-modelbar{padding:0;margin-right:auto;flex:1 1 0;min-width:0;background:transparent}
+.canvas-agent-compose-actions .canvas-agent-modelbar select{width:0;text-overflow:ellipsis}
+.canvas-agent-compose-actions > button{flex-shrink:0}
+
+.canvas-agent-compose-actions #canvasAgentSend{width:32px;height:32px;min-width:32px;padding:0;display:flex;align-items:center;justify-content:center}
+
+/* Match the canvas model picker: compact icon, model name and dropdown caret. */
+.canvas-agent-compose-actions .canvas-agent-modelbar{position:relative;flex:0 1 auto;max-width:calc(100% - 108px);gap:5px;height:28px;padding:0 7px;border:1px solid transparent;border-radius:999px;color:var(--text);font-size:10.5px;box-sizing:border-box}
+.canvas-agent-compose-actions .canvas-agent-modelbar:hover,.canvas-agent-compose-actions .canvas-agent-modelbar:focus-within{background:var(--card);border-color:var(--line)}
+.canvas-agent-compose-actions .canvas-agent-modelbar > svg{width:12px;height:12px;flex:0 0 12px;opacity:.7;pointer-events:none}
+.canvas-agent-compose-actions .canvas-agent-modelbar select{width:auto;max-width:320px;min-width:0;flex:0 1 auto;height:26px;border:0;border-radius:999px;background:transparent;color:inherit;font:inherit;font-weight:500;padding:0 17px 0 0;appearance:none;cursor:pointer;outline:none}
+.canvas-agent-compose-actions .canvas-agent-modelbar::after{content:'';position:absolute;right:8px;top:10px;width:5px;height:5px;border-right:1px solid currentColor;border-bottom:1px solid currentColor;transform:rotate(45deg);opacity:.5;pointer-events:none}
