@@ -825,6 +825,9 @@ function stripOutpaintDisplaySettings(settingsObj, node=null){
 }
 function smartSettingsForNode(node){
     const nodeSettings = normalizeStoredImageRatios(stripOutpaintDisplaySettings(node?.runSettings || {}, node));
+    // Restore the node's pinned workflow before canvas defaults can supply a
+    // different rhConfigKey/comfyWorkflow from the last selected node.
+    restoreCanonicalWorkflowSource(nodeSettings);
     const recentSettings = Object.keys(nodeSettings).length ? {} : recentSmartSettingsForMode();
     const base = {
         ...cloneSmartSettings(canvasDefaultSmartSettings || initialSmartSettings),

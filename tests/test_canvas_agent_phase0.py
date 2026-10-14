@@ -158,6 +158,26 @@ def test_agent_node_identifier_fields_do_not_override_explicit_params():
     assert run_settings["model_id"] == "params-model"
 
 
+def test_runninghub_workflow_creation_uses_confirmed_capability_engine():
+    plan = SemanticPlan.model_validate({
+        "goal": "D风格文生图",
+        "steps": [{"id": "d-style", "action": "canvas.create_node", "node": {
+            "semantic_type": "workflow_generation",
+            "capability": "runninghub.app.image",
+            "connection_id": "rh-connection",
+            "resource_id": "d-resource",
+            "params": {"runSettings": {"prompt": "custom prompt", "rhInstanceType": "plus", "rhParams": {"1::seed": {"value": 123}}}},
+        }}],
+    })
+    node = semantic_plan_to_patch(plan, "canvas-1", 1).operations[0].node
+    assert node["genKind"] == "workflow"
+    assert node["runSettings"]["engine"] == "runninghub"
+    assert node["runSettings"]["resource_id"] == "d-resource"
+    assert node["runSettings"]["rhInstanceType"] == "plus"
+    assert node["runSettings"]["rhParams"] == {"1::seed": {"value": 123}}
+    assert node["text"] == "custom prompt"
+
+
 def test_agent_generation_node_accepts_legacy_flat_settings():
     plan = SemanticPlan.model_validate(
         {

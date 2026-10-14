@@ -174,6 +174,7 @@ function runningHubWorkflowEntriesForNode(node=activeSettingsSubject()){
     return runningHubAllEntries().filter(ref => workflowMatchesNode(ref.entry, node));
 }
 function normalizeWorkflowSourceForNode(node=activeSettingsSubject()){
+    restoreCanonicalWorkflowSource(settings);
     const media = workflowMediaForNode(node);
     if(!media) return;
     const comfy = comfyWorkflowsForNode(node);
@@ -188,11 +189,27 @@ function normalizeWorkflowSourceForNode(node=activeSettingsSubject()){
         if(!runningHub.length && comfy.length) settings.engine = 'comfy';
     }
 }
+function restoreCanonicalWorkflowSource(sourceSettings){
+    const resource=(aiResourceIndex?.resources || []).find(item=>item.id===sourceSettings?.resource_id);
+    if(resource?.kind==='runninghub_app'){
+        const appId=runningHubEntryId(resource.settings || {}, 'app') || resource.id;
+        if(!sourceSettings.rhConfigKey || sourceSettings.engine!=='runninghub')sourceSettings.rhConfigKey=runningHubEntryKey('app',appId);
+        sourceSettings.engine='runninghub';
+    }else if(resource?.kind==='comfyui_workflow'){
+        if(!sourceSettings.comfyWorkflow || sourceSettings.engine!=='comfy')sourceSettings.comfyWorkflow=resource.name;
+        sourceSettings.engine='comfy';
+    }
+}
 function selectedRunningHubRef(sourceSettings=settings){
     const all = runningHubAllEntries();
     sourceSettings = sourceSettings || settings;
     const parsed = parseRunningHubEntryKey(sourceSettings.rhConfigKey || '');
     let ref = parsed ? all.find(item => item.kind === parsed.kind && item.id === parsed.id) : null;
+    if(!ref && sourceSettings.resource_id){
+        const resource=(aiResourceIndex?.resources || []).find(item=>item.kind==='runninghub_app' && item.id===sourceSettings.resource_id);
+        const appId=resource ? runningHubEntryId(resource.settings || {}, 'app') || resource.id : sourceSettings.resource_id;
+        ref=all.find(item=>item.id===appId) || null;
+    }
     if(!ref && all.length) ref = all[0];
     if(ref && sourceSettings === settings) settings.rhConfigKey = runningHubEntryKey(ref.kind, ref.id);
     return ref || null;

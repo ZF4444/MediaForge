@@ -95,6 +95,9 @@ def _canonical_node_data(node: Any, node_type: str, normalized_params: dict[str,
             "runninghubWorkflow",
             "workflow_id",
             "workflowId",
+            "rhConfigKey",
+            "rhParams",
+            "rhInstanceType",
         }
         for key in list(node_data):
             if key in setting_keys:
@@ -108,6 +111,12 @@ def _canonical_node_data(node: Any, node_type: str, normalized_params: dict[str,
             value = str(getattr(node, key, "") or "")
             if value and not run_settings.get(key):
                 run_settings[key] = value
+        # Workflow semantic defaults are ComfyUI; the selected capability pins
+        # the actual engine, including RunningHub workflow nodes.
+        if node.capability.startswith("runninghub."):
+            run_settings["engine"] = "runninghub"
+        elif node.capability.startswith("comfyui.workflow."):
+            run_settings["engine"] = "comfy"
         node_data["runSettings"] = run_settings
 
     node_data.update(

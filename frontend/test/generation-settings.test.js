@@ -13,6 +13,7 @@
 // DOM 与网络请求，跟 M5/M7/M8 核心批次一样不适合单元测试，不在本文件
 // 覆盖范围内。
 import vm from 'node:vm';
+import fs from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { createGenerationSettingsSandbox } from './generation-settings-sandbox.js';
 
@@ -113,6 +114,53 @@ describe('RunningHub text parameters', () => {
     it('保留多段提示词和空行，只统一换行符', () => {
         const { normalizeRhTextValue } = createGenerationSettingsSandbox();
         expect(normalizeRhTextValue('第一段\r\n\r\n第二段\r第三段')).toBe('第一段\n\n第二段\n第三段');
+    });
+});
+
+describe('canonical workflow selection', () => {
+    const resources = [{id:'d-resource',kind:'runninghub_app',name:'D风格文生图',settings:{app_id:'d-app',fields:[{fieldName:'prompt'}]}}];
+    const aiConnections = [{id:'runninghub',rh_apps:[{id:'first-app',title:'默认工作流'},{id:'d-app',title:'D风格文生图'}]}];
+
+    it('从确认的资源恢复 RunningHub 引擎及选择，不使用首个工作流', () => {
+        const ctx=createGenerationSettingsSandbox({settings:{engine:'comfy',resource_id:'d-resource',comfyWorkflow:'Sam3DBody.json'},aiConnections,aiResourceIndex:{resources}});
+        ctx.normalizeWorkflowSourceForNode({genKind:'workflow'});
+        expect(ctx.__state.settings.engine).toBe('runninghub');
+        expect(ctx.__state.settings.rhConfigKey).toBe('app:d-app');
+        expect(ctx.selectedRunningHubRef().id).toBe('d-app');
+    });
+
+    it('直接运行未打开配置的节点时也按资源 ID 找到已确认工作流', () => {
+        const ctx=createGenerationSettingsSandbox({aiConnections,aiResourceIndex:{resources}});
+        expect(ctx.selectedRunningHubRef({resource_id:'d-resource'}).id).toBe('d-app');
+    });
+
+    it('节点的资源选择优先于画布默认工作流', () => {
+        const ctx=createGenerationSettingsSandbox({aiConnections,aiResourceIndex:{resources}});
+        Object.assign(ctx,{
+            normalizeStoredImageRatios:value=>value,
+            stripOutpaintDisplaySettings:value=>JSON.parse(JSON.stringify(value)),
+            cloneSmartSettings:value=>({...value}),
+            recentSmartSettingsForMode:()=>({}),
+            canvasDefaultSmartSettings:{engine:'comfy',comfyWorkflow:'Sam3DBody.json',rhConfigKey:'app:first-app'},
+            withOutpaintDisplaySettings:(_,value)=>value,
+            isApiLikeEngine:engine=>engine==='api',
+        });
+        const main=fs.readFileSync(new URL('../src/canvas/main.js',import.meta.url),'utf8');
+        vm.runInContext(main.slice(main.indexOf('function smartSettingsForNode('),main.indexOf('function activeSettingsSubject(')),ctx);
+        const result=ctx.smartSettingsForNode({genKind:'workflow',runSettings:{resource_id:'d-resource',engine:'runninghub',rhInstanceType:'plus',rhParams:{seed:{value:123}}}});
+        expect(result).toMatchObject({engine:'runninghub',rhConfigKey:'app:d-app',rhInstanceType:'plus',rhParams:{seed:{value:123}}});
+    });
+
+    it('保留用户主动切换的工作流选项', () => {
+        const ctx=createGenerationSettingsSandbox({settings:{engine:'runninghub',resource_id:'d-resource',rhConfigKey:'app:first-app'},aiConnections,aiResourceIndex:{resources}});
+        ctx.normalizeWorkflowSourceForNode({genKind:'workflow'});
+        expect(ctx.selectedRunningHubRef().id).toBe('first-app');
+    });
+
+    it('从托管 ComfyUI 资源恢复原工作流名称', () => {
+        const ctx=createGenerationSettingsSandbox({settings:{engine:'api',resource_id:'comfy-resource'},aiResourceIndex:{resources:[{id:'comfy-resource',kind:'comfyui_workflow',name:'D-style.json'}]}});
+        ctx.normalizeWorkflowSourceForNode({genKind:'workflow'});
+        expect(ctx.__state.settings).toMatchObject({engine:'comfy',comfyWorkflow:'D-style.json'});
     });
 });
 
