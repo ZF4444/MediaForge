@@ -457,8 +457,8 @@ async def _execute_approved_canvas_patch(
             f"{run_id}:plan:{plan_version}",
             patch,
             risk="confirm",
-            allow_user_node_changes=bool(authorized_node_ids),
-            authorized_node_ids=set(authorized_node_ids),
+            allow_user_node_changes=True,
+            authorized_node_ids={str(node["id"]) for node in canvas.get("nodes", []) if node.get("id")},
         )
     except (PatchConflictError, PatchPermissionError, ValueError) as exc:
         AGENT_FAILURES.labels(stage="applying", category=classify_failure(exc)).inc()
