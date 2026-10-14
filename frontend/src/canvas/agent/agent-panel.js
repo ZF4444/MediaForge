@@ -23,7 +23,7 @@
   const restoreMessageScroll = (box, snapshot) => { box.scrollTop=snapshot?.follow ? box.scrollHeight : Math.min(snapshot?.top || 0, Math.max(0,box.scrollHeight-box.clientHeight)); };
   const attachAuxiliaryPanels = () => {
     const messages=$('canvasAgentMessages');
-    messages.append($('canvasAgentPlan'), $('canvasAgentArtifacts'));
+    messages.append($('canvasAgentPlan'));
     messages.addEventListener('scroll',()=>{if(!rebuildingMessages)messageFollow=isNearMessageBottom(messages);});
   };
   const eventProjector = () => window.CanvasAgentEventProjector;
@@ -238,10 +238,10 @@
   function clearRun() {
     lastLiveStatus=''; liveEvents=[]; expandedEventGroups.clear(); messageFollow=true;
     lastRunRenderKey='';
-    const messages=$('canvasAgentMessages'), plan=$('canvasAgentPlan'), artifacts=$('canvasAgentArtifacts');
+    const messages=$('canvasAgentMessages'), plan=$('canvasAgentPlan');
     messages.innerHTML='';
-    plan.innerHTML=''; plan.hidden=true; artifacts.innerHTML=''; artifacts.hidden=true;
-    messages.append(plan, artifacts);
+    plan.innerHTML=''; plan.hidden=true;
+    messages.append(plan);
     state.plan=null; state.tasks=[];
     renderLiveStatus();
   }
@@ -285,7 +285,7 @@
     });
     if(renderKey===lastRunRenderKey) return;
     lastRunRenderKey=renderKey;
-    const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'), artifactsBox=$('canvasAgentArtifacts'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
+    const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
     const loaded=new Map(), planStates=new Map(planDecisions); const persistedPlanStatus=planStatusLabel(data.plan?.status); if(persistedPlanStatus) planStates.set(planDecisionKey(run.id,data.plan.version),persistedPlanStatus); const timeline=[];
     (data.messages||[]).forEach(item=>timeline.push({kind:'message',at:Number(item.created_at)||0,item}));
     (data.events||[]).forEach(event=>{
@@ -324,7 +324,7 @@
     lastLiveStatus=latest ? liveEventText(latest.type,latest.data,latest.message) : '';
     renderLiveStatus();
     state.skills=[...loaded.values()]; renderSkills();
-    // The plan and artifacts live in the message flow. Restore their DOM nodes
+    // The plan lives in the message flow. Restore its DOM node
     // before their renderers resolve them by id after rebuilding the timeline.
     if(data.plan && !planRendered){
       if(activePlan){ messages.appendChild(planBox); window.CanvasAgentPlan.render(data.plan,{interactive:true,status:planStates.get(planDecisionKey(run.id,data.plan.version))||''}); }
@@ -332,8 +332,6 @@
     }
     else if(!planRendered) { planBox.innerHTML=''; planBox.hidden=true; messages.appendChild(planBox); }
     if(!planBox.isConnected){ planBox.innerHTML=''; planBox.hidden=true; messages.appendChild(planBox); }
-    messages.append(artifactsBox);
-    window.CanvasAgentArtifacts.render(data.tasks||[]);
     restoreMessageScroll(messages,scrollSnapshot); rebuildingMessages=false; messageFollow=scrollSnapshot.follow;
   }
   async function ensureRun() { if (state.runId) return state.runId; status('正在创建会话'); const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); await refreshRuns(); return state.runId; }

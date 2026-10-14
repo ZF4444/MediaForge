@@ -25,7 +25,7 @@ test('loads the canvas shell with npm compatibility dependencies', async ({ page
   }))).toEqual({ lucide: 'undefined', marked: 'undefined', dompurify: 'undefined', three: 'undefined' });
   expect(await page.evaluate(() => [
     'CanvasAgentState', 'CanvasAgentBridge', 'CanvasAgentClient', 'CanvasAgentPlan',
-    'CanvasAgentArtifacts', 'CanvasAgentEventProjector', 'CanvasAgentEvents',
+    'CanvasAgentEventProjector', 'CanvasAgentEvents',
     'CanvasAgentPanel', 'MediaForgeMarkdown',
   ].map(name => typeof window[name]))).toEqual(Array(9).fill('undefined'));
   await page.evaluate(() => document.getElementById('canvasShortcutToggle').click());

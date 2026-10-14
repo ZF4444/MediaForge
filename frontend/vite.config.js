@@ -22,7 +22,7 @@ const canvasFeatureFiles = [
   'canvas-sync.js', 'canvas-sync-socket.js', 'prompt-templates.js', 'prompt-task-rules.js', 'mention-composer.js',
   'canvas-render.js', 'image-editor.js', 'asset-library.js', 'generation-settings.js', 'main.js',
   'agent/agent-state.js', 'agent/agent-bridge.js', 'agent/agent-client.js',
-  'agent/agent-plan.js', 'agent/agent-artifacts.js', 'agent/agent-event-projector.js',
+  'agent/agent-plan.js', 'agent/agent-event-projector.js',
   'agent/agent-events.js', 'agent/agent-panel.js',
 ];
 const canvasActionExports = [
@@ -118,7 +118,7 @@ function canvasFeatures() {
         `Object.assign(globalThis.__MediaForgeRuntimeServices, { apiJson, apiText, apiBlob, apiForm, apiConfirm, apiPrompt, openExternal, canvasApi });`,
         "const lucide = { createIcons: options => createIcons({ icons, ...(options && typeof options === 'object' && 'root' in options ? options : { root: options }) }) };",
         "const MediaForgeMarkdown = { render: renderMarkdown };",
-        'let CanvasAgentState, CanvasAgentBridge, CanvasAgentClient, CanvasAgentPlan, CanvasAgentArtifacts, CanvasAgentEventProjector, CanvasAgentEvents, CanvasAgentPanel, canvasAgentHandleEvent;',
+        'let CanvasAgentState, CanvasAgentBridge, CanvasAgentClient, CanvasAgentPlan, CanvasAgentEventProjector, CanvasAgentEvents, CanvasAgentPanel, canvasAgentHandleEvent;',
       ].join('\n');
       const moduleSource = source
         .replaceAll('window.MediaForgeUpload', 'MediaForgeUpload')
@@ -131,7 +131,6 @@ function canvasFeatures() {
         .replaceAll('window.CanvasAgentBridge', 'CanvasAgentBridge')
         .replaceAll('window.CanvasAgentClient', 'CanvasAgentClient')
         .replaceAll('window.CanvasAgentPlan', 'CanvasAgentPlan')
-        .replaceAll('window.CanvasAgentArtifacts', 'CanvasAgentArtifacts')
         .replaceAll('window.CanvasAgentEventProjector', 'CanvasAgentEventProjector')
         .replaceAll('window.CanvasAgentEvents', 'CanvasAgentEvents')
         .replaceAll('window.CanvasAgentPanel', 'CanvasAgentPanel')
