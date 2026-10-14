@@ -724,7 +724,7 @@ function renderRunningHubParams(){
     dynamicParams.innerHTML = `
         ${renderWorkflowSourceControl()}
         ${renderRhMachineControl()}
-        ${params.length ? params.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(fields.length ? tr('smart.rhNoParams') : tr('smart.rhNeedFields'))}</div>`}
+        ${params.length ? renderWorkflowParameterMenu(params, 'runninghub') : `<div class="muted-note">${escapeHtml(fields.length ? tr('smart.rhNoParams') : tr('smart.rhNeedFields'))}</div>`}
     `;
 }
 function rhEntryMediaFields(entry, kind){
@@ -796,7 +796,7 @@ function renderComfyParams(){
     const fields = (wf?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
     dynamicParams.innerHTML = `
         ${renderWorkflowSourceControl()}
-        ${fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`)}
+        ${fields.length ? renderWorkflowParameterMenu(fields, 'comfy') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`)}
     `;
 }
 function renderWorkflowNodeParams(){
@@ -817,7 +817,7 @@ function renderWorkflowNodeParams(){
         if(!settings.comfyWorkflow || !workflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = workflows[0]?.name || '';
         if(settings.comfyWorkflow && !comfyWorkflowCache[settings.comfyWorkflow]) ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
         fields = (comfyWorkflowCache[settings.comfyWorkflow]?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
-        body = fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`);
+        body = fields.length ? renderWorkflowParameterMenu(fields, 'comfy') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`);
     } else {
         const ref = selectedRunningHubRef();
         settings.rhParams = settings.rhParams || {};
@@ -825,7 +825,7 @@ function renderWorkflowNodeParams(){
         if(!ref) body = `${renderRhMachineControl()}<div class="muted-note">${escapeHtml(hasComfy ? tr('smart.noWorkflow') : tr('smart.rhNeedConfig'))}</div>`;
         else {
             fields = rhActiveFields().filter(field => !['image','video','audio','prompt'].includes(rhFieldRole(field)));
-            body = `${renderRhMachineControl()}${fields.length ? fields.map(renderRhSettingField).join('') : `<div class="muted-note">${escapeHtml(tr('smart.rhNoParams'))}</div>`}`;
+            body = `${renderRhMachineControl()}${fields.length ? renderWorkflowParameterMenu(fields, 'runninghub') : `<div class="muted-note">${escapeHtml(tr('smart.rhNoParams'))}</div>`}`;
         }
     }
     // Workflow engines submit one task per requested result. The task count
@@ -1272,6 +1272,63 @@ function renderCustomSizeControls(prefix=''){
     return `<input type="number" data-param="${wKey}" value="${escapeHtml(settings[wKey] || '')}" placeholder="宽度">
             <input type="number" data-param="${hKey}" value="${escapeHtml(settings[hKey] || '')}" placeholder="高度">`;
 }
+function workflowParameterSummary(fields, engine){
+    return fields.map(field => {
+        const kind=engine === 'comfy' ? field.type : rhFieldRole(field);
+        const value=engine === 'comfy' ? comfyParamValue(field) : rhParamValue(field, null);
+        if(kind === 'boolean') return String(value).toLowerCase() === 'true' ? '开启' : '关闭';
+        return String(value ?? '').trim();
+    }).filter(Boolean).join(' · ') || '参数设置';
+}
+function renderWorkflowParameterMenu(fields, engine){
+    const summary=workflowParameterSummary(fields, engine);
+    const pinned=dynamicParams.querySelector('.workflow-params-control.pinned') != null;
+    return `<div class="smart-control workflow-params-control ${pinned ? 'pinned' : ''}" data-workflow-param-engine="${engine}" data-workflow-param-fields="${escapeAttr(JSON.stringify(fields))}">
+        <button class="smart-pill workflow-params-summary" type="button" aria-expanded="${pinned}" aria-label="工作流参数" title="${escapeAttr(summary)}"><i data-lucide="sliders-horizontal"></i><span class="sub">${escapeHtml(summary)}</span><i data-lucide="chevron-down" class="pill-caret"></i></button>
+        <div class="smart-popover workflow-params-popover">
+            ${fields.map(field => renderWorkflowParameterField(field, engine)).join('')}
+        </div>
+    </div>`;
+}
+function renderWorkflowParameterField(field, engine){
+    const comfy=engine === 'comfy';
+    const kind=comfy ? field.type : rhFieldRole(field);
+    const key=comfy ? field.id : rhParamKey(field.nodeId, field.fieldName);
+    const label=comfy ? (field.name || field.input || field.id) : (field.label || field.fieldName || 'Field');
+    const value=comfy ? comfyParamValue(field) : rhParamValue(field, null);
+    const options=comfy ? field.options || [] : rhExtractFieldOptions(field);
+    const prefix=comfy ? 'comfy' : 'rh';
+    let control='';
+    if(kind === 'boolean'){
+        const on=String(value).toLowerCase() === 'true';
+        control=`<button type="button" class="workflow-param-switch ${on ? 'active' : ''}" data-${prefix}-bool="${escapeAttr(key)}" role="switch" aria-checked="${on}" aria-label="${escapeAttr(label)}"><span>${on ? '开启' : '关闭'}</span><span class="workflow-param-switch-track"></span></button>`;
+    } else if(kind === 'slider'){
+        const min=Number.isFinite(Number(field.min)) ? Number(field.min) : 0;
+        const max=Number.isFinite(Number(field.max)) && Number(field.max)>min ? Number(field.max) : 1;
+        const step=Number.isFinite(Number(field.step)) && Number(field.step)>0 ? Number(field.step) : 0.01;
+        const numeric=Number.isFinite(Number(value)) ? Number(value) : min;
+        control=`<div class="workflow-param-range"><input type="range" class="smart-range" data-${prefix}-param="${escapeAttr(key)}" ${comfy ? '' : 'data-rh-type="slider"'} min="${min}" max="${max}" step="${step}" value="${numeric}" aria-label="${escapeAttr(label)}"><output>${numeric}</output></div>`;
+    } else if(kind === 'dropdown' || options?.length){
+        const choices=options || [];
+        const current=String(value ?? '');
+        const unmatched=!choices.some(option => String(option) === current);
+        control=`<select class="workflow-param-select" data-${prefix}-param="${escapeAttr(key)}" aria-label="${escapeAttr(label)}">
+            ${unmatched ? `<option value="${escapeAttr(current)}" selected>${escapeHtml(current || tr('smart.noOption'))}</option>` : ''}
+            ${choices.map(option => `<option value="${escapeAttr(option)}" ${String(option) === current ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+        </select>`;
+    } else {
+        control=comfy ? renderComfySettingField(field) : renderRhSettingField(field);
+        control=control.replace(/<(input|textarea) /g, `<$1 aria-label="${escapeAttr(label)}" `);
+    }
+    return `<div class="workflow-param-field"><div class="workflow-param-label">${escapeHtml(label)}</div>${control}</div>`;
+}
+function updateWorkflowParameterSummary(control){
+    const fields=JSON.parse(control.dataset.workflowParamFields || '[]');
+    const summary=workflowParameterSummary(fields, control.dataset.workflowParamEngine);
+    const pill=control.querySelector('.workflow-params-summary');
+    pill.querySelector('.sub').textContent=summary;
+    pill.title=summary;
+}
 function renderComfySettingField(field){
     const value = comfyParamValue(field);
     const label = field.name || field.input || field.id;
@@ -1681,7 +1738,7 @@ function setDynamicSetting(key, value, providerId='', connectionId='', modelId='
     scheduleSave();
 }
 function closeAllSmartPopovers(){
-    document.querySelectorAll('.smart-control.pinned').forEach(c => c.classList.remove('pinned'));
+    document.querySelectorAll('.smart-control.pinned').forEach(c => { c.classList.remove('pinned'); c.querySelector(':scope > .smart-pill')?.setAttribute('aria-expanded', 'false'); });
 }
 function smartParamRoots(){
     return [dynamicParams, composerHeadParams, composerCountControl].filter(Boolean);
@@ -1689,6 +1746,16 @@ function smartParamRoots(){
 function bindDynamicParams(){
     const queryAll = selector => smartParamRoots().flatMap(root => Array.from(root.querySelectorAll(selector)));
     bindWorkflowCoverFlyouts();
+    queryAll('.workflow-params-control').forEach(control => {
+        const refresh=event => {
+            const range=event.target.closest('.workflow-param-range');
+            if(range && event.target.matches('input[type="range"]')) range.querySelector('output').textContent=event.target.value;
+            queueMicrotask(() => { if(control.isConnected) updateWorkflowParameterSummary(control); });
+        };
+        control.addEventListener('input', refresh, true);
+        control.addEventListener('change', refresh, true);
+        control.addEventListener('click', refresh, true);
+    });
     queryAll('.smart-control > .smart-pill').forEach(pill => {
         pill.addEventListener('click', event => {
             event.preventDefault();
@@ -1698,6 +1765,7 @@ function bindDynamicParams(){
             closeAllSmartPopovers();
             if(!wasPinned) ctrl.classList.add('pinned');
             else pill.blur();
+            pill.setAttribute('aria-expanded', String(!wasPinned));
         });
     });
     queryAll('[data-smart-param]').forEach(btn => {

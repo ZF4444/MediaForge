@@ -2332,7 +2332,6 @@ function updateComposer(){
     if(node?.id && suppressComposerForCandidateNodeId === node.id){
         composer.classList.remove('open');
         updateNodeShortcutBar();
-        if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
         activeComposerSubject = null;
         lastComposerNodeId = '';
         suppressComposerForCandidateNodeId = '';
@@ -2341,7 +2340,6 @@ function updateComposer(){
     if(smartCascadeSilentSelection && !activeComposerSubject){
         composer.classList.remove('open');
         updateNodeShortcutBar();
-        if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
         activeComposerSubject = null;
         lastComposerNodeId = '';
         return;
@@ -2349,7 +2347,6 @@ function updateComposer(){
     composer.classList.toggle('open', !!node);
     updateNodeShortcutBar();
     if(!isSmartImageNode(node) || isUploadedImageOnlyNode(node)){
-        if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
         savePromptDraftForCurrent();
         composer.classList.remove('open');
         activeComposerSubject = null;
@@ -2375,14 +2372,14 @@ function updateComposer(){
     const schemaModel = schemaKind === 'video' ? settings.videoModel : settings.model;
     void refreshCanvasParameterSchema(schemaKind, schemaProvider, schemaModel);
     setPromptInputLocked(false);
-    syncCascadeRunButton(node);
+    syncCascadeRunButton();
     positionComposerForNode(node);
     const ph = Math.max(60, Math.min(380, Number(settings.promptH) || 124));
     promptInput.style.setProperty('--prompt-h', `${ph}px`);
     syncComposerPromptVisibility();
     renderInputThumbsRow(node);
     renderInputPromptPreview(node);
-    syncCascadeRunButton(node);
+    syncCascadeRunButton();
     updateProviderModels();
 }
 // M21 拆分（第一段）：positionPromptComposerForNode / promptComposerParamsHtml /
@@ -3040,10 +3037,12 @@ function directLoopRunTargets(loop){
     return downstreamImageTargetsFor(loop)
         .filter(node => !hasDownstreamWorkflowImageNode(node));
 }
-function smartCascadeGraphForTail(tail){
-    const path = smartImageChainTo(tail?.id, {includeFlow:true}).filter(n => isSmartImageNode(n) && !isHistoryGroupNode(n));
+function smartCascadeGraphForTail(tail, {selectedNodeIds=null}={}){
+    const allowed=selectedNodeIds ? new Set(selectedNodeIds) : null;
+    const path = smartImageChainTo(tail?.id, {includeFlow:true}).filter(n => isSmartImageNode(n) && !isHistoryGroupNode(n) && (!allowed || allowed.has(n.id)));
     if(!path.length) return {root:null, path:[], edges:[], children:new Map()};
-    const loop = resolveSmartCascadeLoop(tail?.id);
+    const resolvedLoop = resolveSmartCascadeLoop(tail?.id);
+    const loop = resolvedLoop && (!allowed || allowed.has(resolvedLoop.node.id)) ? resolvedLoop : null;
     const loopRoots = loop?.node?.id ? downstreamImageTargetsFor(loop.node) : [];
     const loopRoot = loopRoots.find(n => path.some(p => p.id === n.id));
     const lastAssetBeforeTail = path.slice(0, -1).findLastIndex(node => isSmartAssetImageNode(node));
@@ -3058,6 +3057,7 @@ function smartCascadeGraphForTail(tail){
     const visiting = new Set();
     const targetCanReachTail = target => {
         if(!target?.id) return false;
+        if(allowed) return allowed.has(target.id);
         if(target.id === tailId) return true;
         if(pathIds.has(target.id)) return true;
         return downstreamNodesForId(target.id).some(n => n.id === tailId || pathIds.has(n.id));
@@ -3100,12 +3100,13 @@ function cascadeTailForLoop(loopId){
         return (Number(b.y) || 0) - (Number(a.y) || 0);
     })[0];
 }
-function canRunSmartCascade(node){
+function canRunSmartCascade(node, {selectedNodeIds=null}={}){
     if(!isSmartImageNode(node) || isHistoryGroupNode(node)) return false;
-    const graph = smartCascadeGraphForTail(node);
-    const loop = resolveSmartCascadeLoop(node.id);
+    const graph = smartCascadeGraphForTail(node, {selectedNodeIds});
+    const resolvedLoop = resolveSmartCascadeLoop(node.id);
+    const loop = resolvedLoop && (!selectedNodeIds || selectedNodeIds.includes(resolvedLoop.node.id)) ? resolvedLoop : null;
     if(loop && isDirectLoopTargetRun(loop, node, graph)) return true;
-    if(hasDownstreamImageNode(node)) return false;
+    if(!selectedNodeIds && hasDownstreamImageNode(node)) return false;
     if(graph.edges.length) return true;
     return Boolean(loop);
 }
@@ -3326,14 +3327,29 @@ function appendOutputsToNode(node, additions, kind='image', options={}){
     if(!skipShift) pushRightSideNodes(node, afterRight - beforeRight + 36);
     return next;
 }
-function syncCascadeRunButton(node=selectedNode()){
+function selectedCascadeTarget(){
+    const ids=selectedIds.slice();
+    if(ids.length < 2) return null;
+    const selected=ids.map(id=>nodes.find(node=>node.id===id)).filter(node=>node && isSmartImageNode(node) && !isHistoryGroupNode(node));
+    const candidates=selected.filter(node=>canRunSmartCascade(node,{selectedNodeIds:ids}));
+    return candidates.map(node=>({node,graph:smartCascadeGraphForTail(node,{selectedNodeIds:ids})}))
+        .filter(({node,graph})=>{
+            const covered=new Set([graph.root?.id,...graph.edges.flatMap(edge=>[edge.source.id,edge.target.id])]);
+            return selected.every(item=>covered.has(item.id)) &&
+                !(graph.children.get(node.id) || []).length;
+        })
+        .sort((a,b)=>b.graph.path.length-a.graph.path.length)[0]?.node || null;
+}
+function syncCascadeRunButton(){
     if(!cascadeRunBtn) return;
-    const visible = canRunSmartCascade(node);
-    cascadeRunBtn.style.display = visible ? 'inline-flex' : 'none';
-    const nodeLoopId = resolveSmartCascadeLoop(node?.id)?.node?.id || '';
-    const loopRunState = smartCascadeRunForLoop(nodeLoopId);
+    const node=selectedCascadeTarget();
+    const visible = Boolean(node);
+    const resolvedLoopId = resolveSmartCascadeLoop(node?.id)?.node?.id || '';
+    const nodeLoopId = selectedIds.includes(resolvedLoopId) ? resolvedLoopId : '';
+    const loopRunState = nodeLoopId ? smartCascadeRunForLoop(nodeLoopId) : [...smartCascadeRuns.values()].find(run=>run.selectedNodeIds?.some(id=>selectedIds.includes(id)));
     const runningForNode = Boolean(loopRunState);
     cascadeRunBtn.disabled = !visible || (!runningForNode && Boolean(node?.running)) || Boolean(loopRunState?.stopRequested);
+    cascadeRunBtn.title = visible ? '' : '请框选一条连通的图片、视频或工作流链路';
     cascadeRunBtn.classList.toggle('is-stop', runningForNode);
     cascadeRunBtn.innerHTML = runningForNode
         ? `<i data-lucide="square"></i><span>${escapeHtml(smartCascadeStopText(Boolean(loopRunState?.stopRequested)))}</span>`
@@ -3824,6 +3840,7 @@ function positionSelectionActions(left, top, right, selectedCount){
     if(!selectionActions) return;
     selectionActions.hidden = selectedCount < 2;
     if(selectionActions.hidden) return;
+    syncCascadeRunButton();
     const selectionCenter = (left + right) / 2;
     const actionLeft = Math.max(8, Math.min(shell.clientWidth - selectionActions.offsetWidth - 8, selectionCenter - selectionActions.offsetWidth / 2));
     const actionTop = Math.max(selectionActions.offsetHeight + 8, top - 8);
@@ -4541,13 +4558,14 @@ if(promptResize){
 }
 runBtn.addEventListener('click', runGeneration);
 function cascadeRunBtnClickHandler(){
-    const node = selectedNode();
-    const loopId = resolveSmartCascadeLoop(node?.id)?.node?.id || '';
-    if(loopId && smartCascadeIsLoopRunning(loopId)) {
-        requestSmartCascadeStop(loopId);
+    const node = selectedCascadeTarget();
+    if(!node) return;
+    const runState=[...smartCascadeRuns.values()].find(run=>run.selectedNodeIds?.some(id=>selectedIds.includes(id)));
+    if(runState) {
+        requestSmartCascadeStop(runState.runKey);
         return;
     }
-    runSmartCascade();
+    void runSmartCascade(node, {selectedNodeIds:selectedIds.slice()});
 }
 cascadeRunBtn.addEventListener('click', cascadeRunBtnClickHandler);
 function fileInputChangeHandler(){

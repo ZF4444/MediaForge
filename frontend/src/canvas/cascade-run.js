@@ -748,13 +748,14 @@ function cascadeRefsFromOutputs(outputs, targetNode){
 function smartCascadeStopText(stopping=false){
     return stopping ? '停止中...' : '停止运行';
 }
-async function runSmartCascade(targetNode=null){
+async function runSmartCascade(targetNode=null, {selectedNodeIds=null}={}){
     const tail = targetNode || selectedNode();
-    if(!canRunSmartCascade(tail)){ toast('请选择链路结尾图片节点'); return; }
+    if(!canRunSmartCascade(tail, {selectedNodeIds})){ toast('请选择链路结尾图片节点'); return; }
     savePromptDraftForCurrent();
-    const graph = smartCascadeGraphForTail(tail);
+    const graph = smartCascadeGraphForTail(tail, {selectedNodeIds});
     const chain = graph.path;
-    const loop = resolveSmartCascadeLoop(tail.id);
+    const resolvedLoop = resolveSmartCascadeLoop(tail.id);
+    const loop = resolvedLoop && (!selectedNodeIds || selectedNodeIds.includes(resolvedLoop.node.id)) ? resolvedLoop : null;
     const loopId = loop?.node?.id || '';
     if(loopId && smartCascadeIsLoopRunning(loopId)){ requestSmartCascadeStop(loopId); return; }
     if(!loopId && smartCascadeAnyRunning()){ requestSmartCascadeStop(); return; }
@@ -765,7 +766,7 @@ async function runSmartCascade(targetNode=null){
     const originalSettings = cloneSmartSettings(settings);
     const originalPromptHtml = promptInput.innerHTML;
     const runKey = loopId || `cascade-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const runState = {runKey, loopId, stopRequested:false, runPath:null};
+    const runState = {runKey, loopId, stopRequested:false, runPath:null, selectedNodeIds};
     smartCascadeRuns.set(runKey, runState);
     syncSmartCascadeLegacyState(runKey);
     smartCascadeSilentSelection = true;
@@ -786,7 +787,7 @@ async function runSmartCascade(targetNode=null){
         runState.runPath = {states:{}};
         smartCascadeRunPath = runState.runPath;
         selectedId = '';
-        selectedIds = [];
+        selectedIds = selectedNodeIds ? selectedNodeIds.slice() : [];
         selectedImage = {nodeId:'', index:-1};
         try {
             const columnsPerRow = loopMode === 'parallel' ? Math.max(1, parallelLimit) : 1;
@@ -812,7 +813,7 @@ async function runSmartCascade(targetNode=null){
             throwIfSmartCascadeStopRequested(runState);
             smartLoopContext = null;
             selectedId = '';
-            selectedIds = [];
+            selectedIds = selectedNodeIds ? selectedNodeIds.slice() : [];
             selectedImage = {nodeId:'', index:-1};
             activeComposerSubject = null;
             lastComposerNodeId = '';
@@ -989,7 +990,7 @@ async function runSmartCascade(targetNode=null){
         throwIfSmartCascadeStopRequested(runState);
         if(parallelLimit === 1) smartLoopContext = null;
         selectedId = '';
-        selectedIds = [];
+        selectedIds = selectedNodeIds ? selectedNodeIds.slice() : [];
         selectedImage = {nodeId:'', index:-1};
         activeComposerSubject = null;
         lastComposerNodeId = '';

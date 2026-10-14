@@ -55,7 +55,6 @@
                 </div>
                 <div class="composer-actions">
                     <div id="composerCountControl" class="composer-count-control"></div>
-                    <button id="cascadeRunBtn" class="run-btn cascade-run-btn canvas-display-none" type="button"><i data-lucide="workflow"></i><span>运行链路</span></button>
                     <button id="runBtn" class="run-btn" type="button"><i data-lucide="sparkles"></i><span id="runBtnLabel">运行节点</span></button>
                 </div>
             </div>
@@ -342,6 +341,7 @@
         </div>
         <div id="selectionBox" class="selection-box"></div>
         <div id="selectionActions" class="selection-actions" hidden>
+            <button id="cascadeRunBtn" type="button" data-selection-action="run-chain"><i data-lucide="workflow"></i><span>运行链路</span></button>
             <button type="button" data-selection-action="save"><i data-lucide="library"></i><span>加入资产</span></button>
             <button type="button" data-selection-action="download-all"><i data-lucide="download"></i><span>下载全部</span></button>
             <button type="button" data-selection-action="group"><i data-lucide="group"></i><span>打组</span></button>
