@@ -218,6 +218,7 @@
                 <div id="minimapViewport" class="canvas-minimap-viewport"></div>
             </div>
         </div>
+        <div class="canvas-top-actions">
         <button id="canvasUsageToggle" class="canvas-usage-toggle" type="button" title="本月消耗" aria-label="本月消耗"><i data-lucide="wallet-cards"></i><span>本月消耗</span><strong id="canvasUsageAmount">--</strong></button>
         <div id="canvasUsagePanel" class="canvas-usage-panel" hidden><div class="canvas-usage-panel-head"><strong>本月消耗</strong><button id="canvasUsageClose" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div><div class="canvas-usage-total" id="canvasUsagePanelTotal">--</div><div class="canvas-usage-grid"><span>AI 调用次数</span><strong id="canvasUsageRequests">--</strong><span>Token 总量</span><strong id="canvasUsageTokens">--</strong><span>文本输入</span><strong id="canvasUsageText">--</strong><span>图片输入</span><strong id="canvasUsageImage">--</strong><span>输出</span><strong id="canvasUsageOutput">--</strong></div><a id="canvasUsageDetails" href="/static/my-account.html">查看消耗明细 <i data-lucide="arrow-up-right"></i></a></div>
         <button id="canvasWorkflowToggle" class="canvas-workflow-toggle" type="button" title="导入导出模板" aria-label="导入导出模板"><i data-lucide="package-open"></i><span>模板</span></button>
@@ -225,7 +226,9 @@
         <button id="canvasLogToggle" class="canvas-log-toggle" type="button" data-action="openCanvasLog" title="日志" aria-label="日志" data-i18n-title="canvas.logs"><i data-lucide="list-todo"></i><span data-i18n="canvas.logs">日志</span></button>
         <button id="assetToggle" class="asset-toggle" type="button"><i data-lucide="library"></i><span data-i18n="smart.assetLibrary">资产库</span></button>
         <button id="canvasAgentToggle" class="canvas-agent-toggle" type="button" title="打开 Agent" aria-label="打开 Agent" hidden><i data-lucide="bot"></i><span>Agent</span></button>
+        </div>
         <aside id="canvasAgentPanel" class="canvas-agent-panel" aria-label="画布 Agent" hidden>
+            <div id="canvasAgentResize" class="canvas-agent-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整 Agent 面板宽度" tabindex="0"></div>
             <div class="canvas-agent-head">
                 <div class="canvas-agent-title"><i data-lucide="bot"></i><span>画布 Agent</span></div>
                 <button id="canvasAgentClose" class="asset-mini-btn" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
