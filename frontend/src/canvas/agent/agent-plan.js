@@ -7,16 +7,12 @@
   const setPath=(target,path,value)=>{const keys=String(path||'').split('.').filter(Boolean);let cursor=target;keys.slice(0,-1).forEach(key=>cursor=cursor[key]||={});if(keys.length)cursor[keys.at(-1)]=value;};
   const primitive=value=>['string','number','boolean'].includes(typeof value);
   const resourceIndex=()=>{const index=typeof aiResourceIndex!=='undefined'?aiResourceIndex:window.aiResourceIndex;return index&&typeof index==='object'?index:{connections:[],models:[],resources:[]};};
-  // Agent plan nodes describe their target through the same engine-specific
-  // settings a canvas node uses (runningHub `rhConfigKey`, ComfyUI
-  // `comfyWorkflow`), but they do not persist the canonical
-  // connection_id/model_id/resource_id. Derive them here by reusing the exact
-  // resolvers the generation-settings panel relies on, so the confirmation
-  // dialog fetches the same parameter schema the real node would.
+  // Legacy plans use engine-specific settings; canonical plans carry target
+  // IDs on SemanticNode. planValues promotes those IDs before resolving them.
   function resolveStableTarget(settings){
     const engine=String(settings.engine||'').toLowerCase();
     const video=settings.apiKind==='video'||Boolean(settings.videoModel);
-    const target={connection_id:String((video?settings.videoConnectionId:settings.connection_id)||''),model_id:String((video?settings.videoModelId:settings.model_id)||''),resource_id:String((video?settings.videoResourceId:settings.resource_id)||''),model:String((video?settings.videoModel:settings.model)||'')};
+    const target={connection_id:String((video?settings.videoConnectionId||settings.connection_id:settings.connection_id)||''),model_id:String((video?settings.videoModelId||settings.model_id:settings.model_id)||''),resource_id:String((video?settings.videoResourceId||settings.resource_id:settings.resource_id)||''),model:String((video?settings.videoModel:settings.model)||'')};
     if(target.connection_id||target.model_id||target.resource_id)return target;
     try{
       if(engine==='runninghub'&&typeof selectedRunningHubRef==='function'&&typeof runningHubTarget==='function'){
@@ -26,6 +22,7 @@
         // ComfyUI workflows resolve by workflow name; the backend keys the
         // schema on `model` rather than a stable resource id.
         target.model=String(settings.comfyWorkflow||target.model||'');
+        if(typeof stableCanvasTarget==='function')Object.assign(target,stableCanvasTarget('comfyui_workflow','comfyui','',target.model));
       }else if(typeof stableCanvasTarget==='function'){
         Object.assign(target,stableCanvasTarget(video?'video':'image',video?settings.videoProvider:settings.provider_id,target.model));
       }
@@ -57,7 +54,16 @@
   const writePrompt=(params,value)=>{const rs=(params.runSettings&&typeof params.runSettings==='object')?params.runSettings:(params.runSettings={});rs.prompt=value;};
   function planValues(step){
     const node=step.node||{},params=clone(node.params);
-    return {step_id:step.id,title:node.title||'',content:readPrompt(params),params,settings:params.runSettings||params};
+    const settings=params.runSettings||params;
+    for(const key of ['connection_id','model_id','resource_id'])if(node[key]&&!settings[key])settings[key]=String(node[key]);
+    const resource=(resourceIndex().resources||[]).find(item=>item.id===settings.resource_id);
+    const capability=String(node.capability||'');
+    const workflow=node.semantic_type==='workflow_generation'||params.genKind==='workflow'||node.genKind==='workflow'||capability.startsWith('comfyui.workflow.')||capability.startsWith('runninghub.')||['runninghub_app','comfyui_workflow'].includes(resource?.kind)||['comfy','runninghub'].includes(settings.engine);
+    if(workflow){
+      settings.engine=capability.startsWith('runninghub.')||resource?.kind==='runninghub_app'||settings.engine==='runninghub'?'runninghub':'comfy';
+      if(settings.engine==='comfy'&&!settings.comfyWorkflow)settings.comfyWorkflow=resource?.name||settings.resource_id||'';
+    }else if(node.semantic_type==='video_generation'&&!settings.apiKind)settings.apiKind='video';
+    return {step_id:step.id,title:node.title||'',content:readPrompt(params),params,settings,workflow,resource};
   }
   function label(field){return String(field.display_name||field.name||field.id||'参数');}
   function options(field){
@@ -67,7 +73,7 @@
     return (field.options||[]).map((value,index)=>({value,label:String(labels[index]||value)}));
   }
   function fieldIcon(field){
-    return ({provider_id:'plug-zap',videoProvider:'plug-zap',model:'sparkles',videoModel:'film',resolution:'monitor',videoResolution:'monitor',ratio:'scan',videoAspect:'scan',quality:'sliders-horizontal',count:'copy'})[String(field.id||'')]||'sliders-horizontal';
+    return ({provider_id:'plug-zap',videoProvider:'plug-zap',model:'sparkles',videoModel:'film',resolution:'monitor',videoResolution:'monitor',ratio:'scan',videoAspect:'scan',quality:'sliders-horizontal',count:'copy',rhInstanceType:'cpu'})[String(field.id||'')]||'sliders-horizontal';
   }
   function ratioIcon(value){
     if(['2:3','3:4'].includes(String(value))) return String(value)==='2:3'?'r-portrait':'r-portrait43';
@@ -150,6 +156,41 @@
       set(next){setPath(values.params,`${paramsPath}.${field.id}`,wrapped?{value:next}:next);},
     };
   }
+  function workflowSource(values){
+    const settings=values.settings,wrapper=document.createElement('div');wrapper.className='smart-control workflow-control';
+    const pill=document.createElement('button');pill.type='button';pill.className='smart-pill';pill.disabled=true;
+    const workflows=typeof comfyWorkflows!=='undefined'?comfyWorkflows:[];
+    const workflow=workflows.find(item=>item.name===settings.comfyWorkflow);
+    const caption=values.resource?.name||workflow?.title||settings.comfyWorkflow||values.title||'工作流';
+    appendIcon(pill,'layers');const text=document.createElement('span');text.className='sub';text.textContent=caption;pill.title=caption;pill.appendChild(text);wrapper.appendChild(pill);return wrapper;
+  }
+  function workflowSourceControls(values,interactive){
+    const controls=[workflowSource(values)];
+    if(values.settings.engine==='runninghub'){
+      const machine=control({id:'rhInstanceType',name:'显存',type:'dropdown',display_options:[{value:'',label:'24G'},{value:'plus',label:'48G'}]},values.settings.rhInstanceType==='plus'?'plus':'',next=>{setPath(values.params,values.params.runSettings?'runSettings.rhInstanceType':'rhInstanceType',next);},interactive);
+      machine.classList.add('rh-machine-control');controls.push(machine);
+    }
+    return controls;
+  }
+  function workflowParameters(fields,values,paramsPath,interactive){
+    const wrapper=document.createElement('div');wrapper.className='canvas-agent-smart-control smart-control workflow-params-control';
+    const pill=document.createElement('button');pill.type='button';pill.className='smart-pill workflow-params-summary';pill.setAttribute('aria-label','工作流参数');pill.setAttribute('aria-expanded','false');
+    appendIcon(pill,'sliders-horizontal');const summary=document.createElement('span');summary.className='sub';pill.appendChild(summary);appendIcon(pill,'chevron-down','pill-caret');wrapper.appendChild(pill);
+    const popover=document.createElement('div');popover.className='smart-popover workflow-params-popover canvas-agent-options-popover';popover.setAttribute('popover','manual');wrapper.appendChild(popover);
+    const updateSummary=()=>{const text=fields.map(field=>String(fieldStore(field,values,paramsPath).get()??'').trim()).filter(Boolean).join(' · ')||'参数设置';summary.textContent=text;pill.title=text;};
+    fields.forEach(field=>{
+      const row=document.createElement('div');row.className='workflow-param-field';const caption=document.createElement('div');caption.className='workflow-param-label';caption.textContent=label(field);row.appendChild(caption);
+      const store=fieldStore(field,values,paramsPath),value=store.get(),type=String(field.type||'text');let input;
+      if(type==='dropdown'||options(field).length){input=document.createElement('select');input.className='workflow-param-select';const choices=options(field);if(!choices.some(option=>String(option.value)===String(value)))choices.unshift({value,label:String(value)});choices.forEach(option=>{const item=document.createElement('option');item.value=option.value;item.textContent=option.label;item.selected=String(option.value)===String(value);input.appendChild(item);});}
+      else {input=document.createElement('input');input.type=type==='boolean'?'checkbox':type==='slider'?'range':type==='number'?'number':'text';if(type==='boolean')input.checked=value===true||String(value)==='true';else input.value=value;for(const key of ['min','max','step'])if(field[key]!=null)input[key]=field[key];}
+      input.disabled=!interactive||field.ui?.configurable===false;input.setAttribute('aria-label',label(field));
+      let output;
+      input.addEventListener('input',()=>{const next=type==='boolean'?input.checked:['number','slider'].includes(type)&&input.value!==''?Number(input.value):input.tagName==='SELECT'?(options(field).find(option=>String(option.value)===input.value)?.value??input.value):input.value;store.set(next);if(output)output.textContent=String(next);updateSummary();});
+      if(type==='slider'){const range=document.createElement('div');range.className='workflow-param-range';input.className='smart-range';output=document.createElement('output');output.textContent=String(value);range.append(input,output);row.appendChild(range);}else row.appendChild(input);
+      popover.appendChild(row);
+    });
+    updateSummary();pill.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const open=!wrapper.classList.contains('pinned');closePopovers();if(open)openPopover(wrapper);});return wrapper;
+  }
   function visible(field,settings){
     const id=String(field.id||'');
     if(id==='customSize'||id==='customWidth'||id==='customHeight')return settings.resolution==='custom';
@@ -172,6 +213,7 @@
   }
   function fallbackFields(values,interactive){
     const settings=values.settings||{};
+    if(values.workflow){const note=document.createElement('div');note.className='muted-note';note.textContent='工作流参数加载失败，请重试';return [...workflowSourceControls(values,interactive),note];}
     if(!isRunningHubTarget(settings)&&String(settings.engine||'').toLowerCase()!=='comfy'){
       const kind=settings.apiKind==='video'||settings.videoModel?'video':'image';
       const modelId=kind==='video'?'videoModel':'model';
@@ -204,14 +246,27 @@
     const capability=String(node.capability||((node.semantic_type==='prompt'||node.semantic_type==='smart-prompt')?'prompt.generate':(engine==='comfy'?`comfyui.workflow.${kind}`:(engine==='runninghub'||isRunningHubTarget(settings)?`runninghub.app.${kind}`:(kind==='video'?'video.text_to_video':'image.text_to_image')))));
     if(!capability){fallbackFields(values,interactive).forEach(item=>card.querySelector('.canvas-agent-config-controls').appendChild(item));return;}
     try{
-      const apiJson=globalThis.__MediaForgeRuntimeServices?.apiJson;const schema=apiJson ? await apiJson(schemaUrl(capability,settings),{credentials:'same-origin'}) : await fetch(schemaUrl(capability,settings),{credentials:'same-origin'}).then(async response=>{if(!response.ok)throw new Error();return response.json();});if((request!==schemaRequest&&!history)||!card.isConnected)return;
-      if(!Array.isArray(schema?.fields)||!schema.fields.length)throw new Error('Missing parameter schema');
+      const apiJson=globalThis.__MediaForgeRuntimeServices?.apiJson;
+      let schema;
+      // Local workflows have a file name as resource_id, not a database target.
+      if(values.workflow&&engine==='comfy'&&settings.comfyWorkflow&&typeof ensureComfyWorkflow==='function'){
+        const workflow=await ensureComfyWorkflow(settings.comfyWorkflow);schema={params_path:'runSettings.comfyParams',fields:(workflow?.config?.fields||[]).map(field=>({...field,role:field.role||(['prompt','textarea'].includes(field.type)?'prompt':field.type)}))};
+        if(!workflow)throw new Error('Workflow not found');
+      }else schema=apiJson ? await apiJson(schemaUrl(capability,settings),{credentials:'same-origin'}) : await fetch(schemaUrl(capability,settings),{credentials:'same-origin'}).then(async response=>{if(!response.ok)throw new Error();return response.json();});
+      if((request!==schemaRequest&&!history)||!card.isConnected)return;
+      if(!Array.isArray(schema?.fields)||(!schema.fields.length&&!values.workflow))throw new Error('Missing parameter schema');
       const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');
       // A RunningHub app exposes its prompt through a prompt-role field. Mirror
       // the canvas node: surface that text in the top prompt box (and write it
       // back there) instead of rendering a duplicate parameter control.
-      const bindPrompt=field=>{if(!promptEl)return;const store=fieldStore(field,values,paramsPath);const initial=String(store.get()??readPrompt(values.params)??'');if(initial){promptEl.value=initial;values.content=initial;store.set(initial);writePrompt(values.params,initial);}const handler=()=>{store.set(promptEl.value);writePrompt(values.params,promptEl.value);values.content=promptEl.value;};promptEl.removeEventListener('input',promptEl._agentPromptHandler||(()=>{}));promptEl._agentPromptHandler=handler;promptEl.addEventListener('input',handler);};
+      const bindPrompt=field=>{if(!promptEl)return;const store=fieldStore(field,values,paramsPath);const stored=pathValue(values.params,`${paramsPath}.${field.id}`);const initial=String((stored&&typeof stored==='object'?stored.value:stored)??(readPrompt(values.params)||store.get())??'');if(initial){promptEl.value=initial;values.content=initial;store.set(initial);writePrompt(values.params,initial);}const handler=()=>{store.set(promptEl.value);writePrompt(values.params,promptEl.value);values.content=promptEl.value;};promptEl.removeEventListener('input',promptEl._agentPromptHandler||(()=>{}));promptEl._agentPromptHandler=handler;promptEl.addEventListener('input',handler);};
       const renderFields=()=>{closePopovers();controls.innerHTML='';
+        if(values.workflow){
+          workflowSourceControls(values,interactive).forEach(control=>controls.appendChild(control));
+          const fields=schema.fields.filter(field=>{const role=String(field.role||field.type||'');if(role==='prompt'){bindPrompt(field);return false;}return !['image','video','audio'].includes(role);});
+          if(fields.length)controls.appendChild(workflowParameters(fields,values,paramsPath,interactive));
+          window.lucide?.createIcons();return;
+        }
         const orderedFields=[...schema.fields].sort((a,b)=>{const order=['model','resolution','ratio','quality','count'];const rank=field=>{const index=order.indexOf(String(field.id));return index<0?order.length:index;};return rank(a)-rank(b);});
         orderedFields
           .filter(field=>!['provider_id','videoProvider'].includes(String(field.id||'')))
