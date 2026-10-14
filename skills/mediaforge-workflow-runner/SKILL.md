@@ -21,11 +21,10 @@ description: 面向 MediaForge 平台工作流的执行技能：发现可用工�
 
 工作流专属规则必须放在 `references/` 的独立适配器文档中。读取与当前目标匹配的文档后再执行，不将一个工作流的字段、默认值或错误处理套到另一个工作流。
 
-- 当前 X2 场景单体文生图：读取 [references/x2-scene-single-image.md](references/x2-scene-single-image.md)。
+- 当前 X2 场景单体文生图：读取 [references/x2-scene-asset-workflow.md](references/x2-scene-asset-workflow.md)。
 - 新增工作流：新增独立适配器文档，包含资源匹配条件、必需输入、字段映射、节点类型、执行方式、输出解析和失败策略，再加入此路由列表。
 
 ## 安全边界
 
 - 只通过平台的能力、参数和画布工具执行；不得直接拼接供应商请求。
 - 不改变用户明确内容；缺少必填输入时询问，不擅自填入业务含义。
-- 只在用户要求或工作流明确需要时生成提示词；提示词文本规则由适配器文档定义。
