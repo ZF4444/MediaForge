@@ -89,3 +89,8 @@ body:has(#canvasAgentPanel:not([hidden])) .canvas-top-actions{right:calc(var(--c
 .canvas-agent-resize-handle{position:absolute;left:0;top:0;bottom:0;width:7px;z-index:5;cursor:ew-resize;touch-action:none}
 .canvas-agent-resize-handle:hover,.canvas-agent-resize-handle:focus-visible{background:rgba(99,102,241,.18);outline:none}
 .canvas-agent-panel.resizing{user-select:none}
+
+/* Confirmation controls keep their widths and wrap in narrow Agent panels. */
+.canvas-agent-node-config.composer-card:has(.workflow-params-control) .canvas-agent-config-controls{flex-wrap:wrap;row-gap:6px}
+.canvas-agent-node-config.composer-card:has(.workflow-params-control) .canvas-agent-config-controls > *{flex:0 0 auto}
+.canvas-agent-node-config.composer-card:has(.workflow-params-control) .workflow-control{flex:0 0 124px}
