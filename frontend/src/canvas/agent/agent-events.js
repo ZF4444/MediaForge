@@ -49,12 +49,6 @@
     }
     if (type === 'plan.created' && data.plan) { window.CanvasAgentPanel.resetConfirmationState?.(); window.CanvasAgentPlan.render({version:data.plan_version, content_json:data.plan}); }
     if (type === 'operation.failed') window.CanvasAgentPanel.confirmationFailed?.();
-    if (projection.skillBadge?.name) {
-      const badge = projection.skillBadge;
-      const key = `${badge.name}:${badge.version || ''}`;
-      if (!state.skills.some(skill => `${skill.name}:${skill.version || ''}` === key)) state.skills.push(badge);
-      window.CanvasAgentPanel.renderSkills();
-    }
     if (projection.refreshCanvas) window.CanvasAgentBridge.refreshCanvas?.(projection.refreshCanvas);
     if (projection.notice) window.CanvasAgentPanel.system(projection.notice.message);
     if (['run.failed','run.blocked','run.cancelled'].includes(type) && !projection.notice) {
@@ -88,7 +82,7 @@
   function stop() { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer=null; } state.pollInterval=0; }
   async function switchRun(runId) {
     if (!runId || runId === state.runId) return;
-    stop(); state.runId = runId; state.sequence = 0; state.skills = []; saveRun();
+    stop(); state.runId = runId; state.sequence = 0; saveRun();
     window.CanvasAgentPanel.clearRun();
     await recover();
   }

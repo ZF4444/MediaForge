@@ -268,7 +268,6 @@
     state.plan=null; state.tasks=[];
     renderLiveStatus();
   }
-  function renderSkills() { const box=$('canvasAgentSkills'); box.innerHTML=''; state.skills.forEach(skill=>{const tag=document.createElement('span');tag.className='canvas-agent-skill';tag.textContent=`${skill.name}${skill.version ? ` v${skill.version}` : ''}`;box.appendChild(tag);});box.hidden=!state.skills.length; }
   function renderMentions() {
     const box=$('canvasAgentMentions'); box.innerHTML='';
     state.references.forEach(reference => {
@@ -310,7 +309,7 @@
     if(renderKey===lastRunRenderKey) return;
     lastRunRenderKey=renderKey;
     const messages=$('canvasAgentMessages'), planBox=$('canvasAgentPlan'); const scrollSnapshot=captureMessageScroll(messages); rebuildingMessages=true; messages.innerHTML=''; liveEvents=[]; lastLiveStatus='';
-    const loaded=new Map(), planStates=new Map(planDecisions); const persistedPlanStatus=planStatusLabel(data.plan?.status); if(persistedPlanStatus) planStates.set(planDecisionKey(run.id,data.plan.version),persistedPlanStatus); const timeline=[];
+    const planStates=new Map(planDecisions); const persistedPlanStatus=planStatusLabel(data.plan?.status); if(persistedPlanStatus) planStates.set(planDecisionKey(run.id,data.plan.version),persistedPlanStatus); const timeline=[];
     (data.messages||[]).forEach(item=>timeline.push({kind:'message',at:Number(item.created_at)||0,item}));
     (data.events||[]).forEach(event=>{
       const type=String(event.type||'').replace(/^agent\./,''); const payload=event.payload||event.payload_json||{};
@@ -321,7 +320,6 @@
       // Restore transient progress too, so every reply retains its status row.
       if(projection?.progress) timeline.push({kind:'event',at:Number(event.created_at)||0,item:live});
       if(type==='plan.created' && payload.plan) timeline.push({kind:'plan',at:Number(event.created_at)||0,item:{version:payload.plan_version,content_json:payload.plan}});
-      if(projection?.skillBadge?.name) loaded.set(`${projection.skillBadge.name}:${projection.skillBadge.version||''}`,projection.skillBadge);
     });
     const timelineRank=entry=>entry.kind==='message' ? (entry.item.role==='user' ? 0 : 3) : entry.kind==='event' ? 1 : 2;
     timeline.sort((a,b)=>a.at-b.at || timelineRank(a)-timelineRank(b) || Number(a.item.sequence||0)-Number(b.item.sequence||0));
@@ -347,7 +345,6 @@
     const latest=liveEvents[liveEvents.length-1];
     lastLiveStatus=latest ? liveEventText(latest.type,latest.data,latest.message) : '';
     renderLiveStatus();
-    state.skills=[...loaded.values()]; renderSkills();
     // The plan lives in the message flow. Restore its DOM node
     // before their renderers resolve them by id after rebuilding the timeline.
     if(data.plan && !planRendered){
@@ -359,7 +356,7 @@
     restoreMessageScroll(messages,scrollSnapshot); rebuildingMessages=false; messageFollow=scrollSnapshot.follow;
   }
   async function ensureRun() { if (state.runId) return state.runId; status('正在创建会话'); const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); await refreshRuns(); return state.runId; }
-  async function newRun() { if (state.busy) return; state.busy=true; window.CanvasAgentEvents.stop(); state.runId=''; state.sequence=0; state.skills=[]; clearRun(); renderSkills(); status('正在创建会话'); try { const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); renderRun({run:data.run,messages:[],events:[],tasks:[],artifacts:[]}); await refreshRuns(); } catch (e) { system(e.message); status('创建失败'); } finally { state.busy=false; } }
+  async function newRun() { if (state.busy) return; state.busy=true; window.CanvasAgentEvents.stop(); state.runId=''; state.sequence=0; clearRun(); status('正在创建会话'); try { const data=await window.CanvasAgentClient.createRun(); state.runId=data.run.id; window.CanvasAgentEvents.saveRun(); renderRun({run:data.run,messages:[],events:[],tasks:[],artifacts:[]}); await refreshRuns(); } catch (e) { system(e.message); status('创建失败'); } finally { state.busy=false; } }
   function closeReferencePicker(){ referencePickerOpen=false; const picker=$('canvasAgentReferencePicker'); if(picker){ picker.classList.remove('open'); picker.hidden=true; picker.innerHTML=''; } }
   function inputMentionCandidates(){ return state.references.filter(item=>item?.url||item?.src).map((item,index)=>({...item,url:item.url||item.src,thumbnail:item.thumbnail||item.src||item.url,alias:item.name||item.label||`图片${index+1}`,source:item.source||'canvas'})); }
   function assetMentionCandidates(categoryId=''){ try { return typeof assetMentionCandidateImages==='function' ? assetMentionCandidateImages(categoryId).map(item=>({...item,source:'asset'})) : []; } catch (_) { return []; } }
@@ -473,5 +470,5 @@
   async function init() { try { const apiJson=globalThis.__MediaForgeRuntimeServices?.apiJson; const me=apiJson ? await apiJson('/api/access-control/me',{credentials:'same-origin',allowErrorResponse:true}) : await fetch('/api/access-control/me',{credentials:'same-origin'}).then(async response=>response.ok ? response.json() : {}); if(!Array.isArray(me.pages)||!me.pages.includes('canvas-agent')){ $('canvasAgentToggle')?.remove(); panel?.remove(); return; } $('canvasAgentToggle').hidden=false; } catch (_) { $('canvasAgentToggle')?.remove(); panel?.remove(); return; } attachAuxiliaryPanels(); initPanelResize(); loadModelSelection(); $('canvasAgentToggle').addEventListener('click',()=>{panel.hidden=!panel.hidden;if(!panel.hidden){messageFollow=true;ensureModelsLoaded();refreshRuns();window.CanvasAgentEvents.recover();requestAnimationFrame(()=>{const messages=$('canvasAgentMessages');if(messages)messages.scrollTop=messages.scrollHeight;});}}); ['pointerdown','mousedown','dblclick'].forEach(type=>panel.addEventListener(type,event=>event.stopPropagation())); panel.addEventListener('click', event=>{ const link=event.target.closest('.canvas-agent-node-link'); if(link){ event.preventDefault(); event.stopPropagation(); window.CanvasAgentBridge.focusNode(link.dataset.nodeId); } else event.stopPropagation(); }); panel.addEventListener('wheel', event=>event.stopPropagation(), {capture:true,passive:true}); $('canvasAgentClose').addEventListener('click',()=>{panel.hidden=true; window.CanvasAgentBridge.endReferencePicking();}); $('canvasAgentRunSelect').addEventListener('change',event=>window.CanvasAgentEvents.switchRun(event.target.value)); $('canvasAgentNewRun').addEventListener('click',newRun); $('canvasAgentModelSelect').addEventListener('change',onModelChange); $('canvasAgentSend').addEventListener('click',()=>actionMode==='cancel'?cancel():send()); $('canvasAgentAddCanvasContent').addEventListener('click',toggleCanvasReferencePicking); $('canvasAgentInput').addEventListener('input',handleInput); $('canvasAgentInput').addEventListener('keydown',handleInputKeydown); $('canvasAgentInput').addEventListener('mouseover',previewReferenceMention); $('canvasAgentInput').addEventListener('mouseout',hideReferenceMentionPreview); const agentInput=$('canvasAgentInput'); agentInput?.addEventListener('dragenter',agentInputDragEnter); agentInput?.addEventListener('dragover',agentInputDragOver); agentInput?.addEventListener('dragleave',agentInputDragLeave); agentInput?.addEventListener('drop',agentInputDrop); window.addEventListener('canvas-agent-reference-picking-changed',event=>setCanvasReferencePicking(event.detail?.active)); window.addEventListener('beforeunload',()=>{window.CanvasAgentEvents.stop();window.CanvasAgentBridge.endReferencePicking();}); renderMentions(); ensureModelsLoaded(); refreshRuns(); window.CanvasAgentEvents.recover(); }
   document.addEventListener('mousedown',event=>{const picker=$('canvasAgentReferencePicker'),input=$('canvasAgentInput');if(referencePickerOpen&&!picker?.contains(event.target)&&!input?.contains(event.target))closeReferencePicker(); const menu=$('canvasAgentRunMenu'),button=$('canvasAgentRunSelect');if(menu&&!menu.hidden&&!menu.contains(event.target)&&event.target!==button&&!button?.contains(event.target)){menu.hidden=true;button?.setAttribute('aria-expanded','false');}}, {capture:true});
   $('canvasAgentRunSelect')?.addEventListener('click',()=>{const menu=$('canvasAgentRunMenu'),button=$('canvasAgentRunSelect');if(menu){menu.hidden=!menu.hidden;button.setAttribute('aria-expanded',String(!menu.hidden));}});
-  CanvasAgentPanel={init,status,message,liveStatus,liveEvent,clearLiveStatus,isConversationEvent,system,renderRun,renderSkills,clearRun,refreshRuns,refreshCurrentRun,send,answer,confirm,confirmationFailed,resetConfirmationState,cancel}; init();
+  CanvasAgentPanel={init,status,message,liveStatus,liveEvent,clearLiveStatus,isConversationEvent,system,renderRun,clearRun,refreshRuns,refreshCurrentRun,send,answer,confirm,confirmationFailed,resetConfirmationState,cancel}; init();
 })();
