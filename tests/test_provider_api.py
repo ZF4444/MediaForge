@@ -373,3 +373,16 @@ def test_parameter_schema_rejects_unknown_or_execution_overrides():
         normalize_parameter_schema({"models": {"model": {"image": {"fields": [{"id": "seed"}]}}}})
     with pytest.raises(ValueError, match="cannot override"):
         normalize_parameter_schema({"models": {"model": {"image": {"fields": [{"id": "count", "execution": {}}]}}}})
+
+
+def test_video_parameter_schema_discards_retired_input_modes():
+    from app.services.ai_parameters.resolver import normalize_parameter_schema, parameter_schema_definitions
+
+    fields = parameter_schema_definitions()['video']['fields']
+    assert not {'videoMultimodal', 'videoUseFrameRoles'} & {field['id'] for field in fields}
+    result = normalize_parameter_schema({'models': {'seedance': {'video': {'fields': [
+        {'id': 'videoMultimodal', 'default': False},
+        {'id': 'videoUseFrameRoles', 'default': True},
+        {'id': 'videoDuration', 'default': 10},
+    ]}}}})
+    assert result['models']['seedance']['video']['fields'] == [{'id': 'videoDuration', 'default': 10}]

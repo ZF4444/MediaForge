@@ -243,6 +243,9 @@ from app.ai.adapters.runninghub_protocol import (
     authorization_headers as runninghub_protocol_headers,
 )
 from app.ai.adapters.video_protocol import (
+    CLOUDWISE_SEEDANCE_MODELS,
+    cloudwise_seedance_url,
+    is_cloudwise_seedance,
     VIDEO_TASK_FAILURE_STATUSES,
     VIDEO_TASK_SUCCESS_STATUSES,
     humanize_video_task_failure,
@@ -2976,6 +2979,8 @@ def canonical_connection_view(target) -> dict[str, Any]:
     model = getattr(target, "model", None)
     if model is not None:
         settings = dict(getattr(model, "settings", {}) or {})
+        if "video_token_prices" in settings:
+            view["video_token_prices"] = settings["video_token_prices"]
         if any(
             settings.get(key) is not None
             for key in ("input_per_million", "text_input_per_million", "image_input_per_million", "output_per_million")
@@ -3054,7 +3059,10 @@ async def assert_provider_budget_available(provider, user_id):
     # RunningHub 按 coins/money 结算，不依赖 model_prices，需单独保留。其它连接
     # （含 Omnilojo、GPT-Image-2 等 OpenAI 兼容计费网关）只要为模型配置了价格，
     # 消费就会记入 ai_usage_records，因此以“是否配置了价格”作为纳入预算的统一判据。
-    has_pricing = bool((provider or {}).get("model_prices") or (provider or {}).get("omnilojo_model_prices"))
+    has_pricing = bool(
+        (provider or {}).get("model_prices") or (provider or {}).get("omnilojo_model_prices")
+        or (provider or {}).get("video_token_prices")
+    )
     if not (is_runninghub_connection(provider) or has_pricing):
         return
     from app.services.usage import assert_runninghub_budget_available
@@ -4453,15 +4461,14 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
         key_name = "方舟 API Key" if protocol == "volcengine" else "API Key"
         raise HTTPException(status_code=400, detail=f"请先填写或保存 {key_name}")
     if protocol == "openai" and "api.cloudwise.ai" in base_url.lower():
-        # Cloudwise's GPT Image endpoint documents a fixed model and does not
-        # expose an OpenAI /v1/models discovery endpoint.
+        # Cloudwise documents fixed model IDs rather than an OpenAI model-list endpoint.
         return {
-            "total": 1,
+            "total": 1 + len(CLOUDWISE_SEEDANCE_MODELS),
             "protocol": "openai",
             "image_models": ["gpt-image-2"],
             "chat_models": [],
-            "video_models": [],
-            "all": ["gpt-image-2"],
+            "video_models": list(CLOUDWISE_SEEDANCE_MODELS),
+            "all": ["gpt-image-2", *CLOUDWISE_SEEDANCE_MODELS],
         }
     url = upstream_models_url(base_url, protocol)
     try:
@@ -4844,13 +4851,6 @@ def normalize_canvas_video_request(payload: CanvasVideoRequest) -> CanvasVideoRe
         target = execution.get("target")
         if execution.get("supported", False) and target:
             updates[target] = values.get(field["id"])
-    if updates.pop("frame_roles", False):
-        updates["images"] = [
-            image.model_copy(
-                update={"role": "first_frame" if index == 0 else "last_frame" if index == 1 else image.role}
-            )
-            for index, image in enumerate(payload.images)
-        ]
     return payload.model_copy(update=updates)
 
 
@@ -6074,10 +6074,14 @@ def looks_like_html_response(text: str) -> bool:
 
 
 def video_submit_url_candidates(provider, base_url):
+    if is_cloudwise_seedance(provider):
+        return [cloudwise_seedance_url(base_url)]
     return video_protocol_submit_urls(base_url, "volcengine" if is_volcengine_connection(provider) else "openai")
 
 
 def video_task_url_candidates(provider, base_url, task_id, submit_url=""):
+    if is_cloudwise_seedance(provider):
+        return [cloudwise_seedance_url(base_url, task_id)]
     return video_protocol_task_urls(
         base_url, "volcengine" if is_volcengine_connection(provider) else "openai", task_id, submit_url
     )
@@ -6146,18 +6150,24 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     # the transient connection context so canonical task payloads do not need
     # to persist the legacy `model` field.
     runtime_model = str(provider.get("runtime_model") or payload.model or "").strip()
+    provider = {**provider, "runtime_model": runtime_model, "api_key": api_key}
+    cloudwise_seedance = is_cloudwise_seedance(provider)
     submit_urls = video_submit_url_candidates(provider, base_url)
     submit_url = submit_urls[0]
     try:
         async with shared_http_client(timeout=VIDEO_POLL_TIMEOUT) as client:
             # OpenAI-compatible data URL request
-            if is_volcengine:
+            if is_volcengine or cloudwise_seedance:
                 text = str(payload.prompt or "").strip()
                 volc_model = selected_model(runtime_model, "doubao-seedance-2-0-fast-260128")
                 content = []
                 # 火山方舟视频接口（含 Seedance 2.0 图生视频）均通过 body 的 duration 字段控制时长；
                 # 之前对 seedance-2.0 + 参考图的情况省略了 duration，导致接口回退到默认 5s。
                 resolution = volcengine_video_resolution(payload.resolution)
+                if cloudwise_seedance:
+                    from app.services.video_billing import video_resolution
+
+                    resolution = video_resolution(payload.resolution)
                 image_like_urls = set()
                 for ref in payload.images[:9]:
                     url = await run_storage_io(volcengine_media_reference_url, ref.url, 1536)
@@ -6168,6 +6178,8 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                         "image_url": {"url": url},
                     }
                     role = volcengine_content_role(ref.role, "image")
+                    if cloudwise_seedance and not role:
+                        role = "reference_image"
                     if role:
                         item["role"] = role
                     content.append(item)
@@ -6191,7 +6203,11 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                         )
                         image_like_urls.add(media_url)
                         continue
-                    video_items = await volcengine_video_reference_content_items(media_url)
+                    video_items = (
+                        [{"type": "video_url", "video_url": {"url": media_url}, "role": "reference_video"}]
+                        if cloudwise_seedance
+                        else await volcengine_video_reference_content_items(media_url)
+                    )
                     content.extend(video_items)
                 for url in (payload.audios or [])[:3]:
                     audio_url = await run_storage_io(volcengine_media_reference_url, url, None)
@@ -6214,6 +6230,10 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     seed=payload.seed,
                     generate_audio=payload.generate_audio,
                 )
+                if cloudwise_seedance:
+                    body.pop("seed", None)  # Not documented by the Cloudwise Seedance endpoint.
+                    body["generate_audio"] = payload.generate_audio
+                    body["watermark"] = False
             else:
                 image_payload = []
                 for ref in payload.images[:4]:
@@ -6244,6 +6264,11 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
             # Protocol submission and polling live in the canonical transport.
             from app.ai.adapters.video_transport import VideoTransport
 
+            async def on_submitted(upstream_id):
+                local_task_id = provider.get("billing_task_id")
+                if local_task_id:
+                    await update_canvas_task(local_task_id, upstream_task_id=upstream_id)
+
             transport = VideoTransport(
                 submit_urls=lambda value: video_submit_url_candidates(value, video_api_root(value)),
                 headers=lambda value: api_headers(connection=value),
@@ -6255,8 +6280,18 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                 output_urls=video_output_urls,
                 looks_like_html=looks_like_html_response,
                 timeout=VIDEO_POLL_TIMEOUT,
+                on_submitted=on_submitted,
             )
             result, task_id = await transport.generate_with_client(client, provider, body)
+            billing = provider.get("billing_context")
+            if billing is not None:
+                from app.services.video_billing import record_video_response_usage
+
+                # Settle before downloading: a local storage failure does not undo upstream usage.
+                await asyncio.to_thread(
+                    record_video_response_usage, provider.get("billing_user_id") or current_user_id(),
+                    provider, runtime_model, result, billing, task_id,
+                )
             urls = video_output_urls(result)
             local_urls = [await save_remote_video_to_output(url) for url in urls]
             video_items = await run_storage_io(media_response_items, local_urls, "video")
@@ -6333,13 +6368,8 @@ AI_CAPABILITY_RUNTIME.register("video_generation", "default", _video_provider_ad
 
 def _video_runtime_provider(target) -> dict:
     return {
-        "id": target.connection.id,
-        "connection_id": target.connection.id,
-        "name": target.connection.name,
-        "protocol": target.protocol,
-        "base_url": target.connection.base_url,
+        **canonical_connection_view(target),
         "runtime_model": target.model.upstream_model if target.model else "",
-        **dict(target.connection.settings or {}),
     }
 
 
@@ -6355,6 +6385,21 @@ async def _run_video_generation(payload: CanvasVideoRequest, target):
     from app.ai.videos import VideoGateway
 
     runtime_provider = _video_runtime_provider(target)
+    from app.core.log_context import get_log_context
+    from app.services.video_billing import video_billing_context
+
+    local_task_id = get_log_context().get("task_id")
+    task = await get_canvas_task(local_task_id) if local_task_id else None
+    request_snapshot = (task or {}).get("request") or payload.model_dump(mode="json")
+    billing = (task or {}).get("billing_context")
+    if billing is None:
+        billing = video_billing_context(dict(target.model.settings or {}), request_snapshot)
+        if local_task_id:
+            await update_canvas_task(local_task_id, billing_context=billing)
+    runtime_provider.update({
+        "billing_context": billing, "billing_task_id": local_task_id,
+        "billing_user_id": (task or {}).get("owner_id") or current_user_id(),
+    })
 
     async def dispatch_target(command):
         return await _canvas_video_impl(payload, runtime_provider)
@@ -6478,6 +6523,9 @@ async def run_canvas_video_task(task_id: str, payload: CanvasVideoRequest):
             "upstream_task_id": upstream_task_id,
             "updated_at": time.time(),
         }
+        if not upstream_task_id:
+            stored_task = await get_canvas_task(task_id)
+            failure["upstream_task_id"] = (stored_task or {}).get("upstream_task_id") or ""
         if budget_error:
             failure.update(
                 {"error_code": "usage_budget_exceeded", "contact_admin": bool(budget_error.get("contact_admin", True))}
@@ -6530,12 +6578,17 @@ async def canvas_video(payload: CanvasVideoRequest):
         "model_id": payload.model_id or "",
         "resource_id": payload.resource_id or "",
     }
+    from app.services.video_billing import video_billing_context
+
+    video_resource_meta["billing_context"] = video_billing_context(
+        dict(target.model.settings or {}), payload.model_dump(mode="json")
+    )
 
     def _video_request_snapshot(value: CanvasVideoRequest) -> dict[str, Any]:
         snapshot = value.model_dump(mode="json")
         for _key in ("provider_id", "provider", "model"):
             snapshot.pop(_key, None)
-        snapshot.update({k: v for k, v in video_resource_meta.items() if v})
+        snapshot.update({k: v for k, v in video_resource_meta.items() if v and k != "billing_context"})
         return snapshot
 
     count = max(1, min(4, int(payload.n or 1)))
@@ -6637,6 +6690,9 @@ async def canvas_video(payload: CanvasVideoRequest):
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
         upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
+        if not upstream_task_id:
+            stored_task = await get_canvas_task(local_task_id)
+            upstream_task_id = (stored_task or {}).get("upstream_task_id") or ""
         failed_record = await update_canvas_task(
             local_task_id,
             expected_status="running",

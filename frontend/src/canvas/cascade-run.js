@@ -93,6 +93,8 @@ function canonicalRunSettings(value={}){
     delete settings.model;
     delete settings.videoProvider;
     delete settings.videoModel;
+    delete settings.videoMultimodal;
+    delete settings.videoUseFrameRoles;
     return settings;
 }
 function workflowTaskCount(runSettings=settings){
@@ -157,7 +159,6 @@ async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runSt
 //     finalizePendingNode, selectedNode
 //   RunningHub 相关：selectedRunningHubRef, rhActiveFields, rhMediaForRun,
 //     rhBuildNodeInfoList
-//   视频生成相关：videoGenerationMode
 //   随机参数：comfyRandomEnabledField, smartComfyRandomActive, smartComfyRandomValue
 
 async function createSmartComfyTask(payload){
@@ -263,9 +264,7 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
 }
 async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.videoConnectionId || !runSettings.videoModelId) throw new Error(tr('smart.errNoVideoModel'));
-    const generationMode = videoGenerationMode(runSettings);
-    const useReferences = generationMode !== 'text';
-    const refImages = (useReferences ? imageRefsOnly(refs) : []).map((ref, i) => ({
+    const refImages = imageRefsOnly(refs).map((ref, i) => ({
         url:ref.url, name:ref.name || `图${i + 1}`
     }));
     const payload = {
@@ -273,8 +272,8 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
         run_settings: canonicalRunSettings(runSettings),
         connection_id:runSettings.videoConnectionId, model_id:runSettings.videoModelId, resource_id:runSettings.videoResourceId || '',
         images: refImages,
-        videos: useReferences ? videoRefsOnly(refs).map(ref => ref.url).filter(Boolean) : [],
-        audios: useReferences ? audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3) : []
+        videos: videoRefsOnly(refs).map(ref => ref.url).filter(Boolean),
+        audios: audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3)
     };
     const result = await canvasApiJson('/api/canvas-video', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     // count>1: backend fans out N online-video child tasks onto the Redis

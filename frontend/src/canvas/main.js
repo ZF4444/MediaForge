@@ -484,8 +484,6 @@ let settings = {
     videoAspect:'16:9',
     videoResolution:'',
     videoGenerateAudio:false,
-    videoMultimodal:true,
-    videoUseFrameRoles:false,
     msgenModel:'zimage',
     msCustomModel:'',
     msRatio:'1:1',
@@ -533,6 +531,8 @@ function cloneSmartSettings(source=settings){
     }
 }
 function normalizeStoredImageRatios(target){
+    delete target.videoMultimodal;
+    delete target.videoUseFrameRoles;
     const legacy = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21'};
     for(const key of ['ratio','ratioMatched','msRatio','msRatioMatched']){
         if(legacy[target?.[key]]) target[key] = legacy[target[key]];
@@ -827,7 +827,7 @@ function smartSettingsForNode(node){
     const nodeSettings = normalizeStoredImageRatios(stripOutpaintDisplaySettings(node?.runSettings || {}, node));
     // Restore the node's pinned workflow before canvas defaults can supply a
     // different rhConfigKey/comfyWorkflow from the last selected node.
-    restoreCanonicalWorkflowSource(nodeSettings);
+    restoreCanonicalWorkflowSource(nodeSettings, node);
     const recentSettings = Object.keys(nodeSettings).length ? {} : recentSmartSettingsForMode();
     const base = {
         ...cloneSmartSettings(canvasDefaultSmartSettings || initialSmartSettings),

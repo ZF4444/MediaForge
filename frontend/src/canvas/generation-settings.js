@@ -174,7 +174,7 @@ function runningHubWorkflowEntriesForNode(node=activeSettingsSubject()){
     return runningHubAllEntries().filter(ref => workflowMatchesNode(ref.entry, node));
 }
 function normalizeWorkflowSourceForNode(node=activeSettingsSubject()){
-    restoreCanonicalWorkflowSource(settings);
+    restoreCanonicalWorkflowSource(settings, node);
     const media = workflowMediaForNode(node);
     if(!media) return;
     const comfy = comfyWorkflowsForNode(node);
@@ -189,7 +189,10 @@ function normalizeWorkflowSourceForNode(node=activeSettingsSubject()){
         if(!runningHub.length && comfy.length) settings.engine = 'comfy';
     }
 }
-function restoreCanonicalWorkflowSource(sourceSettings){
+function restoreCanonicalWorkflowSource(sourceSettings, node=null){
+    // Retained workflow IDs must not override an explicit AI engine selection
+    // when a parameter edit or reopening the node restores its settings.
+    if(node?.genKind !== 'workflow' && ['api', 'volcengine'].includes(sourceSettings?.engine)) return;
     const resource=(aiResourceIndex?.resources || []).find(item=>item.id===sourceSettings?.resource_id);
     if(resource?.kind==='runninghub_app'){
         const appId=runningHubEntryId(resource.settings || {}, 'app') || resource.id;
@@ -350,15 +353,6 @@ function connectionVideoModels(providerId){
     const provider = (aiConnections || []).find(p => p.id === providerId);
     return [...new Set((provider?.video_models || []).filter(model => provider?.model_enabled?.[String(model || '').trim()] !== false))];
 }
-// Normalize the mutually-exclusive video input modes used by the API payload
-// and by the compact generation settings popover.
-function videoGenerationMode(source=settings){
-    const value = source || settings || {};
-    if(value.videoUseFrameRoles) return 'frames';
-    if(value.videoMultimodal) return 'multimodal';
-    return 'text';
-}
-
 function ratioLabel(prefix=''){
     const source = prefix ? `${prefix}Ratio` : 'ratio';
     const value = String(settings?.[source] || (prefix ? '1:1' : '1:1'));
@@ -399,9 +393,9 @@ function renderVideoModelSelector(providers, models, restricted){
 function renderVideoGenerationConfig(){
     const durationField = canvasSchemaField('video', 'videoDuration');
     const durationName = canvasSchemaFieldName('video', 'videoDuration', tr('smart.videoDuration'));
-    const quick = Array.isArray(durationField.options) && durationField.options.length ? durationField.options.map(Number).filter(Number.isFinite) : [5, 10, 15];
+    const quick = Array.isArray(durationField.options) && durationField.options.length ? durationField.options.map(Number).filter(Number.isFinite) : Array.from({length:12}, (_, index) => index + 4);
     const durationValue = Number(settings.videoDuration);
-    const v = Number.isFinite(durationValue) && durationValue > 0 ? durationValue : 5;
+    const v = quick.includes(durationValue) ? durationValue : (quick.includes(Number(durationField.default)) ? Number(durationField.default) : quick[0]);
     settings.videoDuration = v;
     const aspectField = canvasSchemaField('video', 'videoAspect');
     const aspectName = canvasSchemaFieldName('video', 'videoAspect', tr('smart.videoAspect'));
@@ -410,19 +404,12 @@ function renderVideoGenerationConfig(){
     const aspectLabels = Object.fromEntries(aspectOptions);
     const resolutionField = canvasSchemaField('video', 'videoResolution');
     const resolutionName = canvasSchemaFieldName('video', 'videoResolution', tr('smart.videoResolution'));
-    const resolutionOptions = (Array.isArray(resolutionField.options) && resolutionField.options.length ? resolutionField.options : ['480p','720p','1080p']).map(value => [value, canvasSchemaOptionLabel(resolutionField, value)]);
+    const resolutionOptions = (Array.isArray(resolutionField.options) && resolutionField.options.length ? resolutionField.options : ['480p','720p','1080p','4k']).map(value => [value, canvasSchemaOptionLabel(resolutionField, value, value === '4k' ? '4K' : value)]);
     const resolution = settings.videoResolution || '480p';
     settings.videoResolution = resolution;
     const resolutionLabels = Object.fromEntries(resolutionOptions);
-    const durationLabel = canvasSchemaOptionLabel(durationField, v, String(v));
-    const generationMode = videoGenerationMode();
-    const generationModeOptions = [
-        ['text', tr('smart.videoTextToVideo')],
-        ['multimodal', canvasSchemaFieldName('video', 'videoMultimodal', tr('smart.videoMultimodal'))],
-        ['frames', canvasSchemaFieldName('video', 'videoUseFrameRoles', tr('smart.videoUseFrameRoles'))]
-    ];
-    const generationModeLabel = Object.fromEntries(generationModeOptions)[generationMode];
-    const summary = `${generationModeLabel}·${aspectLabels[aspect] || aspect}·${resolutionLabels[resolution] || resolution}·${durationLabel}`;
+    const durationLabel = canvasSchemaOptionLabel(durationField, v, `${v}s`);
+    const summary = `${aspectLabels[aspect] || aspect}·${resolutionLabels[resolution] || resolution}·${durationLabel}`;
     return `<div class="smart-control video-generation-control">
         <button class="smart-pill video-generation-summary" type="button" title="${escapeAttr(summary)}">
             <i data-lucide="sliders-horizontal"></i>
@@ -430,12 +417,6 @@ function renderVideoGenerationConfig(){
             <i data-lucide="chevron-up" class="pill-caret"></i>
         </button>
         <div class="smart-popover video-config-popover">
-            <section class="video-config-section">
-                <div class="video-config-label">${escapeHtml(tr('smart.videoGenerationMode'))}</div>
-                <div class="video-config-mode-single">
-                    ${generationModeOptions.map(([value,label]) => `<button type="button" class="video-config-option ${value === generationMode ? 'active' : ''}" data-video-mode="${escapeAttr(value)}"><span>${escapeHtml(label)}</span></button>`).join('')}
-                </div>
-            </section>
             <section class="video-config-section">
                 <div class="video-config-label">${escapeHtml(aspectName)}</div>
                 <div class="ratio-grid video-config-ratio-grid">
@@ -451,9 +432,11 @@ function renderVideoGenerationConfig(){
                 </section>
                 <section class="video-config-section">
                     <div class="video-config-label">${escapeHtml(durationName)}</div>
-                    <div class="duration-grid">
-                        ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" data-smart-param="videoDuration" data-smart-value="${n}">${escapeHtml(canvasSchemaOptionLabel(durationField, n, n))}</button>`).join('')}
-                        <input class="duration-custom-input ${quick.includes(v) ? '' : 'active'}" type="number" min="${escapeAttr(durationField.min ?? 1)}" max="${escapeAttr(durationField.max ?? 60)}" step="${escapeAttr(durationField.step ?? 1)}" value="${quick.includes(v) ? '' : escapeAttr(v)}" placeholder="${escapeAttr(tr('smart.custom'))}" aria-label="${escapeAttr(durationName)}" data-param="videoDuration">
+                    <div class="video-duration-row">
+                    <div class="duration-grid" role="group" aria-label="${escapeAttr(durationName)}">
+                        ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" aria-pressed="${n === v}" data-smart-param="videoDuration" data-smart-value="${n}">${escapeHtml(canvasSchemaOptionLabel(durationField, n, `${n}s`))}</button>`).join('')}
+                    </div>
+                    <label class="video-duration-entry"><input type="number" inputmode="numeric" data-video-duration-input aria-label="${escapeAttr(durationName)}" min="${Math.min(...quick)}" max="${Math.max(...quick)}" step="1" value="${v}"><span aria-hidden="true">s</span></label>
                     </div>
                 </section>
             </div>
@@ -480,9 +463,9 @@ const canvasParameterSchemaCache = new Map();
 const canvasParameterSchemaTarget = {image:'', video:''};
 function defaultCanvasParameterSchema(kind){
     if(kind === 'video') return {fields:[
-        {id:'videoDuration', default:5, options:[5,10,15], min:1, max:60, step:1},
+        {id:'videoDuration', type:'number', default:5, options:Array.from({length:12}, (_, index) => index + 4), min:4, max:15, step:1},
         {id:'videoAspect', default:'16:9', options:['16:9','4:3','1:1','3:4','9:16','21:9']},
-        {id:'videoResolution', default:'480p', options:['480p','720p','1080p']}
+        {id:'videoResolution', default:'480p', options:['480p','720p','1080p','4k']}
     ]};
     return {fields:[
         {id:'resolution', default:'1k', options:['1k','2k','4k','custom']},
@@ -510,7 +493,13 @@ function applyCanvasSchemaDefaults(kind, schema){
         if(!key || ['provider_id','model','videoProvider','videoModel'].includes(key)) continue;
         const options = Array.isArray(field.options) ? field.options : [];
         const current = settings[key];
-        if(current === undefined || current === null || current === '' || (options.length && !options.some(value => String(value) === String(current)))){
+        // Numeric options are quick presets, not an exhaustive list of values.
+        const numeric = ['number', 'slider'].includes(field.type);
+        const invalidNumber = numeric && (!Number.isFinite(Number(current))
+            || (field.min != null && Number(current) < Number(field.min))
+            || (field.max != null && Number(current) > Number(field.max)));
+        const invalidOption = !numeric && options.length && !options.some(value => String(value) === String(current));
+        if(current === undefined || current === null || current === '' || invalidNumber || invalidOption){
             settings[key] = field.default !== undefined ? field.default : (options[0] ?? current);
         }
     }
@@ -1700,8 +1689,6 @@ function setDynamicSetting(key, value, providerId='', connectionId='', modelId='
     if(key === 'videoProvider') settings.videoModel = '';
     if(key === 'provider_id' || key === 'model') void refreshCanvasParameterSchema('image', settings.provider_id, settings.model);
     if(key === 'videoProvider' || key === 'videoModel') void refreshCanvasParameterSchema('video', settings.videoProvider, settings.videoModel);
-    if(key === 'videoMultimodal' && settings.videoMultimodal) settings.videoUseFrameRoles = false;
-    if(key === 'videoUseFrameRoles' && settings.videoUseFrameRoles) settings.videoMultimodal = false;
     if(key === 'workflowSource'){
         const match = String(value || '').match(/^(comfy|runninghub):(.*)$/);
         if(match){
@@ -1760,8 +1747,66 @@ function closeAllSmartPopovers(){
 function smartParamRoots(){
     return [dynamicParams, composerHeadParams, composerCountControl].filter(Boolean);
 }
+let videoDurationResizeObserver = null;
+function centerVideoDuration(row, smooth=false){
+    const active = row?.querySelector('.duration-option.active');
+    if(!active || !row.clientWidth) return;
+    const rowRect = row.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const left = row.scrollLeft + activeRect.left - rowRect.left - (row.clientWidth - activeRect.width) / 2;
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    row.scrollTo({left:Math.max(0, Math.min(left, row.scrollWidth - row.clientWidth)), behavior:smooth && !reducedMotion ? 'smooth' : 'instant'});
+}
+function updateVideoDurationControl(button){
+    const row = button.closest('.duration-grid');
+    row.querySelectorAll('.duration-option').forEach(option => {
+        const active = option === button;
+        option.classList.toggle('active', active);
+        option.setAttribute('aria-pressed', String(active));
+    });
+    const control = button.closest('.video-generation-control');
+    const input = control.querySelector('[data-video-duration-input]');
+    if(input) input.value = String(settings.videoDuration);
+    const summary = control.querySelector('.video-config-summary');
+    if(summary){
+        const label = canvasSchemaOptionLabel(canvasSchemaField('video', 'videoDuration'), settings.videoDuration, `${settings.videoDuration}s`);
+        summary.textContent = summary.textContent.slice(0, summary.textContent.lastIndexOf('·') + 1) + label;
+        control.querySelector('.video-generation-summary')?.setAttribute('title', summary.textContent);
+    }
+    centerVideoDuration(row, true);
+}
 function bindDynamicParams(){
     const queryAll = selector => smartParamRoots().flatMap(root => Array.from(root.querySelectorAll(selector)));
+    videoDurationResizeObserver?.disconnect();
+    const durationRows = queryAll('.video-generation-control .duration-grid');
+    if(typeof ResizeObserver !== 'undefined'){
+        videoDurationResizeObserver = new ResizeObserver(entries => entries.forEach(({target}) => centerVideoDuration(target)));
+        durationRows.forEach(row => videoDurationResizeObserver.observe(row));
+    }
+    durationRows.forEach(row => requestAnimationFrame(() => centerVideoDuration(row)));
+    queryAll('[data-video-duration-input]').forEach(input => {
+        const control = input.closest('.video-generation-control');
+        const restore = () => { input.value = String(settings.videoDuration); };
+        const select = () => {
+            const value = input.value.trim();
+            const button = Array.from(control.querySelectorAll('.duration-option')).find(option => value !== '' && Number(option.dataset.smartValue) === Number(value));
+            if(!button) return false;
+            setDynamicSetting('videoDuration', button.dataset.smartValue);
+            updateVideoDurationControl(button);
+            return true;
+        };
+        input.addEventListener('click', event => event.stopPropagation());
+        input.addEventListener('input', event => { event.stopPropagation(); select(); });
+        input.addEventListener('blur', () => { if(!select()) restore(); });
+        input.addEventListener('keydown', event => {
+            event.stopPropagation();
+            if(event.key === 'Enter' || event.key === 'Escape'){
+                event.preventDefault();
+                if(event.key === 'Escape' || !select()) restore();
+                input.blur();
+            }
+        });
+    });
     bindWorkflowCoverFlyouts();
     queryAll('.workflow-params-control').forEach(control => {
         const refresh=event => {
@@ -1780,7 +1825,10 @@ function bindDynamicParams(){
             const ctrl = pill.parentElement;
             const wasPinned = ctrl.classList.contains('pinned');
             closeAllSmartPopovers();
-            if(!wasPinned) ctrl.classList.add('pinned');
+            if(!wasPinned){
+                ctrl.classList.add('pinned');
+                requestAnimationFrame(() => centerVideoDuration(ctrl.querySelector('.duration-grid')));
+            }
             else pill.blur();
             pill.setAttribute('aria-expanded', String(!wasPinned));
         });
@@ -1793,19 +1841,21 @@ function bindDynamicParams(){
                 toast(tr('smart.modelLocked'));
                 return;
             }
+            if(btn.dataset.smartParam === 'videoDuration'){
+                setDynamicSetting('videoDuration', btn.dataset.smartValue);
+                updateVideoDurationControl(btn);
+                return;
+            }
             if(btn.closest('.video-model-control')) reopenVideoControlAfterRender = 'model';
             else if(btn.closest('.video-generation-control')) reopenVideoControlAfterRender = 'config';
             setDynamicSetting(btn.dataset.smartParam, btn.dataset.smartValue, btn.dataset.smartProviderId || '', btn.dataset.smartConnectionId || '', btn.dataset.smartModelId || '');
-            if(btn.dataset.smartParam === 'videoDuration') renderDynamicParams();
         });
     });
     queryAll('[data-param]').forEach(input => {
         input.addEventListener('click', event => event.stopPropagation());
         const handleInput = event => {
             event?.stopPropagation?.();
-            if(event?.type === 'change' && input.closest('.video-generation-control')) reopenVideoControlAfterRender = 'config';
             setDynamicSetting(input.dataset.param, input.value);
-            if(input.dataset.param === 'videoDuration' && event?.type === 'change') renderDynamicParams();
         };
         input.addEventListener('input', handleInput);
         input.addEventListener('change', handleInput);
@@ -1821,26 +1871,12 @@ function bindDynamicParams(){
             scheduleSave();
         });
     });
-    queryAll('[data-video-mode]').forEach(btn => {
-        btn.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            const mode = btn.dataset.videoMode;
-            setVideoGenerationMode(mode);
-            reopenVideoControlAfterRender = 'config';
-            persistActiveSmartSettings();
-            renderDynamicParams();
-            scheduleSave();
-        });
-    });
     queryAll('[data-toggle-param]').forEach(btn => {
         btn.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             if(btn.closest('.video-generation-control')) reopenVideoControlAfterRender = 'config';
             settings[btn.dataset.toggleParam] = !settings[btn.dataset.toggleParam];
-            if(btn.dataset.toggleParam === 'videoMultimodal' && settings.videoMultimodal) settings.videoUseFrameRoles = false;
-            if(btn.dataset.toggleParam === 'videoUseFrameRoles' && settings.videoUseFrameRoles) settings.videoMultimodal = false;
             persistActiveSmartSettings();
             renderDynamicParams();
             scheduleSave();

@@ -11,8 +11,8 @@ from typing import Any
 
 import httpx
 
-from app.core.utils import now_ms
 from app.core.http_client import shared_http_client
+from app.core.utils import now_ms
 from app.services.business_metadata import json_value, metadata_connection, new_id
 
 _SHANGHAI = timezone(timedelta(hours=8))
@@ -564,7 +564,8 @@ omnilojo_response_usage_values = openai_response_usage_values
 
 
 def record_openai_response_usage(
-    user_id: str, provider: dict[str, Any], model: str, raw: Any, *, operation: str
+    user_id: str, provider: dict[str, Any], model: str, raw: Any, *, operation: str,
+    billing_context: dict[str, Any] | None = None,
 ) -> bool:
     """Persist a user-attributed charge from an OpenAI-compatible response.
 
@@ -596,6 +597,8 @@ def record_openai_response_usage(
             "configured": values["configured"],
         },
     }
+    if billing_context is not None:
+        raw_usage["video_billing"] = billing_context
     with metadata_connection() as conn, conn.cursor() as cur:
         org_id = _org_for_user(cur, user_id)
         connection_id = str(provider.get("connection_id") or provider.get("id") or "")
@@ -611,9 +614,14 @@ def record_openai_response_usage(
         cur.execute(
             """INSERT INTO ai_usage_records(id,protocol,connection_id,upstream_log_id,model_id,resource_id,request_id,upstream_request_id,user_id,org_id,external_username,token_name,model,operation,quota,cost_usd,total_money_cny,prompt_tokens,completion_tokens,text_input_tokens,image_input_tokens,cached_tokens,total_tokens,status,usage_available,pricing_configured,created_at,raw_log,inserted_at,updated_at)
                VALUES(%s,%s,%s,%s,%s,%s,%s,'',%s,%s,'','',%s,%s,0,%s,%s,%s,%s,%s,%s,%s,%s,'succeeded',TRUE,%s,%s,%s,%s,%s)
-               ON CONFLICT(protocol,connection_id,upstream_log_id) DO UPDATE SET
-                 cost_usd=EXCLUDED.cost_usd,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,cached_tokens=EXCLUDED.cached_tokens,total_tokens=EXCLUDED.total_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at
-               RETURNING id""",
+               ON CONFLICT(protocol,connection_id,upstream_log_id) """
+            + (
+                "DO NOTHING"
+                if billing_context is not None
+                else """DO UPDATE SET
+                 cost_usd=EXCLUDED.cost_usd,prompt_tokens=EXCLUDED.prompt_tokens,completion_tokens=EXCLUDED.completion_tokens,cached_tokens=EXCLUDED.cached_tokens,total_tokens=EXCLUDED.total_tokens,raw_log=EXCLUDED.raw_log,updated_at=EXCLUDED.updated_at"""
+            )
+            + " RETURNING id",
             (
                 new_id(),
                 protocol,

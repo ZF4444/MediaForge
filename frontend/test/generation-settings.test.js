@@ -378,3 +378,59 @@ describe('RunningHub request parameters', () => {
         expect(vm.runInContext('rhActiveFields().map(f => f.fieldName)', ctx).sort()).toEqual(['image', 'steps', 'text']);
     });
 });
+
+describe('API engine selection with retained workflow resources', () => {
+    it.each(['runninghub_app', 'comfyui_workflow'])('parameter edits keep the API engine with an old %s resource', kind => {
+        const node = {genKind:'video'};
+        const sandbox = createGenerationSettingsSandbox({
+            settings: {engine:'api', apiKind:'video', resource_id:'old-workflow', videoResolution:'480p'},
+            aiResourceIndex: {resources:[{
+                id:'old-workflow', kind, name:'video.json', enabled:true,
+                settings:{id:'old-app', media:'video'},
+            }]},
+            comfyWorkflows:[{name:'video.json', media:'video'}],
+        });
+        sandbox.activeSettingsSubject = () => node;
+        sandbox.persistActiveSmartSettings = () => {};
+        sandbox.rememberRecentSmartSettings = () => {};
+        sandbox.scheduleSave = () => {};
+        sandbox.renderDynamicParams = () => sandbox.normalizeWorkflowSourceForNode(node);
+        sandbox.setDynamicSetting('videoResolution', '720p');
+        expect(sandbox.__state.settings.engine).toBe('api');
+        expect(sandbox.__state.settings.videoResolution).toBe('720p');
+        sandbox.restoreCanonicalWorkflowSource(sandbox.__state.settings);
+        expect(sandbox.__state.settings.engine).toBe('api');
+    });
+
+    it('still restores a saved workflow resource when no engine was recorded', () => {
+        const sandbox = createGenerationSettingsSandbox({
+            aiResourceIndex: {resources:[{id:'workflow', kind:'comfyui_workflow', name:'video.json'}]},
+        });
+        const saved = {resource_id:'workflow'};
+        sandbox.restoreCanonicalWorkflowSource(saved);
+        expect(saved).toMatchObject({engine:'comfy', comfyWorkflow:'video.json'});
+    });
+});
+
+describe('custom video duration after schema reload', () => {
+    const schema = {fields:[
+        {id:'videoDuration', type:'number', default:5, options:[5,10,15], min:1, max:60, step:1},
+        {id:'videoResolution', type:'dropdown', default:'480p', options:['480p','720p','1080p','4k']},
+    ]};
+    it.each([8, 12, 30, '12'])('keeps saved custom duration %s when reapplying the server schema', duration => {
+        const ctx = createGenerationSettingsSandbox({settings:{videoDuration:duration, videoResolution:'720p'}});
+        ctx.applyCanvasSchemaDefaults('video', schema);
+        expect(ctx.__state.settings.videoDuration).toBe(duration);
+        expect(ctx.__state.settings.videoResolution).toBe('720p');
+    });
+    it('keeps a custom duration when using the offline fallback schema', () => {
+        const ctx = createGenerationSettingsSandbox({settings:{videoDuration:12}});
+        ctx.applyCanvasSchemaDefaults('video', ctx.defaultCanvasParameterSchema('video'));
+        expect(ctx.__state.settings.videoDuration).toBe(12);
+    });
+    it('still resets invalid dropdown values to their default', () => {
+        const ctx = createGenerationSettingsSandbox({settings:{videoDuration:12, videoResolution:'invalid'}});
+        ctx.applyCanvasSchemaDefaults('video', schema);
+        expect(ctx.__state.settings.videoResolution).toBe('480p');
+    });
+});

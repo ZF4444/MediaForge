@@ -3,6 +3,25 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote, urlsplit
+
+
+def is_cloudwise_seedance(connection: Any) -> bool:
+    return (
+        urlsplit(str(connection.get("base_url") or "")).hostname == "api.cloudwise.ai"
+        and "seedance" in str(connection.get("runtime_model") or "").lower()
+    )
+
+
+CLOUDWISE_SEEDANCE_MODELS = (
+    "dreamina-seedance-2-0-260128-enhance",
+)
+
+
+def cloudwise_seedance_url(base_url: str, task_id: str | None = None) -> str:
+    parsed = urlsplit(base_url)
+    url = f"{parsed.scheme}://{parsed.netloc}/api/v1/aiproducts/video/seedance"
+    return f"{url}/tasks/{quote(task_id, safe='')}" if task_id is not None else url
 
 
 def api_root(base_url: str, protocol: str) -> str:
