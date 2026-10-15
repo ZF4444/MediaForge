@@ -5908,7 +5908,7 @@ async def execute_canvas_task(task_id: str):
                 model=str(task.get("model") or request.get("model") or ""),
                 kind="image",
             )
-            await asyncio.to_thread(require_target_access, resolved, current_user_id())
+            await asyncio.to_thread(require_target_access, resolved, str(task.get("owner_id") or ""))
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
@@ -5932,7 +5932,7 @@ async def execute_canvas_task(task_id: str):
                 model=str(task.get("model") or request.get("model") or ""),
                 kind="video",
             )
-            await asyncio.to_thread(require_target_access, resolved, current_user_id())
+            await asyncio.to_thread(require_target_access, resolved, str(task.get("owner_id") or ""))
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
@@ -5977,6 +5977,13 @@ async def execute_canvas_task(task_id: str):
                 connection_id=resolved.connection.id,
                 resource_id=resolved.resource.id if resolved.resource else "",
             )
+    except HTTPException as exc:
+        await update_canvas_task(
+            task_id, expected_status="queued", status="failed",
+            error=str(exc.detail), status_code=exc.status_code,
+            error_code="model_access_denied" if exc.status_code == 403 else "task_execution_failed",
+        )
+        return
     except LookupError as exc:
         await update_canvas_task(task_id, expected_status="queued", status="failed", error=f"任务资源解析失败：{exc}")
         return

@@ -1223,7 +1223,7 @@ async function exportVideoFrame(which='current'){
         selectedImage = {nodeId:newNode.id, index:0};
         render();
         scheduleSave();
-        toast('已导出到画布');
+        toast('已导出至画布');
         if(which !== 'current') await seekVideoForFrame(video, originalTime);
     } catch(e) {
         toast((e.message || '导出帧失败').slice(0, 120));

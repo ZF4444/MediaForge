@@ -3656,6 +3656,10 @@ async function pollCanvasTask(taskId){
                 return task.result || {};
             }
             if(task.status === 'failed'){
+                const accessError = new Error(task.error || tr('smart.errRunFailed'));
+                accessError.status = task.status_code;
+                accessError.data = task;
+                if(globalThis.__MediaForgeRuntimeServices?.notifyModelAccessDenied?.(accessError)) throw accessError;
                 if(task.error_code === 'storage_quota_exceeded' || task.status_code === 413) throw new StorageQuotaSignal(task);
                 const budget = budgetDataFromPayload(task);
                 if(budget) throw new UsageBudgetSignal(budget);
@@ -3686,6 +3690,10 @@ async function pollCanvasComfyTask(taskId){
                 return task.result || {};
             }
             if(task.status === 'failed'){
+                const accessError = new Error(task.error || tr('smart.errRunFailed'));
+                accessError.status = task.status_code;
+                accessError.data = task;
+                if(globalThis.__MediaForgeRuntimeServices?.notifyModelAccessDenied?.(accessError)) throw accessError;
                 if(task.error_code === 'storage_quota_exceeded' || task.status_code === 413) throw new StorageQuotaSignal(task);
                 const budget = budgetDataFromPayload(task);
                 if(budget) throw new UsageBudgetSignal(budget);

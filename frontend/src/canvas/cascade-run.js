@@ -1165,6 +1165,20 @@ async function runGeneration(){
         }
         if(isApiLikeEngine(settings.engine) && settings.apiKind === 'video'){
             const videoResult = await runApiVideoGeneration(prompt, refs);
+            if(videoResult?.batch){
+                pendingNode.pendingTasks = videoResult.taskIds.map(taskId => ({taskId, kind:'video', connectionId:videoResult.connectionId, modelId:videoResult.modelId, resourceId:videoResult.resourceId}));
+                pendingNode.running = false;
+                render();
+                await saveCanvas();
+                await resumeSmartPendingNode(pendingNode);
+                if(!(pendingNode.images || []).length) throw new Error(tr('smart.errNoOutVideos'));
+                if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
+                addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart, tasks:smartLogTasksFromNode(pendingNode)});
+                clearPromptInput({preserveDraft:true});
+                settings = previousSettings;
+                scheduleSave();
+                return;
+            }
             const outVideos = videoResult.urls || videoResult;
             if(!outVideos.length) throw new Error(tr('smart.errNoOutVideos'));
             finalizePendingNode(pendingNode, outVideos, pendingMeta, 'video');
