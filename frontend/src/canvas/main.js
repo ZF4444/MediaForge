@@ -3647,7 +3647,8 @@ async function pollCanvasTask(taskId, kind='image'){
     if(!taskId) throw new Error(tr('smart.errRunFailed'));
     if(activeSmartTaskPolls.has(taskId)) return activeSmartTaskPolls.get(taskId);
     const promise = (async () => {
-        for(let i = 0; i < 900; i++){
+        const pollLimit = kind === 'video' ? 1800 : 900; // 2s intervals: video 60min, image 30min.
+        for(let i = 0; i < pollLimit; i++){
             await new Promise(resolve => setTimeout(resolve, 2000));
             const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
             const task = apiJson ? await apiJson(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`) : await fetch(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`).then(async r => { if(!r.ok) throw await smartResponseError(r); return r.json(); });

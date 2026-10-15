@@ -470,6 +470,7 @@ from app.config import (
     CANVAS_TASK_WORKER_ENABLED,
     AGENT_COMMAND_WORKER_ENABLED,
     CANVAS_TASK_TIMEOUT_SECONDS,
+    VIDEO_POLL_TIMEOUT,
     HTTP_CLIENT_TIMEOUT_POOL_SECONDS,
     REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS,
     BASE_DIR,
@@ -538,7 +539,6 @@ AI_REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "1800"))
 IMAGE_POLL_INTERVAL = float(os.getenv("IMAGE_POLL_INTERVAL", "2"))
 IMAGE_TASK_TIMEOUT = float(os.getenv("IMAGE_TASK_TIMEOUT", str(AI_REQUEST_TIMEOUT)))
 COMFYUI_HISTORY_TIMEOUT = int(float(os.getenv("COMFYUI_HISTORY_TIMEOUT", "1800")))
-VIDEO_POLL_TIMEOUT = float(os.getenv("VIDEO_POLL_TIMEOUT", "1800"))
 # Worker-side polling for canvas RunningHub app tasks. Mirrors the previous
 # client-side loop (360 attempts x 5s = 30 minutes).
 CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS = float(os.getenv("CANVAS_RUNNINGHUB_POLL_INTERVAL_SECONDS", "5"))
@@ -6000,7 +6000,8 @@ async def execute_canvas_task(task_id: str):
         operation_id=task.get("operation_id") or task_id,
     )
     try:
-        timeout = max(1.0, deadline - time.time()) if deadline else CANVAS_TASK_TIMEOUT_SECONDS
+        task_timeout = VIDEO_POLL_TIMEOUT if task.get("type") == "online-video" else CANVAS_TASK_TIMEOUT_SECONDS
+        timeout = max(1.0, deadline - time.time()) if deadline else task_timeout
         # RunningHub app tasks poll the upstream inside the worker for up to
         # CANVAS_RUNNINGHUB_POLL_TIMEOUT_SECONDS, so the wrapper must not kill
         # them earlier than that.
