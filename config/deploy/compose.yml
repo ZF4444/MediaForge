@@ -1,0 +1,123 @@
+name: mediaforge
+
+x-common: &common
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-app: &app
+  <<: *common
+  image: ${APP_IMAGE:?set APP_IMAGE}
+  init: true
+  env_file: .env
+  environment: &app-env
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+    MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    MINIO_SECURE: "false"
+    STORAGE_CACHE_DIR: /app/data/cache
+    TMPDIR: /app/data/tmp
+    DATABASE_POOL_MIN_SIZE: "1"
+    DATABASE_POOL_MAX_SIZE: "8"
+  volumes:
+    - ${DATA_ROOT:?set DATA_ROOT}/app:/app/data
+    - ${DATA_ROOT}/logs:/app/logs
+    - ${DATA_ROOT}/config:/app/config
+    - ${DATA_ROOT}/workflows:/app/workflows
+  stop_grace_period: 60s
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+
+services:
+  api:
+    <<: *app
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      <<: *app-env
+      LOG_DIR: /app/logs/api
+      CANVAS_TASK_WORKER_ENABLED: "false"
+      CANVAS_TASK_RECOVERY_ENABLED: "false"
+      AGENT_COMMAND_WORKER_ENABLED: "true"
+      RUN_BACKGROUND_MAINTENANCE: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health/ready"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 90s
+
+  worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      LOG_DIR: /app/logs/worker
+      AGENT_COMMAND_WORKER_ENABLED: "false"
+      RUN_BACKGROUND_MAINTENANCE: "false"
+    command: ["python", "-m", "app.workers.canvas"]
+
+  postgres:
+    <<: *common
+    image: ${POSTGRES_IMAGE:?set POSTGRES_IMAGE}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ${DATA_ROOT}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    <<: *common
+    image: ${REDIS_IMAGE:?set REDIS_IMAGE}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    command: ["sh", "-ec", 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes --appendfsync everysec --maxmemory-policy noeviction']
+    volumes:
+      - ${DATA_ROOT}/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -qx PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    <<: *common
+    image: ${MINIO_IMAGE:?set MINIO_IMAGE}
+    build:
+      context: .
+      dockerfile: minio.Dockerfile
+      args:
+        MINIO_SOURCE_REF: ${MINIO_SOURCE_REF:?set MINIO_SOURCE_REF}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - ${DATA_ROOT}/minio:/data
+    ports:
+      - "127.0.0.1:19000:9000"
+      - "127.0.0.1:19001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s

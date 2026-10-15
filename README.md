@@ -321,37 +321,10 @@ Provider Base URL 只能直接指向公网可路由地址。服务会在每次�
 确需访问私有上游时，应配置受控出网代理 `AI_OUTBOUND_PROXY=http://proxy.example:3128`，并由该代理
 实施目标地址 allowlist、DNS 解析与重定向校验；不要将它指向未经隔离的通用代理。
 
-推荐使用 systemd 管理服务：
-
-```ini
-[Unit]
-Description=MediaForge AI Studio
-After=network.target postgresql.service redis.service minio.service
-
-[Service]
-Type=simple
-User=mediaforge
-WorkingDirectory=/path/to/MediaForge
-Environment=DATABASE_URL=postgresql://mediaforge:readygo123@127.0.0.1:5432/mediaforge
-Environment=MINIO_ENDPOINT=127.0.0.1:9000
-Environment=MINIO_ACCESS_KEY=minioadmin
-Environment=MINIO_SECRET_KEY=readygo123
-Environment=REDIS_URL=redis://127.0.0.1:6379/0
-ExecStart=/path/to/MediaForge/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 3000 --workers 1
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启用并启动：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable mediaforge
-sudo systemctl start mediaforge
-```
+生产部署统一使用单机多容器方案（API、画布 Worker、PostgreSQL、Redis、MinIO），
+共享宿主机内存，不设置容器内存限额。完整步骤见
+[生产环境完整部署方案](docs/生产环境完整部署方案.md)，配置位于 `config/deploy/`。
+上面的直接运行命令用于开发和排障，生产环境不要同时启用旧 systemd 应用和容器应用。
 
 ## 启动验证
 
