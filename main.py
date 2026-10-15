@@ -6306,8 +6306,39 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     record_video_response_usage, provider.get("billing_user_id") or current_user_id(),
                     provider, runtime_model, result, billing, task_id,
                 )
-            urls = video_output_urls(result)
-            local_urls = [await save_remote_video_to_output(url) for url in urls]
+            from app.services.video_download import download_generated_videos
+
+            async def query_video_result(upstream_id):
+                last_error = None
+                for query_url in video_task_url_candidates(provider, video_api_root(provider), upstream_id):
+                    try:
+                        response = await client.get(query_url, headers=api_headers(connection=provider), timeout=30)
+                        response.raise_for_status()
+                        refreshed = response.json()
+                        if not isinstance(refreshed, dict):
+                            raise ValueError("视频任务查询未返回对象")
+                        return refreshed
+                    except (httpx.HTTPError, ValueError) as exc:
+                        last_error = exc
+                raise last_error or ValueError("没有视频任务查询地址")
+
+            try:
+                local_urls, result = await download_generated_videos(
+                    result,
+                    task_id=task_id,
+                    output_urls=video_output_urls,
+                    download=save_remote_video_to_output,
+                    query_task=query_video_result,
+                )
+            except httpx.HTTPError as exc:
+                download_status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                reason = f"（HTTP {download_status}）" if download_status else ""
+                failure = HTTPException(
+                    status_code=502,
+                    detail=f"上游已返回视频，但下载保存失败{reason}，请稍后查询原任务或联系管理员。",
+                )
+                failure.upstream_task_id = task_id
+                raise failure from exc
             video_items = await run_storage_io(media_response_items, local_urls, "video")
             return await _attach_quota_warning_async(
                 {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}

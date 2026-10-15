@@ -50,14 +50,21 @@ var canvasApiJson=async(url,options)=>{
  calls.push({url,payload:JSON.parse(options.body)});
  return {child_task_ids:['child-a','child-b'],task_id:'parent',status:'queued'};
 };
-var polls={};
+var polls={},failMode='';
+class ImageTaskRecoverSignal extends Error {
+ constructor(data){super(data.message);this.imageTaskRecover=true;Object.assign(this,data);}
+}
+
 globalThis.__MediaForgeRuntimeServices={apiJson:async (url,options)=>{
  if(options?.method==='POST'){
+ if(failMode==='single') throw new Error('上游已返回视频，但下载保存失败（HTTP 404）');
  calls.push({url,payload:JSON.parse(options.body)});
  return {child_task_ids:['child-a','child-b'],task_id:'parent',status:'queued'};
  }
 
  const id=url.split('/').pop();polls[id]=(polls[id]||0)+1;
+ if(failMode==='all' || (failMode==='partial' && id==='child-b'))
+ return {status:'failed',error:'上游已返回视频，但下载保存失败（HTTP 404）',upstream_task_id:'upstream-'+id,status_code:502};
  // Stagger completion; exercise a queued response as well as successes.
  if(id==='child-b' && polls[id]===1)return {status:'queued'};
  return {status:'succeeded',result:{videos:['/api/files/'+id+'/content'],video_items:[{url:'/api/files/'+id+'/content',file_id:id,kind:'video',natural_w:1280,natural_h:720}]}};
@@ -91,7 +98,19 @@ globalThis.__MediaForgeRuntimeServices={apiJson:async (url,options)=>{
         page.evaluate('node=JSON.parse(JSON.stringify(node));render()')
         expect(page.locator('.candidate-count')).to_have_text('2')
         expect(page.locator('.candidate-grid-item .video-thumb')).to_have_count(2)
-        print('PASS: Count=2 submission, staggered polling, two video candidates, switching, serialized state')
+        for mode, expected_count in [('all', 0), ('partial', 1), ('single', 0)]:
+            page.evaluate('''mode=>{
+                failMode=mode;messages=[];polls={};settings.count=mode==='single'?1:2;
+                node={id:'video-node',type:'smart-image',genKind:'video',images:[]};
+            }''', mode)
+            page.evaluate('runGeneration()')
+            assert page.evaluate('node.candidateImages?.length || 0') == expected_count
+            assert not page.evaluate('Boolean(node.pending || node.running || node.pendingTasks)')
+            assert page.evaluate('node.runFinishedAt >= node.runStartedAt')
+            assert page.evaluate('node.runElapsedMs >= 0')
+            assert page.evaluate("messages.some(m=>m.includes('下载保存失败'))")
+            assert not page.evaluate("messages.some(m=>m.includes('任务未丢失'))")
+        print('PASS: Count=2 candidates; all/partial download failures stop timers and preserve successful results')
         browser.close()
 
 

@@ -707,6 +707,10 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         outputSlot.queued = false;
         outputSlot.pending = 0;
         outputSlot.running = false;
+        outputSlot.runFinishedAt = nowMs();
+        if(!outputSlot.runStartedAt) outputSlot.runStartedAt = outputSlot.runFinishedAt;
+        outputSlot.runElapsedMs = Math.max(0, outputSlot.runFinishedAt - Number(outputSlot.runStartedAt));
+        outputSlot.runTimerHidden = false;
         delete outputSlot.pendingCandidatePool;
         throw e;
     } finally {
@@ -1244,6 +1248,10 @@ async function runGeneration(){
     } catch(e) {
         settings = previousSettings;
         pendingNode.pending = 0;
+        pendingNode.runFinishedAt = nowMs();
+        if(!pendingNode.runStartedAt) pendingNode.runStartedAt = pendingNode.runFinishedAt;
+        pendingNode.runElapsedMs = Math.max(0, pendingNode.runFinishedAt - Number(pendingNode.runStartedAt));
+        pendingNode.runTimerHidden = false;
         delete pendingNode.pendingCandidatePool;
         if(branchNode){
             nodes = nodes.filter(n => n.id !== branchNode.id);

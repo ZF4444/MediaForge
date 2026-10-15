@@ -3643,7 +3643,7 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
         scheduleSave();
     }
 }
-async function pollCanvasTask(taskId){
+async function pollCanvasTask(taskId, kind='image'){
     if(!taskId) throw new Error(tr('smart.errRunFailed'));
     if(activeSmartTaskPolls.has(taskId)) return activeSmartTaskPolls.get(taskId);
     const promise = (async () => {
@@ -3655,7 +3655,7 @@ async function pollCanvasTask(taskId){
                 checkQuotaWarningFromResult(task);
                 return task.result || {};
             }
-            if(task.status === 'failed'){
+            if(['failed', 'interrupted', 'timed_out'].includes(task.status)){
                 const accessError = new Error(task.error || tr('smart.errRunFailed'));
                 accessError.status = task.status_code;
                 accessError.data = task;
@@ -3664,7 +3664,7 @@ async function pollCanvasTask(taskId){
                 const budget = budgetDataFromPayload(task);
                 if(budget) throw new UsageBudgetSignal(budget);
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '');
-                if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, kind:'image', message:task.error || tr('smart.errRunFailed')});
+                if(kind === 'image' && recoverTaskId && task.status === 'failed') throw new ImageTaskRecoverSignal({taskId, recoverTaskId, kind:'image', message:task.error || tr('smart.errRunFailed')});
                 throw new Error(task.error || tr('smart.errRunFailed'));
             }
         }
@@ -3689,7 +3689,7 @@ async function pollCanvasComfyTask(taskId){
                 checkQuotaWarningFromResult(task);
                 return task.result || {};
             }
-            if(task.status === 'failed'){
+            if(['failed', 'interrupted', 'timed_out'].includes(task.status)){
                 const accessError = new Error(task.error || tr('smart.errRunFailed'));
                 accessError.status = task.status_code;
                 accessError.data = task;
@@ -3712,7 +3712,7 @@ async function pollCanvasComfyTask(taskId){
 async function pollSmartPendingTask(task){
     if(isRunningHubPendingTask(task)) return pollRunningHubTask(task.taskId, task);
     if(isComfyPendingTask(task)) return pollCanvasComfyTask(task.taskId);
-    return pollCanvasTask(task.taskId);
+    return pollCanvasTask(task.taskId, task.kind || 'image');
 }
 function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     if(!node || !taskId) return [];
@@ -3794,6 +3794,10 @@ async function resumeSmartPendingNode(node){
                 delete node.pendingTasks;
                 delete node.pendingCandidatePool;
                 node.running = false;
+                node.runFinishedAt = nowMs();
+                if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
+                node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt));
+                node.runTimerHidden = false;
                 if(!(node.images || []).length){
                     if(candidateCountForNode(node)) setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
                     else {
