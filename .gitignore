@@ -13,7 +13,6 @@ __pycache__/
 **/.env.lock
 /assets/
 data/
-docs/*
 backups/
 logs/
 .runtime/
