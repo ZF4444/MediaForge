@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.core.access_control import (
     all_pages,
+    all_models,
     effective_permissions,
     has_page_access,
     is_admin,
@@ -61,6 +62,7 @@ def access_control_me():
         "user_id": uid,
         "user_type": perms["user_type"],
         "pages": perms["pages"],
+        "models": perms["models"],
         "is_admin": is_admin(uid),
     }
 
@@ -72,10 +74,17 @@ def access_control_get_config():
     config = load_config()
     return {
         "all_pages": all_pages(),
+        "all_models": all_models(),
         "users": _registered_users(),
         "types": config.get("types", {}),
         "user_types": config.get("user_types", {}),
     }
+
+
+@router.get("/api/access-control/models")
+def access_control_models():
+    _require_user_management()
+    return {"all_models": all_models()}
 
 
 @router.put("/api/access-control/config")
@@ -83,8 +92,8 @@ def access_control_put_config(payload: AccessControlConfigPayload):
     """保存用户类型与用户类型分配。"""
     _require_user_management()
     data = {
-        "types": {type_id: {"name": entry.name, "pages": entry.pages} for type_id, entry in payload.types.items()},
-        "user_types": payload.user_types,
+        "types": {type_id: {"name": entry.name, "pages": entry.pages, "models": entry.models} for type_id, entry in payload.types.items()},
+        "user_types": payload.user_types if payload.user_types is not None else load_config().get("user_types", {}),
     }
     saved = save_config(data)
     audit_event(

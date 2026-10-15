@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('lucide/dist/esm/lucide.mjs', () => ({ createIcons: vi.fn() }));
+const directory = vi.hoisted(() => ({ refresh: vi.fn() }));
+vi.mock('../src/user-management/user-directory.js', () => ({ initUserDirectory: () => directory }));
 
 function element(data = {}) {
   return {
@@ -27,36 +29,21 @@ describe('user management page module', () => {
     expect(html).not.toMatch(/\sstyle=/i);
   });
 
-  it('delegates user-type changes through the shared API client', async () => {
-    const ids = ['userTable', 'orgList', 'budgetGrid', 'personalBudgetGrid', 'search', 'orgForm', 'usageMonth', 'syncOmnilojo', 'newUserBudgetSave', 'refreshSessions', 'onlineOnly', 'userCount', 'userTable', 'orgList', 'status', 'orgStatus'];
-    const elements = new Map(ids.map(id => [id, element()]));
-    const tabs = [{ dataset: { tab: 'users' }, classList: { toggle: vi.fn() }, addEventListener: vi.fn() }];
-    const views = [{ dataset: { view: 'users' }, classList: { toggle: vi.fn() } }];
+  it('refreshes the user directory when the users view opens', async () => {
+    directory.refresh.mockClear();
+    const elements = new Map();
+    const tab = { dataset: { tab: 'users' }, classList: { toggle: vi.fn() }, addEventListener: vi.fn() };
     vi.stubGlobal('document', {
-      getElementById: id => elements.get(id) || element(),
-      querySelectorAll: selector => selector === '.tab' ? tabs : selector === '.view' ? views : [],
+      getElementById: id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); },
+      querySelectorAll: selector => selector === '.tab' ? [tab] : [],
       querySelector: () => null,
     });
     vi.stubGlobal('location', { hash: '#users' });
     vi.stubGlobal('history', { replaceState: vi.fn() });
-    vi.stubGlobal('CSS', { escape: value => value });
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ organizations: [] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ users: [], types: {}, user_types: {} }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ user_type: 'member' }) }));
-
     await import('../src/user-management/main.js');
-    const event = { target: { matches: selector => selector === '[data-user-type]', dataset: { userType: 'u-7' }, value: 'member' } };
-    elements.get('userTable').listeners.change(event);
-
-    await vi.waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith('/api/access-control/users/u-7/type', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type_id: 'member' }),
-      });
-      expect(elements.get('status').textContent).toBe('用户类型已更新');
-    });
+    expect(directory.refresh).toHaveBeenCalledOnce();
+    tab.addEventListener.mock.calls[0][1]();
+    expect(directory.refresh).toHaveBeenCalledTimes(2);
   });
 
   it('keeps user management API endpoints in its service module', async () => {

@@ -70,6 +70,9 @@ export function mountActionDelegation(root, actions, { event = 'click', capture 
   const handler = eventObject => {
     const target = eventObject.target.closest?.('[data-action]');
     if (!target || !root.contains(target)) return;
+    // A panel boundary blocks ancestor backdrop actions, but keeps its own buttons active.
+    const boundary = eventObject.target.closest?.('[data-stop-propagation]');
+    if (boundary && boundary !== target && target.contains(boundary)) return;
     const action = actions[target.dataset.action];
     if (typeof action !== 'function') return;
     const raw = target.dataset.actionArgs ?? target.dataset.actionArg;

@@ -25,6 +25,8 @@ class GatewayChatModel(BaseChatModel):
     headers: dict[str, str] = Field(default_factory=dict)
     model_name: str
     request_timeout: float = 180.0
+    authorization_target: Any = Field(default=None, exclude=True)
+    authorization_user_id: str = Field(default="", exclude=True)
 
     @property
     def _llm_type(self) -> str:
@@ -92,6 +94,10 @@ class GatewayChatModel(BaseChatModel):
 
     async def _post_with_retry(self, body: dict[str, Any]) -> dict[str, Any]:
         from app.ai.chat import complete_with_retry
+        from app.ai.authorization import require_model_access
+
+        if self.authorization_target is not None:
+            await asyncio.to_thread(require_model_access, self.authorization_target, self.authorization_user_id)
 
         try:
             return await complete_with_retry(
@@ -157,8 +163,14 @@ def resolve_canvas_agent_model(*, model: str = "", model_id: str = "", connectio
         )
     except LookupError as exc:
         raise ValueError("指定的 Canvas Agent 聊天模型不存在或已禁用") from exc
+    from app.ai.authorization import require_model_access
+    from app.core.auth import current_user_id
+
+    require_model_access(target, current_user_id())
     return GatewayChatModel(
         endpoint=f"{endpoint_for_target(target, 'chat')}/chat/completions",
         headers=dict(headers_for_target(target)),
         model_name=target.model.upstream_model,
+        authorization_target=target,
+        authorization_user_id=current_user_id(),
     )

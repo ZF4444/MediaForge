@@ -744,10 +744,6 @@
       "generate_audio": {
         "type": "boolean",
         "default": false
-      },
-      "multimodal": {
-        "type": "boolean",
-        "default": false
       }
     },
     "required": [

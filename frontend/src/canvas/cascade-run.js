@@ -44,16 +44,31 @@ function smartCascadeAbortError(){
 }
 function canvasApiJson(url, options = {}){
     const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
-    if(apiJson) return apiJson(url, options);
+    if(apiJson) return apiJson(url, options).catch(error => {
+        if(error.status === 413 && quotaDataFromPayload(error.data)) throw new StorageQuotaSignal(error.data);
+        const budget = budgetDataFromPayload(error.data);
+        if(budget) throw new UsageBudgetSignal(budget);
+        throw error;
+    });
     return fetch(url, options).then(async response => {
         const data = await response.json().catch(() => ({}));
-        if(!response.ok) throw new Error(data.detail || data.message || '请求失败');
+        if(!response.ok) {
+            if(response.status === 413 && quotaDataFromPayload(data)) throw new StorageQuotaSignal(data);
+            const budget = budgetDataFromPayload(data);
+            if(budget) throw new UsageBudgetSignal(budget);
+            throw await smartResponseError(response, '请求失败');
+        }
         return data;
     });
 }
 function canvasApiForm(url, formData, options = {}){
     const apiForm = globalThis.__MediaForgeRuntimeServices?.apiForm;
-    if(apiForm) return apiForm(url, formData, options);
+    if(apiForm) return apiForm(url, formData, options).catch(error => {
+        if(error.status === 413 && quotaDataFromPayload(error.data)) throw new StorageQuotaSignal(error.data);
+        const budget = budgetDataFromPayload(error.data);
+        if(budget) throw new UsageBudgetSignal(budget);
+        throw error;
+    });
     return canvasApiJson(url, {...options, method:options.method || 'POST', body:formData});
 }
 function canvasApiBlob(url, options = {}){
@@ -93,6 +108,8 @@ function canonicalRunSettings(value={}){
     delete settings.model;
     delete settings.videoProvider;
     delete settings.videoModel;
+    delete settings.videoMultimodal;
+    delete settings.videoUseFrameRoles;
     return settings;
 }
 function workflowTaskCount(runSettings=settings){
@@ -157,7 +174,6 @@ async function runSmartCascadeRoundsWithLimit(roundIndexes, limit, runner, runSt
 //     finalizePendingNode, selectedNode
 //   RunningHub 相关：selectedRunningHubRef, rhActiveFields, rhMediaForRun,
 //     rhBuildNodeInfoList
-//   视频生成相关：videoGenerationMode
 //   随机参数：comfyRandomEnabledField, smartComfyRandomActive, smartComfyRandomValue
 
 async function createSmartComfyTask(payload){
@@ -261,20 +277,48 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
     const submit = await submitRunningHubGeneration(prompt, refs, runSettings);
     return pollRunningHubTask(submit.taskId, submit);
 }
+async function resolveVideoSourceAspect(runSettings, refs){
+    if(runSettings.videoAspect !== 'source') return runSettings.videoAspect;
+    const first = imageRefsOnly(refs)[0];
+    if(!first) return '9:16';
+    let size = imageSizeForRatio(first);
+    if(!size && first.url){
+        size = await new Promise(resolve => {
+            const image = new Image();
+            image.onload = () => resolve({w:image.naturalWidth, h:image.naturalHeight});
+            image.onerror = () => resolve(null);
+            image.src = first.url;
+        });
+    }
+    if(!size) return '9:16';
+    // Resolve against this task's model, not the model currently open in the composer.
+    const key = `video:${runSettings.videoConnectionId}:${runSettings.videoModelId}:${runSettings.videoResourceId || ''}`;
+    let schema = canvasParameterSchemaCache.get(key);
+    if(!schema){
+        const query = new URLSearchParams({capability:'video.text_to_video', connection_id:runSettings.videoConnectionId || '', model_id:runSettings.videoModelId || '', resource_id:runSettings.videoResourceId || ''});
+        schema = await canvasApiJson(`/api/canvas/capability-parameters?${query}`);
+        canvasParameterSchemaCache.set(key, schema);
+    }
+    const field = (schema?.fields || []).find(item => item.id === 'videoAspect');
+    const options = (field?.options?.length ? field.options : defaultCanvasParameterSchema('video').fields.find(item => item.id === 'videoAspect').options)
+        .filter(value => parseRatioValue(value) > 0);
+    if(!options.length) throw new Error('当前视频模型未配置支持的画面比例');
+    const ratio = size.w / size.h;
+    return options.reduce((best, value) => Math.abs(parseRatioValue(value) - ratio) < Math.abs(parseRatioValue(best) - ratio) ? value : best);
+}
 async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.videoConnectionId || !runSettings.videoModelId) throw new Error(tr('smart.errNoVideoModel'));
-    const generationMode = videoGenerationMode(runSettings);
-    const useReferences = generationMode !== 'text';
-    const refImages = (useReferences ? imageRefsOnly(refs) : []).map((ref, i) => ({
+    const videoAspect = await resolveVideoSourceAspect(runSettings, refs);
+    const refImages = imageRefsOnly(refs).map((ref, i) => ({
         url:ref.url, name:ref.name || `图${i + 1}`
     }));
     const payload = {
         prompt,
-        run_settings: canonicalRunSettings(runSettings),
+        run_settings: canonicalRunSettings({...runSettings, videoAspect}),
         connection_id:runSettings.videoConnectionId, model_id:runSettings.videoModelId, resource_id:runSettings.videoResourceId || '',
         images: refImages,
-        videos: useReferences ? videoRefsOnly(refs).map(ref => ref.url).filter(Boolean) : [],
-        audios: useReferences ? audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3) : []
+        videos: videoRefsOnly(refs).map(ref => ref.url).filter(Boolean),
+        audios: audioRefsOnly(refs).map(ref => ref.url).filter(Boolean).slice(0, 3)
     };
     const result = await canvasApiJson('/api/canvas-video', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     // count>1: backend fans out N online-video child tasks onto the Redis
@@ -663,6 +707,10 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         outputSlot.queued = false;
         outputSlot.pending = 0;
         outputSlot.running = false;
+        outputSlot.runFinishedAt = nowMs();
+        if(!outputSlot.runStartedAt) outputSlot.runStartedAt = outputSlot.runFinishedAt;
+        outputSlot.runElapsedMs = Math.max(0, outputSlot.runFinishedAt - Number(outputSlot.runStartedAt));
+        outputSlot.runTimerHidden = false;
         delete outputSlot.pendingCandidatePool;
         throw e;
     } finally {
@@ -1121,6 +1169,20 @@ async function runGeneration(){
         }
         if(isApiLikeEngine(settings.engine) && settings.apiKind === 'video'){
             const videoResult = await runApiVideoGeneration(prompt, refs);
+            if(videoResult?.batch){
+                pendingNode.pendingTasks = videoResult.taskIds.map(taskId => ({taskId, kind:'video', connectionId:videoResult.connectionId, modelId:videoResult.modelId, resourceId:videoResult.resourceId}));
+                pendingNode.running = false;
+                render();
+                await saveCanvas();
+                await resumeSmartPendingNode(pendingNode);
+                if(!(pendingNode.images || []).length) throw new Error(tr('smart.errNoOutVideos'));
+                if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
+                addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart, tasks:smartLogTasksFromNode(pendingNode)});
+                clearPromptInput({preserveDraft:true});
+                settings = previousSettings;
+                scheduleSave();
+                return;
+            }
             const outVideos = videoResult.urls || videoResult;
             if(!outVideos.length) throw new Error(tr('smart.errNoOutVideos'));
             finalizePendingNode(pendingNode, outVideos, pendingMeta, 'video');
@@ -1186,6 +1248,10 @@ async function runGeneration(){
     } catch(e) {
         settings = previousSettings;
         pendingNode.pending = 0;
+        pendingNode.runFinishedAt = nowMs();
+        if(!pendingNode.runStartedAt) pendingNode.runStartedAt = pendingNode.runFinishedAt;
+        pendingNode.runElapsedMs = Math.max(0, pendingNode.runFinishedAt - Number(pendingNode.runStartedAt));
+        pendingNode.runTimerHidden = false;
         delete pendingNode.pendingCandidatePool;
         if(branchNode){
             nodes = nodes.filter(n => n.id !== branchNode.id);

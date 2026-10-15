@@ -212,6 +212,12 @@ class DatabaseAIRepository:
         now = now_ms()
         connection_rows = list(connections)
         model_rows = list(models)
+        from app.services.video_billing import validate_video_token_prices
+
+        for model in model_rows:
+            settings = model.get("settings") or {}
+            if "video_token_prices" in settings:
+                validate_video_token_prices(settings["video_token_prices"])
         resource_rows = list(resources)
         connection_ids = {str(item.get("id") or "") for item in connection_rows}
         if not connection_ids or "" in connection_ids:

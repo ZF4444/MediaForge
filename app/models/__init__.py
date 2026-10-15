@@ -122,7 +122,6 @@ class CanvasVideoRequest(BaseModel):
     seed: Optional[int] = None
     return_last_frame: bool = False
     generate_audio: bool = False
-    multimodal: bool = False
     n: int = 1
     run_settings: Dict[str, Any] = Field(default_factory=dict)
 
@@ -419,13 +418,14 @@ class ComfyInstancesPayload(BaseModel):
 
 
 class AccessControlUserEntry(BaseModel):
+    models: Optional[List[str]] = None
     name: str = Field(default="", max_length=80)
     pages: List[str] = Field(default_factory=list)
 
 
 class AccessControlConfigPayload(BaseModel):
     types: Dict[str, AccessControlUserEntry] = Field(default_factory=dict)
-    user_types: Dict[str, str] = Field(default_factory=dict)
+    user_types: Optional[Dict[str, str]] = None
 
 
 class OrganizationCreatePayload(BaseModel):

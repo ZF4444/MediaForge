@@ -1,79 +1,197 @@
-import { apiResponse } from '../services/http.js';
+import { apiJson } from '../services/http.js';
 import { applyStoredTheme } from '../shared/theme-bootstrap.js';
 
 applyStoredTheme();
-
-/* 权限管理：用户类型的页面权限与用户类型分配。 */
-  var DEFAULT_TYPE_ID = 'new-user';
-  var ADMIN_TYPE_ID = 'sys-admin';
-  var state = { allPages: [], users: [], types: {}, userTypes: {}, selected: null, draftPages: new Set() };
-  function $(id) { return document.getElementById(id); }
-  function setVisible(id, visible) { $(id).classList.toggle('ac-hidden', !visible); }
-  function typeEntries() { return Object.keys(state.types).map(function (id) { return { id: id, value: state.types[id] }; }); }
-  function setStatus(message, kind) { var el = $('acStatus'); el.textContent = message || ''; el.className = 'ac-status' + (kind ? ' ' + kind : ''); }
-  function markDirty(message) { setStatus(message || '有未保存的变更。'); }
-  function fetchJSON(url, options) { return apiResponse(url, Object.assign({ credentials: 'same-origin' }, options || {})).then(function (response) { if (response.status === 403) { var forbidden = new Error('forbidden'); forbidden.code = 403; throw forbidden; } if (!response.ok) { var error = new Error('http ' + response.status); error.code = response.status; throw error; } return response.data; }); }
-  function commitSelected() { if (state.selected && state.types[state.selected] && state.selected !== ADMIN_TYPE_ID) state.types[state.selected] = { name: $('acTypeName').value.trim() || state.selected, pages: Array.from(state.draftPages) }; }
-  function renderTypes() {
-    var list = $('acTypeList'); list.innerHTML = '';
-    typeEntries().forEach(function (entry) {
-      var item = document.createElement('button'), dot = document.createElement('span'), name = document.createElement('span');
-      item.type = 'button'; item.className = 'ac-type-item' + (state.selected === entry.id ? ' active' : ''); dot.className = 'ac-type-dot'; name.textContent = entry.value.name || entry.id;
-      item.appendChild(dot); item.appendChild(name); item.addEventListener('click', function () { selectType(entry.id); }); list.appendChild(item);
+const DEFAULT = 'new-user';
+const ADMIN = 'sys-admin';
+const $ = id => document.getElementById(id);
+const state = { types: {}, userTypes: {}, users: [], pages: [], models: [], selected: DEFAULT, snapshot: '', saving: false, refreshing: false, loaded: false };
+const clone = value => JSON.parse(JSON.stringify(value));
+const payload = () => ({ types: state.types });
+const dirty = () => state.loaded && JSON.stringify(payload()) !== state.snapshot;
+const current = () => state.types[state.selected];
+const admin = () => state.selected === ADMIN;
+const matches = (value, query) => String(value).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+const memberType = user => state.types[state.userTypes[user.user_id]] ? state.userTypes[user.user_id] : DEFAULT;
+const members = id => state.users.filter(user => memberType(user) === id).length;
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+function status(message, error = false) {
+  $('saveStatus').textContent = message;
+  $('saveStatus').dataset.error = String(error);
+}
+function updateActions() {
+  const invalid = Object.values(state.types).some(type => !type.name?.trim());
+  $('saveButton').disabled = !dirty() || invalid || state.saving;
+  $('resetButton').disabled = !dirty() || state.saving;
+  $('saveButton').textContent = state.saving ? '保存中…' : '保存更改';
+}
+function changed() {
+  status(dirty() ? '有未保存的更改' : '所有更改已保存');
+  updateActions();
+}
+function renderTypes() {
+  $('typeCount').textContent = Object.keys(state.types).length;
+  const list = $('typeList'); list.replaceChildren();
+  Object.entries(state.types).filter(([, type]) => matches(type.name, $('typeSearch').value)).forEach(([id, type]) => {
+    const button = element('button', 'type-item' + (state.selected === id ? ' selected' : ''));
+    button.type = 'button'; button.setAttribute('aria-pressed', String(state.selected === id));
+    const symbol = element('span', 'type-symbol', id === ADMIN ? '◇' : id === DEFAULT ? '◎' : '◌');
+    symbol.setAttribute('aria-hidden', 'true');
+    const copy = element('span', 'type-copy');
+    copy.append(element('strong', '', type.name || '未命名类型'), element('small', '', `${members(id)} 位用户${id === ADMIN || id === DEFAULT ? ' · 内置类型' : ''}`));
+    button.append(symbol, copy); button.addEventListener('click', () => selectType(id)); list.append(button);
+  });
+  if (!list.children.length) list.append(element('p', 'empty', '没有匹配的用户类型'));
+}
+function updateSummary() {
+  $('typeTitle').textContent = current().name || '未命名类型';
+  $('typeSummary').textContent = `${members(state.selected)} 位用户使用此类型 · 权限调整将在保存后生效`;
+  const pageTotal = admin() ? state.pages.length : state.pages.filter(item => current().pages.includes(item.id)).length;
+  const modelTotal = admin() || current().models === null ? state.models.length : state.models.filter(item => current().models.includes(item.id)).length;
+  $('pageCount').textContent = `${pageTotal} / ${state.pages.length}`;
+  $('modelCount').textContent = `${modelTotal} / ${state.models.length}`;
+}
+function renderPermissions(group) {
+  const isModels = group === 'models';
+  const source = isModels ? state.models : state.pages;
+  const box = $(isModels ? 'modelList' : 'pageList');
+  const query = $(isModels ? 'modelSearch' : 'pageSearch').value;
+  box.replaceChildren();
+  const filtered = source.filter(item => matches(`${item.label} ${item.upstream_model || ''} ${item.connection_id || ''}`, query));
+  filtered.forEach(item => {
+    const label = element('label', 'permission-row');
+    const input = element('input'); input.type = 'checkbox';
+    input.checked = admin() || (isModels && current().models === null) || current()[group].includes(item.id);
+    input.disabled = admin();
+    const copy = element('span', '', item.label || item.id);
+    if (isModels) copy.append(element('small', '', item.upstream_model || item.id));
+    input.addEventListener('change', () => {
+      if (isModels && current().models === null) current().models = state.models.map(model => model.id);
+      const values = new Set(current()[group]);
+      if (input.checked) values.add(item.id); else values.delete(item.id);
+      current()[group] = [...values];
+      $('allModels').checked = current().models === null;
+      updateSummary(); changed();
     });
+    label.append(input, copy); box.append(label);
+  });
+  if (!filtered.length) box.append(element('p', 'empty', source.length ? '没有匹配的结果，试试其他关键词。' : isModels ? '暂无模型。请先在 API 设置中添加模型。' : '暂无可配置页面。'));
+}
+function selectType(id) {
+  state.selected = state.types[id] ? id : DEFAULT;
+  $('typeName').value = current().name;
+  $('typeName').disabled = admin();
+  $('nameError').hidden = !!current().name?.trim();
+  $('typeBadge').textContent = state.selected === ADMIN ? '系统管理员 · 内置类型' : state.selected === DEFAULT ? '默认用户 · 内置类型' : '自定义类型';
+  $('deleteType').hidden = state.selected === ADMIN || state.selected === DEFAULT;
+  $('adminNotice').hidden = !admin();
+  $('allModels').checked = admin() || current().models === null;
+  $('allModels').disabled = admin();
+  document.querySelectorAll('[data-bulk]').forEach(button => { button.disabled = admin(); });
+  renderTypes(); updateSummary(); renderPermissions('pages'); renderPermissions('models');
+}
+function normalizeTypes(types) {
+  return Object.fromEntries(Object.entries(types).map(([id, type]) => [id, { ...type, pages: type.pages || [], models: type.models ?? null }]));
+}
+async function load() {
+  $('loading').hidden = false; $('loadError').hidden = true;
+  try {
+    const data = await apiJson('/api/access-control/config');
+    state.types = normalizeTypes(data.types || {}); state.userTypes = data.user_types || {};
+    state.users = data.users || []; state.pages = data.all_pages || []; state.models = data.all_models || [];
+    state.loaded = true; state.snapshot = JSON.stringify(payload());
+    $('workspace').hidden = false; $('loading').hidden = true;
+    selectType(state.selected); changed();
+  } catch (error) {
+    $('loading').hidden = true; $('loadError').hidden = false;
+    $('loadErrorText').textContent = error.status === 403 ? '需要“用户管理”页面权限才能访问此页面。' : `配置加载失败：${error.message}`;
+    status('未能加载配置', true);
   }
-  function renderUsers() {
-    var list = $('acUserList'); list.innerHTML = '';
-    if (!state.users.length) { var empty = document.createElement('tr'); empty.innerHTML = '<td class="ac-empty-row" colspan="2">暂无其他注册用户。</td>'; list.appendChild(empty); return; }
-    state.users.forEach(function (user) {
-      var row = document.createElement('tr'), userCell = document.createElement('td'), typeCell = document.createElement('td'), name = document.createElement('div'), id = document.createElement('div'), select = document.createElement('select');
-      name.className = 'ac-user-name'; id.className = 'ac-user-id'; name.textContent = user.username || user.user_id; id.textContent = user.username && user.username !== user.user_id ? user.user_id : '';
-      userCell.appendChild(name); if (id.textContent) userCell.appendChild(id); select.className = 'ac-type-select';
-      typeEntries().forEach(function (entry) { var option = document.createElement('option'); option.value = entry.id; option.textContent = entry.value.name || entry.id; option.selected = (state.userTypes[user.user_id] || DEFAULT_TYPE_ID) === entry.id; select.appendChild(option); });
-      select.addEventListener('change', function () { state.userTypes[user.user_id] = select.value; markDirty('有未保存的用户类型分配。'); });
-      typeCell.appendChild(select); row.appendChild(userCell); row.appendChild(typeCell); list.appendChild(row);
-    });
-  }
-  function buildChecks() {
-    var box = $('acPages'); box.innerHTML = '';
-    if (state.selected === ADMIN_TYPE_ID) {
-      var hint = document.createElement('p'); hint.className = 'ac-admin-hint'; hint.textContent = '系统管理员固定拥有全部页面权限，无需单独配置。';
-      box.appendChild(hint); return;
+}
+async function save() {
+  if ($('saveButton').disabled) return;
+  state.saving = true; updateActions(); status('正在保存更改…');
+  // Keep editing available while the request runs; merge the response only if no newer edits exist.
+  const submitted = clone(payload()); const serialized = JSON.stringify(submitted);
+  try {
+    const data = await apiJson('/api/access-control/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: serialized });
+    const saved = { types: normalizeTypes(data.types || submitted.types) };
+    state.userTypes = data.user_types || state.userTypes;
+    if (JSON.stringify(payload()) === serialized) {
+      state.types = saved.types;
+      selectType(state.selected);
     }
-    state.allPages.forEach(function (item) {
-      var label = document.createElement('label'), input = document.createElement('input'), text = document.createElement('span');
-      label.className = 'ac-check' + (state.draftPages.has(item.id) ? ' checked' : ''); input.type = 'checkbox'; input.checked = state.draftPages.has(item.id);
-      input.addEventListener('change', function () { if (input.checked) state.draftPages.add(item.id); else state.draftPages.delete(item.id); label.classList.toggle('checked', input.checked); markDirty(); });
-      text.textContent = item.label; label.appendChild(input); label.appendChild(text); box.appendChild(label);
-    });
-  }
-  function selectType(typeId) {
-    commitSelected(); state.selected = typeId; var type = state.types[typeId]; if (!type) return;
-    state.draftPages = new Set(type.pages || []); setVisible('acDetailEmpty', false); setVisible('acDetail', true); $('acTypeName').value = type.name || typeId; $('acDetailTitle').textContent = type.name || typeId; setVisible('acDeleteTypeBtn', !(typeId === DEFAULT_TYPE_ID || typeId === ADMIN_TYPE_ID)); $('acTypeName').disabled = typeId === ADMIN_TYPE_ID;
-    document.querySelectorAll('[data-bulk]').forEach(function (button) { button.disabled = typeId === ADMIN_TYPE_ID; });
-    renderTypes(); buildChecks();
-  }
-  function applyBulk(value) { if (state.selected === ADMIN_TYPE_ID) return; state.draftPages.clear(); if (value === 'all') state.allPages.forEach(function (item) { state.draftPages.add(item.id); }); buildChecks(); markDirty(); }
-  function newType() {
-    var name = window.prompt('用户类型名称'); if (!name || !name.trim()) return;
-    var id = 'type-' + Date.now().toString(36); state.types[id] = { name: name.trim(), pages: [] }; selectType(id); renderUsers(); markDirty('已创建用户类型，请配置权限后保存。');
-  }
-  function deleteType() {
-    var typeId = state.selected; if (!typeId || typeId === DEFAULT_TYPE_ID || typeId === ADMIN_TYPE_ID || !window.confirm('删除此用户类型？相关用户将改为“默认用户”。')) return;
-    delete state.types[typeId]; Object.keys(state.userTypes).forEach(function (uid) { if (state.userTypes[uid] === typeId) state.userTypes[uid] = DEFAULT_TYPE_ID; }); selectType(DEFAULT_TYPE_ID); renderUsers(); markDirty('已删除用户类型，请保存变更。');
-  }
-  function persist() {
-    commitSelected(); $('acSaveBtn').disabled = true; setStatus('保存中...');
-    fetchJSON('/api/access-control/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ types: state.types, user_types: state.userTypes }) }).then(function (data) {
-      state.types = data.types || {}; state.userTypes = data.user_types || {}; renderTypes(); renderUsers(); selectType(state.selected && state.types[state.selected] ? state.selected : DEFAULT_TYPE_ID); setStatus('已保存。', 'ok');
-    }).catch(function (error) { setStatus(error.code === 403 ? '无权限。' : '保存失败：' + error.message, 'err'); }).finally(function () { $('acSaveBtn').disabled = false; });
-  }
-  function init() {
-    document.querySelectorAll('[data-bulk]').forEach(function (button) { button.addEventListener('click', function () { applyBulk(button.dataset.val); }); });
-    $('acAddTypeBtn').addEventListener('click', newType); $('acDeleteTypeBtn').addEventListener('click', deleteType); $('acSaveBtn').addEventListener('click', persist);
-    $('acTypeName').addEventListener('input', function () { if (state.selected) { $('acDetailTitle').textContent = this.value.trim() || state.selected; markDirty(); } });
-    fetchJSON('/api/access-control/config').then(function (data) {
-      state.allPages = data.all_pages || []; state.users = data.users || []; state.types = data.types || {}; state.userTypes = data.user_types || {}; setVisible('acMain', true); renderTypes(); renderUsers(); selectType(state.types[DEFAULT_TYPE_ID] ? DEFAULT_TYPE_ID : typeEntries()[0].id);
-    }).catch(function (error) { if (error.code === 403) setVisible('acForbidden', true); else setStatus('加载失败：' + error.message, 'err'); });
-  }
-  document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
+    state.snapshot = JSON.stringify(saved); changed();
+    if (dirty()) status('已保存，仍有新的更改待保存');
+  } catch (error) { status(`保存失败：${error.message}。更改已保留，可重试。`, true); }
+  finally { state.saving = false; updateActions(); }
+}
+async function refreshModels() {
+  if (!state.loaded || state.refreshing || document.hidden) return;
+  state.refreshing = true; $('refreshModels').disabled = true;
+  try {
+    const data = await apiJson('/api/access-control/models');
+    const models = data.all_models || [];
+    if (JSON.stringify(models) !== JSON.stringify(state.models)) {
+      state.models = models; renderPermissions('models'); updateSummary();
+    }
+    $('syncStatus').textContent = '已同步 · 每 5 秒自动更新';
+  } catch { $('syncStatus').textContent = '同步失败，将自动重试'; }
+  finally { state.refreshing = false; $('refreshModels').disabled = false; }
+}
+function init() {
+  document.querySelectorAll('[data-bulk]').forEach(button => button.addEventListener('click', () => {
+    if (admin()) return;
+    const group = button.dataset.bulk;
+    current()[group] = button.dataset.value === 'all' ? (group === 'pages' ? state.pages : state.models).map(item => item.id) : [];
+    $('allModels').checked = current().models === null;
+    renderPermissions(group); updateSummary(); changed();
+  }));
+  $('typeSearch').addEventListener('input', renderTypes);
+  $('pageSearch').addEventListener('input', () => renderPermissions('pages'));
+  $('modelSearch').addEventListener('input', () => renderPermissions('models'));
+  $('typeName').addEventListener('input', event => {
+    current().name = event.target.value;
+    $('nameError').hidden = !!current().name.trim();
+    updateSummary(); renderTypes(); changed();
+  });
+  $('allModels').addEventListener('change', event => {
+    current().models = event.target.checked ? null : state.models.map(item => item.id);
+    renderPermissions('models'); updateSummary(); changed();
+  });
+  $('addType').addEventListener('click', () => { $('newTypeName').value = ''; $('typeDialog').showModal(); $('newTypeName').focus(); });
+  $('cancelCreate').addEventListener('click', () => $('typeDialog').close());
+  $('typeForm').addEventListener('submit', event => {
+    event.preventDefault(); const name = $('newTypeName').value.trim(); if (!name) { $('newTypeName').setCustomValidity('请输入用户类型名称'); $('newTypeName').reportValidity(); return; }
+    // randomUUID is unavailable on HTTP origins outside localhost.
+    let id;
+    do {
+      const suffix = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      id = `type-${suffix}`;
+    } while (state.types[id]);
+    const defaults = state.types[DEFAULT];
+    state.types[id] = { name, pages: [...defaults.pages], models: defaults.models === null ? null : [...defaults.models] };
+    $('typeSearch').value = ''; $('typeDialog').close(); selectType(id); changed(); $('typeName').focus();
+  });
+  $('newTypeName').addEventListener('input', () => $('newTypeName').setCustomValidity(''));
+  $('deleteType').addEventListener('click', () => {
+    if (admin() || state.selected === DEFAULT) return;
+    const id = state.selected; delete state.types[id];
+    selectType(DEFAULT); changed(); status('已移除类型，成员将归入默认用户。保存前可撤销。');
+  });
+  $('resetButton').addEventListener('click', () => {
+    if (state.saving) return;
+    const saved = JSON.parse(state.snapshot); state.types = saved.types;
+    selectType(state.selected); changed();
+  });
+  $('saveButton').addEventListener('click', save); $('retryButton').addEventListener('click', load); $('refreshModels').addEventListener('click', refreshModels);
+  window.addEventListener('beforeunload', event => { if (dirty()) { event.preventDefault(); event.returnValue = ''; } });
+  window.addEventListener('focus', refreshModels); document.addEventListener('visibilitychange', refreshModels);
+  load(); window.setInterval(refreshModels, 5000);
+}
+init();

@@ -1,5 +1,6 @@
+import { registerRuntimeServices } from '../shared/runtime-services.js';
 import { createIcons, Database, X } from 'lucide';
-import { apiJson, apiForm } from './http.js';
+import { apiJson, apiForm, errorMessage } from './http.js';
 
 const DIALOG_ID = 'storageQuotaExceededDialog';
 const icons = { Database, X };
@@ -110,6 +111,14 @@ export function showBudgetDialog(data) {
   `);
 }
 
+export function showModelPermissionDialog(data) {
+  createDialog('模型使用权限不足', '没有权限使用该模型，请联系管理员@飞帆开放。', `
+    <button class="storage-quota-dialog-btn primary" type="button" data-quota-close>我知道了</button>
+  `);
+}
+
+registerRuntimeServices({ showModelPermissionDialog });
+
 export async function upload(form, onProgress) {
   if (typeof onProgress !== 'function') {
     let data = {};
@@ -134,7 +143,7 @@ export async function upload(form, onProgress) {
       try { data = text ? JSON.parse(text) : {}; }
       catch { data = { detail: text }; }
       if (xhr.status === 413) {
-        const quotaError = new Error(data?.detail || data?.message || '上传失败');
+        const quotaError = new Error(errorMessage(data?.detail) || errorMessage(data?.message) || '上传失败');
         quotaError.status = xhr.status;
         quotaError.data = data;
         showQuotaDialog(await quotaSnapshot(data));
@@ -142,7 +151,7 @@ export async function upload(form, onProgress) {
         return;
       }
       if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new Error(data?.detail || data?.message || '上传失败'));
+        reject(new Error(errorMessage(data?.detail) || errorMessage(data?.message) || '上传失败'));
         return;
       }
       resolve(data);
@@ -152,4 +161,4 @@ export async function upload(form, onProgress) {
   });
 }
 
-export const MediaForgeUpload = { upload, showQuotaDialog, showBudgetDialog, openStorageManagement };
+export const MediaForgeUpload = { upload, showQuotaDialog, showBudgetDialog, showModelPermissionDialog, openStorageManagement };

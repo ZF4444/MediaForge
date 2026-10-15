@@ -67,3 +67,37 @@ def test_assign_user_type_updates_only_the_selected_user(monkeypatch):
     assert result == {"ok": True, "user_id": "alice", "user_type": "creator"}
     assert saved["user_types"] == {"bob": "new-user", "alice": "creator"}
     assert saved["types"] == config["types"]
+
+
+def test_model_permissions_by_type_and_connection(monkeypatch):
+    monkeypatch.setattr(access_control, 'all_page_ids', lambda: ['canvas'])
+    monkeypatch.setattr(access_control, 'set_app_setting', lambda *_args: None)
+    monkeypatch.setattr(access_control, 'all_models', lambda: [
+        {'id': 'model-a', 'connection_id': 'a', 'upstream_model': 'same'},
+        {'id': 'model-b', 'connection_id': 'b', 'upstream_model': 'same'},
+    ])
+    monkeypatch.setattr(access_control, '_ACCESS_CONTROL_CACHE', None)
+    access_control.save_config({
+        'types': {'restricted': {'pages': ['canvas'], 'models': ['model-a']},
+                  'blocked': {'pages': ['canvas'], 'models': []}},
+        'user_types': {'alice': 'restricted', 'bob': 'blocked', 'operator': 'sys-admin'},
+    })
+    assert access_control.is_model_allowed('alice', 'a', 'same')
+    assert not access_control.is_model_allowed('alice', 'b', 'same')
+    assert not access_control.is_model_allowed('bob', 'a', 'same')
+    assert access_control.is_model_allowed('operator', 'b', 'same')
+    assert access_control.is_model_allowed('legacy-user', 'b', 'same')
+
+
+def test_saving_permissions_without_assignments_preserves_latest_user_types(monkeypatch):
+    from app.models import AccessControlConfigPayload
+
+    saved = {}
+    monkeypatch.setattr(access_control_router, '_require_user_management', lambda: 'manager')
+    monkeypatch.setattr(access_control_router, 'load_config', lambda: {'user_types': {'alice': 'creator'}})
+    monkeypatch.setattr(access_control_router, 'save_config', lambda payload: saved.update(payload) or payload)
+    monkeypatch.setattr(access_control_router, 'audit_event', lambda *_args, **_kwargs: None)
+    payload = AccessControlConfigPayload(types={'creator': {'name': '创作团队', 'pages': ['canvas'], 'models': []}})
+    access_control_router.access_control_put_config(payload)
+    assert saved['user_types'] == {'alice': 'creator'}
+    assert saved['types']['creator']['models'] == []

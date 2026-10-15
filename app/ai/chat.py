@@ -10,6 +10,7 @@ import httpx
 
 from app.ai.contracts import Actor, ChatCommand
 from app.ai.gateway import connection_operation
+from app.ai.authorization import require_model_access
 from app.core.http_client import new_outbound_http_client, shared_http_client
 from app.core.retry import retry_delay_seconds, retry_max_attempts
 
@@ -43,11 +44,13 @@ class ChatGateway:
             yield line
 
     async def _execute_target(self, command: ChatCommand, *, user_id: str) -> dict[str, Any]:
+        await asyncio.to_thread(require_model_access, command.target, user_id)
         adapter = _chat_adapter(command.target.protocol, self._timeout)
         async with connection_operation(command.target.connection.id, "llm", user_id=user_id):
             return await adapter.chat(command, headers=await self._resolver_headers(command.target))
 
     async def _stream_target(self, command: ChatCommand, *, user_id: str) -> AsyncIterator[str]:
+        await asyncio.to_thread(require_model_access, command.target, user_id)
         adapter = _chat_adapter(command.target.protocol, self._timeout)
         async with connection_operation(command.target.connection.id, "llm", user_id=user_id):
             async for line in adapter.stream_chat(command, headers=await self._resolver_headers(command.target)):

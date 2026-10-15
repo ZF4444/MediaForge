@@ -227,3 +227,45 @@ describe('smartCascadeStopText', () => {
         expect(sandbox.smartCascadeStopText()).toBe('停止运行');
     });
 });
+
+describe('video reference inputs', () => {
+    it('submits connected media even when historical input modes were disabled', async () => {
+        const sandbox = createCascadeRunSandbox();
+        let request;
+        sandbox.canvasApiJson = async (_url, options) => {
+            request = JSON.parse(options.body);
+            return {child_task_ids:['child'], task_id:'parent'};
+        };
+        const refs = [
+            {url:'https://example.com/image.png', kind:'image'},
+            {url:'https://example.com/video.mp4', kind:'video'},
+            {url:'https://example.com/audio.mp3', kind:'audio'},
+        ];
+        sandbox.imageRefsOnly = value => value.filter(ref => ref.kind === 'image');
+        sandbox.videoRefsOnly = value => value.filter(ref => ref.kind === 'video');
+        sandbox.audioRefsOnly = value => value.filter(ref => ref.kind === 'audio');
+        await sandbox.runApiVideoGeneration('prompt', refs, {
+            videoConnectionId:'connection', videoModelId:'model',
+            videoMultimodal:false, videoUseFrameRoles:false,
+        });
+        expect(request.images).toEqual([{url:refs[0].url, name:'图1'}]);
+        expect(request.videos).toEqual([refs[1].url]);
+        expect(request.audios).toEqual([refs[2].url]);
+        expect(request.run_settings).not.toHaveProperty('videoMultimodal');
+        expect(request.run_settings).not.toHaveProperty('videoUseFrameRoles');
+    });
+
+    it('submits text-only input when no media is connected', async () => {
+        const sandbox = createCascadeRunSandbox();
+        let request;
+        sandbox.canvasApiJson = async (_url, options) => {
+            request = JSON.parse(options.body);
+            return {child_task_ids:['child']};
+        };
+        sandbox.imageRefsOnly = sandbox.videoRefsOnly = sandbox.audioRefsOnly = () => [];
+        await sandbox.runApiVideoGeneration('prompt', [], {videoConnectionId:'c', videoModelId:'m'});
+        expect(request.images).toEqual([]);
+        expect(request.videos).toEqual([]);
+        expect(request.audios).toEqual([]);
+    });
+});

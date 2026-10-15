@@ -484,8 +484,6 @@ let settings = {
     videoAspect:'16:9',
     videoResolution:'',
     videoGenerateAudio:false,
-    videoMultimodal:true,
-    videoUseFrameRoles:false,
     msgenModel:'zimage',
     msCustomModel:'',
     msRatio:'1:1',
@@ -533,6 +531,8 @@ function cloneSmartSettings(source=settings){
     }
 }
 function normalizeStoredImageRatios(target){
+    delete target.videoMultimodal;
+    delete target.videoUseFrameRoles;
     const legacy = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21'};
     for(const key of ['ratio','ratioMatched','msRatio','msRatioMatched']){
         if(legacy[target?.[key]]) target[key] = legacy[target[key]];
@@ -827,7 +827,7 @@ function smartSettingsForNode(node){
     const nodeSettings = normalizeStoredImageRatios(stripOutpaintDisplaySettings(node?.runSettings || {}, node));
     // Restore the node's pinned workflow before canvas defaults can supply a
     // different rhConfigKey/comfyWorkflow from the last selected node.
-    restoreCanonicalWorkflowSource(nodeSettings);
+    restoreCanonicalWorkflowSource(nodeSettings, node);
     const recentSettings = Object.keys(nodeSettings).length ? {} : recentSmartSettingsForMode();
     const base = {
         ...cloneSmartSettings(canvasDefaultSmartSettings || initialSmartSettings),
@@ -2471,7 +2471,11 @@ async function smartResponseError(response, fallback='请求失败'){
     if(response.status === 413 && quotaDataFromPayload(payload)) return new StorageQuotaSignal(payload);
     const budget = budgetDataFromPayload(payload);
     if(budget) return new UsageBudgetSignal(budget);
-    return new Error(await smartResponseErrorMessage(response, fallback, payload));
+    const error = new Error(await smartResponseErrorMessage(response, fallback, payload));
+    error.status = response.status;
+    error.data = payload;
+    globalThis.__MediaForgeRuntimeServices?.notifyModelAccessDenied?.(error);
+    return error;
 }
 async function smartResponseErrorMessage(response, fallback='请求失败', prefetched){
     let data = prefetched;
@@ -3565,7 +3569,8 @@ function extractUpstreamTaskId(text){
 function handleStorageQuotaSignal(e){
     if(!(e && e.storageQuotaExceeded)) return false;
     try {
-        MediaForgeUpload?.showQuotaDialog?.({
+        if(!MediaForgeUpload?.showQuotaDialog) throw new Error('quota dialog unavailable');
+        MediaForgeUpload.showQuotaDialog({
             quota_bytes:e.quota_bytes,
             used_bytes:e.used_bytes,
             incoming_bytes:e.incoming_bytes,
@@ -3579,14 +3584,15 @@ function handleStorageQuotaSignal(e){
 function handleUsageBudgetSignal(e){
     if(!(e && e.usageBudgetExceeded)) return false;
     try {
-        MediaForgeUpload?.showBudgetDialog?.({message:e.message});
+        if(!MediaForgeUpload?.showBudgetDialog) throw new Error('budget dialog unavailable');
+        MediaForgeUpload.showBudgetDialog({message:e.message});
     } catch(_) {
         toast((e.message || '本月使用预算已用尽，请联系管理员(@飞帆)。').slice(0, 160));
     }
     return true;
 }
 function handleTaskLimitSignal(e){
-    return handleStorageQuotaSignal(e) || handleUsageBudgetSignal(e);
+    return !!e?.modelAccessDeniedNotified || handleStorageQuotaSignal(e) || handleUsageBudgetSignal(e);
 }
 async function fetchImageTaskQuery(taskId, task={}){
     const payload = {
@@ -3637,11 +3643,12 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
         scheduleSave();
     }
 }
-async function pollCanvasTask(taskId){
+async function pollCanvasTask(taskId, kind='image'){
     if(!taskId) throw new Error(tr('smart.errRunFailed'));
     if(activeSmartTaskPolls.has(taskId)) return activeSmartTaskPolls.get(taskId);
     const promise = (async () => {
-        for(let i = 0; i < 900; i++){
+        const pollLimit = kind === 'video' ? 1800 : 900; // 2s intervals: video 60min, image 30min.
+        for(let i = 0; i < pollLimit; i++){
             await new Promise(resolve => setTimeout(resolve, 2000));
             const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
             const task = apiJson ? await apiJson(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`) : await fetch(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`).then(async r => { if(!r.ok) throw await smartResponseError(r); return r.json(); });
@@ -3649,12 +3656,16 @@ async function pollCanvasTask(taskId){
                 checkQuotaWarningFromResult(task);
                 return task.result || {};
             }
-            if(task.status === 'failed'){
+            if(['failed', 'interrupted', 'timed_out'].includes(task.status)){
+                const accessError = new Error(task.error || tr('smart.errRunFailed'));
+                accessError.status = task.status_code;
+                accessError.data = task;
+                if(globalThis.__MediaForgeRuntimeServices?.notifyModelAccessDenied?.(accessError)) throw accessError;
                 if(task.error_code === 'storage_quota_exceeded' || task.status_code === 413) throw new StorageQuotaSignal(task);
                 const budget = budgetDataFromPayload(task);
                 if(budget) throw new UsageBudgetSignal(budget);
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '');
-                if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, kind:'image', message:task.error || tr('smart.errRunFailed')});
+                if(kind === 'image' && recoverTaskId && task.status === 'failed') throw new ImageTaskRecoverSignal({taskId, recoverTaskId, kind:'image', message:task.error || tr('smart.errRunFailed')});
                 throw new Error(task.error || tr('smart.errRunFailed'));
             }
         }
@@ -3679,7 +3690,11 @@ async function pollCanvasComfyTask(taskId){
                 checkQuotaWarningFromResult(task);
                 return task.result || {};
             }
-            if(task.status === 'failed'){
+            if(['failed', 'interrupted', 'timed_out'].includes(task.status)){
+                const accessError = new Error(task.error || tr('smart.errRunFailed'));
+                accessError.status = task.status_code;
+                accessError.data = task;
+                if(globalThis.__MediaForgeRuntimeServices?.notifyModelAccessDenied?.(accessError)) throw accessError;
                 if(task.error_code === 'storage_quota_exceeded' || task.status_code === 413) throw new StorageQuotaSignal(task);
                 const budget = budgetDataFromPayload(task);
                 if(budget) throw new UsageBudgetSignal(budget);
@@ -3698,7 +3713,7 @@ async function pollCanvasComfyTask(taskId){
 async function pollSmartPendingTask(task){
     if(isRunningHubPendingTask(task)) return pollRunningHubTask(task.taskId, task);
     if(isComfyPendingTask(task)) return pollCanvasComfyTask(task.taskId);
-    return pollCanvasTask(task.taskId);
+    return pollCanvasTask(task.taskId, task.kind || 'image');
 }
 function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     if(!node || !taskId) return [];
@@ -3780,6 +3795,10 @@ async function resumeSmartPendingNode(node){
                 delete node.pendingTasks;
                 delete node.pendingCandidatePool;
                 node.running = false;
+                node.runFinishedAt = nowMs();
+                if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
+                node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt));
+                node.runTimerHidden = false;
                 if(!(node.images || []).length){
                     if(candidateCountForNode(node)) setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
                     else {
@@ -3798,6 +3817,8 @@ async function resumeSmartPendingNode(node){
     node._smartRunSettlements = settlements;
     if(failures.length && !(node.images || []).length && candidateCountForNode(node)) setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
     if(failures.length && !(node.images || []).length){
+        const permissionFailure = failures.find(e => e?.modelAccessDeniedNotified);
+        if(permissionFailure) throw permissionFailure;
         const quotaFailure = failures.find(e => e && e.storageQuotaExceeded);
         if(quotaFailure) throw quotaFailure;
         const messages = [...new Set(failures.map(e => (e?.message || String(e || '')).trim()).filter(Boolean))];

@@ -1,27 +1,26 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>权限管理</title>
-  <link rel="stylesheet" href="/static/dist/styles/theme.css">
-  <link rel="stylesheet" href="./page.css">
-</head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>权限管理</title><link rel="stylesheet" href="./page.css"></head>
 <body>
-  <main class="ac-wrap">
-    <header class="ac-head">
-      <div><h1 class="ac-title">权限管理</h1><p class="ac-sub">通过用户类型统一配置可访问页面，再将用户分配到对应类型。未分配的用户使用“默认用户”类型，所有页面权限均由所属类型决定。</p></div>
-      <div class="ac-head-actions"><span id="acStatus" class="ac-status" role="status"></span><button id="acSaveBtn" class="ac-save-btn" type="button">保存变更</button></div>
-    </header>
-    <div id="acMain" class="ac-main ac-hidden">
-      <section class="ac-workspace" aria-label="用户类型权限配置">
-        <aside class="ac-type-pane"><div class="ac-pane-head"><div class="ac-pane-title">用户类型</div><button id="acAddTypeBtn" class="ac-secondary-btn" type="button">新增类型</button></div><p class="ac-pane-note">选择一种类型，设置它可使用的页面。</p><div id="acTypeList" class="ac-type-list"></div></aside>
-        <section class="ac-editor"><div id="acDetailEmpty" class="ac-empty">选择左侧的用户类型后，在这里配置页面权限。</div><div id="acDetail" class="ac-hidden"><h2 id="acDetailTitle" class="ac-editor-title"></h2><div class="ac-field"><label class="ac-label" for="acTypeName">用户类型名称</label><input id="acTypeName" class="ac-name-input" maxlength="80"></div><section class="ac-permissions"><div class="ac-section-head"><div><div class="ac-section-title">可访问页面</div><p class="ac-hint">勾选后，该类型下的用户可以从侧边栏访问对应页面。</p></div><div class="ac-bulk"><button class="ac-secondary-btn" type="button" data-bulk="pages" data-val="all">全选</button><button class="ac-secondary-btn" type="button" data-bulk="pages" data-val="none">清空</button></div></div><div id="acPages" class="ac-grid"></div></section><div class="ac-editor-foot"><button id="acDeleteTypeBtn" class="ac-danger-btn" type="button">删除此类型</button><span class="ac-hint">删除后，关联用户会自动归入“默认用户”。</span></div></div></section>
-      </section>
-      <section class="ac-assignment" aria-label="用户类型分配"><div class="ac-section-title">用户类型分配</div><p class="ac-assignment-copy">为每个用户选择用户类型。修改会与页面权限配置一并保存。</p><table class="ac-user-table"><thead><tr><th>用户</th><th>用户类型</th></tr></thead><tbody id="acUserList"></tbody></table></section>
-    </div>
-    <div id="acForbidden" class="ac-forbidden ac-hidden">需要“用户管理”页面权限才能访问此页面。</div>
-  </main>
-  <script type="module" src="../../access-control/main.js"></script>
-</body>
-</html>
+<main class="access-app">
+  <header class="topbar"><div><p class="eyebrow">用户与访问</p><h1>权限管理</h1><p class="intro">为每一种用户类型，设定恰到好处的访问范围。</p></div><div class="save-actions"><span id="saveStatus" role="status" aria-live="polite">正在加载…</span><button id="resetButton" class="quiet" disabled>撤销更改</button><button id="saveButton" class="primary" disabled>保存更改</button></div></header>
+  <div id="loadError" class="notice" hidden><p id="loadErrorText"></p><button id="retryButton" class="quiet">重新加载</button></div>
+  <div id="loading" class="loading">正在读取用户类型与权限配置…</div>
+  <div id="workspace" hidden>
+    <section id="permissionsView" class="workspace" aria-label="类型与权限">
+      <aside class="type-sidebar"><div class="sidebar-head"><h2>用户类型 <span id="typeCount" class="count"></span></h2><button id="addType" class="icon-button" aria-label="新增用户类型">+</button></div><label class="search"><span aria-hidden="true">⌕</span><input id="typeSearch" type="search" placeholder="搜索用户类型" aria-label="搜索用户类型"></label><div id="typeList" class="type-list"></div><p class="sidebar-note">未分配类型的用户，使用默认用户权限。</p></aside>
+      <div class="editor"><div class="editor-heading"><div><p id="typeBadge" class="eyebrow"></p><h2 id="typeTitle"></h2><p id="typeSummary" class="muted"></p></div></div>
+        <div class="type-settings"><div class="name-field"><label for="typeName">类型名称</label><input id="typeName" maxlength="80" autocomplete="off"><span id="nameError" class="field-error" hidden>请输入用户类型名称。</span></div><button id="deleteType" class="danger">删除类型</button></div>
+        <div id="adminNotice" class="notice" hidden>系统管理员拥有全部页面和模型权限，新增资源也会自动开放。</div>
+        <div class="permission-columns">
+          <section class="permission-panel" aria-labelledby="pagesTitle"><div class="panel-heading"><div><h3 id="pagesTitle">可访问页面</h3><p class="muted">决定用户可以打开哪些工作空间。</p></div><span id="pageCount" class="permission-count"></span></div><div class="panel-toolbar"><label class="search"><span aria-hidden="true">⌕</span><input id="pageSearch" type="search" placeholder="搜索页面" aria-label="搜索页面"></label><button class="text-button" data-bulk="pages" data-value="all">全选</button><button class="text-button" data-bulk="pages" data-value="none">清空</button></div><div id="pageList" class="permission-list"></div></section>
+          <section class="permission-panel" aria-labelledby="modelsTitle"><div class="panel-heading"><div><h3 id="modelsTitle">可访问模型</h3><p class="muted">与 API 设置中的模型保持同步。</p></div><span id="modelCount" class="permission-count"></span></div><div class="panel-toolbar"><label class="search"><span aria-hidden="true">⌕</span><input id="modelSearch" type="search" placeholder="搜索模型或连接" aria-label="搜索模型或连接"></label><button class="text-button" data-bulk="models" data-value="all">全选</button><button class="text-button" data-bulk="models" data-value="none">清空</button></div><label class="auto-access"><input id="allModels" type="checkbox"><span>允许全部模型<small>包含以后新增的模型</small></span></label><div id="modelList" class="permission-list"></div><div class="sync-footer"><span id="syncStatus" role="status">每 5 秒自动同步</span><button id="refreshModels" class="text-button">立即同步</button></div></section>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+<dialog id="typeDialog"><form id="typeForm"><p class="eyebrow">用户类型</p><h2>创建新的访问范围</h2><p class="muted">新类型将复制“默认用户”的页面和模型权限，创建后可独立调整。</p><label class="dialog-field" for="newTypeName">类型名称<input id="newTypeName" maxlength="80" placeholder="例如：设计团队" required></label><div class="dialog-actions"><button id="cancelCreate" type="button" class="quiet">取消</button><button class="primary" type="submit">创建类型</button></div></form></dialog>
+<script type="module" src="../../access-control/main.js"></script>
+</body></html>

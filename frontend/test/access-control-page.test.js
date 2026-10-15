@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 function element() {
   return {
     value: '', textContent: '', innerHTML: '', className: '', style: {}, disabled: false,
-    children: [], listeners: {}, dataset: {},
+    children: [], listeners: {}, dataset: {}, hidden: true,
+    append(...children) { this.children.push(...children); },
+    replaceChildren(...children) { this.children = children; },
+    setAttribute: vi.fn(),
     addEventListener(type, callback) { this.listeners[type] = callback; },
     appendChild(child) { this.children.push(child); },
     querySelectorAll: () => [],
@@ -13,22 +16,21 @@ function element() {
 
 describe('access control page module', () => {
   beforeEach(() => vi.resetModules());
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
   it('loads user types and page permissions using the shared response service', async () => {
-    const ids = ['acStatus', 'acTypeList', 'acUserList', 'acPages', 'acDetailEmpty', 'acDetail', 'acTypeName', 'acDetailTitle', 'acDeleteTypeBtn', 'acMain', 'acForbidden', 'acSaveBtn', 'acAddTypeBtn'];
-    const elements = new Map(ids.map(id => [id, element()]));
-    const defaultType = element();
-    defaultType.value = 'new-user';
-    const bulk = element();
-    bulk.dataset = { val: 'all' };
+    vi.useFakeTimers();
+    const elements = new Map();
+    const getElement = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
     vi.stubGlobal('document', {
       readyState: 'complete',
-      getElementById: id => elements.get(id) || element(),
-      querySelectorAll: selector => selector === '[data-bulk]' ? [bulk] : [],
+      getElementById: getElement,
+      querySelectorAll: () => [],
       createElement: () => element(),
     });
-    vi.stubGlobal('window', { prompt: vi.fn(), confirm: vi.fn() });
+    vi.stubGlobal('window', { addEventListener: vi.fn(), setInterval: vi.fn() });
+    vi.stubGlobal('Option', function (text, value) { return { textContent: text, value }; });
+    document.addEventListener = vi.fn();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -45,11 +47,11 @@ describe('access control page module', () => {
 
     await import('../src/access-control/main.js');
 
-    expect(fetch).toHaveBeenCalledWith('/api/access-control/config', { credentials: 'same-origin' });
-    await vi.waitFor(() => expect(elements.get('acMain').classList.toggle).toHaveBeenCalledWith('ac-hidden', false));
-    expect(elements.get('acTypeList').children[0].children[1].textContent).toBe('默认用户');
-    expect(elements.get('acUserList').children[0].children[0].children[0].textContent).toBe('<alice>');
-    expect(elements.get('acPages').children[0].children[1].textContent).toBe('<画布>');
+    expect(fetch).toHaveBeenCalledWith('/api/access-control/config', {});
+    await vi.waitFor(() => expect(elements.get('workspace').hidden).toBe(false));
+    expect(elements.get('typeTitle').textContent).toBe('默认用户');
+    expect(elements.get('pageList').children[0].children[1].textContent).toBe('<画布>');
+    expect(elements.get('saveButton').disabled).toBe(true);
   });
 
   it('uses the legacy HTML URL with page-owned CSS and module entry', async () => {
@@ -57,6 +59,8 @@ describe('access control page module', () => {
     const html = await readFile(new URL('../src/pages/access-control/index.html', import.meta.url), 'utf8');
 
     expect(html).toContain('./page.css');
+    expect(html).not.toContain('用户分配');
+    expect(html).not.toContain('membersView');
     expect(html).toContain('../../access-control/main.js');
     expect(html).not.toContain('<style>');
     expect(html).not.toContain('/static/vendor/js/lucide.js');

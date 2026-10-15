@@ -4,13 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>用户管理</title>
-    <link rel="stylesheet" href="/static/dist/styles/theme.css">
     <link rel="stylesheet" href="./page.css">
 </head>
 <body>
 <div class="shell">
     <header class="head">
-        <div class="title-row"><div class="title">用户管理</div><div id="userCount" class="count"></div></div>
+        <div class="title-row"><div><p class="directory-eyebrow">团队与访问</p><h1 class="title">用户管理</h1></div><span id="userCount" class="count"></span></div>
         <nav class="tabs" aria-label="用户管理视图">
             <button class="tab active" data-tab="users"><i data-lucide="users"></i>用户列表</button>
             <button class="tab" data-tab="access"><i data-lucide="shield-check"></i>权限管理</button>
@@ -22,20 +21,17 @@
     </header>
     <main class="content">
         <section class="view active" data-view="users">
-            <div class="users">
-                <div class="org-panel">
-                    <div class="org-panel-head">
-                        <div class="org-panel-title">组织</div>
-                        <div id="orgStatus" class="status"></div>
+            <div class="directory">
+                <div class="directory-heading"><div><h2>用户列表</h2><p>在这里管理用户类型与组织归属。</p></div><div class="directory-heading-actions"><span id="directoryStatus" role="status" aria-live="polite">正在加载…</span><button id="refreshUsers" class="ud-button" type="button">刷新列表</button></div></div>
+                <div class="directory-workspace">
+                    <aside class="directory-sidebar"><div class="directory-sidebar-head"><h3>组织</h3><button id="manageOrgs" class="ud-link" type="button">管理</button></div><div id="directoryOrgs" class="directory-orgs"></div><p class="directory-sidebar-note">组织用于归属与预算管理。<br>用户类型决定页面和模型权限。</p></aside>
+                    <div class="directory-main"><div class="directory-toolbar"><label class="ud-search"><span aria-hidden="true">⌕</span><input id="directorySearch" type="search" placeholder="搜索用户名或用户 ID" aria-label="搜索用户"></label><select id="directoryTypeFilter" aria-label="按用户类型筛选"></select><span id="directoryResultCount" class="ud-muted"></span></div>
+                        <div id="directoryBulk" class="directory-bulk" hidden><span id="directorySelection"></span><label>分配为 <select id="directoryBulkType" aria-label="批量分配用户类型"></select></label><button id="applyBulkType" class="ud-primary" type="button">应用类型</button><button id="clearSelection" class="ud-link" type="button">取消选择</button></div>
+                        <div id="directoryError" class="directory-error" hidden><p id="directoryErrorText"></p><button id="retryUsers" class="ud-link" type="button">重试</button></div>
+                        <div class="directory-table-wrap"><table class="directory-table"><thead><tr><th class="select-cell"><input id="selectVisibleUsers" type="checkbox" aria-label="选择当前筛选的全部用户"></th><th>用户</th><th>用户类型</th><th>所属组织</th><th class="operation-cell">操作</th></tr></thead><tbody id="directoryRows"></tbody></table></div>
+                        <footer class="directory-footer"><span>类型与组织调整即时保存。</span><span>未分配类型的用户使用“默认用户”。</span></footer>
                     </div>
-                    <form id="orgForm" class="org-form">
-                        <input id="orgNameInput" class="org-input" type="text" placeholder="新建组织名称" maxlength="60">
-                        <button type="submit" class="org-btn"><i data-lucide="plus"></i>创建组织</button>
-                    </form>
-                    <div id="orgList" class="org-list org-list-spaced"></div>
                 </div>
-                <div class="toolbar"><div><div class="section-title">注册用户</div><div id="status" class="status">加载中...</div></div><input id="search" class="search" type="search" placeholder="搜索用户名或用户 ID"></div>
-                <div id="userTable" class="table"></div>
             </div>
         </section>
         <section class="view" data-view="access"><iframe class="embed" data-src="/static/access-control.html" title="权限管理"></iframe></section>
@@ -45,6 +41,8 @@
         <section class="view" data-view="budgets"><div class="usage"><div class="usage-toolbar"><div><h2>预算配置</h2><p id="budgetStatus">所有预算按 USD 设置</p></div></div><div class="budget-row default-budget-row"><div class="budget-head"><span class="budget-name">新用户默认预算</span><span class="budget-state">仅影响之后新建的用户</span></div><div class="budget-meta default-budget-meta">新用户首次创建时自动写入个人月度预算。</div><div class="budget-edit"><input id="newUserBudgetInput" type="number" min="0" step="0.0001" placeholder="月度预算（USD）"><label class="budget-toggle"><input id="newUserBudgetEnabled" type="checkbox">启用</label><button id="newUserBudgetSave" class="budget-save" type="button" title="保存新用户默认预算"><i data-lucide="check"></i></button></div></div><div class="section-title budget-section-title">组织预算</div><div id="budgetGrid" class="usage-grid"></div><div class="section-title budget-section-title personal-budget-title">个人预算</div><div id="personalBudgetGrid" class="usage-grid"></div></div></section>
 </main>
 </div>
+<dialog id="organizationsDialog" class="ud-dialog ud-organizations-dialog"><div class="ud-dialog-heading"><div><p class="directory-eyebrow">团队归属</p><h2>管理组织</h2></div><button id="closeOrganizations" class="ud-button" type="button">完成</button></div><p class="ud-muted">创建组织后，可在用户列表中分配成员。</p><form id="directoryOrgForm" class="ud-org-form"><label class="ud-sr-only" for="directoryOrgName">新组织名称</label><input id="directoryOrgName" maxlength="60" placeholder="新组织名称" required><button id="createDirectoryOrg" class="ud-primary" type="submit">创建组织</button></form><p id="directoryOrgStatus" class="ud-muted" role="status"></p><div id="directoryOrgList" class="ud-org-list"></div></dialog>
+<dialog id="directoryActionDialog" class="ud-dialog"><form id="directoryActionForm"><p id="directoryActionEyebrow" class="directory-eyebrow"></p><h2 id="directoryActionTitle"></h2><p id="directoryActionDescription" class="ud-muted"></p><label id="directoryRenameField" class="ud-rename-field" hidden>组织名称<input id="directoryRenameInput" maxlength="60"></label><p id="directoryActionError" class="ud-error" role="alert"></p><div class="ud-dialog-actions"><button id="cancelDirectoryAction" class="ud-button" type="button">取消</button><button id="confirmDirectoryAction" class="ud-primary" type="submit">确认</button></div></form></dialog>
 <script type="module" src="../../user-management/main.js"></script>
 </body>
 </html>

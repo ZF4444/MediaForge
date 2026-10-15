@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
-import httpx
 from fastapi import HTTPException
 
 
@@ -21,6 +20,7 @@ class VideoTransport:
         output_urls: Callable[[Mapping[str, Any]], list[str]],
         looks_like_html: Callable[[str], bool],
         timeout: Any,
+        on_submitted: Callable[[str], Awaitable[None]] | None = None,
     ):
         self._submit_urls = submit_urls
         self._headers = headers
@@ -30,6 +30,7 @@ class VideoTransport:
         self._output_urls = output_urls
         self._looks_like_html = looks_like_html
         self._timeout = timeout
+        self._on_submitted = on_submitted
 
     async def generate(
         self, connection: Mapping[str, Any], body: Mapping[str, Any]
@@ -65,6 +66,8 @@ class VideoTransport:
                     status_code=502, detail=f"上游视频接口返回了网页 HTML，而不是 JSON（状态 {status}）：{text}"
                 ) from last_error
             task_id = self._extract_task_id(raw)
+            if task_id and self._on_submitted:
+                await self._on_submitted(task_id)
             result = raw
             if task_id and not self._output_urls(raw):
                 result = await self._wait_task(client, connection, task_id, submit_url)
@@ -106,6 +109,8 @@ class VideoTransport:
                 status_code=502, detail=f"上游视频接口返回了网页 HTML，而不是 JSON（状态 {status}）：{text}"
             ) from last_error
         task_id = self._extract_task_id(raw)
+        if task_id and self._on_submitted:
+            await self._on_submitted(task_id)
         result = raw
         if task_id and not self._output_urls(raw):
             result = await self._wait_task(client, connection, task_id, submit_url)

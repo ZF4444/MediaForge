@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-
 IMAGE_RATIO_OPTIONS = [
     "1:1",
     "2:3",
@@ -175,9 +174,9 @@ DEFAULT_API_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
                 name="Duration",
                 field_type="number",
                 default=5,
-                options=[5, 10, 15],
-                minimum=1,
-                maximum=60,
+                options=list(range(4, 16)),
+                minimum=4,
+                maximum=15,
                 step=1,
                 target="duration",
                 transform="integer",
@@ -187,7 +186,7 @@ DEFAULT_API_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
                 name="Aspect ratio",
                 field_type="dropdown",
                 default="16:9",
-                options=["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+                options=["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "source"],
                 target="aspect_ratio",
                 transform="passthrough",
             ),
@@ -196,7 +195,7 @@ DEFAULT_API_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
                 name="Resolution",
                 field_type="dropdown",
                 default="480p",
-                options=["480p", "720p", "1080p"],
+                options=["480p", "720p", "1080p", "4k"],
                 target="resolution",
                 transform="passthrough",
             ),
@@ -206,22 +205,6 @@ DEFAULT_API_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
                 field_type="boolean",
                 default=False,
                 target="generate_audio",
-                transform="boolean",
-            ),
-            _field(
-                field_id="videoMultimodal",
-                name="Multimodal input",
-                field_type="boolean",
-                default=True,
-                target="multimodal",
-                transform="boolean",
-            ),
-            _field(
-                field_id="videoUseFrameRoles",
-                name="Use frame roles",
-                field_type="boolean",
-                default=False,
-                target="frame_roles",
                 transform="boolean",
             ),
             _field(
@@ -317,6 +300,8 @@ def normalize_parameter_schema(value: Any) -> dict[str, Any]:
         for field in fields:
             if not isinstance(field, dict) or not str(field.get("id") or "").strip():
                 raise ValueError(f"parameter_schema.{label}.fields items require id")
+            if label.endswith(".video") and field["id"] in {"videoMultimodal", "videoUseFrameRoles"}:
+                continue  # Discard retired input-mode overrides from saved configurations.
             normalized.append(_validate_override(field, label.rsplit(".", 1)[-1], label))
         return {"fields": normalized}
 
@@ -342,7 +327,9 @@ def _merge_fields(base: list[dict[str, Any]], overrides: list[dict[str, Any]]) -
     merged = [deepcopy(field) for field in base]
     positions = {str(field.get("id")): index for index, field in enumerate(merged)}
     for override in overrides:
-        merged[positions[str(override["id"])]].update(deepcopy(override))
+        position = positions.get(str(override["id"]))
+        if position is not None:
+            merged[position].update(deepcopy(override))
     return merged
 
 

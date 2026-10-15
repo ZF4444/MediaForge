@@ -1067,7 +1067,7 @@
                     await loadConversations();
                 }
             } catch(err) {
-                renderMessages([...(currentConversation.messages || []), {role:'assistant', content:err.message || tr('chat.requestFailed')}]);
+                if (!err.modelAccessDeniedNotified) renderMessages([...(currentConversation.messages || []), {role:'assistant', content:err.message || tr('chat.requestFailed')}]);
             } finally {
                 btn.disabled = false;
                 scrollBottom();
