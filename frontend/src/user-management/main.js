@@ -1,14 +1,7 @@
+import { initUserDirectory } from './user-directory.js';
 import {
-    assignUserOrganization as requestAssignUserOrganization,
-    assignUserType as requestAssignUserType,
-    createOrganization as requestCreateOrganization,
-    deleteManagedUser as requestDeleteManagedUser,
-    deleteOrganization as requestDeleteOrganization,
-    listManagedUsers as requestListManagedUsers,
-    listOrganizations as requestListOrganizations,
     listUserSessions as requestListUserSessions,
     loadUsage as requestLoadUsage,
-    renameOrganization as requestRenameOrganization,
     saveNewUserDefaultBudget as requestSaveNewUserDefaultBudget,
     saveOrganizationBudget as requestSaveOrganizationBudget,
     saveUserBudget as requestSaveUserBudget,
@@ -32,110 +25,8 @@ applyStoredTheme();
 (() => {
     const pageIcons = { Users, ShieldCheck, Database, MonitorSmartphone, ChartNoAxesColumn, WalletCards, Plus, RefreshCw, Trash2: Trash, Pencil, Check };
     const renderIcons = () => createIcons({icons:pageIcons});
-    const state = { users: [], orgs: [], types: {}, userTypes: {}, query: '', usage: null };
+    const state = { usage: null };
     const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    function orgName(orgId){
-        const org = state.orgs.find(o => o.id === orgId);
-        return org ? org.name : '';
-    }
-    function renderUsers(){
-        const q = state.query.trim().toLowerCase();
-        const users = q ? state.users.filter(u => `${u.username || ''} ${u.user_id || ''}`.toLowerCase().includes(q)) : state.users;
-        document.getElementById('userCount').textContent = `${state.users.length} 位用户`;
-        const orgOptions = state.orgs.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
-        const typeOptions = Object.entries(state.types).map(([id, type]) => `<option value="${esc(id)}">${esc(type.name || id)}</option>`).join('');
-        document.getElementById('userTable').innerHTML = `<div class="row header"><div>用户</div><div>用户 ID</div><div>账号类型</div><div>组织</div><div>操作</div></div>${users.map(u => {
-            const orgSelect = `<select class="org-select" data-user="${esc(u.user_id)}"><option value="">未分配</option>${orgOptions}</select>`;
-            const typeSelect = `<select class="org-select" data-user-type="${esc(u.user_id)}">${typeOptions}</select>`;
-            const deleteButton = `<button type="button" class="user-delete" data-user-delete="${esc(u.user_id)}" title="删除用户"><i data-lucide="trash-2"></i></button>`;
-            return `<div class="row"><div class="user">${esc(u.username || u.user_id)}</div><div class="id">${esc(u.user_id)}</div><div>${typeSelect}</div><div>${orgSelect}</div><div>${deleteButton}</div></div>`;
-        }).join('') || '<div class="empty">没有匹配的用户</div>'}`;
-        document.querySelectorAll('[data-user-type]').forEach(sel => {
-            sel.value = state.userTypes[sel.dataset.userType] || 'new-user';
-        });
-        document.querySelectorAll('.org-select[data-user]').forEach(sel => {
-            const user = state.users.find(u => u.user_id === sel.dataset.user);
-            sel.value = (user && user.org_id) || '';
-        });
-        renderIcons();
-    }
-    function renderOrgs(){
-        document.getElementById('orgList').innerHTML = state.orgs.length ? state.orgs.map(o => `
-            <div class="org-chip" data-org="${esc(o.id)}">
-                <span class="org-chip-name">${esc(o.name)}</span>
-                <span class="org-chip-count">${o.member_count} 人</span>
-                <span class="org-chip-actions">
-                    <button type="button" class="org-chip-btn" data-action="rename" title="重命名"><i data-lucide="pencil"></i></button>
-                    <button type="button" class="org-chip-btn" data-action="delete" title="删除"><i data-lucide="trash-2"></i></button>
-                </span>
-            </div>`).join('') : '<div class="org-empty">还没有组织，创建一个用于分组管理用户。</div>';
-        renderIcons();
-    }
-    async function loadUsers(){
-        try { const d = await requestListManagedUsers(); state.users = d.users || []; state.types = d.types || {}; state.userTypes = d.user_types || {}; document.getElementById('status').textContent = ''; renderUsers(); }
-        catch(e){ document.getElementById('status').textContent = e.message || '加载失败'; }
-    }
-    async function loadOrgs(){
-        try { const d = await requestListOrganizations(); state.orgs = d.organizations || []; renderOrgs(); renderUsers(); }
-        catch(e){ document.getElementById('orgStatus').textContent = e.message || '加载失败'; }
-    }
-    async function createOrg(name){
-        const status = document.getElementById('orgStatus');
-        status.textContent = '创建中...';
-        try {
-            await requestCreateOrganization(name);
-            status.textContent = '已创建';
-            await loadOrgs();
-        } catch(e){ status.textContent = e.message || '创建失败'; }
-    }
-    async function renameOrg(orgId){
-        const current = orgName(orgId);
-        const next = window.prompt('重命名组织', current);
-        if(next == null) return;
-        const trimmed = next.trim();
-        if(!trimmed || trimmed === current) return;
-        const status = document.getElementById('orgStatus');
-        try {
-            await requestRenameOrganization(orgId, trimmed);
-            await loadOrgs();
-        } catch(e){ status.textContent = e.message || '重命名失败'; }
-    }
-    async function deleteOrg(orgId){
-        const name = orgName(orgId);
-        if(!window.confirm(`删除组织「${name}」？成员将解除归属，不会被删除。`)) return;
-        const status = document.getElementById('orgStatus');
-        try {
-            await requestDeleteOrganization(orgId);
-            await Promise.all([loadOrgs(), loadUsers()]);
-        } catch(e){ status.textContent = e.message || '删除失败'; }
-    }
-    async function assignUserOrg(userId, orgId){
-        const status = document.getElementById('status');
-        try {
-            await requestAssignUserOrganization(userId, orgId);
-            await Promise.all([loadUsers(), loadOrgs()]);
-        } catch(e){ status.textContent = e.message || '分配失败'; }
-    }
-    async function assignUserType(userId, typeId){
-        const status = document.getElementById('status');
-        try {
-            const d = await requestAssignUserType(userId, typeId);
-            state.userTypes[userId] = d.user_type;
-            status.textContent = '用户类型已更新';
-        } catch(e){ status.textContent = e.message || '分配失败'; await loadUsers(); }
-    }
-    async function deleteUser(userId){
-        const user = state.users.find(item => item.user_id === userId);
-        const name = user?.username || userId;
-        if(!window.confirm(`删除用户「${name}」？该用户将无法继续登录，历史用量记录会保留。`)) return;
-        const status = document.getElementById('status');
-        status.textContent = '删除中...';
-        try {
-            await requestDeleteManagedUser(userId);
-            await Promise.all([loadUsers(), loadOrgs()]);
-            status.textContent = '用户已删除';
-        } catch(e){ status.textContent = e.message || '删除失败'; }
-    }
     const money = value => `$${Number(value || 0).toFixed(4)}`;
     const moneyUsd = value => `$${Number(value || 0).toFixed(4)}`;
     const dateTime = value => value ? new Date(Number(value)).toLocaleString('zh-CN', {hour12:false}) : '—';
@@ -218,7 +109,9 @@ applyStoredTheme();
         try { const d = await requestListUserSessions(); state.sessions = d.sessions || []; status.textContent = `${d.online_count || 0} 位在线用户 · 最近 ${d.online_window_minutes || 5} 分钟有活动`; renderSessions(); }
         catch(e){ status.textContent = e.message || '加载失败'; document.getElementById('sessionTable').innerHTML = '<div class="empty">会话数据暂时不可用</div>'; }
     }
+    const directory = initUserDirectory();
     function activate(name){
+        if (name === 'users') directory.refresh();
         document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
         document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.dataset.view === name));
         const frame = document.querySelector(`[data-view="${name}"] iframe[data-src]`);
@@ -228,22 +121,6 @@ applyStoredTheme();
         history.replaceState(null, '', `#${name}`);
     }
     document.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => activate(el.dataset.tab)));
-    document.getElementById('userTable').addEventListener('change', event => {
-        const target = event.target;
-        if (target.matches('[data-user-type]')) assignUserType(target.dataset.userType, target.value);
-        else if (target.matches('.org-select[data-user]')) assignUserOrg(target.dataset.user, target.value || null);
-    });
-    document.getElementById('userTable').addEventListener('click', event => {
-        const button = event.target.closest('[data-user-delete]');
-        if (button) deleteUser(button.dataset.userDelete);
-    });
-    document.getElementById('orgList').addEventListener('click', event => {
-        const button = event.target.closest('[data-action]');
-        if (!button) return;
-        const orgId = button.closest('.org-chip')?.dataset.org;
-        if (button.dataset.action === 'rename') renameOrg(orgId);
-        if (button.dataset.action === 'delete') deleteOrg(orgId);
-    });
     document.getElementById('budgetGrid').addEventListener('click', event => {
         const button = event.target.closest('[data-budget-save]');
         if (button) saveBudget(button.dataset.budgetSave);
@@ -252,15 +129,6 @@ applyStoredTheme();
         const button = event.target.closest('[data-user-budget-save]');
         if (button) saveUserBudget(button.dataset.userBudgetSave);
     });
-    document.getElementById('search').addEventListener('input', e => { state.query = e.target.value || ''; renderUsers(); });
-    document.getElementById('orgForm').addEventListener('submit', e => {
-        e.preventDefault();
-        const input = document.getElementById('orgNameInput');
-        const name = (input.value || '').trim();
-        if(!name) return;
-        input.value = '';
-        createOrg(name);
-    });
     document.getElementById('usageMonth').value = new Date().toISOString().slice(0, 7);
     document.getElementById('usageMonth').addEventListener('change', loadUsage);
     document.getElementById('syncOmnilojo').addEventListener('click', loadUsage);
@@ -268,5 +136,5 @@ applyStoredTheme();
     document.getElementById('refreshSessions').addEventListener('click', loadSessions);
     document.getElementById('onlineOnly').addEventListener('change', renderSessions);
     const initial = ['users','access','quota','sessions','usage','budgets'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'users';
-    activate(initial); loadOrgs(); loadUsers(); renderIcons();
+    activate(initial); renderIcons();
 })();

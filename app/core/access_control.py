@@ -124,9 +124,30 @@ def all_page_ids() -> List[str]:
     return [p["id"] for p in all_pages()]
 
 
+def all_models() -> List[Dict[str, str]]:
+    """Read the same canonical model configuration as API settings, without secrets."""
+    from app.ai.database_repository import DatabaseAIRepository
+
+    repo = DatabaseAIRepository()
+    connections = {item.id: item.name for item in repo.connections(include_disabled=True)}
+    return [
+        {"id": item.id, "connection_id": item.connection_id,
+         "upstream_model": item.upstream_model,
+         "label": f"{item.alias or item.upstream_model} · {connections.get(item.connection_id, item.connection_id)}"}
+        for item in repo.models(include_disabled=True)
+    ]
+
+
 def is_model_allowed(user_id: str, connection_id: str, model: str) -> bool:
-    """User-type access control currently scopes pages, not model allowlists."""
-    return bool(str(user_id or "").strip() and str(connection_id or "").strip() and str(model or "").strip())
+    if not user_id or not connection_id or not model:
+        return False
+    if is_admin(user_id):
+        return True
+    allowed = effective_permissions(user_id)["models"]
+    if allowed is None:
+        return True
+    return any(item["id"] in allowed and item["connection_id"] == connection_id
+               and item["upstream_model"] == model for item in all_models())
 
 
 def is_admin(user_id: str) -> bool:
@@ -150,7 +171,7 @@ def _ensure_builtin_types(types: Dict[str, Any]) -> Dict[str, Any]:
     管理页面里单独勾选，且会随页面清单增减自动同步）。"""
     if DEFAULT_USER_TYPE_ID not in types:
         types[DEFAULT_USER_TYPE_ID] = {"name": DEFAULT_USER_TYPE_NAME, **_sanitize_user_entry({})}
-    types[ADMIN_USER_TYPE_ID] = {"name": ADMIN_USER_TYPE_NAME, "pages": all_page_ids()}
+    types[ADMIN_USER_TYPE_ID] = {"name": ADMIN_USER_TYPE_NAME, "pages": all_page_ids(), "models": None}
     return types
 
 
@@ -231,7 +252,11 @@ def _sanitize_user_entry(entry: Any) -> Dict[str, List[str]]:
         if "asset-manager" in requested and "storage-manager" in valid_page_ids:
             requested.add("storage-manager")
         pages = [p for p in valid_page_ids if p in requested]
-    return {"pages": pages}
+    raw_models = entry.get("models")
+    models = None if raw_models is None else list(dict.fromkeys(
+        value for value in raw_models if isinstance(value, str) and value.strip()
+    )) if isinstance(raw_models, list) else []
+    return {"pages": pages, "models": models}
 
 
 def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -273,4 +298,4 @@ def effective_permissions(user_id: str) -> Dict[str, Any]:
     type_id = config.get("user_types", {}).get(user_id, DEFAULT_USER_TYPE_ID)
     entry = config.get("types", {}).get(type_id) or config["types"][DEFAULT_USER_TYPE_ID]
     sanitized = _sanitize_user_entry(entry)
-    return {"user_type": type_id, "pages": sanitized["pages"]}
+    return {"user_type": type_id, **sanitized}
