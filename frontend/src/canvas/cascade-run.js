@@ -44,16 +44,31 @@ function smartCascadeAbortError(){
 }
 function canvasApiJson(url, options = {}){
     const apiJson = globalThis.__MediaForgeRuntimeServices?.apiJson;
-    if(apiJson) return apiJson(url, options);
+    if(apiJson) return apiJson(url, options).catch(error => {
+        if(error.status === 413 && quotaDataFromPayload(error.data)) throw new StorageQuotaSignal(error.data);
+        const budget = budgetDataFromPayload(error.data);
+        if(budget) throw new UsageBudgetSignal(budget);
+        throw error;
+    });
     return fetch(url, options).then(async response => {
         const data = await response.json().catch(() => ({}));
-        if(!response.ok) throw new Error(data.detail || data.message || '请求失败');
+        if(!response.ok) {
+            if(response.status === 413 && quotaDataFromPayload(data)) throw new StorageQuotaSignal(data);
+            const budget = budgetDataFromPayload(data);
+            if(budget) throw new UsageBudgetSignal(budget);
+            throw await smartResponseError(response, '请求失败');
+        }
         return data;
     });
 }
 function canvasApiForm(url, formData, options = {}){
     const apiForm = globalThis.__MediaForgeRuntimeServices?.apiForm;
-    if(apiForm) return apiForm(url, formData, options);
+    if(apiForm) return apiForm(url, formData, options).catch(error => {
+        if(error.status === 413 && quotaDataFromPayload(error.data)) throw new StorageQuotaSignal(error.data);
+        const budget = budgetDataFromPayload(error.data);
+        if(budget) throw new UsageBudgetSignal(budget);
+        throw error;
+    });
     return canvasApiJson(url, {...options, method:options.method || 'POST', body:formData});
 }
 function canvasApiBlob(url, options = {}){
@@ -262,14 +277,44 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
     const submit = await submitRunningHubGeneration(prompt, refs, runSettings);
     return pollRunningHubTask(submit.taskId, submit);
 }
+async function resolveVideoSourceAspect(runSettings, refs){
+    if(runSettings.videoAspect !== 'source') return runSettings.videoAspect;
+    const first = imageRefsOnly(refs)[0];
+    if(!first) return '9:16';
+    let size = imageSizeForRatio(first);
+    if(!size && first.url){
+        size = await new Promise(resolve => {
+            const image = new Image();
+            image.onload = () => resolve({w:image.naturalWidth, h:image.naturalHeight});
+            image.onerror = () => resolve(null);
+            image.src = first.url;
+        });
+    }
+    if(!size) return '9:16';
+    // Resolve against this task's model, not the model currently open in the composer.
+    const key = `video:${runSettings.videoConnectionId}:${runSettings.videoModelId}:${runSettings.videoResourceId || ''}`;
+    let schema = canvasParameterSchemaCache.get(key);
+    if(!schema){
+        const query = new URLSearchParams({capability:'video.text_to_video', connection_id:runSettings.videoConnectionId || '', model_id:runSettings.videoModelId || '', resource_id:runSettings.videoResourceId || ''});
+        schema = await canvasApiJson(`/api/canvas/capability-parameters?${query}`);
+        canvasParameterSchemaCache.set(key, schema);
+    }
+    const field = (schema?.fields || []).find(item => item.id === 'videoAspect');
+    const options = (field?.options?.length ? field.options : defaultCanvasParameterSchema('video').fields.find(item => item.id === 'videoAspect').options)
+        .filter(value => parseRatioValue(value) > 0);
+    if(!options.length) throw new Error('当前视频模型未配置支持的画面比例');
+    const ratio = size.w / size.h;
+    return options.reduce((best, value) => Math.abs(parseRatioValue(value) - ratio) < Math.abs(parseRatioValue(best) - ratio) ? value : best);
+}
 async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.videoConnectionId || !runSettings.videoModelId) throw new Error(tr('smart.errNoVideoModel'));
+    const videoAspect = await resolveVideoSourceAspect(runSettings, refs);
     const refImages = imageRefsOnly(refs).map((ref, i) => ({
         url:ref.url, name:ref.name || `图${i + 1}`
     }));
     const payload = {
         prompt,
-        run_settings: canonicalRunSettings(runSettings),
+        run_settings: canonicalRunSettings({...runSettings, videoAspect}),
         connection_id:runSettings.videoConnectionId, model_id:runSettings.videoModelId, resource_id:runSettings.videoResourceId || '',
         images: refImages,
         videos: videoRefsOnly(refs).map(ref => ref.url).filter(Boolean),

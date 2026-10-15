@@ -2471,7 +2471,11 @@ async function smartResponseError(response, fallback='请求失败'){
     if(response.status === 413 && quotaDataFromPayload(payload)) return new StorageQuotaSignal(payload);
     const budget = budgetDataFromPayload(payload);
     if(budget) return new UsageBudgetSignal(budget);
-    return new Error(await smartResponseErrorMessage(response, fallback, payload));
+    const error = new Error(await smartResponseErrorMessage(response, fallback, payload));
+    error.status = response.status;
+    error.data = payload;
+    globalThis.__MediaForgeRuntimeServices?.notifyModelAccessDenied?.(error);
+    return error;
 }
 async function smartResponseErrorMessage(response, fallback='请求失败', prefetched){
     let data = prefetched;
@@ -3565,7 +3569,8 @@ function extractUpstreamTaskId(text){
 function handleStorageQuotaSignal(e){
     if(!(e && e.storageQuotaExceeded)) return false;
     try {
-        MediaForgeUpload?.showQuotaDialog?.({
+        if(!MediaForgeUpload?.showQuotaDialog) throw new Error('quota dialog unavailable');
+        MediaForgeUpload.showQuotaDialog({
             quota_bytes:e.quota_bytes,
             used_bytes:e.used_bytes,
             incoming_bytes:e.incoming_bytes,
@@ -3579,14 +3584,15 @@ function handleStorageQuotaSignal(e){
 function handleUsageBudgetSignal(e){
     if(!(e && e.usageBudgetExceeded)) return false;
     try {
-        MediaForgeUpload?.showBudgetDialog?.({message:e.message});
+        if(!MediaForgeUpload?.showBudgetDialog) throw new Error('budget dialog unavailable');
+        MediaForgeUpload.showBudgetDialog({message:e.message});
     } catch(_) {
         toast((e.message || '本月使用预算已用尽，请联系管理员(@飞帆)。').slice(0, 160));
     }
     return true;
 }
 function handleTaskLimitSignal(e){
-    return handleStorageQuotaSignal(e) || handleUsageBudgetSignal(e);
+    return !!e?.modelAccessDeniedNotified || handleStorageQuotaSignal(e) || handleUsageBudgetSignal(e);
 }
 async function fetchImageTaskQuery(taskId, task={}){
     const payload = {
@@ -3798,6 +3804,8 @@ async function resumeSmartPendingNode(node){
     node._smartRunSettlements = settlements;
     if(failures.length && !(node.images || []).length && candidateCountForNode(node)) setNodeMainCandidate(node, Number(node.candidateIndex) || 0);
     if(failures.length && !(node.images || []).length){
+        const permissionFailure = failures.find(e => e?.modelAccessDeniedNotified);
+        if(permissionFailure) throw permissionFailure;
         const quotaFailure = failures.find(e => e && e.storageQuotaExceeded);
         if(quotaFailure) throw quotaFailure;
         const messages = [...new Set(failures.map(e => (e?.message || String(e || '')).trim()).filter(Boolean))];

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
+
 from typing import Any
 
 from app.ai.contracts import Actor, VideoCommand
 from app.ai.gateway import connection_operation
+from app.ai.authorization import require_model_access
 
 
 TargetVideoHandler = Callable[[VideoCommand], Awaitable[Any]]
@@ -28,5 +31,6 @@ class VideoGateway:
             raise RuntimeError("target video handler is not configured")
         if command.target.model is None:
             raise ValueError("video command requires a model resource")
+        await asyncio.to_thread(require_model_access, command.target, actor.user_id)
         async with connection_operation(command.target.connection.id, "video_generation", user_id=actor.user_id):
             return await self._target_handler(command)

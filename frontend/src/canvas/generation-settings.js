@@ -399,7 +399,7 @@ function renderVideoGenerationConfig(){
     settings.videoDuration = v;
     const aspectField = canvasSchemaField('video', 'videoAspect');
     const aspectName = canvasSchemaFieldName('video', 'videoAspect', tr('smart.videoAspect'));
-    const aspectOptions = (Array.isArray(aspectField.options) && aspectField.options.length ? aspectField.options : ['16:9','4:3','1:1','3:4','9:16','21:9']).map(value => [value, canvasSchemaOptionLabel(aspectField, value)]);
+    const aspectOptions = [...new Set([...(Array.isArray(aspectField.options) && aspectField.options.length ? aspectField.options : ['16:9','4:3','1:1','3:4','9:16','21:9']), 'source'])].map(value => [value, value === 'source' ? 'source' : canvasSchemaOptionLabel(aspectField, value)]);
     const aspect = settings.videoAspect || '16:9';
     const aspectLabels = Object.fromEntries(aspectOptions);
     const resolutionField = canvasSchemaField('video', 'videoResolution');
@@ -464,7 +464,7 @@ const canvasParameterSchemaTarget = {image:'', video:''};
 function defaultCanvasParameterSchema(kind){
     if(kind === 'video') return {fields:[
         {id:'videoDuration', type:'number', default:5, options:Array.from({length:12}, (_, index) => index + 4), min:4, max:15, step:1},
-        {id:'videoAspect', default:'16:9', options:['16:9','4:3','1:1','3:4','9:16','21:9']},
+        {id:'videoAspect', default:'16:9', options:['16:9','4:3','1:1','3:4','9:16','21:9','source']},
         {id:'videoResolution', default:'480p', options:['480p','720p','1080p','4k']}
     ]};
     return {fields:[
@@ -498,7 +498,7 @@ function applyCanvasSchemaDefaults(kind, schema){
         const invalidNumber = numeric && (!Number.isFinite(Number(current))
             || (field.min != null && Number(current) < Number(field.min))
             || (field.max != null && Number(current) > Number(field.max)));
-        const invalidOption = !numeric && options.length && !options.some(value => String(value) === String(current));
+        const invalidOption = !(kind === 'video' && key === 'videoAspect' && current === 'source') && !numeric && options.length && !options.some(value => String(value) === String(current));
         if(current === undefined || current === null || current === '' || invalidNumber || invalidOption){
             settings[key] = field.default !== undefined ? field.default : (options[0] ?? current);
         }
@@ -1039,7 +1039,7 @@ function videoAspectIconClass(value){
     if(value === '9:16' || value === '9:21') return 'r-story';
     if(value === '4:3') return 'r-landscape43';
     if(value === '3:4') return 'r-portrait43';
-    if(value === 'keep_ratio' || value === 'adaptive') return 'r-source';
+    if(value === 'source' || value === 'keep_ratio' || value === 'adaptive') return 'r-source';
     return '';
 }
 function renderProviderControl(providers, restricted){

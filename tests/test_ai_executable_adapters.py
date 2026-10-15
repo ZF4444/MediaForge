@@ -93,6 +93,7 @@ def test_video_gateway_target_entry_uses_resolved_model(monkeypatch):
 
         return Context()
 
+    monkeypatch.setattr("app.ai.videos.require_model_access", lambda *_args: None)
     monkeypatch.setattr("app.ai.videos.connection_operation", no_governance)
     gateway = VideoGateway(
         target_handler=handler,

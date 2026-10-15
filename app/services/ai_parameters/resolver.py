@@ -186,7 +186,7 @@ DEFAULT_API_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
                 name="Aspect ratio",
                 field_type="dropdown",
                 default="16:9",
-                options=["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+                options=["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "source"],
                 target="aspect_ratio",
                 transform="passthrough",
             ),

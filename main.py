@@ -3250,6 +3250,7 @@ async def decide_chat_agent_action(payload, conversation, refs):
             model=payload.model,
             kind="chat",
         )
+        await asyncio.to_thread(require_target_access, chat_target, current_user_id())
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Agent 聊天模型或连接不存在或已禁用") from exc
     model = chat_target.model.upstream_model
@@ -3325,6 +3326,7 @@ async def build_chat_text_reply(payload, conversation):
             model=payload.model,
             kind="chat",
         )
+        await asyncio.to_thread(require_target_access, chat_target, current_user_id())
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="聊天模型或连接不存在或已禁用") from exc
     model = chat_target.model.upstream_model
@@ -4588,6 +4590,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
             model=payload.model,
             kind="image",
         )
+        await asyncio.to_thread(require_target_access, target, current_user_id())
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
     model = target.model.upstream_model if target.model else payload.model
@@ -4875,6 +4878,7 @@ async def online_image(payload: OnlineImageRequest):
                     model=payload.model,
                     kind="image",
                 )
+                await asyncio.to_thread(require_target_access, target, current_user_id())
                 payload = payload.model_copy(
                     update={"connection_id": target.connection.id, "model_id": target.model.id}
                 )
@@ -5128,6 +5132,7 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
                 model=payload.model,
                 kind="image",
             )
+            await asyncio.to_thread(require_target_access, target, current_user_id())
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
         else:
@@ -5903,6 +5908,7 @@ async def execute_canvas_task(task_id: str):
                 model=str(task.get("model") or request.get("model") or ""),
                 kind="image",
             )
+            await asyncio.to_thread(require_target_access, resolved, current_user_id())
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
@@ -5926,6 +5932,7 @@ async def execute_canvas_task(task_id: str):
                 model=str(task.get("model") or request.get("model") or ""),
                 kind="video",
             )
+            await asyncio.to_thread(require_target_access, resolved, current_user_id())
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
@@ -6488,6 +6495,7 @@ async def run_canvas_video_task(task_id: str, payload: CanvasVideoRequest):
                 model=payload.model,
                 kind="video",
             )
+            await asyncio.to_thread(require_target_access, target, current_user_id())
         except LookupError as exc:
             raise ValueError("视频模型资源不存在或已禁用") from exc
         exec_payload = payload.model_copy(update={"model": "", "connection_id": target.connection.id})
@@ -6566,6 +6574,7 @@ async def canvas_video(payload: CanvasVideoRequest):
             model=payload.model,
             kind="video",
         )
+        await asyncio.to_thread(require_target_access, target, current_user_id())
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="视频模型资源不存在或已禁用") from exc
     # Resolve the upstream model once, but keep the command payload canonical.
@@ -6842,6 +6851,7 @@ async def _canvas_llm_impl(payload: CanvasLLMRequest):
                 model="",
                 kind="chat",
             )
+            await asyncio.to_thread(require_target_access, target, current_user_id())
             chat_target = target
             _llm_provider = canonical_connection_view(target)
             model = target.model.upstream_model
@@ -7450,6 +7460,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
                         model=payload.image_model or payload.model,
                         kind="image",
                     )
+                    await asyncio.to_thread(require_target_access, target, current_user_id())
                     image_target = target
                     provider = canonical_connection_view(target)
                     resolved_image_model = target.model.upstream_model
@@ -7510,6 +7521,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
                     model=payload.model,
                     kind="chat",
                 )
+                await asyncio.to_thread(require_target_access, target, current_user_id())
                 chat_target = target
                 _conv_provider = canonical_connection_view(target)
                 model = target.model.upstream_model
@@ -7634,6 +7646,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
                         model=model,
                         kind="image",
                     )
+                    await asyncio.to_thread(require_target_access, target, current_user_id())
                     image_target = target
                 image_provider = canonical_connection_view(target)
                 model = target.model.upstream_model if target.model else model
@@ -7752,6 +7765,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
                 model=payload.model,
                 kind="chat",
             )
+            await asyncio.to_thread(require_target_access, target, current_user_id())
             chat_target = target
             provider = canonical_connection_view(target)
             _stream_provider = provider
