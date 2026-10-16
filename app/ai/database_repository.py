@@ -212,6 +212,12 @@ class DatabaseAIRepository:
         now = now_ms()
         connection_rows = list(connections)
         model_rows = list(models)
+        from app.core.comfyui import normalize_comfyui_endpoint
+
+        connection_rows = [dict(item) for item in connection_rows]
+        for item in connection_rows:
+            if item.get("protocol") == "comfyui":
+                item["base_url"] = normalize_comfyui_endpoint(item.get("base_url") or "")
         from app.services.video_billing import validate_video_token_prices
 
         for model in model_rows:

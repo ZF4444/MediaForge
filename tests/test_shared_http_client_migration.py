@@ -104,7 +104,7 @@ def test_upload_image_route_uses_shared_client(monkeypatch):
             return _Resp()
 
         monkeypatch.setattr(shared, "post", fake_post)
-        monkeypatch.setattr(main_module, "COMFYUI_INSTANCES", ["127.0.0.1:8188"])
+        monkeypatch.setattr(main_module, "comfyui_endpoints", lambda: ["http://127.0.0.1:8188"])
 
         class DummyUploadFile:
             filename = "demo.png"
@@ -147,7 +147,7 @@ def test_view_image_route_uses_shared_client_and_is_async(monkeypatch):
             return _Resp()
 
         monkeypatch.setattr(shared, "get", fake_get)
-        monkeypatch.setattr(main_module, "COMFYUI_INSTANCES", ["127.0.0.1:8188"])
+        monkeypatch.setattr(main_module, "comfyui_endpoints", lambda: ["http://127.0.0.1:8188"])
 
         response = await main_module.view_image(filename="demo.png")
         assert response.body == b"image-bytes"

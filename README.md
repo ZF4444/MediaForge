@@ -23,24 +23,15 @@
 
 ## 环境搭建
 
-### 一键初始化（推荐）
+### 开发环境配置
 
-在 macOS 安装 Homebrew 后，在项目根目录执行：
+开发环境自动配置流程待后续补充，当前按下文手动准备依赖和基础设施。
+`config/dev/.env.example` 是应用运行配置模板，需要时手动复制为 `config/.env`，
+并根据已安装的 PostgreSQL、Redis、MinIO 修改连接参数；已有配置应保留。
 
-```bash
-./scripts/setup-dev.sh
-```
-
-脚本会通过 Homebrew 按需安装 `uv`、Node.js、FFmpeg、PostgreSQL 16、Redis 和
-MinIO，创建 `config/.env`，安装 Python/前端依赖，构建前端，并启动本机服务。
-已有的 `config/.env` 会被保留；要按模板
-重新生成，使用 `./scripts/setup-dev.sh --force-env`。
-
-本地基础设施端口为 PostgreSQL `5432`、Redis `6379`、MinIO API `9000`、
-MinIO Console `9001`。初始化后用 `uv run python main.py` 启动应用。可用
-`./scripts/setup-dev.sh --help` 查看跳过基础设施或前端构建等选项。
-要停止本机开发服务，执行 `./scripts/stop-dev-services.sh`。
-仅重新启动或修复本机服务时，执行 `./scripts/setup-dev.sh --only-infra`。
+生产 Docker 部署使用 `config/deploy/`，详见
+[生产环境完整部署方案](docs/生产环境完整部署方案.md)。应用启动时读取 `config/.env`，
+运行时不写入该文件；AI 连接、模型和供应商密钥保存在数据库。
 
 ### 安装 uv
 
@@ -134,15 +125,12 @@ API-only 副本（`CANVAS_TASK_WORKER_ENABLED=false` 且
 
 应用检测到 `SUBSCRIBE` 被 ACL 拒绝时会自动降级为定时刷新 Provider 配置，但 WebSocket 跨进程事件仍需要 `publish/subscribe` 权限。
 
-在 `config/.env` 中填写 AI 平台密钥：
+在 API 设置页面配置 AI 连接的 Base URL、API Key、模型和资源。连接、模型与资源保存在
+PostgreSQL；API Key 加密保存在 `ai_connection_secrets` 表，保存前需配置固定的 `APP_SECRET_KEY`。
+当前 AI 连接执行链路不会从旧的 `COMFLY_API_KEY`、`MODELSCOPE_API_KEY`、`RUNNINGHUB_API_KEY`
+环境变量读取密钥；仅保留这些旧变量不能完成供应商配置。
 
-```dotenv
-COMFLY_API_KEY=sk-xxxxx
-RUNNINGHUB_API_KEY=your-key-here
-COMFYUI_INSTANCES=192.168.80.21:8188
-# 云端网关也可使用无端口 HTTPS 域名，或显式完整 URL
-# COMFYUI_INSTANCES=c6fc4e1f29a54123912d7bd086de9b77.region1.waas.aigate.cc
-```
+ComfyUI 地址同样在 API 设置页面作为 `comfyui` 连接配置，保存在数据库中。
 
 可选配置包括 `PUBLIC_BASE_URL`、`PUBLIC_MEDIA_BASE_URL`、`CHAT_MODEL`、`IMAGE_MODEL`、`MINIO_SECURE` 等。
 
@@ -349,11 +337,13 @@ curl http://127.0.0.1:3000/metrics
 python main.py --listen 0.0.0.0 --port 8188
 ```
 
-并在 `config/.env` 配置：
+然后在 API 设置页面创建并启用 `comfyui` 连接，Base URL 填写应用可访问的地址，
+例如 `http://192.168.80.21:8188`。多个实例创建多个连接，并将工作流资源关联到对应连接。
+工作流执行使用指定连接；素材上传与查找从数据库读取已启用的 ComfyUI 连接。
 
-```dotenv
-COMFYUI_INSTANCES=192.168.80.21:8188,192.168.80.22:8188
-```
+旧环境升级时，先将原 `COMFYUI_INSTANCES` 地址逐一录入数据库连接并关联工作流资源，
+再验证上传和执行。该环境变量不再读取，不会自动导入；原有 `comfyui` 连接可直接复用。
+Docker 内的 `127.0.0.1` 指向容器自身，外部 ComfyUI 必须填写容器可访问的地址。
 
 ## 常见问题
 
@@ -363,7 +353,7 @@ COMFYUI_INSTANCES=192.168.80.21:8188,192.168.80.22:8188
 | `/health/ready` 返回 503 | 查看返回的 `components` 字段，检查对应连接配置 |
 | 页面模块 404 或仍显示旧逻辑 | 确认执行了 `cd frontend && npm run build`，并检查 `static/dist/` |
 | `npm ci` 失败 | 检查 `package.json` 与 `package-lock.json` 是否同步 |
-| API 调用失败 | 检查 `config/.env` 中对应平台的 API Key |
+| API 调用失败 | 检查 API 设置中的连接、模型和 API Key，以及 `APP_SECRET_KEY` 是否与保存密钥时一致 |
 
 日志默认位于：`logs/app.log`、`logs/access.log`、`logs/error.log`、`logs/audit.log` 和 `logs/task.log`。
 
@@ -372,7 +362,7 @@ COMFYUI_INSTANCES=192.168.80.21:8188,192.168.80.22:8188
 ```text
 ├── main.py              # 主服务入口
 ├── app/                 # 后端配置、模型、路由和服务
-├── config/              # 配置：.env（API Key）、.env.example、deploy/、monitoring/
+├── config/              # 运行环境 .env（应用只读）、dev/、deploy/、monitoring/
 ├── frontend/            # 前端源码、构建脚本和测试
 ├── static/              # 页面与静态资源
 ├── static/dist/         # 前端构建产物，不入库

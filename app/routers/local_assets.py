@@ -2,7 +2,7 @@
 
 从 main.py 的「本地素材导入 / 上传」区块原样迁移可独立的路由。URL/模型/状态码完全一致。
 注意：以下路由因依赖运行期 ComfyUI 实例列表或云上传 helper（跨域）暂留 main.py：
-- GET /api/view、POST /api/upload（依赖 COMFYUI_INSTANCES 运行期可变全局）
+- GET /api/view、POST /api/upload（从数据库读取已启用的 ComfyUI 连接）
 - POST /api/temp-sh/upload、POST /api/cloud-video/upload（依赖 upload_local_video_to_cloud 云上传集群）
 
 依赖：

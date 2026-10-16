@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop native services started by scripts/setup-dev.sh.
+# Stop legacy native macOS development services (Homebrew and the MinIO launch agent).
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

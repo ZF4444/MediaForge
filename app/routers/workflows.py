@@ -2,8 +2,7 @@
 
 从 main.py 的「ComfyUI 工作流管理」区块原样迁移。URL/模型/状态码完全一致。
 注意：
-- /api/comfyui/instances GET/PUT 依赖运行期可变全局 COMFYUI_INSTANCES/COMFYUI_ADDRESS/
-  BACKEND_LOCAL_LOAD 与 update_env_values，暂留 main.py。
+- /api/comfyui/instances GET/PUT 读写数据库中的 ComfyUI 连接，暂留 main.py。
 - /api/workflows/{name}/run 调用 generate()（生成域，仍在 main.py），暂留 main.py。
 
 依赖：

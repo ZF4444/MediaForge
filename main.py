@@ -25,10 +25,6 @@ import shlex
 import functools
 from types import SimpleNamespace
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows uses the process lock only.
-    fcntl = None
 from typing import List, Dict, Any, Optional, Tuple, Mapping
 from threading import Lock, Thread
 
@@ -475,7 +471,6 @@ from app.config import (
     REDIS_CANVAS_TASK_RECOVERY_INTERVAL_SECONDS,
     BASE_DIR,
     STATIC_DIR,
-    API_ENV_FILE,
     DATA_DIR,
     LOCAL_IMAGE_IMPORT_MAX_BYTES,
     LOCAL_IMAGE_IMPORT_EXTS,
@@ -483,7 +478,6 @@ from app.config import (
     STORAGE_CLEANUP_ENABLED,
     TASK_ID_LOCK,
     HISTORY_LOCK,
-    GLOBAL_CONFIG_LOCK,
     FEEDBACK_LOCK,
     HELP_LOCK,
     CONVERSATION_LOCK,
@@ -521,10 +515,7 @@ RUNNINGHUB_DEFAULT_BASE_URL = "https://www.runninghub.cn"
 VOLCENGINE_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 from app.config import VOLCENGINE_DEFAULT_PROJECT_NAME, VOLCENGINE_DEFAULT_REGION
 
-COMFYUI_INSTANCES = [
-    normalize_comfyui_endpoint(s) for s in os.getenv("COMFYUI_INSTANCES", "127.0.0.1:8188").split(",") if s.strip()
-]
-COMFYUI_ADDRESS = COMFYUI_INSTANCES[0]
+from app.services.comfyui_connections import comfyui_endpoints, save_comfyui_endpoints
 
 AI_BASE_URL = os.getenv("COMFLY_BASE_URL", "https://ai.comfly.chat").rstrip("/")
 AI_API_KEY = os.getenv("COMFLY_API_KEY", "")
@@ -845,61 +836,7 @@ def require_target_access(target, user_id: str) -> None:
         raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员开放。")
 
 
-def env_quote(value):
-    text = str(value or "")
-    if not text or re.search(r"\s|#|['\"]", text):
-        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return text
-
-
-def update_env_values(updates):
-    with GLOBAL_CONFIG_LOCK:
-        os.makedirs(os.path.dirname(API_ENV_FILE), exist_ok=True)
-        lock_path = f"{API_ENV_FILE}.lock"
-        lock_file = open(lock_path, "a+", encoding="utf-8")
-        if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            lines = []
-            if os.path.exists(API_ENV_FILE):
-                with open(API_ENV_FILE, "r", encoding="utf-8-sig") as f:
-                    lines = f.read().splitlines()
-            seen = set()
-            next_lines = []
-            for line in lines:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#") or "=" not in line:
-                    next_lines.append(line)
-                    continue
-                key = line.split("=", 1)[0].strip()
-                if key in updates:
-                    next_lines.append(f"{key}={env_quote(updates[key])}")
-                    os.environ[key] = str(updates[key] or "")
-                    seen.add(key)
-                else:
-                    next_lines.append(line)
-            for key, value in updates.items():
-                if key not in seen:
-                    next_lines.append(f"{key}={env_quote(value)}")
-                    os.environ[key] = str(value or "")
-            fd, tmp_path = tempfile.mkstemp(prefix=".env.", dir=os.path.dirname(API_ENV_FILE), text=True)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write("\n".join(next_lines).rstrip() + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.chmod(tmp_path, 0o600)
-                os.replace(tmp_path, API_ENV_FILE)
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-        finally:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-            lock_file.close()
-
-
-BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
+BACKEND_LOCAL_LOAD = {}
 
 os.makedirs(STATIC_DIR, exist_ok=True)
 
@@ -1039,78 +976,6 @@ def collect_required_comfy_media(params: Dict[str, Any]) -> List[str]:
             if is_comfy_input_media_value(input_name, value):
                 required.append(value)
     return list(dict.fromkeys(required))
-
-
-def get_best_backend(required_images: List[str] = None):
-    best_backend = COMFYUI_INSTANCES[0]
-    min_queue_size = float("inf")
-    backend_stats = {}
-
-    for addr in COMFYUI_INSTANCES:
-        try:
-            from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
-
-            remote_load = ComfyUIAssetTransport.queue_load(comfyui_url, addr)
-            with LOAD_LOCK:
-                local_load = BACKEND_LOCAL_LOAD.get(addr, 0)
-            effective_load = max(remote_load, local_load)
-            has_images = check_images_exist(addr, required_images)
-            backend_stats[addr] = {"load": effective_load, "has_images": has_images}
-        except Exception:
-            logger.warning(
-                "ComfyUI backend unreachable",
-                exc_info=True,
-                extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr},
-            )
-            continue
-
-    if not backend_stats:
-        return COMFYUI_INSTANCES[0]
-
-    for addr, stats in backend_stats.items():
-        load = stats["load"]
-        if load < min_queue_size or (
-            load == min_queue_size
-            and stats.get("has_images")
-            and not backend_stats.get(best_backend, {}).get("has_images")
-        ):
-            min_queue_size = load
-            best_backend = addr
-
-    return best_backend
-
-
-def reserve_best_backend(required_images: List[str] = None):
-    backend_stats = {}
-    for addr in COMFYUI_INSTANCES:
-        try:
-            from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
-
-            remote_load = ComfyUIAssetTransport.queue_load(comfyui_url, addr)
-            has_images = check_images_exist(addr, required_images)
-            backend_stats[addr] = {"remote_load": remote_load, "has_images": has_images}
-        except Exception:
-            logger.warning(
-                "ComfyUI backend unreachable",
-                exc_info=True,
-                extra={"event": "backend_unreachable", "provider": "comfyui", "endpoint": addr},
-            )
-            continue
-    with LOAD_LOCK:
-        best_backend = COMFYUI_INSTANCES[0]
-        min_load = float("inf")
-        if backend_stats:
-            for addr, stats in backend_stats.items():
-                load = max(stats["remote_load"], BACKEND_LOCAL_LOAD.get(addr, 0))
-                if load < min_load or (
-                    load == min_load
-                    and stats.get("has_images")
-                    and not backend_stats.get(best_backend, {}).get("has_images")
-                ):
-                    min_load = load
-                    best_backend = addr
-        BACKEND_LOCAL_LOAD[best_backend] = BACKEND_LOCAL_LOAD.get(best_backend, 0) + 1
-        return best_backend
 
 
 # --- 辅助工具 ---
@@ -3391,7 +3256,7 @@ async def view_image(filename: str, type: str = "input", subfolder: str = ""):
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
 
     transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
-    for addr in COMFYUI_INSTANCES:
+    for addr in await asyncio.to_thread(comfyui_endpoints):
         try:
             r = await transport.view(addr, filename, kind=type, subfolder=subfolder)
             if r.status_code == 200:
@@ -3425,7 +3290,7 @@ async def upload_image(files: List[UploadFile] = File(...)):
     for file, content in files_content:
         success_count = 0
         last_result = None
-        for addr in COMFYUI_INSTANCES:
+        for addr in await asyncio.to_thread(comfyui_endpoints):
             try:
                 response = await transport.upload(
                     addr, file.filename or "upload.bin", content, file.content_type or "application/octet-stream"
@@ -3507,7 +3372,7 @@ async def pose_studio_generate_fbx(file: UploadFile = File(...)):
     from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
 
     transport = ComfyUIAssetTransport(endpoint=comfyui_url, client=get_http_client())
-    for addr in COMFYUI_INSTANCES:
+    for addr in await asyncio.to_thread(comfyui_endpoints):
         try:
             response = await transport.upload(
                 addr, comfy_image_name, content, file.content_type or "image/png", overwrite=True
@@ -3952,7 +3817,7 @@ async def ai_config():
         "chat_models": CHAT_MODELS,
         "image_models": IMAGE_MODELS,
         "video_models": VIDEO_MODELS,
-        "comfy_instances": COMFYUI_INSTANCES,
+        "comfy_instances": await asyncio.to_thread(comfyui_endpoints),
         "has_api_key": bool(AI_API_KEY),
     }
 
@@ -7925,7 +7790,28 @@ def generate(req: GenerateRequest):
     try:
         required_images = collect_required_comfy_media(req.params)
 
-        target_backend = reserve_best_backend(required_images)
+        repository = DatabaseAIRepository()
+        try:
+            if req.resource_id:
+                target = repository.resolve_executable(resource_id=req.resource_id, kind="comfyui_workflow")
+                connection = target.connection
+            elif req.model_id:
+                target = repository.resolve_model(model_id=req.model_id)
+                connection = target.connection
+            else:
+                connection = next((item for item in repository.connections() if item.id == req.connection_id), None)
+                from app.ai.domain import ResolvedTarget
+                target = ResolvedTarget(connection=connection)
+            if connection is None or connection.protocol != "comfyui":
+                raise LookupError("ComfyUI connection not found")
+            if req.connection_id and connection.id != req.connection_id:
+                raise LookupError("ComfyUI connection does not match resource")
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="ComfyUI 连接或资源不存在、已禁用或不匹配") from exc
+        require_target_access(target, current_user_id())
+        target_backend = normalize_comfyui_endpoint(connection.base_url)
+        with LOAD_LOCK:
+            BACKEND_LOCAL_LOAD[target_backend] = BACKEND_LOCAL_LOAD.get(target_backend, 0) + 1
 
         for image_name in required_images:
             from app.ai.adapters.comfyui_assets import ComfyUIAssetTransport
@@ -7936,7 +7822,7 @@ def generate(req: GenerateRequest):
             if need_sync:
                 image_content = None
                 image_type = "image/png"
-                for addr in COMFYUI_INSTANCES:
+                for addr in comfyui_endpoints():
                     if addr == target_backend:
                         continue
                     fetched = ComfyUIAssetTransport.download_sync(comfyui_url, addr, image_name, kind="input")
@@ -8107,6 +7993,8 @@ def generate(req: GenerateRequest):
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result, current_user_id()), GLOBAL_LOOP)
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
         return {"images": [], "error": str(e)}
     finally:
@@ -8182,40 +8070,17 @@ def runninghub_normalize_field(raw, fallback=None):
 
 @app.get("/api/comfyui/instances")
 def get_comfyui_instances():
-    return {"instances": COMFYUI_INSTANCES}
+    return {"instances": comfyui_endpoints()}
 
 
 @app.put("/api/comfyui/instances")
 def save_comfyui_instances(payload: ComfyInstancesPayload):
-    # 接受完整 URL、旧版 host:port 和无端口的 HTTPS 网关域名。
-    cleaned = []
-    for item in payload.instances:
-        if not str(item or "").strip():
-            continue
-        try:
-            s = normalize_comfyui_endpoint(item)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"地址不合法：{item}（{exc}）") from exc
-        if s in cleaned:
-            continue
-        cleaned.append(s)
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="至少保留一个 ComfyUI 后端地址")
-    # 写入 env 文件
+    require_api_settings_access()
     try:
-        update_env_values({"COMFYUI_INSTANCES": ",".join(cleaned)})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"写入 env 失败：{e}")
-    # 更新进程中的全局变量
-    global COMFYUI_INSTANCES, COMFYUI_ADDRESS, BACKEND_LOCAL_LOAD
-    COMFYUI_INSTANCES = cleaned
-    COMFYUI_ADDRESS = cleaned[0]
-    new_load = {addr: 0 for addr in cleaned}
-    for addr, n in (BACKEND_LOCAL_LOAD or {}).items():
-        if addr in new_load:
-            new_load[addr] = n
-    BACKEND_LOCAL_LOAD = new_load
-    return {"instances": COMFYUI_INSTANCES}
+        cleaned = save_comfyui_endpoints(payload.instances)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"instances": cleaned}
 
 
 # --- ComfyUI 工作流管理 ---
