@@ -160,6 +160,13 @@ def test_agent_task_projection_keeps_structured_media_and_clears_terminal_state(
 
     class Cursor:
         def execute(self, query, params=()):
+            if "jsonb_build_object('logs'" in query:
+                entry = json.loads(params[0])[0]
+                assert entry["id"] == "agent-task:task-1"
+                assert entry["status"] == "success"
+                assert entry["nodeId"] == "node-1"
+                assert entry["request"]["task_id"] == "task-1"
+                assert entry["outputs"][0]["file_id"] == "image-1"
             if "UPDATE smart_canvas_nodes" in query:
                 projected = json.loads(params[0])
                 updates.append(projected)

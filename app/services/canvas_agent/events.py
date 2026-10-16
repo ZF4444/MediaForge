@@ -149,11 +149,51 @@ def _project_task_to_canvas(user_id: str, run_id: str, payload: dict[str, Any]) 
             "UPDATE smart_canvas_nodes SET data_json=%s,updated_at=EXTRACT(EPOCH FROM clock_timestamp())*1000 WHERE id=%s AND canvas_id=%s",
             (json_value(node), node_id, run["canvas_id"]),
         )
+        if status in {"succeeded", "failed", "cancelled", "timed_out"} and task_id:
+            entry = _task_log_entry(node, payload)
+            # Append in the same transaction as node settlement. A stable id
+            # makes replayed lifecycle events replace, rather than duplicate, logs.
+            cur.execute(
+                """UPDATE smart_canvases SET viewport_json=jsonb_set(
+                    viewport_json, '{payload}',
+                    COALESCE(viewport_json->'payload', '{}'::jsonb) || jsonb_build_object('logs',
+                        (SELECT jsonb_agg(item ORDER BY ordinal) FROM (
+                            SELECT item, ordinal FROM jsonb_array_elements(
+                                %s::jsonb || COALESCE(viewport_json->'payload'->'logs', '[]'::jsonb)
+                            ) WITH ORDINALITY AS entries(item, ordinal)
+                            WHERE ordinal=1 OR item->>'id' IS DISTINCT FROM %s
+                            ORDER BY ordinal LIMIT 500
+                        ) recent)), true) WHERE id=%s""",
+                (json_value([entry]), entry["id"], run["canvas_id"]),
+            )
         cur.execute(
             "UPDATE smart_canvases SET version=version+1,updated_at=EXTRACT(EPOCH FROM clock_timestamp())*1000 WHERE id=%s RETURNING version",
             (run["canvas_id"],),
         )
         return int(cur.fetchone()["version"])
+
+
+def _task_log_entry(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    settings = dict(node.get("runSettings") or {})
+    result = payload.get("result") or {}
+    outputs = result.get("image_items") or result.get("images") or result.get("urls") or []
+    request = dict(settings)
+    request["task_id"] = str(payload["task_id"])
+    return {
+        "id": "agent-task:" + str(payload["task_id"]),
+        "createdAt": node.get("runFinishedAt") or now_ms(),
+        "status": "success" if payload.get("status") == "succeeded" else "failed",
+        "platform": {"runninghub": "RunningHub", "comfy": "ComfyUI"}.get(settings.get("engine"), "API"),
+        "nodeType": node.get("type") or "smart-image",
+        "nodeId": str(payload.get("node_id") or ""),
+        "model": node.get("title") or settings.get("model_id") or "",
+        "request": request,
+        "prompt": node.get("text") or "",
+        "outputs": outputs,
+        "refs": [],
+        "runMs": node.get("runElapsedMs") or 0,
+        "error": str(payload.get("error") or ("任务已取消" if payload.get("status") == "cancelled" else "")),
+    }
 
 
 async def emit_agent_event(
