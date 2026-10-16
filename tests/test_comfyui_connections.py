@@ -99,9 +99,63 @@ def test_instance_save_requires_configuration_permission(monkeypatch):
 def test_configuration_rejects_invalid_comfyui_url_before_writing(monkeypatch):
     from app.ai.database_repository import DatabaseAIRepository
 
+    monkeypatch.setattr(DatabaseAIRepository, "connections", lambda *args, **kwargs: [])
     monkeypatch.setattr("app.ai.database_repository.database_connection_sync", lambda: pytest.fail("unexpected write"))
     with pytest.raises(ValueError):
         DatabaseAIRepository().replace(
             connections=[{"id": "bad", "protocol": "comfyui", "base_url": "ftp://bad.example"}],
+            models=[], resources=[],
+        )
+
+
+def test_runninghub_resource_save_preserves_legacy_empty_comfyui_endpoint(monkeypatch):
+    import asyncio
+    import main
+    from app.ai.database_repository import DatabaseAIRepository
+
+    calls = []
+
+    class Cursor:
+        def execute(self, sql, args=None):
+            calls.append((sql, args))
+
+    connection = SimpleNamespace(cursor=lambda: nullcontext(Cursor()), transaction=nullcontext)
+    monkeypatch.setattr(main, "require_api_settings_access", lambda: None)
+    monkeypatch.setattr(DatabaseAIRepository, "connections", lambda *args, **kwargs: [
+        Connection("legacy", "comfyui", "Legacy", "", True),
+    ])
+    monkeypatch.setattr("app.ai.database_repository.database_connection_sync", lambda: nullcontext(connection))
+
+    result = asyncio.run(main.save_ai_configuration({
+        "connections": [
+            {"id": "legacy", "protocol": "comfyui", "base_url": "", "enabled": True},
+            {"id": "rh", "protocol": "runninghub", "base_url": "https://www.runninghub.cn"},
+        ],
+        "models": [],
+        "resources": [{
+            "id": "app", "connection_id": "rh", "kind": "runninghub_app",
+            "settings": {"app_id": "123", "title": "Updated workflow"},
+        }],
+    }))
+    assert result == {"ok": True}
+    assert any("INSERT INTO ai_resources" in sql for sql, _ in calls)
+    legacy = next(args for sql, args in calls if "INSERT INTO ai_connections" in sql and args[0] == "legacy")
+    assert legacy[3] == ""
+
+
+@pytest.mark.parametrize("existing_url, existing_enabled, new_enabled", [
+    ("http://valid:8188", True, True),
+    ("", False, True),
+])
+def test_configuration_rejects_clearing_or_enabling_empty_endpoint(monkeypatch, existing_url, existing_enabled, new_enabled):
+    from app.ai.database_repository import DatabaseAIRepository
+
+    monkeypatch.setattr(DatabaseAIRepository, "connections", lambda *args, **kwargs: [
+        Connection("comfy", "comfyui", "Comfy", existing_url, existing_enabled),
+    ])
+    monkeypatch.setattr("app.ai.database_repository.database_connection_sync", lambda: pytest.fail("unexpected write"))
+    with pytest.raises(ValueError, match="ComfyUI 后端地址不能为空"):
+        DatabaseAIRepository().replace(
+            connections=[{"id": "comfy", "protocol": "comfyui", "base_url": "", "enabled": new_enabled}],
             models=[], resources=[],
         )

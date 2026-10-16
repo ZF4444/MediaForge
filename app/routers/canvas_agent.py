@@ -353,6 +353,35 @@ def _merge_existing_params(current: dict, incoming: dict) -> dict:
     return merged
 
 
+def _merge_confirmed_params(node, incoming: dict) -> dict:
+    """Accept new parameter keys only when the selected capability declares them."""
+    merged = _merge_existing_params(node.params, incoming)
+    schema = capability_schema_resolver(node)
+    if not schema:
+        return merged
+    from app.services.ai_parameters import normalize_capability_params
+
+    path = str(schema.get("params_path") or "runSettings").split(".")
+    values = incoming
+    for key in path:
+        values = values.get(key, {}) if isinstance(values, dict) else {}
+    flat = dict(node.params)
+    if isinstance(values, dict):
+        flat.update({key: value.get("value") if isinstance(value, dict) else value for key, value in values.items()})
+    canonical = normalize_capability_params(schema, flat)
+
+    def merge(target, source):
+        for key, value in source.items():
+            if isinstance(value, dict):
+                if not isinstance(target.get(key), dict):
+                    target[key] = {}
+                merge(target[key], value)
+            else:
+                target[key] = value
+    merge(merged, canonical)
+    return merged
+
+
 async def _apply_confirmation_overrides(user_id: str, run_id: str, plan_row: dict, overrides: list[dict]) -> None:
     if not overrides:
         return
@@ -375,7 +404,10 @@ async def _apply_confirmation_overrides(user_id: str, run_id: str, plan_row: dic
         if params is not None:
             if not isinstance(params, dict):
                 raise HTTPException(status_code=422, detail="节点参数格式无效")
-            node.params = _merge_existing_params(node.params, params)
+            try:
+                node.params = await asyncio.to_thread(_merge_confirmed_params, node, params)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         # The prompt now lives in params.runSettings.prompt. Accept the legacy
         # top-level "content" override for compatibility and write it there so
         # a user-edited prompt is preserved regardless of the merge guard.

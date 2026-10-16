@@ -138,6 +138,11 @@ def fail_reason(raw: Any) -> str:
     if not isinstance(raw, dict):
         return "RunningHub 任务失败"
     data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    if normalized_status(raw, raw.get("code"), []) == "FAILED" and any(
+        str(item.get("status") or "").upper() in {"SUCCESS", "SUCCEEDED", "COMPLETED"}
+        for item in (raw, data)
+    ):
+        return "RunningHub 任务已完成，但未返回任何输出文件，请检查上游工作流的输出节点。"
     return str(
         data.get("errorMessage")
         or data.get("failReason")

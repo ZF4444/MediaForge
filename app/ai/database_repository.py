@@ -23,6 +23,20 @@ def _json(value: Any, fallback: Any) -> Any:
 class DatabaseAIRepository:
     """The final configuration source. It never reads legacy configuration records."""
 
+    def update_resource(self, resource_id: str, changes: dict[str, Any]) -> None:
+        """Update one workflow without replacing connections or other resources."""
+        with database_connection_sync() as conn, conn.transaction(), conn.cursor() as cur:
+            cur.execute("SELECT * FROM ai_resources WHERE id=%s FOR UPDATE", (resource_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise LookupError("工作流资源不存在")
+            settings = {**_json(row["settings_json"], {}), **changes.get("settings", {})}
+            cur.execute(
+                "UPDATE ai_resources SET name=%s,enabled=%s,settings_json=%s,updated_at=%s WHERE id=%s",
+                (changes.get("name", row["name"]), changes.get("enabled", row["enabled"]),
+                 json.dumps(settings), now_ms(), resource_id),
+            )
+
     def connections(self, *, include_disabled: bool = False) -> list[Connection]:
         query = (
             "SELECT * FROM ai_connections" + ("" if include_disabled else " WHERE enabled=TRUE") + " ORDER BY name,id"
@@ -215,9 +229,29 @@ class DatabaseAIRepository:
         from app.core.comfyui import normalize_comfyui_endpoint
 
         connection_rows = [dict(item) for item in connection_rows]
+        existing_connections = None
         for item in connection_rows:
             if item.get("protocol") == "comfyui":
-                item["base_url"] = normalize_comfyui_endpoint(item.get("base_url") or "")
+                try:
+                    item["base_url"] = normalize_comfyui_endpoint(item.get("base_url") or "")
+                except ValueError:
+                    # Resource editors submit the entire configuration. Legacy
+                    # invalid endpoints must not block unrelated resource edits,
+                    # but new/changed endpoints and enabling a connection still
+                    # require a valid address.
+                    if existing_connections is None:
+                        existing_connections = {
+                            connection.id: connection
+                            for connection in self.connections(include_disabled=True)
+                        }
+                    existing = existing_connections.get(item.get("id"))
+                    if not (
+                        existing is not None
+                        and existing.protocol == "comfyui"
+                        and existing.base_url == (item.get("base_url") or "")
+                        and existing.enabled == bool(item.get("enabled", True))
+                    ):
+                        raise
         from app.services.video_billing import validate_video_token_prices
 
         for model in model_rows:

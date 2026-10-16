@@ -7,7 +7,20 @@ const runningHubState=()=>({id:'runninghub',connection_id:runningHubConnection?.
 function canonicalRhAppId(value){return String(value?.app_id||value?.webappId||value?.appId||value?.id||'').trim()}
 function canonicalRhApp(value){const id=canonicalRhAppId(value);return {...value,app_id:id}}
 async function loadRhProviders(){const data=await getAiConfiguration();aiConfiguration=data;runningHubConnection=(data.connections||[]).find(item=>item.protocol==='runninghub')||null;runningHubApps=(data.resources||[]).filter(item=>item.kind==='runninghub_app').map(item=>({...canonicalRhApp(item.settings||{}),_resource_id:item.id,name:item.name,enabled:item.enabled}));ensureRunningHubLists(runningHubState());renderRunningHubCards();}
-async function saveRunningHubResources(){const item=runningHubState();const connectionId=item?.connection_id;if(!connectionId)throw new Error('未配置 RunningHub Connection');const preserved=(aiConfiguration.resources||[]).filter(resource=>resource.kind!=='runninghub_app');const resources=(item.rh_apps||[]).map(app=>{const normalized=canonicalRhApp(app);const resourceId=app._resource_id||`${connectionId}:runninghub_app:${encodeURIComponent(normalized.app_id)}`;const previous=(aiConfiguration.resources||[]).find(resource=>resource.id===resourceId);const settings={...(previous?.settings||{}),...Object.fromEntries(Object.entries(normalized).filter(([key])=>!['_resource_id','name','enabled'].includes(key)))};return{id:resourceId,connection_id:connectionId,kind:'runninghub_app',name:normalized.title||app.name||previous?.name||normalized.app_id,enabled:app.enabled!==false,settings};});const connections=(aiConfiguration.connections||[]).map(connection=>connection.id===connectionId?{...connection,settings:{...(connection.settings||{}),rh_apps:item.rh_apps||[]}}:connection);await saveAiConfiguration({...aiConfiguration,connections,resources:[...preserved,...resources]});await loadRhProviders();return true;}
+async function saveRunningHubResources(resourceId=rhWorkflowEditorState.resourceId){
+    const app=runningHubApps.find(item=>item._resource_id===resourceId);
+    if(!app) throw new Error('工作流资源已变更，请重新打开');
+    const normalized=canonicalRhApp(app);
+    const settings=Object.fromEntries(Object.entries(normalized).filter(([key])=>!['_resource_id','name','enabled'].includes(key)));
+    await updateWorkflowResource(resourceId, {
+        name:normalized.title||app.name||normalized.app_id,
+        enabled:app.enabled!==false,
+        settings,
+    });
+    await loadRhProviders();
+    return true;
+}
+
 function setRhWorkflowMedia(media){const resourceId=new URLSearchParams(location.search).get('resourceId');const entry=runningHubState()?.rh_apps?.find(item=>item._resource_id===resourceId);if(entry)entry.media=media==='video'?'video':'image';}
 function openRhWorkflowEditorWhenReady(index=0){if(typeof openRhAppEditor==='function'){openRhAppEditor(index);}}
 loadRhProviders().then(()=>{const params=new URLSearchParams(location.search);const requestedResourceId=params.get('resourceId')||'';const requestedAppId=params.get('appId')||'';const item=runningHubState();ensureRunningHubLists(item);let existingIndex=requestedResourceId?item.rh_apps.findIndex(app=>app._resource_id===requestedResourceId):-1;if(existingIndex<0&&requestedAppId) existingIndex=item.rh_apps.findIndex(app=>canonicalRhAppId(app)===String(requestedAppId));if(existingIndex<0&&requestedAppId){const resourceId=requestedResourceId||`${item.connection_id}:runninghub_app:${encodeURIComponent(requestedAppId)}`;item.rh_apps.unshift({app_id:requestedAppId,_resource_id:resourceId,title:`AI 应用 ${requestedAppId.slice(-6)}`,note:'',enabled:true});existingIndex=0;}if(existingIndex<0)return;const existing=item.rh_apps[existingIndex];if(!existing._resource_id) existing._resource_id=requestedResourceId||`${item.connection_id}:runninghub_app:${encodeURIComponent(canonicalRhAppId(existing))}`;item.rh_apps.splice(existingIndex,1);item.rh_apps.unshift(existing);renderRunningHubCards();openRhWorkflowEditorWhenReady(0)}).catch(err=>setStatus(err.message));

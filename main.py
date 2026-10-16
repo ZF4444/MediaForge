@@ -3628,7 +3628,7 @@ async def runninghub_query(
     stored_outputs = await asyncio.gather(
         *(
             runninghub_store_remote_output_item(remote, persist=persistOutputs, fallback_remote=True)
-            for remote in runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw)
+            for remote in runninghub_extract_outputs(raw)
         )
     )
     urls = [item[0] for item in stored_outputs]
@@ -3984,6 +3984,26 @@ async def save_ai_configuration(payload: Dict[str, Any]):
         await asyncio.to_thread(save)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.patch("/api/ai/executable-resources/{resource_id:path}")
+async def update_ai_executable_resource(resource_id: str, payload: Dict[str, Any]):
+    require_api_settings_access()
+    if set(payload) - {"name", "enabled", "settings"}:
+        raise HTTPException(status_code=400, detail="仅支持修改工作流名称、启用状态和参数配置")
+    if "settings" in payload and not isinstance(payload["settings"], dict):
+        raise HTTPException(status_code=400, detail="settings 必须是对象")
+    if "enabled" in payload and not isinstance(payload["enabled"], bool):
+        raise HTTPException(status_code=400, detail="enabled 必须是布尔值")
+    if "name" in payload and not isinstance(payload["name"], str):
+        raise HTTPException(status_code=400, detail="name 必须是字符串")
+    from app.ai.database_repository import DatabaseAIRepository
+
+    try:
+        await asyncio.to_thread(DatabaseAIRepository().update_resource, resource_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True}
 
 
@@ -5449,7 +5469,7 @@ async def run_canvas_runninghub_task(task_id: str, payload: RunningHubSubmitRequ
                 return
             raw = await transport.query(provider, api_key, str(upstream_task_id))
             code = raw.get("code") if isinstance(raw, dict) else None
-            current_outputs = runninghub_extract_outputs(raw.get("data") if isinstance(raw, dict) else raw)
+            current_outputs = runninghub_extract_outputs(raw)
             new_outputs = [remote for remote in current_outputs if remote not in seen_remote_outputs]
             stored_outputs = await asyncio.gather(
                 *(runninghub_store_remote_output_item(remote) for remote in new_outputs)

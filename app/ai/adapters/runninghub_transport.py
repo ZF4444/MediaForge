@@ -10,6 +10,8 @@ from fastapi import HTTPException
 import asyncio
 import time
 
+from .runninghub_protocol import extract_outputs
+
 
 class RunningHubTransport:
     def __init__(
@@ -49,7 +51,18 @@ class RunningHubTransport:
                 headers=dict(self._headers(api_key, True)),
                 json={"apiKey": api_key, "taskId": task_id},
             )
-            return self._json(response, "查询 RunningHub 任务失败", allow_codes={803, 804})
+            raw = self._json(response, "查询 RunningHub 任务失败", allow_codes={803, 804})
+            # The legacy outputs endpoint can return code=0, data=[] without
+            # any task status. Query the full task record so an empty completed
+            # workflow does not stay RUNNING until the canvas timeout.
+            if isinstance(raw, Mapping) and raw.get("code") in (0, "0") and not extract_outputs(raw):
+                response = await client.post(
+                    self._endpoint(connection, "/openapi/v2/query"),
+                    headers=dict(self._headers(api_key, True)),
+                    json={"taskId": task_id},
+                )
+                return self._json(response, "查询 RunningHub 任务状态失败", allow_codes={803, 804})
+            return raw
 
     async def upload(
         self, connection: Mapping[str, Any], api_key: str, filename: str, content: bytes, content_type: str

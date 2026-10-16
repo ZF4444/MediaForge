@@ -218,7 +218,7 @@ function rhWorkflowFeatures() {
       const uploadService = JSON.stringify(resolve(frontendRoot, 'src/services/upload-quota.js'));
       const featureImports = [
         "import { createIcons, icons } from 'lucide';",
-        `import { getAiConfiguration, saveAiConfiguration } from ${JSON.stringify(resolve(frontendRoot, 'src/services/ai-configuration.js'))};`,
+        `import { getAiConfiguration, updateWorkflowResource } from ${JSON.stringify(resolve(frontendRoot, 'src/services/ai-configuration.js'))};`,
         `import { MediaForgeUpload } from ${uploadService};`,
         "const lucide = { createIcons: options => createIcons({ icons, ...(options && typeof options === 'object' && 'root' in options ? options : { root: options }) }) };",
       ].join('\n');

@@ -11,3 +11,11 @@ export function saveAiConfiguration(configuration) {
     body: JSON.stringify(configuration),
   });
 }
+
+export function updateWorkflowResource(resourceId, changes) {
+  return apiJson(`/api/ai/executable-resources/${encodeURIComponent(resourceId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(changes),
+  });
+}

@@ -1,8 +1,8 @@
+import { updateWorkflowResource } from '../services/ai-configuration.js';
 import {
     createWorkflow,
     getAiConfiguration,
     getWorkflow,
-    saveAiConfiguration,
     saveWorkflowConfig,
     uploadWorkflowCover,
     workflowCoverPreviewUrl,
@@ -144,14 +144,10 @@ async function persistBackend(){
         });
         return;
     }
-    const config = await getAiConfiguration();
-    const resources = (config.resources || []).map(resource => {
-        if(resource.id !== current.resourceId) return resource;
-        const existingCover = validCover(resource.settings?.cover);
-        const nextCover = Object.keys(validCover(current.cover)).length ? current.cover : existingCover;
-        return {...resource, enabled:current.enabled, settings:{...(resource.settings || {}), title:current.title || resource.name, media:current.media, cover:nextCover}};
+    await updateWorkflowResource(current.resourceId, {
+        enabled:current.enabled,
+        settings:{title:current.title, media:current.media, cover:validCover(current.cover)},
     });
-    await saveAiConfiguration({...config, resources});
 }
 async function saveEmbeddedConfig(){
     if(!current.id) return;

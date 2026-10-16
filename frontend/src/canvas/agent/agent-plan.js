@@ -256,6 +256,18 @@
       if((request!==schemaRequest&&!history)||!card.isConnected)return;
       if(!Array.isArray(schema?.fields)||(!schema.fields.length&&!values.workflow))throw new Error('Missing parameter schema');
       const paramsPath=String(schema.params_path||'runSettings');const controls=card.querySelector('.canvas-agent-config-controls');
+      // Plans may carry schema fields flat, while canvas nodes persist them
+      // under params_path. Materialize the displayed values before confirming,
+      // including defaults, so the summary and created node share one value.
+      for(const field of schema.fields){
+        if(['image','video','audio'].includes(String(field.role||field.type||'')))continue;
+        const store=fieldStore(field,values,paramsPath);
+        const nested=pathValue(values.params,`${paramsPath}.${field.id}`);
+        const flat=values.params[field.id];
+        if(nested===undefined&&flat!==undefined)store.set(flat&&typeof flat==='object'&&'value'in flat?flat.value:flat);
+        else if(nested===undefined&&field.role==='prompt'&&readPrompt(values.params))store.set(readPrompt(values.params));
+        else store.set(store.get());
+      }
       // A RunningHub app exposes its prompt through a prompt-role field. Mirror
       // the canvas node: surface that text in the top prompt box (and write it
       // back there) instead of rendering a duplicate parameter control.
