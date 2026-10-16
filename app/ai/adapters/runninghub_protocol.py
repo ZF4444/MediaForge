@@ -111,6 +111,18 @@ def normalized_status(raw: Any, code: Any, urls: list[str]) -> str:
         "",
     )
     if status in {"SUCCESS", "SUCCEEDED", "COMPLETED"}:
+        # A completed response with an explicitly empty result collection is
+        # a terminal upstream failure.  Treating this as RUNNING forever makes
+        # the canvas spinner run until the worker timeout when RunningHub
+        # returns e.g. ``status=SUCCESS, results=[]``.
+        result_keys = ("results", "outputs", "files", "images")
+        has_explicit_empty_results = any(
+            isinstance(item, dict)
+            and any(key in item and item.get(key) in (None, [], {}) for key in result_keys)
+            for item in (raw, data)
+        )
+        if not urls and has_explicit_empty_results:
+            return "FAILED"
         # RunningHub can briefly report a terminal status before its output
         # list is populated. Do not finalize an empty result; the caller will
         # keep polling until outputs become available or the task times out.
