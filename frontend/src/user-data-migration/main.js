@@ -56,8 +56,12 @@ executeButton.addEventListener('click', async () => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({source_user_id: source.user_id, confirmed: true}),
         });
-        setStatus(`迁移完成，账号 ${source.username} 已删除。`);
+        const message = `迁移完成，账号 ${source.username} 已删除。`;
+        setStatus(message);
         confirmElement.hidden = true;
+        confirmationInput.checked = false;
+        source = null;
+        window.alert(message);
     } catch (error) {
         setStatus(error.message);
         executeButton.disabled = false;
