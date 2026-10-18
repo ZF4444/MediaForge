@@ -18,8 +18,10 @@
 // 不需要暴露任何函数给外部（`checkVersion()`/`setInterval` 在 IIFE
 // 内部直接调用），所以对 window 全局作用域没有任何新增。
 //
-// 依赖：无。只用到 fetch/DOM/setInterval，不依赖 main.js 或本次拆分的
-// 任何其它模块。
+// 依赖：services/version.js 的 getVersion（通过 import 引入；缺失时
+// checkVersion 内的 ReferenceError 会被 catch 吞掉，导致版本提示静默失效）。
+
+import { getVersion } from '../services/version.js';
 
     (function(){
         var initial;
