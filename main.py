@@ -177,7 +177,6 @@ AGENT_COMMAND_WORKER_TASK = None
 WEBSOCKET_PUBSUB_TASK = None
 AGENT_EVENT_PUBSUB_TASK = None
 AGENT_EVENT_OUTBOX_TASK = None
-APP_VERSION = "2026.05.19"
 RUN_BACKGROUND_MAINTENANCE = os.getenv("RUN_BACKGROUND_MAINTENANCE", "true").strip().lower() in {
     "1",
     "true",
@@ -333,7 +332,7 @@ async def startup_event():
                 CANVAS_TASK_RECOVERY_TASK = asyncio.create_task(canvas_task_recovery_loop())
             if CANVAS_TASK_WORKER_ENABLED and CANVAS_TASK_WORKER_TASK is None:
                 CANVAS_TASK_WORKER_TASK = asyncio.create_task(canvas_task_worker_loop())
-        logger.info("application started", extra={"event": "application_started", "version": APP_VERSION})
+        logger.info("application started", extra={"event": "application_started", "version": current_app_version()})
     except Exception:
         await close_http_client()
         await close_redis_client()
