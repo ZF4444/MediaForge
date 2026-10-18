@@ -57,5 +57,5 @@ import { getVersion } from '../services/version.js';
             }catch(e){}
         }
         checkVersion();
-        setInterval(checkVersion, 5 * 60 * 1000);
+        setInterval(checkVersion, 60 * 1000);
     })();

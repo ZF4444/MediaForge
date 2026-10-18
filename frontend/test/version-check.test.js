@@ -31,7 +31,7 @@ describe('index version check', () => {
     versions.push(first, second);
     await import('../src/index/version-check.js');
     await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(60 * 1000);
   }
 
   it('shows the dismissible toast when only the patch version changes', async () => {
