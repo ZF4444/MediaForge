@@ -399,7 +399,7 @@ function renderVideoGenerationConfig(){
     settings.videoDuration = v;
     const aspectField = canvasSchemaField('video', 'videoAspect');
     const aspectName = canvasSchemaFieldName('video', 'videoAspect', tr('smart.videoAspect'));
-    const aspectOptions = [...new Set([...(Array.isArray(aspectField.options) && aspectField.options.length ? aspectField.options : ['16:9','4:3','1:1','3:4','9:16','21:9']), 'source'])].map(value => [value, value === 'source' ? 'source' : canvasSchemaOptionLabel(aspectField, value)]);
+    const aspectOptions = [...new Set([...(Array.isArray(aspectField.options) && aspectField.options.length ? aspectField.options : ['16:9','4:3','1:1','3:4','9:16','21:9']), 'source'])].map(value => [value, canvasSchemaOptionLabel(aspectField, value)]);
     const aspect = settings.videoAspect || '16:9';
     const aspectLabels = Object.fromEntries(aspectOptions);
     const resolutionField = canvasSchemaField('video', 'videoResolution');
@@ -487,7 +487,7 @@ function canvasSchemaOptionLabel(field, value, fallback=value){
     const index = options.findIndex(option => String(option) === String(value));
     return index >= 0 && labels[index] !== undefined && labels[index] !== '' ? String(labels[index]) : String(fallback ?? value);
 }
-function applyCanvasSchemaDefaults(kind, schema){
+function applyCanvasSchemaDefaults(kind, schema, {force=false}={}){
     for(const field of schema?.fields || []){
         const key = field?.id;
         if(!key || ['provider_id','model','videoProvider','videoModel'].includes(key)) continue;
@@ -495,14 +495,35 @@ function applyCanvasSchemaDefaults(kind, schema){
         const current = settings[key];
         // Numeric options are quick presets, not an exhaustive list of values.
         const numeric = ['number', 'slider'].includes(field.type);
+        // 新建节点首次拿到模型 schema 时，直接采用 API 设置里的默认值（前提是该默认值本身合法）。
+        if(force && field.default !== undefined && field.default !== null && field.default !== ''){
+            const defaultValid = numeric
+                ? Number.isFinite(Number(field.default)) && !(field.min != null && Number(field.default) < Number(field.min)) && !(field.max != null && Number(field.default) > Number(field.max))
+                : !options.length || options.some(value => String(value) === String(field.default));
+            if(defaultValid){ settings[key] = field.default; continue; }
+        }
         const invalidNumber = numeric && (!Number.isFinite(Number(current))
             || (field.min != null && Number(current) < Number(field.min))
             || (field.max != null && Number(current) > Number(field.max)));
         const invalidOption = !(kind === 'video' && key === 'videoAspect' && current === 'source') && !numeric && options.length && !options.some(value => String(value) === String(current));
         if(current === undefined || current === null || current === '' || invalidNumber || invalidOption){
-            settings[key] = field.default !== undefined ? field.default : (options[0] ?? current);
+            // 默认值自身不在可选项内时（配置错误），回退到第一个可选项，避免写入非法值。
+            const defaultInOptions = field.default !== undefined && (numeric || !options.length || options.some(value => String(value) === String(field.default)));
+            settings[key] = defaultInOptions ? field.default : (options[0] ?? current);
         }
     }
+}
+// 新建的生成节点（createGenerationNodeByKind 会打上 schemaDefaultsPending）只在第一次拿到
+// 它实际所用模型的参数 schema 时采用 API 设置里的默认值；已有节点和用户改过的值不受影响。
+function pendingNewNodeForSchema(kind, target){
+    const node = activeSettingsSubject();
+    if(!node?.schemaDefaultsPending || node.genKind !== kind) return null;
+    const ids = kind === 'video'
+        ? {connection_id:settings.videoConnectionId, model_id:settings.videoModelId, resource_id:settings.videoResourceId}
+        : {connection_id:settings.connection_id, model_id:settings.model_id, resource_id:settings.resource_id};
+    if(!ids.connection_id && !ids.model_id && !ids.resource_id) return null;
+    const same = key => String(ids[key] || '') === String(target[key] || '');
+    return same('connection_id') && same('model_id') && same('resource_id') ? node : null;
 }
 async function refreshCanvasParameterSchema(kind, providerId, model){
     const canonical = kind === 'video'
@@ -519,7 +540,13 @@ async function refreshCanvasParameterSchema(kind, providerId, model){
         // Only the selected node/model may update the shared rendered schema.
         if(canvasParameterSchemaTarget[kind] !== key) return;
         canvasParameterSchemaCache.set(`${kind}:active`, schema);
-        applyCanvasSchemaDefaults(kind, schema);
+        const newNode = pendingNewNodeForSchema(kind, target);
+        applyCanvasSchemaDefaults(kind, schema, {force:Boolean(newNode)});
+        if(newNode){
+            delete newNode.schemaDefaultsPending;
+            persistActiveSmartSettings();
+            scheduleSave();
+        }
         renderDynamicParams();
     };
     if(canvasParameterSchemaCache.has(key)){

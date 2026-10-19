@@ -47,6 +47,7 @@ export function createGenerationSettingsSandbox(overrides = {}) {
         // 模型元数据表），本文件的 msModelLabel 会读取它。sandbox 里用一个
         // 最小的默认值代替，测试用例可通过 overrides.msGenModels 自定义。
 
+        ...(overrides.extra || {}),
         __state: state,
     };
 

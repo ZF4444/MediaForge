@@ -434,3 +434,67 @@ describe('custom video duration after schema reload', () => {
         expect(ctx.__state.settings.videoResolution).toBe('480p');
     });
 });
+
+describe('new generation node adopts API-settings defaults', () => {
+    const schema = {fields:[
+        {id:'videoDuration', type:'number', default:4, options:[4,5,6], min:4, max:15, step:1},
+        {id:'videoAspect', default:'16:9', options:['16:9','9:16','source']},
+        {id:'videoResolution', type:'dropdown', default:'720p', options:['720p','1080p']},
+        {id:'videoGenerateAudio', type:'boolean', default:true},
+    ]};
+    const initial = {videoDuration:5, videoAspect:'16:9', videoResolution:'', videoGenerateAudio:false};
+
+    it('force mode replaces still-valid built-in values with the configured defaults', () => {
+        const ctx = createGenerationSettingsSandbox({settings:{...initial}});
+        ctx.applyCanvasSchemaDefaults('video', schema, {force:true});
+        expect(ctx.__state.settings).toMatchObject({videoDuration:4, videoResolution:'720p', videoGenerateAudio:true});
+    });
+
+    it('without force an existing valid value is kept (existing nodes are untouched)', () => {
+        const ctx = createGenerationSettingsSandbox({settings:{...initial, videoGenerateAudio:false}});
+        ctx.applyCanvasSchemaDefaults('video', schema);
+        expect(ctx.__state.settings).toMatchObject({videoDuration:5, videoGenerateAudio:false, videoResolution:'720p'});
+    });
+
+    it('force mode ignores a configured default that is outside its own options/range', () => {
+        const ctx = createGenerationSettingsSandbox({settings:{...initial, videoDuration:5}});
+        ctx.applyCanvasSchemaDefaults('video', {fields:[
+            {id:'videoDuration', type:'number', default:99, min:4, max:15},
+            {id:'videoResolution', type:'dropdown', default:'8k', options:['720p','1080p']},
+        ]}, {force:true});
+        expect(ctx.__state.settings.videoDuration).toBe(5);
+        expect(ctx.__state.settings.videoResolution).toBe('720p');
+    });
+
+    it('force mode does not touch fields that have no configured default', () => {
+        const ctx = createGenerationSettingsSandbox({settings:{...initial, videoDuration:7}});
+        ctx.applyCanvasSchemaDefaults('video', {fields:[{id:'videoDuration', type:'number', min:4, max:15}]}, {force:true});
+        expect(ctx.__state.settings.videoDuration).toBe(7);
+    });
+});
+
+describe('pendingNewNodeForSchema', () => {
+    const target = {connection_id:'c1', model_id:'m1', resource_id:''};
+    function make(node, settings) {
+        return createGenerationSettingsSandbox({settings, fns:{}, extra:{activeSettingsSubject:() => node}});
+    }
+    it('returns the node only while pending, of the same kind, and for the model it actually uses', () => {
+        const node = {genKind:'video', schemaDefaultsPending:true};
+        const ctx = make(node, {videoConnectionId:'c1', videoModelId:'m1', videoResourceId:''});
+        expect(ctx.pendingNewNodeForSchema('video', target)).toBe(node);
+        expect(ctx.pendingNewNodeForSchema('image', target)).toBeNull();
+        expect(ctx.pendingNewNodeForSchema('video', {...target, model_id:'other'})).toBeNull();
+    });
+    it('returns null for an existing node (no pending flag) or before the model is resolved', () => {
+        expect(make({genKind:'video'}, {videoConnectionId:'c1', videoModelId:'m1'}).pendingNewNodeForSchema('video', target)).toBeNull();
+        expect(make({genKind:'video', schemaDefaultsPending:true}, {}).pendingNewNodeForSchema('video', target)).toBeNull();
+    });
+});
+
+describe('video aspect option labels', () => {
+    it('renders the configured label for the source option instead of the raw value', () => {
+        const src = fs.readFileSync(new URL('../src/canvas/generation-settings.js', import.meta.url), 'utf8');
+        expect(src).toContain("'source'])].map(value => [value, canvasSchemaOptionLabel(aspectField, value)])");
+        expect(src).not.toContain("value === 'source' ? 'source' : canvasSchemaOptionLabel(aspectField, value)");
+    });
+});
