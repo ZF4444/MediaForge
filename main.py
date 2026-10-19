@@ -94,7 +94,6 @@ app.add_middleware(
 # --- 认证中间件 ---
 # 放行（无需登录）的精确路径与前缀。
 AUTH_PUBLIC_PATHS = {
-    "/login",
     "/auth/login",
     "/auth/logout",
     "/health/live",
@@ -103,6 +102,7 @@ AUTH_PUBLIC_PATHS = {
     "/favicon.ico",
 }
 HEALTH_PATHS = {"/health/live", "/health/ready", "/metrics"}
+PUBLIC_LANDING_URL = "https://ai-plantform.omnilojo.games/"
 AUTH_PUBLIC_PREFIXES = (
     "/static/",  # css/js/字体/图片等前端静态资源
     "/auth/",  # 认证相关接口
@@ -112,6 +112,10 @@ AUTH_PUBLIC_PREFIXES = (
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+    # The legacy login UI is no longer an entry point. Keep both the route and
+    # its directly served HTML from exposing the old login screen.
+    if path in {"/login", "/login/", "/static/login.html"}:
+        return RedirectResponse(url=PUBLIC_LANDING_URL, status_code=302)
     if path in HEALTH_PATHS:
         return await call_next(request)
     if path == "/favicon.ico" or path.startswith("/static/"):
@@ -144,6 +148,11 @@ async def auth_middleware(request: Request, call_next):
 
     if is_public:
         return await call_next(request)
+
+    # Anonymous visitors start at the public landing site. Existing sessions
+    # pass through above and continue to use the studio as before.
+    if path == "/":
+        return RedirectResponse(url=PUBLIC_LANDING_URL, status_code=302)
 
     # 未登录且访问受保护资源：
     # - API 请求返回 401（前端据此跳登录）

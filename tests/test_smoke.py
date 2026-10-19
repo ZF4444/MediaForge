@@ -13,11 +13,12 @@ def client(app):
     return TestClient(app)
 
 
-def test_login_page_public(client):
-    """登录页无需认证，返回 HTML。"""
-    r = client.get("/login")
-    assert r.status_code == 200
-    assert "text/html" in r.headers.get("content-type", "")
+@pytest.mark.parametrize("path", ["/login", "/login/", "/static/login.html"])
+def test_legacy_login_urls_redirect_to_public_landing(client, path):
+    """旧登录入口统一跳转到新的公开站点。"""
+    response = client.get(path, follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers.get("location") == "https://ai-plantform.omnilojo.games/"
 
 
 def test_static_asset_public(client):
@@ -150,11 +151,11 @@ def test_broadcast_admin_page_keeps_legacy_url_without_inline_css_or_global_scri
     assert "/static/dist/shared/markdown-renderer.js" not in response.text
 
 
-def test_root_redirects_to_login_when_anonymous(client):
-    """未登录访问首页 -> 302 重定向到 /login。"""
+def test_root_redirects_to_public_landing_when_anonymous(client):
+    """未登录访问首页 -> 302 重定向到新的公开站点。"""
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 302
-    assert r.headers.get("location") == "/login"
+    assert r.headers.get("location") == "https://ai-plantform.omnilojo.games/"
 
 
 def test_protected_api_returns_401_when_anonymous(client):
