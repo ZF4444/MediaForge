@@ -265,7 +265,7 @@
         "smart.shortcutUngroup": { zh: "释放选中的分组", en: "Ungroup selected nodes" },
         "smart.shortcutUndo": { zh: "撤销上一步操作", en: "Undo the last action" },
         "smart.shortcutCopy": { zh: "复制选中的节点", en: "Copy selected nodes" },
-        "smart.shortcutPaste": { zh: "粘贴节点或剪贴板图片", en: "Paste nodes or clipboard images" },
+        "smart.shortcutPaste": { zh: "粘贴系统剪贴板内容（节点/图片/视频/文字）", en: "Paste clipboard content (nodes, media, text)" },
         "smart.shortcutAssets": { zh: "打开/关闭资源库", en: "Open/close the asset library" },
         "smart.shortcutOverview": { zh: "缩小画布视图", en: "Zoom out to canvas overview" },
         "smart.shortcutCreateMenu": { zh: "打开快捷菜单", en: "Open the quick create menu" },

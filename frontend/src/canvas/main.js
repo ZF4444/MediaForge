@@ -281,7 +281,6 @@ let promptTemplateEditing = false;
 let promptTemplateGroupEditMode = false;
 let promptPresetDeleteArmed = false;
 let createMenuPoint = {x:0, y:0};
-let nodeClipboard = null;
 let imageClickTimer = null;
 let suppressImageClickUntil = 0;
 let candidatePanelNodeId = '';
@@ -4399,31 +4398,9 @@ async function shellDropHandler(e){
     await handleSmartImageDropPayload(payload, '', {point:p, forceNew:true});
 }
 shell.addEventListener('drop', shellDropHandler);
-function windowPasteHandler(e){
-    if(isBootLoadingActive()){
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-    }
-    const editable = isEditableTarget(e.target) || isEditableTarget(document.activeElement);
-    const files = clipboardEventMediaFiles(e.clipboardData);
-    if(editable && !files.length){
-        const plainText = e.clipboardData?.getData('text/plain') ?? '';
-        const target = e.target?.closest?.('input, textarea, [contenteditable="true"]') || document.activeElement;
-        // Text fields must never receive clipboard HTML or embedded rich nodes.
-        e.preventDefault();
-        if(target?.matches?.('input, textarea') && typeof target.setRangeText === 'function'){
-            const start=target.selectionStart ?? target.value.length, end=target.selectionEnd ?? start;
-            target.setRangeText(plainText,start,end,'end');
-            target.dispatchEvent(new Event('input',{bubbles:true}));
-        }else if(target?.isContentEditable){
-            document.execCommand('insertText',false,plainText);
-        }
-        return;
-    }
-    pasteClipboardContent(files, {editable, preventDefault:() => e.preventDefault()});
-}
-window.addEventListener('paste', windowPasteHandler);
+// 复制/粘贴事件统一在 clipboard.js 的 bindCanvasClipboardEvents 中绑定：
+// 复制与粘贴都以系统剪贴板为唯一来源，Ctrl+C/Ctrl+V 与右键菜单走同一条路径。
+bindCanvasClipboardEvents();
 function windowKeydownHandler(e){
     if(isBootLoadingActive()){
         e.preventDefault();
@@ -4467,15 +4444,8 @@ function windowKeydownHandler(e){
             return;
         }
     }
-    if((e.ctrlKey || e.metaKey) && key === 'c' && !isEditableTarget(e.target)){
-        const selectionText = window.getSelection?.().toString() || '';
-        if(selectionText) return;
-        e.preventDefault();
-        copySelectedNodes();
-        return;
-    }
-    // 不在此处拦截 Ctrl+V：交给原生 'paste' 事件统一处理，
-    // 这样才能读取系统剪贴板里的图片文件并决定粘贴图片还是内部节点。
+    // 不在此处拦截 Ctrl+C / Ctrl+V：交给原生 'copy' / 'paste' 事件（clipboard.js）统一处理，
+    // 这样复制写入、粘贴读取的都是同一份系统剪贴板，且在 http 非安全上下文下同样可用。
     if(e.key === 'Escape' && imageEditModal.classList.contains('open')){
         closeImageEditor();
         return;

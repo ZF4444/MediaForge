@@ -168,6 +168,14 @@ function closeNodeContextMenu(){
     nodeContextMenu.innerHTML = '';
     delete nodeContextMenu.dataset.nodeId;
     delete nodeContextMenu.dataset.canvasContext;
+    delete nodeContextMenu.dataset.worldX;
+    delete nodeContextMenu.dataset.worldY;
+}
+// 右键时记录的世界坐标。菜单打开后鼠标会移动，粘贴必须用右键点下的位置而不是点击菜单项时的位置。
+function contextMenuWorldPoint(){
+    const x = Number(nodeContextMenu?.dataset.worldX);
+    const y = Number(nodeContextMenu?.dataset.worldY);
+    return Number.isFinite(x) && Number.isFinite(y) ? {x, y} : null;
 }
 function nodeContextMenuHtml(node){
     const target = nodeShortcutTargetFor(node);
@@ -176,7 +184,7 @@ function nodeContextMenuHtml(node){
         {action:'download', icon:'download', label:'下载', disabled:!target?.image?.url},
         {separator:true},
         {action:'copy', icon:'copy', label:'复制'},
-        {action:'paste', icon:'clipboard', label:'粘贴', disabled:!nodeClipboard?.nodes?.length && !canReadSystemClipboard()},
+        {action:'paste', icon:'clipboard', label:'粘贴'},
         {separator:true},
         {action:'delete', icon:'trash-2', label:'删除', danger:true},
         {action:'feedback', icon:'message-square-warning', label:'反馈问题'}
@@ -192,8 +200,12 @@ function openNodeContextMenu(nodeId, event){
     const composerWasOpen = composer?.classList.contains('open');
     const shortcutsWereOpen = Boolean(nodeShortcutOverlay?.querySelector('.node-shortcut-bar'));
     document.activeElement?.blur?.();
-    selectedId = node.id;
-    selectedIds = [];
+    // 右键点在已多选的节点上时保留多选，这样"复制"作用于整个选区；否则改为单选该节点。
+    const keepMultiSelection = selectedIds.length > 1 && selectedIds.includes(node.id);
+    if(!keepMultiSelection){
+        selectedId = node.id;
+        selectedIds = [];
+    }
     const mediaItem = event.target.closest?.('[data-image-index]');
     selectedImage = mediaItem
         ? {nodeId:mediaItem.dataset.refNodeId || node.id, index:Number(mediaItem.dataset.refImageIndex ?? mediaItem.dataset.imageIndex ?? 0)}
@@ -208,6 +220,8 @@ function openNodeContextMenu(nodeId, event){
     }
     requestRenderMinimap();
     nodeContextMenu.dataset.nodeId = node.id;
+    nodeContextMenu.dataset.worldX = String(lastMouseWorld.x);
+    nodeContextMenu.dataset.worldY = String(lastMouseWorld.y);
     nodeContextMenu.innerHTML = nodeContextMenuHtml(node);
     nodeContextMenu.hidden = false;
     const shellRect = shell.getBoundingClientRect();
@@ -230,7 +244,7 @@ function canvasContextMenuHtml(){
         {action:'loop', icon:'repeat-2', label:'循环节点'},
         {separator:true},
         {action:'fit-view', icon:'scan', label:'适应视图'},
-        {action:'paste', icon:'clipboard', label:'粘贴', disabled:!nodeClipboard?.nodes?.length && !canReadSystemClipboard()},
+        {action:'paste', icon:'clipboard', label:'粘贴'},
         {action:'undo', icon:'undo-2', label:'撤销', disabled:!undoStack.length}
     ];
     return items.map(item => item.separator
@@ -245,6 +259,8 @@ function openCanvasContextMenu(event){
     closeNodeContextMenu();
     lastMouseWorld = screenToWorld(event);
     nodeContextMenu.dataset.canvasContext = '1';
+    nodeContextMenu.dataset.worldX = String(lastMouseWorld.x);
+    nodeContextMenu.dataset.worldY = String(lastMouseWorld.y);
     nodeContextMenu.innerHTML = canvasContextMenuHtml();
     nodeContextMenu.hidden = false;
     const shellRect = shell.getBoundingClientRect();
@@ -258,7 +274,7 @@ function openCanvasContextMenu(event){
     if(window.lucide) lucide.createIcons();
 }
 function triggerCanvasContextAction(action){
-    const point = lastMouseWorld || viewportCenter();
+    const point = contextMenuWorldPoint() || lastMouseWorld || viewportCenter();
     closeNodeContextMenu();
     if(action === 'generation-image') createGenerationNodeByKind('image', point);
     else if(action === 'generation-video') createGenerationNodeByKind('video', point);
@@ -267,7 +283,7 @@ function triggerCanvasContextAction(action){
     else if(action === 'prompt') createPromptNode(point.x - 158, point.y - 97);
     else if(action === 'loop') createLoopNode(point.x - 135, point.y - 95);
     else if(action === 'fit-view') toggleZoomPreview();
-    else if(action === 'paste') void pasteFromContextMenu();
+    else if(action === 'paste') void pasteFromContextMenu(point, {forceNew:true});
     else if(action === 'undo') performUndo();
 }
 function openParentFeedback(){
@@ -279,6 +295,7 @@ function openParentFeedback(){
 }
 function triggerNodeContextAction(action, nodeId){
     const node = nodes.find(entry => entry.id === nodeId);
+    const point = contextMenuWorldPoint();
     closeNodeContextMenu();
     if(!node && action !== 'paste' && action !== 'feedback') return;
     if(action === 'save'){
@@ -287,9 +304,10 @@ function triggerNodeContextAction(action, nodeId){
         const target = nodeShortcutTargetFor(node);
         if(target?.image) downloadPreviewFile(target.image);
     } else if(action === 'copy'){
-        copySelectedNodes();
+        void copySelectedNodes();
     } else if(action === 'paste'){
-        void pasteFromContextMenu();
+        // 右键在节点上：媒体内容追加进该节点；节点内容则粘贴到右键位置。
+        void pasteFromContextMenu(point, {targetId:node?.id || ''});
     } else if(action === 'delete'){
         deleteNode(node.id);
     } else if(action === 'feedback'){
