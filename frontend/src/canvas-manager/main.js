@@ -10,6 +10,7 @@ import ChevronDown from 'lucide/dist/esm/icons/chevron-down.mjs';
 import SearchX from 'lucide/dist/esm/icons/search-x.mjs';
 import LayoutGrid from 'lucide/dist/esm/icons/layout-grid.mjs';
 import Download from 'lucide/dist/esm/icons/download.mjs';
+import Archive from 'lucide/dist/esm/icons/archive.mjs';
 import Pencil from 'lucide/dist/esm/icons/pencil.mjs';
 import { applyStoredTheme } from '../shared/theme-bootstrap.js';
 import Trash from 'lucide/dist/esm/icons/trash.mjs';
@@ -19,7 +20,7 @@ applyStoredTheme();
 
 const icons = {
   Sparkles, Layers,
-  Upload, RefreshCw, Plus, Search, ChevronDown, SearchX, LayoutGrid, Download,
+  Upload, RefreshCw, Plus, Search, ChevronDown, SearchX, LayoutGrid, Download, Archive,
   Pencil, Trash, CircleAlert,
   // 页面仍使用旧图标名 layers-3 / trash-2；在 lucide 1.x 中分别是 Layers / Trash 的别名。
   Layers3: Layers, Trash2: Trash,
@@ -68,7 +69,7 @@ function render(canvases) {
     const stage = thumbnail
       ? `<img class="canvas-thumbnail" src="${escapeHtml(thumbnail)}" alt="" loading="lazy" decoding="async">`
       : '<span class="canvas-icon"><i data-lucide="sparkles"></i></span>';
-    return `<article class="canvas-card" style="--card-index:${Math.min(index, 8)}"><button class="canvas-open" type="button" data-open-id="${escapeHtml(canvas.id)}" aria-label="打开 ${escapeHtml(canvas.title)}"><div class="canvas-stage ${thumbnail ? 'has-thumbnail' : ''}">${stage}</div><div class="canvas-info"><div class="canvas-title">${escapeHtml(canvas.title || '未命名画布')}</div><div class="canvas-meta">${Number(canvas.node_count || 0)} 个节点 · ${formatTime(canvas.updated_at || canvas.created_at)}</div></div></button><div class="card-actions"><button class="card-action" type="button" data-export-id="${escapeHtml(canvas.id)}" data-title="${escapeHtml(canvas.title || '')}" title="导出 JSON" aria-label="导出 JSON"><i data-lucide="download"></i></button><button class="card-action" type="button" data-rename-id="${escapeHtml(canvas.id)}" data-title="${escapeHtml(canvas.title || '')}" title="重命名"><i data-lucide="pencil"></i></button><button class="card-action danger" type="button" data-delete-id="${escapeHtml(canvas.id)}" data-title="${escapeHtml(canvas.title || '')}" title="删除"><i data-lucide="trash-2"></i></button></div></article>`;
+    return `<article class="canvas-card" style="--card-index:${Math.min(index, 8)}"><button class="canvas-open" type="button" data-open-id="${escapeHtml(canvas.id)}" aria-label="打开 ${escapeHtml(canvas.title)}"><div class="canvas-stage ${thumbnail ? 'has-thumbnail' : ''}">${stage}</div><div class="canvas-info"><div class="canvas-title">${escapeHtml(canvas.title || '未命名画布')}</div><div class="canvas-meta">${Number(canvas.node_count || 0)} 个节点 · ${formatTime(canvas.updated_at || canvas.created_at)}</div></div></button><div class="card-actions"><button class="card-action" type="button" data-export-id="${escapeHtml(canvas.id)}" data-title="${escapeHtml(canvas.title || '')}" title="下载画布" aria-label="下载画布"><i data-lucide="download"></i></button><button class="card-action" type="button" data-export-assets-id="${escapeHtml(canvas.id)}" data-title="${escapeHtml(canvas.title || '')}" title="下载画布和资产" aria-label="下载画布和资产"><i data-lucide="archive"></i></button><button class="card-action" type="button" data-rename-id="${escapeHtml(canvas.id)}" data-title="${escapeHtml(canvas.title || '')}" title="重命名"><i data-lucide="pencil"></i></button><button class="card-action danger" type="button" data-delete-id="${escapeHtml(canvas.id)}" data-title="${escapeHtml(canvas.title || '')}" title="删除"><i data-lucide="trash-2"></i></button></div></article>`;
   }).join('');
   list.querySelectorAll('.canvas-thumbnail').forEach(image => image.addEventListener('error', () => {
     image.closest('.canvas-stage')?.classList.add('thumbnail-failed');
@@ -135,26 +136,26 @@ async function deleteCanvas(id, title) {
   }
 }
 
-function downloadJson(data, title) {
-  const safe = (title || 'canvas').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'canvas';
+function downloadBlob(blob, filename) {
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-  link.download = `${safe}.json`;
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 800);
 }
 
-async function exportCanvas(id, title) {
+async function exportCanvas(id, title, includeResources = false) {
   try {
     const data = await apiJson(`/api/canvases/${encodeURIComponent(id)}`);
     const canvas = data.canvas || {};
-    downloadJson({
-      format: 'infinite-canvas-workflow', version: 1, canvas_type: 'smart', exported_at: Date.now(),
-      nodes: canvas.nodes || [], connections: canvas.connections || [],
-    }, `${title || canvas.title || 'canvas'}-workflow`);
-  } catch {
-    window.alert('导出失败，请稍后重试。');
-  }
+    const payload = { format: 'infinite-canvas-workflow', version: 1, canvas_type: 'smart', exported_at: Date.now(), nodes: canvas.nodes || [], connections: canvas.connections || [] };
+    const safe = (title || canvas.title || 'canvas').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'canvas';
+    const filename = `${safe}-workflow.${includeResources ? 'zip' : 'json'}`;
+    if (!includeResources) { downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), filename); return; }
+    const response = await fetch('/api/canvas-workflows/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, include_resources: true, filename }) });
+    if (!response.ok) throw new Error('export failed');
+    downloadBlob(await response.blob(), filename);
+  } catch { window.alert('导出失败，请稍后重试。'); }
 }
 
 async function importCanvas(file) {
@@ -202,6 +203,8 @@ list.addEventListener('click', event => {
   if (open) return openCanvas(open.dataset.openId);
   const exportButton = event.target.closest('[data-export-id]');
   if (exportButton) return exportCanvas(exportButton.dataset.exportId, exportButton.dataset.title);
+  const exportAssetsButton = event.target.closest('[data-export-assets-id]');
+  if (exportAssetsButton) return exportCanvas(exportAssetsButton.dataset.exportAssetsId, exportAssetsButton.dataset.title, true);
   const rename = event.target.closest('[data-rename-id]');
   if (rename) return renameCanvas(rename.dataset.renameId, rename.dataset.title || '');
   const remove = event.target.closest('[data-delete-id]');
