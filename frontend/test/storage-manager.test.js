@@ -133,6 +133,100 @@ describe('storageCardThumb', () => {
     });
 });
 
+describe('exportStorageEntries', () => {
+    function exportCtx(extra = {}) {
+        const statuses = [];
+        const ctx = createStorageManagerSandbox({
+            storageFiles: { entries: [{ file_id: 'a', original_name: 'a.png' }] },
+            fns: { setStatus: s => statuses.push(s) },
+        });
+        const clicks = [];
+        ctx.document = {
+            createElement: () => ({ click() { clicks.push(this.href + '|' + (this.download || '')); }, remove() {} }),
+            body: { appendChild() {} },
+        };
+        ctx.URL = { createObjectURL: () => 'blob:x', revokeObjectURL() {} };
+        ctx.setTimeout = () => 0;
+        Object.assign(ctx, extra);
+        return { ctx, statuses, clicks };
+    }
+
+    it('未选择文件时不做任何事', async () => {
+        const { ctx, statuses, clicks } = exportCtx();
+        await run(ctx, 'exportStorageEntries([])');
+        expect(statuses).toEqual([]);
+        expect(clicks).toEqual([]);
+    });
+
+    it('只选 1 个文件时直接走单文件下载接口', async () => {
+        const { ctx, clicks } = exportCtx();
+        await run(ctx, "exportStorageEntries(['a'])");
+        expect(clicks).toEqual(['/api/files/a/download|a.png']);
+    });
+
+    it('选多个文件时请求 /api/storage/export 并保存 zip', async () => {
+        const calls = [];
+        const response = {
+            ok: true,
+            headers: { get: name => ({ 'Content-Disposition': "attachment; filename*=UTF-8''pack.zip", 'X-Export-Count': '2', 'X-Export-Skipped': '1' })[name] },
+            blob: async () => 'BLOB',
+        };
+        const { ctx, statuses, clicks } = exportCtx({
+            fetch: async (url, opts) => { calls.push([url, JSON.parse(opts.body)]); return response; },
+        });
+        await run(ctx, "exportStorageEntries(['a','b','a'])");
+        expect(calls).toEqual([['/api/storage/export', { file_ids: ['a', 'b'] }]]);
+        expect(clicks).toEqual(['blob:x|pack.zip']);
+        expect(statuses.at(-1)).toBe('已导出 2 个文件，1 个文件读取失败');
+    });
+
+    it('后端返回错误时在状态栏显示 detail', async () => {
+        const { ctx, statuses, clicks } = exportCtx({
+            fetch: async () => ({ ok: false, json: async () => ({ detail: '请分批导出' }) }),
+        });
+        await run(ctx, "exportStorageEntries(['a','b'])");
+        expect(statuses.at(-1)).toBe('请分批导出');
+        expect(clicks).toEqual([]);
+    });
+});
+
+describe('deleteSelectedStorageEntries', () => {
+    function deleteCtx(confirmResult) {
+        const messages = [];
+        const requests = [];
+        const ctx = createStorageManagerSandbox({
+            storageFiles: { entries: [{ file_id: 'a' }, { file_id: 'b' }], total_matches: 2, limit: 50 },
+            storageSelectedIds: new Set(['a', 'b']),
+            fns: {
+                confirm: message => { messages.push(message); return confirmResult; },
+                apiJson: async (url, options) => { requests.push([url, options?.body]); return { removed: 2, deleted: ['a', 'b'], entries: [] }; },
+            },
+        });
+        return { ctx, messages, requests };
+    }
+
+    it('确认后才调用删除接口，弹窗里显示选中数量', async () => {
+        const { ctx, messages, requests } = deleteCtx(true);
+        await run(ctx, 'deleteSelectedStorageEntries()');
+        expect(messages).toEqual(['确定删除选中的 2 个文件？此操作不可恢复。']);
+        expect(requests.find(([url]) => url === '/api/storage/delete')?.[1]).toBe(JSON.stringify({ file_ids: ['a', 'b'] }));
+    });
+
+    it('取消确认时不调用任何接口，选中状态保持不变', async () => {
+        const { ctx, requests } = deleteCtx(false);
+        await run(ctx, 'deleteSelectedStorageEntries()');
+        expect(requests).toEqual([]);
+        expect(run(ctx, 'storageSelectedIds.size')).toBe(2);
+    });
+
+    it('没有选中文件时不弹窗', async () => {
+        const { ctx, messages } = deleteCtx(true);
+        run(ctx, 'storageSelectedIds.clear()');
+        await run(ctx, 'deleteSelectedStorageEntries()');
+        expect(messages).toEqual([]);
+    });
+});
+
 describe('storageDateInputValue', () => {
     it('未设置 storageCreatedBefore 时返回空字符串', () => {
         const ctx = createStorageManagerSandbox({ storageCreatedBefore: null });

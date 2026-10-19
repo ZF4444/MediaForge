@@ -140,6 +140,8 @@ STORAGE_CACHE_CLEANUP_BATCH_SIZE = int(os.getenv("STORAGE_CACHE_CLEANUP_BATCH_SI
 STORAGE_CACHE_DRY_RUN = str(os.getenv("STORAGE_CACHE_DRY_RUN", "false")).strip().lower() in {"1", "true", "yes", "on"}
 STORAGE_QUOTA_ENABLED = str(os.getenv("STORAGE_QUOTA_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
 STORAGE_USER_QUOTA_BYTES = int(os.getenv("STORAGE_USER_QUOTA_BYTES", str(10 * 1024 * 1024 * 1024)))
+# 空间管理批量导出 zip 的单次总大小上限（字节），超出返回 413，提示用户分批导出。
+STORAGE_EXPORT_MAX_BYTES = int(os.getenv("STORAGE_EXPORT_MAX_BYTES", str(2 * 1024 * 1024 * 1024)))
 STORAGE_CLEANUP_ENABLED = str(os.getenv("STORAGE_CLEANUP_ENABLED", "true")).strip().lower() in {
     "1",
     "true",

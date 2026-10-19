@@ -465,6 +465,10 @@ class StorageBatchDeletePayload(BaseModel):
     file_ids: List[str] = Field(default_factory=list, max_length=500)
 
 
+class StorageExportPayload(BaseModel):
+    file_ids: List[str] = Field(default_factory=list, max_length=500)
+
+
 class StorageQuotaUserConfigPayload(BaseModel):
     quota_bytes: Optional[int] = Field(default=None, ge=0)
 

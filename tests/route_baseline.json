@@ -903,6 +903,13 @@
     "APIRoute"
   ],
   [
+    "/api/storage/export",
+    [
+      "POST"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/storage/files",
     [
       "GET"

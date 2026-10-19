@@ -152,6 +152,69 @@ async function deleteStorageEntries(fileIds){
     render();
     setStatus(removed > 0 ? `已删除 ${removed} 个文件` : '未删除任何文件');
 }
+function triggerBrowserDownload(href, filename=''){
+    const link = document.createElement('a');
+    link.href = href;
+    if(filename) link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+}
+function exportFileNameFromResponse(response){
+    const header = String(response?.headers?.get?.('Content-Disposition') || '');
+    const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i);
+    if(utf8){ try { return decodeURIComponent(utf8[1]); } catch(_) {} }
+    const plain = header.match(/filename="?([^";]+)"?/i);
+    return plain ? plain[1] : 'mediaforge-export.zip';
+}
+// 导出已选文件：只选 1 个时直接走单文件下载；多个时请求后端打包 zip。
+async function exportStorageEntries(fileIds){
+    const ids = [...new Set((fileIds || []).map(id => String(id || '').trim()).filter(Boolean))];
+    if(!ids.length) return;
+    if(ids.length === 1){
+        const entry = findStorageEntry(ids[0]);
+        triggerBrowserDownload(`/api/files/${encodeURIComponent(ids[0])}/download`, entry?.original_name || entry?.filename || '');
+        setStatus('已开始下载');
+        return;
+    }
+    setStatus(`正在打包 ${ids.length} 个文件...`);
+    try {
+        const request = {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({file_ids:ids})
+        };
+        const apiStream = globalThis.__MediaForgeRuntimeServices?.apiStream;
+        let response;
+        if(apiStream){
+            response = await apiStream('/api/storage/export', request);
+        } else {
+            response = await fetch('/api/storage/export', request);
+            if(!response.ok){
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.detail || data.message || '导出失败');
+            }
+        }
+        const filename = exportFileNameFromResponse(response);
+        const count = Number(response.headers?.get?.('X-Export-Count') || ids.length);
+        const skipped = Number(response.headers?.get?.('X-Export-Skipped') || 0);
+        const blob = await response.blob();
+        const href = URL.createObjectURL(blob);
+        triggerBrowserDownload(href, filename);
+        setTimeout(() => URL.revokeObjectURL(href), 1200);
+        setStatus(skipped > 0 ? `已导出 ${count} 个文件，${skipped} 个文件读取失败` : `已导出 ${count} 个文件`);
+    } catch(e) {
+        setStatus(String(e?.message || '导出失败').slice(0, 160));
+    }
+}
+// 批量删除前先弹窗确认（与"删除全部符合条件"的确认方式一致）。
+async function deleteSelectedStorageEntries(){
+    const count = storageSelectedIds.size;
+    if(!count) return;
+    const confirmFn = globalThis.__MediaForgeRuntimeServices?.apiConfirm || (message => globalThis.confirm?.(message));
+    if(!(await confirmFn(`确定删除选中的 ${count} 个文件？此操作不可恢复。`))) return;
+    await deleteStorageEntries([...storageSelectedIds]);
+}
 async function deleteAllMatchingStorageEntries(){
     const {totalMatches} = storagePageInfo();
     if(!totalMatches) return;
@@ -265,6 +328,7 @@ function renderStorageManager(){
                 <div class="asset-tools">
                     <button class="asset-btn" type="button" data-storage-select-all ${entries.length ? '' : 'disabled'}><i data-lucide="check-square"></i><span>全选</span></button>
                     <button class="asset-btn" type="button" data-storage-clear ${storageSelectedIds.size ? '' : 'disabled'}><i data-lucide="square"></i><span>清空</span></button>
+                    <button class="asset-btn" type="button" data-storage-export ${storageSelectedIds.size ? '' : 'disabled'}><i data-lucide="download"></i><span>导出</span></button>
                     <button class="asset-btn danger" type="button" data-storage-delete-selected ${storageSelectedIds.size ? '' : 'disabled'}><i data-lucide="trash-2"></i><span>删除</span></button>
                 </div>
             </div>

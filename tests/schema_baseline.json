@@ -1331,6 +1331,17 @@
     },
     "required": []
   },
+  "StorageExportPayload": {
+    "properties": {
+      "file_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": []
+  },
   "StorageQuotaConfigPayload": {
     "properties": {
       "enabled": {

@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
+import time
+import zipfile
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
+from app.config import STORAGE_EXPORT_MAX_BYTES
 from app.core.access_control import has_page_access
 from app.core.auth import (
     USERS,
     USERS_LOCK,
     current_user_id,
 )
-from app.core.logging import audit_event
+from app.core.logging import audit_event, get_logger
+from app.core.media import sanitize_export_filename
 from app.core.storage_io import run_storage_io
-from app.models import StorageBatchDeletePayload, StorageQuotaConfigPayload
+from app.models import StorageBatchDeletePayload, StorageExportPayload, StorageQuotaConfigPayload
 from app.services.storage import (
+    download_object_to_file,
     get_user_files_by_ids,
     list_media_entries_page_for_user,
     list_user_file_ids_matching,
@@ -28,6 +38,7 @@ from app.services.storage import (
 )
 
 router = APIRouter()
+logger = get_logger("storage_management")
 
 
 def _require_user_management() -> str:
@@ -196,6 +207,119 @@ def _batch_delete_storage_entries_sync(raw, payload: StorageBatchDeletePayload):
         all_matching=all_matching,
     )
     return {"deleted": removed_ids, "removed": len(removed_ids)}
+
+
+def _export_archive_name(entry: Dict[str, Any], used_names: Set[str]) -> str:
+    ext = str(entry.get("ext") or "")
+    fallback = f"{entry.get('file_id') or 'file'}{ext}"
+    base = sanitize_export_filename(entry.get("original_name") or entry.get("filename") or "", fallback)
+    if not os.path.splitext(base)[1] and ext:
+        base = f"{base}{ext}"
+    stem, suffix = os.path.splitext(base)
+    name = base
+    counter = 2
+    while name.lower() in used_names:
+        name = f"{stem}-{counter}{suffix}"
+        counter += 1
+    used_names.add(name.lower())
+    return name
+
+
+def _export_zip_date_time(created_at: Any) -> tuple:
+    try:
+        stamp = time.localtime(int(created_at or 0) / 1000)
+    except (TypeError, ValueError, OverflowError, OSError):
+        stamp = time.localtime()
+    if stamp.tm_year < 1980:
+        stamp = time.localtime()
+    return tuple(stamp[:6])
+
+
+def _remove_file_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _export_storage_entries_sync(payload: StorageExportPayload) -> Dict[str, Any]:
+    file_ids = list(
+        dict.fromkeys(str(item or "").strip() for item in (payload.file_ids or []) if str(item or "").strip())
+    )
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="没有选择文件。")
+    entries_by_id = get_user_files_by_ids(file_ids)
+    entries = [
+        entries_by_id[file_id]
+        for file_id in file_ids
+        if file_id in entries_by_id
+        and entries_by_id[file_id].get("bucket")
+        and entries_by_id[file_id].get("object_key")
+    ]
+    if not entries:
+        raise HTTPException(status_code=404, detail="没有可导出的文件。")
+    total_bytes = sum(int(entry.get("size") or 0) for entry in entries)
+    if total_bytes > STORAGE_EXPORT_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"所选文件共 {total_bytes // (1024 * 1024)} MB，超过单次导出上限 "
+            f"{STORAGE_EXPORT_MAX_BYTES // (1024 * 1024)} MB，请分批导出。",
+        )
+    fd, zip_path = tempfile.mkstemp(prefix="storage-export-", suffix=".zip")
+    os.close(fd)
+    exported_ids: List[str] = []
+    try:
+        used_names: Set[str] = set()
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED, allowZip64=True) as zf:
+            for entry in entries:
+                # download_object_to_file 失败重试时需要 seek/truncate，目标必须可回绕，
+                # 因此每个对象先落到匿名临时文件，再拷入 zip，避免整包进内存。
+                with tempfile.TemporaryFile() as tmp:
+                    try:
+                        download_object_to_file(entry["bucket"], entry["object_key"], tmp)
+                    except Exception:
+                        logger.exception(
+                            "storage export: failed to read object",
+                            extra={"event": "storage_export_object_failed", "file_id": entry.get("file_id")},
+                        )
+                        continue
+                    tmp.seek(0)
+                    info = zipfile.ZipInfo(
+                        _export_archive_name(entry, used_names),
+                        date_time=_export_zip_date_time(entry.get("created_at")),
+                    )
+                    info.compress_type = zipfile.ZIP_STORED
+                    with zf.open(info, "w", force_zip64=True) as dest:
+                        shutil.copyfileobj(tmp, dest, 1024 * 1024)
+                exported_ids.append(str(entry.get("file_id") or ""))
+        if not exported_ids:
+            raise HTTPException(status_code=404, detail="所选文件读取失败，无法导出。")
+    except BaseException:
+        _remove_file_quietly(zip_path)
+        raise
+    audit_event(
+        "storage_files_exported",
+        action="export",
+        resource_type="stored_file",
+        resource_id=None,
+        requested_count=len(file_ids),
+        exported_count=len(exported_ids),
+        resource_ids=exported_ids,
+    )
+    return {"path": zip_path, "count": len(exported_ids), "skipped": len(file_ids) - len(exported_ids)}
+
+
+@router.post("/api/storage/export")
+async def export_storage_entries(payload: StorageExportPayload):
+    result = await run_storage_io(_export_storage_entries_sync, payload)
+    filename = f"mediaforge-export-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return FileResponse(
+        result["path"],
+        media_type="application/zip",
+        filename=filename,
+        headers={"X-Export-Count": str(result["count"]), "X-Export-Skipped": str(result["skipped"])},
+        background=BackgroundTask(_remove_file_quietly, result["path"]),
+    )
 
 
 @router.get("/api/storage/config")

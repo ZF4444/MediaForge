@@ -333,7 +333,8 @@ async function handleClick(event){
     }
     if(target.closest?.('[data-storage-select-all]')){ currentStorageEntries().forEach(item => storageSelectedIds.add(item.file_id)); render({preserveScroll:true}); return; }
     if(target.closest?.('[data-storage-clear]')){ storageSelectedIds.clear(); render({preserveScroll:true}); return; }
-    if(target.closest?.('[data-storage-delete-selected]')){ await deleteStorageEntries([...storageSelectedIds]); return; }
+    if(target.closest?.('[data-storage-export]')){ await exportStorageEntries([...storageSelectedIds]); return; }
+    if(target.closest?.('[data-storage-delete-selected]')){ await deleteSelectedStorageEntries(); return; }
     const storageDeleteOne = target.closest?.('[data-storage-delete-one]');
     if(storageDeleteOne){ await deleteStorageEntries([storageDeleteOne.dataset.storageDeleteOne || '']); return; }
     const storageCheck = target.closest?.('[data-storage-check]');
