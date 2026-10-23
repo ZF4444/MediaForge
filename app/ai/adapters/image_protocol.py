@@ -9,8 +9,88 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 from fastapi import HTTPException
+
+# Cloudwise serves these Gemini image models through the native
+# ``generateContent`` API only (no OpenAI-compatible image facade).
+CLOUDWISE_GEMINI_IMAGE_MODELS = (
+    "gemini-3.1-flash-image",
+    "gemini-3-pro-image",
+)
+
+
+def is_cloudwise_gemini_image(base_url: Any, model: Any) -> bool:
+    """Whether a request must use Cloudwise's native Gemini image endpoint."""
+    host = urlsplit(str(base_url or "")).hostname
+    return host == "api.cloudwise.ai" and str(model or "").strip().lower() in CLOUDWISE_GEMINI_IMAGE_MODELS
+
+
+def cloudwise_gemini_image_url(base_url: str, model: str) -> str:
+    """Build ``/api/v1beta/models/{model}:generateContent`` from any Cloudwise base URL form."""
+    parsed = urlsplit(str(base_url or ""))
+    return f"{parsed.scheme}://{parsed.netloc}/api/v1beta/models/{quote(str(model), safe='.-_')}:generateContent"
+
+
+def gemini_usage(meta: Any) -> dict[str, int]:
+    """Translate Gemini ``usageMetadata`` into the OpenAI-style usage used for billing.
+
+    Thinking tokens are billed at the output rate, so they are folded into
+    ``completion_tokens``.
+    """
+    if not isinstance(meta, dict):
+        return {}
+
+    def number(value: Any) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    prompt = number(meta.get("promptTokenCount"))
+    completion = number(meta.get("candidatesTokenCount")) + number(meta.get("thoughtsTokenCount"))
+    usage = {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": number(meta.get("totalTokenCount")) or prompt + completion,
+    }
+    cached = number(meta.get("cachedContentTokenCount"))
+    if cached:
+        usage["cached_tokens"] = cached
+    text = image = 0
+    for item in meta.get("promptTokensDetails") or []:
+        if not isinstance(item, dict):
+            continue
+        modality = str(item.get("modality") or "").upper()
+        if modality == "TEXT":
+            text += number(item.get("tokenCount"))
+        elif modality == "IMAGE":
+            image += number(item.get("tokenCount"))
+    if text or image:
+        usage["text_input_tokens"], usage["image_input_tokens"] = text, image
+    return usage
+
+
+def gemini_failure_reason(data: Any) -> str:
+    """Explain why a Gemini response carries no image (blocked prompt, safety stop, text-only)."""
+    if not isinstance(data, dict):
+        return ""
+    feedback = data.get("promptFeedback")
+    if isinstance(feedback, dict) and feedback.get("blockReason"):
+        return f"提示词被拦截（{feedback['blockReason']}）"
+    texts: list[str] = []
+    for candidate in data.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        reason = str(candidate.get("finishReason") or "")
+        if reason and reason != "STOP":
+            return f"生成被终止（{reason}）"
+        content = candidate.get("content")
+        for part in (content.get("parts") if isinstance(content, dict) else None) or []:
+            if isinstance(part, dict) and part.get("text"):
+                texts.append(str(part["text"]))
+    return f"模型只返回了文字：{' '.join(texts)[:300]}" if texts else ""
 
 
 def image_from_value(value: Any) -> dict[str, str] | None:

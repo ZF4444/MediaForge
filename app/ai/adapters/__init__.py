@@ -3,6 +3,7 @@
 from .base import AIAdapter
 from .openai import OpenAIChatAdapter, OpenAIImageAdapter
 from .gemini import GeminiChatAdapter
+from .gemini_images import GeminiNativeImageAdapter
 from .omnilojo import OmnilojoChatAdapter, OmnilojoImageAdapter
 from .runninghub_app import RunningHubAppAdapter, RunningHubImageAdapter
 from .comfyui_workflow import ComfyUIWorkflowAdapter
@@ -12,6 +13,7 @@ __all__ = [
     "OpenAIChatAdapter",
     "OpenAIImageAdapter",
     "GeminiChatAdapter",
+    "GeminiNativeImageAdapter",
     "OmnilojoChatAdapter",
     "OmnilojoImageAdapter",
     "RunningHubAppAdapter",

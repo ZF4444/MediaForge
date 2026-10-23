@@ -246,6 +246,7 @@ from app.ai.adapters.runninghub_protocol import (
     endpoint as runninghub_protocol_endpoint,
     authorization_headers as runninghub_protocol_headers,
 )
+from app.ai.adapters.image_protocol import CLOUDWISE_GEMINI_IMAGE_MODELS
 from app.ai.adapters.video_protocol import (
     CLOUDWISE_SEEDANCE_MODELS,
     cloudwise_seedance_url,
@@ -2805,6 +2806,19 @@ async def _image_adapter_gemini(request: ImageGenerationRequest):
     )
 
 
+async def _image_adapter_cloudwise_gemini(request: ImageGenerationRequest):
+    """Cloudwise gemini-3.1-flash-image / gemini-3-pro-image via native generateContent."""
+    from app.ai.adapters.gemini_images import GeminiNativeImageAdapter
+
+    adapter = GeminiNativeImageAdapter(
+        headers=lambda value, upstream_model: api_headers(connection=value, model=upstream_model),
+        resolve_reference=lambda reference: run_storage_io(reference_to_data_url, reference, 1536),
+        client_factory=shared_http_client,
+        timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=HTTP_CLIENT_TIMEOUT_POOL_SECONDS),
+    )
+    return await adapter.generate(request)
+
+
 async def _image_adapter_volcengine(request: ImageGenerationRequest):
     return await generate_volcengine_image(
         request.prompt,
@@ -2833,6 +2847,7 @@ IMAGE_ADAPTERS = build_image_adapter_registry(
         "gemini": _image_adapter_gemini,
         "volcengine": _image_adapter_volcengine,
         "openai": _image_adapter_openai,
+        "cloudwise_gemini": _image_adapter_cloudwise_gemini,
     }
 )
 
@@ -4357,13 +4372,14 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
         raise HTTPException(status_code=400, detail=f"请先填写或保存 {key_name}")
     if protocol == "openai" and "api.cloudwise.ai" in base_url.lower():
         # Cloudwise documents fixed model IDs rather than an OpenAI model-list endpoint.
+        image_models = ["gpt-image-2", *CLOUDWISE_GEMINI_IMAGE_MODELS]
         return {
-            "total": 1 + len(CLOUDWISE_SEEDANCE_MODELS),
+            "total": len(image_models) + len(CLOUDWISE_SEEDANCE_MODELS),
             "protocol": "openai",
-            "image_models": ["gpt-image-2"],
+            "image_models": image_models,
             "chat_models": [],
             "video_models": list(CLOUDWISE_SEEDANCE_MODELS),
-            "all": ["gpt-image-2", *CLOUDWISE_SEEDANCE_MODELS],
+            "all": [*image_models, *CLOUDWISE_SEEDANCE_MODELS],
         }
     url = upstream_models_url(base_url, protocol)
     try:
