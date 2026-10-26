@@ -14,18 +14,17 @@
 本模块不引用 FastAPI app 对象，避免循环导入。
 """
 
+import copy
 import os
 import re
-import copy
 from threading import Lock
 from typing import Any, Dict, List
 
 from app.config import STATIC_DIR
 from app.core.logging import get_logger
-
+from app.services.business_metadata import get_app_setting_version, get_app_setting_with_version, set_app_setting
 
 logger = get_logger("access_control")
-from app.services.business_metadata import get_app_setting, set_app_setting
 
 DEFAULT_USER_TYPE_ID = "new-user"
 DEFAULT_USER_TYPE_NAME = "默认用户"
@@ -39,6 +38,7 @@ ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "admin").strip() or "admin"
 
 ACCESS_CONTROL_LOCK = Lock()
 _ACCESS_CONTROL_CACHE = None
+_ACCESS_CONTROL_VERSION = None
 
 # 侧边栏首页文件（唯一真实来源）：页面清单从这里动态解析，避免与本文件的硬编码列表脱节。
 STUDIO_INDEX_HTML_FILE = os.path.join(STATIC_DIR, "index.html")
@@ -78,7 +78,6 @@ def _extract_nav_items(html: str) -> List[Dict[str, str]]:
     seen = set()
     matches = list(re.finditer(r'<[^>]*onclick="switchUI\(this,\s*\'([a-zA-Z0-9-]+)\'\)"[^>]*>', html))
     for idx, m in enumerate(matches):
-        tag = m.group(0)
         page_id = m.group(1)
         if page_id in seen:
             continue
@@ -138,14 +137,21 @@ def all_models() -> List[Dict[str, str]]:
     ]
 
 
-def is_model_allowed(user_id: str, connection_id: str, model: str) -> bool:
+def is_model_allowed(user_id: str, connection_id: str, model: str, *, model_id: str = "") -> bool:
     if not user_id or not connection_id or not model:
         return False
-    if is_admin(user_id):
+    if user_id == ADMIN_USER_ID:
         return True
-    allowed = effective_permissions(user_id)["models"]
+    config = load_config()
+    type_id = config["user_types"].get(user_id, DEFAULT_USER_TYPE_ID)
+    if type_id == ADMIN_USER_TYPE_ID:
+        return True
+    allowed = config["types"][type_id]["models"]
     if allowed is None:
         return True
+    if model_id:
+        # Resolved targets already pin the connection and model. No catalogue scan.
+        return model_id in allowed
     return any(item["id"] in allowed and item["connection_id"] == connection_id
                and item["upstream_model"] == model for item in all_models())
 
@@ -218,10 +224,14 @@ def _normalize_config(data: Any) -> Dict[str, Any]:
 
 
 def _load_config_unlocked() -> Dict[str, Any]:
-    global _ACCESS_CONTROL_CACHE
-    if _ACCESS_CONTROL_CACHE is not None:
-        return copy.deepcopy(_ACCESS_CONTROL_CACHE)
-    _ACCESS_CONTROL_CACHE = _normalize_config(get_app_setting("access_control", {}))
+    global _ACCESS_CONTROL_CACHE, _ACCESS_CONTROL_VERSION
+    # Do not serve stale permissions if the database revision cannot be read.
+    version = get_app_setting_version("access_control")
+    if _ACCESS_CONTROL_CACHE is None or version != _ACCESS_CONTROL_VERSION:
+        value, version = get_app_setting_with_version("access_control", {})
+        normalized = _normalize_config(value)
+        _ACCESS_CONTROL_CACHE = normalized
+        _ACCESS_CONTROL_VERSION = version
     return copy.deepcopy(_ACCESS_CONTROL_CACHE)
 
 
@@ -285,7 +295,9 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     global _ACCESS_CONTROL_CACHE
     with ACCESS_CONTROL_LOCK:
         set_app_setting("access_control", sanitized)
-        _ACCESS_CONTROL_CACHE = copy.deepcopy(sanitized)
+        # Invalidate rather than guessing the revision: another process may write
+        # immediately after this commit. Reload value and revision together.
+        _ACCESS_CONTROL_CACHE = None
     return sanitized
 
 
@@ -297,5 +309,4 @@ def effective_permissions(user_id: str) -> Dict[str, Any]:
     config = load_config()
     type_id = config.get("user_types", {}).get(user_id, DEFAULT_USER_TYPE_ID)
     entry = config.get("types", {}).get(type_id) or config["types"][DEFAULT_USER_TYPE_ID]
-    sanitized = _sanitize_user_entry(entry)
-    return {"user_type": type_id, **sanitized}
+    return {"user_type": type_id, "pages": entry["pages"], "models": entry["models"]}

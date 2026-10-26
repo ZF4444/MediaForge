@@ -731,6 +731,14 @@ def get_app_setting(key: str, default: Any = None) -> Any:
     return row["value_json"] if row else default
 
 
+def get_app_setting_version(key: str) -> int:
+    """Read only the revision used to invalidate process-local settings caches."""
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT version FROM app_settings WHERE key=%s", (key,))
+        row = cur.fetchone()
+    return int(row["version"]) if row else 0
+
+
 def get_app_setting_with_version(key: str, default: Any = None) -> tuple[Any, int]:
     with metadata_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT value_json,version FROM app_settings WHERE key=%s", (key,))
