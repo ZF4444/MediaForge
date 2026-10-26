@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.ai.contracts import Actor, ImageCommand
 from app.ai.gateway import connection_operation
-from app.ai.authorization import require_model_access
-from app.ai.registry import ImageAdapterRegistry, ImageGenerationRequest
-
+from app.ai.registry import ImageAdapterRegistry
 
 TargetImageHandler = Callable[[ImageCommand], Awaitable[Any]]
 
@@ -28,7 +25,7 @@ class ImageGateway:
         self._target_handler = target_handler
 
     async def generate_target(self, command: ImageCommand, *, actor: Actor) -> Any:
-        """Execute an image command whose target was resolved from AI tables.
+        """Execute API-admitted an image command whose target was resolved from AI tables.
 
         This is the canonical business boundary for resolved AI targets.
         """
@@ -36,6 +33,5 @@ class ImageGateway:
             raise RuntimeError("target image handler is not configured")
         if command.target.model is None:
             raise ValueError("image command requires a model resource")
-        await asyncio.to_thread(require_model_access, command.target, actor.user_id)
         async with connection_operation(command.target.connection.id, "image_generation", user_id=actor.user_id):
             return await self._target_handler(command)

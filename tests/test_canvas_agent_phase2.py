@@ -318,7 +318,7 @@ def test_runninghub_workflow_dispatch_uses_native_task_queue(monkeypatch):
     monkeypatch.setattr(dispatch, 'from_repository', lambda: SimpleNamespace(get=lambda name: None))
     monkeypatch.setattr(DatabaseAIRepository, 'resolve_executable', lambda *args, **kwargs: target)
     authorize, create, enqueue, emit = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
-    monkeypatch.setattr(dispatch, 'authorize_target_task', authorize)
+    monkeypatch.setattr(dispatch, 'check_target_task_budget', authorize)
     monkeypatch.setattr(dispatch, 'create_canvas_task', create)
     monkeypatch.setattr(dispatch, 'enqueue_canvas_task', enqueue)
     monkeypatch.setattr(events, 'emit_agent_event', emit)

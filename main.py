@@ -834,15 +834,10 @@ def require_api_settings_access() -> str:
 
 
 def require_target_access(target, user_id: str) -> None:
-    """Authorize a resolved canonical target without consulting legacy providers."""
-    connection = getattr(target, "connection", None)
-    model = getattr(target, "model", None)
-    connection_id = str(getattr(connection, "id", "") or "")
-    upstream_model = str(getattr(model, "upstream_model", "") or "")
-    if not access_control.is_admin(user_id) and not access_control.is_model_allowed(
-        user_id, connection_id, upstream_model
-    ):
-        raise HTTPException(status_code=403, detail="没有权限使用该模型，请联系管理员开放。")
+    """Authorize at API admission; workers execute already admitted tasks."""
+    from app.ai.authorization import require_model_access
+
+    require_model_access(target, user_id)
 
 
 BACKEND_LOCAL_LOAD = {}
@@ -4499,7 +4494,6 @@ async def build_online_image_result(payload: OnlineImageRequest):
             model=payload.model,
             kind="image",
         )
-        await asyncio.to_thread(require_target_access, target, current_user_id())
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="图片模型资源不存在或已禁用") from exc
     model = target.model.upstream_model if target.model else payload.model
@@ -4728,7 +4722,6 @@ configure_canvas_runtime(
     # test/runtime overrides retain the same dynamic behavior as before.
     image_normalizer=lambda payload: normalize_canvas_image_request(payload),
     media_reference_resolver=lambda ref, max_size: reference_to_data_url(ref, max_size),
-    target_authorizer=require_target_access,
     connection_lookup=lambda connection_id: canonical_connection_view(
         next(item for item in DatabaseAIRepository().connections() if item.id == connection_id)
     ),
@@ -5817,7 +5810,6 @@ async def execute_canvas_task(task_id: str):
                 model=str(task.get("model") or request.get("model") or ""),
                 kind="image",
             )
-            await asyncio.to_thread(require_target_access, resolved, str(task.get("owner_id") or ""))
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
@@ -5841,7 +5833,6 @@ async def execute_canvas_task(task_id: str):
                 model=str(task.get("model") or request.get("model") or ""),
                 kind="video",
             )
-            await asyncio.to_thread(require_target_access, resolved, str(task.get("owner_id") or ""))
             task_updates = {
                 "connection_id": resolved.connection.id,
                 "model_id": resolved.model.id if resolved.model else "",
@@ -6443,7 +6434,6 @@ async def run_canvas_video_task(task_id: str, payload: CanvasVideoRequest):
                 model=payload.model,
                 kind="video",
             )
-            await asyncio.to_thread(require_target_access, target, current_user_id())
         except LookupError as exc:
             raise ValueError("视频模型资源不存在或已禁用") from exc
         exec_payload = payload.model_copy(update={"model": "", "connection_id": target.connection.id})
@@ -6527,7 +6517,7 @@ async def canvas_video(payload: CanvasVideoRequest):
         raise HTTPException(status_code=404, detail="视频模型资源不存在或已禁用") from exc
     # Resolve the upstream model once, but keep the command payload canonical.
     # The execution handler receives the model through transient context below.
-    payload = payload.model_copy(update={"model": "", "connection_id": target.connection.id})
+    payload = payload.model_copy(update={"model": "", "model_id": target.model.id, "connection_id": target.connection.id})
     await assert_provider_budget_available(canonical_connection_view(target), current_user_id())
     owner_id = current_user_id()
     video_resource_meta = {
@@ -7408,7 +7398,6 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
                         model=payload.image_model or payload.model,
                         kind="image",
                     )
-                    await asyncio.to_thread(require_target_access, target, current_user_id())
                     image_target = target
                     provider = canonical_connection_view(target)
                     resolved_image_model = target.model.upstream_model
@@ -7419,7 +7408,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             raise HTTPException(status_code=400, detail="生图请求缺少有效的稳定执行目标")
         default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
         model = resolved_image_model or selected_model(payload.image_model or payload.model, default_model)
-        require_target_access(image_target, user_id)
+        await asyncio.to_thread(require_target_access, image_target, user_id)
         try:
             if image_target is None:
                 raise HTTPException(status_code=400, detail="图片任务缺少稳定执行目标")
@@ -7594,7 +7583,6 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
                         model=model,
                         kind="image",
                     )
-                    await asyncio.to_thread(require_target_access, target, current_user_id())
                     image_target = target
                 image_provider = canonical_connection_view(target)
                 model = target.model.upstream_model if target.model else model
@@ -7613,7 +7601,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
         count = 1 if action == "edit_image" else chat_requested_image_count(payload.message)
         prompts = chat_split_parallel_prompts(prompt, count)
         local_urls, raw_items = [], []
-        require_target_access(image_target, user_id)
+        await asyncio.to_thread(require_target_access, image_target, user_id)
         try:
             for item_prompt in prompts:
                 if image_target is None:

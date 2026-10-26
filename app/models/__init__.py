@@ -249,6 +249,11 @@ class CanvasAgentAnswerRequest(BaseModel):
 
 
 class CanvasAgentConfirmRequest(BaseModel):
+    # Filled by API admission; incoming values are replaced before enqueue.
+    execution_patch: Dict[str, Any] = Field(default_factory=dict)
+    canvas_fingerprint: str = ""
+    model_id: str = ""
+    connection_id: str = ""
     plan_version: int = Field(ge=1)
     approved: bool = True
     authorized_node_ids: List[str] = []

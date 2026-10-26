@@ -7,19 +7,16 @@ connection-backed gateway.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import inspect
+from collections.abc import Callable
 from typing import Any
 
-
-TargetAuthorizer = Callable[[Any, str], Any]
 ConnectionRuntimeLoader = Callable[[], list[dict[str, Any]]]
 CanvasImageNormalizer = Callable[[Any], Any]
 MediaReferenceResolver = Callable[[dict[str, Any], int | None], str]
 ConnectionLookup = Callable[[str], dict[str, Any]]
 ConnectionBudgetAuthorizer = Callable[[dict[str, Any], str], Any]
 
-_target_authorizer: TargetAuthorizer | None = None
 _connection_runtime_loader: ConnectionRuntimeLoader | None = None
 _canvas_image_normalizer: CanvasImageNormalizer | None = None
 _media_reference_resolver: MediaReferenceResolver | None = None
@@ -53,16 +50,14 @@ def configure_canvas_runtime(
     *,
     image_normalizer: CanvasImageNormalizer,
     media_reference_resolver: MediaReferenceResolver,
-    target_authorizer: TargetAuthorizer,
     connection_lookup: ConnectionLookup,
     connection_budget_authorizer: ConnectionBudgetAuthorizer,
 ) -> None:
     """Bind legacy Canvas execution functions behind a narrow service port."""
-    global _canvas_image_normalizer, _media_reference_resolver, _target_authorizer
+    global _canvas_image_normalizer, _media_reference_resolver
     global _connection_lookup, _connection_budget_authorizer
     _canvas_image_normalizer = image_normalizer
     _media_reference_resolver = media_reference_resolver
-    _target_authorizer = target_authorizer
     _connection_lookup = connection_lookup
     _connection_budget_authorizer = connection_budget_authorizer
 
@@ -79,16 +74,12 @@ def reference_to_data_url(ref: dict[str, Any], max_size: int | None = None) -> s
     return _media_reference_resolver(ref, max_size)
 
 
-async def authorize_target_task(target: Any, user_id: str) -> None:
-    """Authorize an Agent task from a canonical resolved target."""
-    if _target_authorizer is None or _connection_budget_authorizer is None:
+async def check_target_task_budget(target: Any, user_id: str) -> None:
+    """Check runtime budget only; user permissions were checked at API admission."""
+    if _connection_budget_authorizer is None:
         raise RuntimeError("AI canvas runtime is not configured")
     connection = target.connection
-    model = target.model.upstream_model if target.model else ""
     connection_id = str(connection.id)
-    result = _target_authorizer(target, user_id)
-    if inspect.isawaitable(result):
-        await result
     runtime = {
         "id": connection_id,
         "connection_id": connection_id,

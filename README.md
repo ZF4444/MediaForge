@@ -293,6 +293,15 @@ RUN_BACKGROUND_MAINTENANCE=false uv run python -m app.workers.canvas
 查询上游任务 ID 的供应商，`running` 任务在 worker 失联后会标记为 `interrupted`，不会自动重投，
 以避免重复生成和计费。上游请求同时携带稳定的 `Idempotency-Key`（HTTP 请求 ID 或画布任务 ID）。
 
+模型使用权限统一在 API 提交任务或受理 Agent 命令前校验。权限配置以 PostgreSQL
+`app_settings.access_control` 为准，各 API 进程在读取权限时查询数据库版本；版本变化后
+重新加载配置，无需重新登录或重启服务。数据库读取失败时不会沿用旧权限放行。
+已受理任务保留提交时的执行许可，后续授权或撤权只影响新提交；worker 不再复查用户的
+页面、模型权限，但仍检查资源是否启用、任务归属、取消状态、运行预算和有效参数。
+用户主动重试失败任务时重新校验模型权限。页面权限继续控制已有菜单和页面入口，
+不额外绑定到通用生成 API。Agent 在确认计划时校验实际执行的模型（含确认参数修改），
+并将模型稳定 ID 和执行快照随命令保存，后台不会重新选择默认模型；画布内容变化后需重新确认。
+
 AI Provider 默认通过 Redis 进行跨进程限流与熔断。可按 Provider 设置
 `AI_PROVIDER_<ID>_REQUESTS_PER_WINDOW`、`AI_PROVIDER_<ID>_USER_REQUESTS_PER_WINDOW`、
 `AI_PROVIDER_<ID>_CIRCUIT_FAILURE_THRESHOLD` 和

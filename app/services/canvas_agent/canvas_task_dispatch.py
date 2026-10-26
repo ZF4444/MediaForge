@@ -5,7 +5,7 @@ import uuid
 import asyncio
 import time
 from app.config import CANVAS_TASK_TIMEOUT_SECONDS
-from app.ai.runtime import authorize_target_task, normalize_canvas_image_payload
+from app.ai.runtime import check_target_task_budget, normalize_canvas_image_payload
 from typing import Any
 from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_tasks import create_canvas_task, enqueue_canvas_task
@@ -94,7 +94,7 @@ async def _submit_runninghub_node(user_id: str, run_id: str, node: dict[str, Any
     target = await asyncio.to_thread(DatabaseAIRepository().resolve_executable,
         resource_id=settings.get("resource_id", ""),
         connection_id=settings.get("connection_id", ""), kind="runninghub_app")
-    await authorize_target_task(target, user_id)
+    await check_target_task_budget(target, user_id)
     request = _runninghub_request(node, target)
     task_id = f"canvas_agent_rh_{uuid.uuid4().hex}"
     await create_canvas_task({"id": task_id, "type": "online-runninghub", "status": "queued",
@@ -179,9 +179,8 @@ async def submit_run_requests(
                 )
         except (LookupError, RuntimeError):
             raise ValueError("生图节点的稳定资源标识无效或已禁用")
-        # Reuse the existing access-control resolver; the Agent never chooses
-        # an unapproved connection/model pair directly.
-        await authorize_target_task(target, user_id)
+        # User permissions were checked when the confirmation was accepted.
+        await check_target_task_budget(target, user_id)
         persisted_request = dict(request)
         for key in ("provider_id", "provider", "model"):
             persisted_request.pop(key, None)
