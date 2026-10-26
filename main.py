@@ -1699,6 +1699,24 @@ def volcengine_media_reference_url(value, max_image_size=1536):
     return value
 
 
+def volcengine_seedance2_video_reference_url(value):
+    """Seedance 2 accepts reference videos only as web URLs, never data URLs."""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if value.startswith(("http://", "https://", "asset://")):
+        return value
+    if value.startswith("/api/files/"):
+        public_url = local_asset_public_url(value)
+        if not public_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Seedance 2 的参考视频必须是公网可访问的视频 URL；本地画布文件需配置 PUBLIC_BASE_URL/PUBLIC_MEDIA_BASE_URL 后重试。",
+            )
+        return public_url
+    raise HTTPException(status_code=400, detail="Seedance 2 的参考视频必须是公网视频 URL 或 asset:// 素材地址，不支持 data URL 或本地路径。")
+
+
 def looks_like_image_media_url(value: str) -> bool:
     text = str(value or "").strip().lower()
     if not text:
@@ -6084,6 +6102,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
 
                     resolution = video_resolution(payload.resolution)
                 image_like_urls = set()
+                seedance2_video = is_volcengine_seedance2_model(volc_model)
                 for ref in payload.images[:9]:
                     url = await run_storage_io(volcengine_media_reference_url, ref.url, 1536)
                     if not url:
@@ -6103,9 +6122,12 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     text_url = str(url or "").strip()
                     if not text_url:
                         continue
-                    media_url = await run_storage_io(
-                        volcengine_media_reference_url, text_url, 1536 if looks_like_image_media_url(text_url) else None
-                    )
+                    if seedance2_video and not looks_like_image_media_url(text_url):
+                        media_url = volcengine_seedance2_video_reference_url(text_url)
+                    else:
+                        media_url = await run_storage_io(
+                            volcengine_media_reference_url, text_url, 1536 if looks_like_image_media_url(text_url) else None
+                        )
                     if not media_url:
                         continue
                     if media_url in image_like_urls or looks_like_image_media_url(media_url):
@@ -6120,7 +6142,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                         continue
                     video_items = (
                         [{"type": "video_url", "video_url": {"url": media_url}, "role": "reference_video"}]
-                        if cloudwise_seedance
+                        if cloudwise_seedance or seedance2_video
                         else await volcengine_video_reference_content_items(media_url)
                     )
                     content.extend(video_items)
