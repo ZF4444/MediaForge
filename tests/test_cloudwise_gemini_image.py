@@ -193,3 +193,39 @@ def test_cloudwise_discovery_lists_gemini_image_models():
     assert set(CLOUDWISE_GEMINI_IMAGE_MODELS) <= set(result["image_models"])
     assert "gpt-image-2" in result["image_models"]
     assert result["total"] == len(result["all"])
+
+
+def _inline(data, thought=False):
+    part = {"inlineData": {"mimeType": "image/png", "data": data}}
+    if thought:
+        part["thought"] = True
+    return part
+
+
+def test_extract_image_skips_thought_drafts_and_returns_final_image():
+    from app.ai.adapters.image_protocol import extract_image
+
+    payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"text": "thinking", "thought": True},
+                        _inline("DRAFT1", thought=True),
+                        {"text": "checking", "thought": True},
+                        _inline("FINAL"),
+                    ]
+                }
+            }
+        ]
+    }
+    assert extract_image(payload) == {"type": "b64", "value": "FINAL", "mime_type": "image/png"}
+
+
+def test_extract_image_takes_last_final_image_and_falls_back_to_draft():
+    from app.ai.adapters.image_protocol import extract_image
+
+    two_finals = {"candidates": [{"content": {"parts": [_inline("A"), _inline("B")]}}]}
+    assert extract_image(two_finals)["value"] == "B"
+    only_drafts = {"candidates": [{"content": {"parts": [_inline("D1", True), _inline("D2", True)]}}]}
+    assert extract_image(only_drafts)["value"] == "D2"

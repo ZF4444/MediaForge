@@ -233,20 +233,43 @@ def extract_image_from_chat_response(data: dict[str, Any]) -> dict[str, str]:
     )
 
 
+def _gemini_candidate_image(data: dict[str, Any]) -> dict[str, str] | None:
+    """Pick the final image from a Gemini ``candidates`` payload.
+
+    Thinking-enabled image models (e.g. gemini-3-pro-image) interleave draft
+    images flagged ``"thought": true`` before the final image, which is the only
+    part at the requested resolution. Prefer the last non-thought image and fall
+    back to the last draft only when no final image exists.
+    """
+    final: dict[str, str] | None = None
+    draft: dict[str, str] | None = None
+    for candidate in data.get("candidates") or []:
+        content = candidate.get("content") or {} if isinstance(candidate, dict) else {}
+        parts = content.get("parts") if isinstance(content, dict) else None
+        for part in parts or []:
+            if not isinstance(part, dict):
+                continue
+            inline = part.get("inlineData") or part.get("inline_data") or {}
+            if not (isinstance(inline, dict) and inline.get("data")):
+                continue
+            image = {
+                "type": "b64",
+                "value": inline["data"],
+                "mime_type": inline.get("mimeType") or inline.get("mime_type") or "image/png",
+            }
+            if part.get("thought") is True:
+                draft = image
+            else:
+                final = image
+    return final or draft
+
+
 def extract_image(data: dict[str, Any]) -> dict[str, str]:
     candidates = data.get("candidates") if isinstance(data, dict) else None
     if isinstance(candidates, list):
-        for candidate in candidates:
-            content = candidate.get("content") or {} if isinstance(candidate, dict) else {}
-            parts = content.get("parts") if isinstance(content, dict) else None
-            for part in parts or []:
-                inline = part.get("inlineData") or part.get("inline_data") or {} if isinstance(part, dict) else {}
-                if isinstance(inline, dict) and inline.get("data"):
-                    return {
-                        "type": "b64",
-                        "value": inline["data"],
-                        "mime_type": inline.get("mimeType") or inline.get("mime_type") or "image/png",
-                    }
+        image = _gemini_candidate_image(data)
+        if image:
+            return image
     if isinstance(data.get("data"), dict) and isinstance(data["data"].get("result"), dict):
         data = data["data"]
     if isinstance(data.get("result"), dict):
