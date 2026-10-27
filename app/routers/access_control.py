@@ -13,6 +13,8 @@
 - app.models：AccessControlConfigPayload
 """
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.access_control import (
@@ -201,11 +203,11 @@ async def access_control_delete_user(user_id: str):
     for entry in result.get("files", []):
         await run_storage_io(delete_user_media_objects, entry)
 
-    config = load_config()
+    config = await asyncio.to_thread(load_config)
     assignments = config.get("user_types", {})
     if user_id in assignments:
         assignments.pop(user_id, None)
-        save_config({"types": config.get("types", {}), "user_types": assignments})
+        await asyncio.to_thread(save_config, {"types": config.get("types", {}), "user_types": assignments})
     quota_config = load_storage_quota_config()
     if user_id in quota_config.get("users", {}):
         quota_config["users"].pop(user_id, None)

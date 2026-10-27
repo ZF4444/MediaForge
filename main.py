@@ -3984,7 +3984,7 @@ def _ai_configuration_payload(repository):
 @app.get("/api/ai/configuration")
 async def ai_configuration():
     """Authoritative editable configuration, without exposing connection secrets."""
-    require_api_settings_access()
+    await asyncio.to_thread(require_api_settings_access)
     from app.ai.database_repository import DatabaseAIRepository
 
     return await asyncio.to_thread(lambda: _ai_configuration_payload(DatabaseAIRepository()))
@@ -3993,7 +3993,7 @@ async def ai_configuration():
 @app.put("/api/ai/configuration")
 async def save_ai_configuration(payload: Dict[str, Any]):
     """Atomically replace AI connections/models/resources and update supplied secrets."""
-    require_api_settings_access()
+    await asyncio.to_thread(require_api_settings_access)
     connections = payload.get("connections") if isinstance(payload.get("connections"), list) else []
     models = payload.get("models") if isinstance(payload.get("models"), list) else []
     resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
@@ -4025,7 +4025,7 @@ async def save_ai_configuration(payload: Dict[str, Any]):
 
 @app.patch("/api/ai/executable-resources/{resource_id:path}")
 async def update_ai_executable_resource(resource_id: str, payload: Dict[str, Any]):
-    require_api_settings_access()
+    await asyncio.to_thread(require_api_settings_access)
     if set(payload) - {"name", "enabled", "settings"}:
         raise HTTPException(status_code=400, detail="仅支持修改工作流名称、启用状态和参数配置")
     if "settings" in payload and not isinstance(payload["settings"], dict):
@@ -4086,7 +4086,7 @@ async def ai_gateway_status():
 
 @app.post("/api/ai/connections/{connection_id}/discover")
 async def ai_connection_discover(connection_id: str):
-    require_api_settings_access()
+    await asyncio.to_thread(require_api_settings_access)
     from app.ai.services.discovery import ConnectionDiscoveryService
     from app.ai.database_repository import DatabaseAIRepository
     from app.services.connection_secrets import get_connection_secret
@@ -4122,7 +4122,7 @@ async def ai_connection_discover(connection_id: str):
 @app.post("/api/ai/connections/{connection_id}/test")
 async def ai_connection_test(connection_id: str):
     """Test a persisted connection and return categorized upstream models."""
-    require_api_settings_access()
+    await asyncio.to_thread(require_api_settings_access)
     from app.ai.database_repository import DatabaseAIRepository
     from app.services.connection_secrets import get_connection_secret
 
@@ -4183,7 +4183,7 @@ async def canvas_parameter_schema_definitions():
 @app.post("/api/canvas/parameter-schema/validate")
 async def validate_canvas_parameter_schema(payload: Dict[str, Any]):
     """Validate one Provider's model-scoped parameter overrides before save."""
-    require_api_settings_access()
+    await asyncio.to_thread(require_api_settings_access)
     from app.services.ai_parameters import normalize_parameter_schema
 
     try:
@@ -5211,7 +5211,7 @@ async def get_canvas_image_task(task_id: str):
     task = await get_canvas_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="画布任务不存在，可能服务已重启或任务已过期")
-    if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
+    if task.get("owner_id") != current_user_id() and not await asyncio.to_thread(access_control.is_admin, current_user_id()):
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
     if task.get("type") == "online-image-batch":
         task = await _canvas_image_batch_view(task)
@@ -5385,7 +5385,7 @@ async def get_canvas_comfy_task(task_id: str):
     task = await get_canvas_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在，可能服务已重启或任务已过期")
-    if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
+    if task.get("owner_id") != current_user_id() and not await asyncio.to_thread(access_control.is_admin, current_user_id()):
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
     task.pop("request", None)
     return task
@@ -5688,7 +5688,7 @@ async def get_canvas_runninghub_task(task_id: str):
     task = await get_canvas_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="RunningHub 任务不存在，可能服务已重启或任务已过期")
-    if task.get("owner_id") != current_user_id() and not access_control.is_admin(current_user_id()):
+    if task.get("owner_id") != current_user_id() and not await asyncio.to_thread(access_control.is_admin, current_user_id()):
         raise HTTPException(status_code=403, detail="无权查看其他用户的画布任务。")
     task.pop("request", None)
     return task
@@ -5696,13 +5696,13 @@ async def get_canvas_runninghub_task(task_id: str):
 
 @app.get("/api/admin/canvas-task-dead-letters")
 async def admin_list_canvas_task_dead_letters(limit: int = 100):
-    require_user_management_access()
+    await asyncio.to_thread(require_user_management_access)
     return {"items": await list_dead_letter_canvas_tasks(limit)}
 
 
 @app.post("/api/admin/canvas-task-dead-letters/{entry_id}/retry")
 async def admin_retry_canvas_task_dead_letter(entry_id: str):
-    require_user_management_access()
+    await asyncio.to_thread(require_user_management_access)
     entries = await list_dead_letter_canvas_tasks(500)
     entry = next((item for item in entries if item.get("entry_id") == entry_id), None)
     if not entry or not entry.get("task_id"):
@@ -5724,7 +5724,7 @@ async def admin_retry_canvas_task_dead_letter(entry_id: str):
 
 @app.delete("/api/admin/canvas-task-dead-letters/{entry_id}")
 async def admin_cancel_canvas_task_dead_letter(entry_id: str):
-    require_user_management_access()
+    await asyncio.to_thread(require_user_management_access)
     entries = await list_dead_letter_canvas_tasks(500)
     entry = next((item for item in entries if item.get("entry_id") == entry_id), None)
     if not entry:
