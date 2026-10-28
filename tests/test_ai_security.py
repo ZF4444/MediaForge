@@ -41,3 +41,24 @@ def test_external_media_url_never_uses_provider_internal_allowlist(monkeypatch):
 
     with pytest.raises(HTTPException, match="内网"):
         outbound.validate_external_http_url("https://ai.internal.example/file.png")
+
+
+def test_external_media_url_keeps_signed_query(monkeypatch):
+    monkeypatch.setattr(outbound.socket, "getaddrinfo", lambda *_args, **_kwargs: _address("8.8.8.8"))
+    url = "https://cdn.example.test/a.png?X-Amz-Signature=abc&Expires=1"
+
+    assert outbound.validate_external_http_url(url) == url
+
+
+def test_external_media_url_still_rejects_userinfo(monkeypatch):
+    monkeypatch.setattr(outbound.socket, "getaddrinfo", lambda *_args, **_kwargs: _address("8.8.8.8"))
+
+    with pytest.raises(HTTPException, match="用户名"):
+        outbound.validate_external_http_url("https://user:pw@cdn.example.test/a.png")
+
+
+def test_provider_base_url_still_rejects_query(monkeypatch):
+    monkeypatch.setattr(outbound.socket, "getaddrinfo", lambda *_args, **_kwargs: _address("8.8.8.8"))
+
+    with pytest.raises(HTTPException, match="查询参数"):
+        outbound.validate_public_http_url("https://api.example.test/v1?key=1")

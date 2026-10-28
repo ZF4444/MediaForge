@@ -31,18 +31,16 @@ def resolve_public_host_addresses(hostname: str, port: int) -> tuple[str, ...]:
     return tuple(str(address) for address in sorted(addresses, key=str))
 
 
-def validate_public_http_url(value: str, *, label: str = "请求地址") -> str:
-    """Return a normalized HTTP(S) URL only when it resolves to public IPs.
-
-    Provider endpoints receive long-lived credentials. Rejecting private and
-    special-use addresses prevents the provider configuration UI from becoming
-    an internal-network request primitive.
-    """
-    text = str(value or "").strip().rstrip("/")
+def _validate_http_url(value: str, *, label: str, allow_query: bool) -> str:
+    text = str(value or "").strip()
+    if not allow_query:
+        text = text.rstrip("/")
     parsed = urlsplit(text)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(status_code=400, detail=f"{label}必须是完整的 http:// 或 https:// 地址")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail=f"{label}不能包含用户名或密码")
+    if not allow_query and (parsed.query or parsed.fragment):
         raise HTTPException(status_code=400, detail=f"{label}不能包含用户名、密码、查询参数或片段")
     try:
         port = parsed.port
@@ -56,9 +54,27 @@ def validate_public_http_url(value: str, *, label: str = "请求地址") -> str:
         resolve_public_host_addresses(hostname, port or (443 if parsed.scheme == "https" else 80))
     except OutboundAddressError as exc:
         raise HTTPException(status_code=400, detail=f"{label}{exc}") from exc
+    if parsed.fragment:
+        text = text.split("#", 1)[0]
     return text
 
 
+def validate_public_http_url(value: str, *, label: str = "请求地址") -> str:
+    """Return a normalized HTTP(S) URL only when it resolves to public IPs.
+
+    Provider endpoints receive long-lived credentials. Rejecting private and
+    special-use addresses prevents the provider configuration UI from becoming
+    an internal-network request primitive. Query strings and fragments are
+    rejected because a Base URL is a stable prefix, not a signed resource.
+    """
+    return _validate_http_url(value, label=label, allow_query=False)
+
+
 def validate_external_http_url(value: str, *, label: str = "外部地址") -> str:
-    """Validate a user- or upstream-supplied media URL without intranet exceptions."""
-    return validate_public_http_url(value, label=label)
+    """Validate a user- or upstream-supplied media URL without intranet exceptions.
+
+    Upstream providers commonly return signed download links
+    (``?X-Amz-Signature=...``), so the query string is preserved verbatim.
+    Userinfo is still rejected, and the host must still resolve to public IPs.
+    """
+    return _validate_http_url(value, label=label, allow_query=True)
