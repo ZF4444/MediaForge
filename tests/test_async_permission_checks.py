@@ -91,3 +91,28 @@ def test_task_query_admin_check_does_not_block_event_loop(loop_guarded_permissio
     with pytest.raises(HTTPException) as exc:
         _run(lambda: endpoint("t1"), loop_guarded_permissions, "alice")
     assert exc.value.status_code == 403
+
+
+def test_announcement_create_does_not_block_event_loop(loop_guarded_permissions):
+    from app.models import AnnouncementPayload
+    from app.routers import announcement
+
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            lambda: announcement.announcement_create(AnnouncementPayload(content="hello")),
+            loop_guarded_permissions,
+            "alice",
+        )
+    assert exc.value.status_code == 403
+
+
+def test_access_control_async_routes_do_not_block_event_loop(loop_guarded_permissions):
+    from starlette.requests import Request
+
+    from app.routers import access_control as router
+
+    request = Request({"type": "http", "headers": [], "method": "GET", "path": "/"})
+    for factory in (lambda: router.access_control_sessions(request), lambda: router.access_control_delete_user("bob")):
+        with pytest.raises(HTTPException) as exc:
+            _run(factory, loop_guarded_permissions, "alice")
+        assert exc.value.status_code == 403

@@ -123,7 +123,7 @@ def access_control_users():
 @router.get("/api/access-control/sessions")
 async def access_control_sessions(request: Request):
     """返回有效登录会话及最近活动状态，不返回任何可复用凭据。"""
-    _require_user_management()
+    await asyncio.to_thread(_require_user_management)
     now = now_ms()
     online_cutoff = now - 5 * 60 * 1000
     current_token = request.cookies.get(SESSION_COOKIE_NAME, "")
@@ -190,7 +190,7 @@ def access_control_assign_user_type(user_id: str, payload: dict):
 @router.delete("/api/access-control/users/{user_id}")
 async def access_control_delete_user(user_id: str):
     """删除注册用户；历史用量和审计记录保留。"""
-    _require_user_management()
+    await asyncio.to_thread(_require_user_management)
     user_id = str(user_id or "").strip()
     with USERS_LOCK:
         exists = user_id in USERS
@@ -208,10 +208,10 @@ async def access_control_delete_user(user_id: str):
     if user_id in assignments:
         assignments.pop(user_id, None)
         await asyncio.to_thread(save_config, {"types": config.get("types", {}), "user_types": assignments})
-    quota_config = load_storage_quota_config()
+    quota_config = await asyncio.to_thread(load_storage_quota_config)
     if user_id in quota_config.get("users", {}):
         quota_config["users"].pop(user_id, None)
-        save_storage_quota_config(quota_config)
+        await asyncio.to_thread(save_storage_quota_config, quota_config)
     audit_event(
         "user_deleted",
         action="delete",

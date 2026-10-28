@@ -39,7 +39,7 @@ def announcement_latest():
 
 @router.post("/api/announcement")
 async def announcement_create(payload: AnnouncementPayload):
-    _require_broadcast_access()
+    await asyncio.to_thread(_require_broadcast_access)
     content = payload.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="公告内容不能为空。")
