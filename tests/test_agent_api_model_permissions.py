@@ -230,3 +230,48 @@ def test_confirmation_replaces_client_supplied_execution_snapshot(monkeypatch):
     )
     assert accept.await_args.args[-1]["execution_patch"] == snapshot["execution_patch"]
     assert accept.await_args.args[-1]["canvas_fingerprint"] == "server-fingerprint"
+
+
+def _retry_task(**overrides):
+    task = {
+        "owner_id": "user",
+        "agent_run_id": "run",
+        "status": "failed",
+        "type": "online-image",
+        "connection_id": "connection",
+    }
+    task.update(overrides)
+    return task
+
+
+def test_retry_without_pinned_model_is_rejected_instead_of_checking_an_arbitrary_model(monkeypatch):
+    monkeypatch.setattr(router, "_user", lambda *args: "user")
+    monkeypatch.setattr(router, "_require_run", AsyncMock(return_value={}))
+    monkeypatch.setattr(router, "get_canvas_task", AsyncMock(return_value=_retry_task()))
+    resolve = []
+    monkeypatch.setattr(
+        DatabaseAIRepository, "resolve_model", lambda *args, **kwargs: resolve.append(kwargs) or resolved("first")
+    )
+    monkeypatch.setattr(access_control, "is_model_allowed", lambda *args, **kwargs: True)
+    reset = AsyncMock()
+    monkeypatch.setattr(router, "release_canvas_task_dispatch", reset)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(router.retry_agent_task("run", "task", object()))
+    assert exc.value.status_code == 409
+    assert resolve == []  # never resolved a guessed model
+    reset.assert_not_called()
+
+
+def test_retry_with_upstream_model_name_still_resolves_that_exact_model(monkeypatch):
+    monkeypatch.setattr(router, "_user", lambda *args: "user")
+    monkeypatch.setattr(router, "_require_run", AsyncMock(return_value={}))
+    monkeypatch.setattr(router, "get_canvas_task", AsyncMock(return_value=_retry_task(request={"model": "upstream-x"})))
+    seen = {}
+    monkeypatch.setattr(
+        DatabaseAIRepository, "resolve_model", lambda *args, **kwargs: seen.update(kwargs) or resolved("image-model")
+    )
+    monkeypatch.setattr(access_control, "is_model_allowed", lambda *args, **kwargs: False)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(router.retry_agent_task("run", "task", object()))
+    assert exc.value.status_code == 403  # reached the permission check on the named model
+    assert seen["model"] == "upstream-x" and seen["connection_id"] == "connection"

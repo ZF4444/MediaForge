@@ -1233,11 +1233,18 @@ async def retry_agent_task(run_id: str, task_id: str, request: Request, x_user_i
         from app.ai.database_repository import DatabaseAIRepository
 
         snapshot = task.get("request") or {}
+        retry_model_id = str(task.get("model_id") or snapshot.get("model_id") or "").strip()
+        retry_model = str(task.get("model") or snapshot.get("model") or "").strip()
+        if not (retry_model_id or retry_model):
+            # With neither a pinned id nor an upstream name, resolve_model would take the connection's first
+            # model of this kind, so the permission check could target a model the task never used.
+            raise HTTPException(status_code=409, detail="任务缺少 model_id，无法确认模型权限，请重新提交任务")
         try:
             target = await asyncio.to_thread(
                 DatabaseAIRepository().resolve_model,
-                model_id=task.get("model_id") or snapshot.get("model_id", ""),
+                model_id=retry_model_id,
                 connection_id=task.get("connection_id") or snapshot.get("connection_id", ""),
+                model=retry_model,
                 kind="video" if task["type"] == "online-video" else "image",
             )
         except LookupError as exc:
