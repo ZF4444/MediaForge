@@ -391,6 +391,21 @@ def test_normalize_capability_params_runninghub_wraps_values():
     assert params["runSettings"]["prompt"] == "hello"
 
 
+def test_normalize_capability_params_keeps_fraction_without_step():
+    from app.services.ai_parameters import normalize_capability_params
+
+    schema = {
+        "params_path": "runSettings.rhParams",
+        "fields": [
+            {"id": "13::megapixels", "type": "number", "min": None, "max": None, "step": None},
+            {"id": "14::steps", "type": "number", "step": 1},
+        ],
+    }
+    params = normalize_capability_params(schema, {"13::megapixels": 0.3, "14::steps": "25"})
+    assert params["runSettings"]["rhParams"]["13::megapixels"] == {"value": 0.3}
+    assert params["runSettings"]["rhParams"]["14::steps"] == {"value": 25}
+
+
 def test_normalize_capability_params_comfy_and_dropdown_validation():
     from app.services.ai_parameters import normalize_capability_params
 

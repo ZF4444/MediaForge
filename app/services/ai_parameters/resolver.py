@@ -680,7 +680,13 @@ def _coerce_scalar(field: dict[str, Any], value: Any) -> Any:
                 return None
 
         step, lower, upper = _bound("step"), _bound("min"), _bound("max")
-        number = number if (step is not None and step < 1) else int(number)
+        # Only truncate to int when the field is known to step in whole numbers.
+        # Without a step (e.g. RunningHub FLOAT fields such as megapixels=0.3),
+        # keep fractional values and only collapse integral floats to int.
+        if step is None:
+            number = int(number) if number.is_integer() else number
+        elif step >= 1:
+            number = int(number)
         if lower is not None and number < lower:
             raise ValueError(f"{field.get('id')} is below the minimum")
         if upper is not None and number > upper:
