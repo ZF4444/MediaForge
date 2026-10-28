@@ -94,6 +94,74 @@ def test_hydrate_plan_nodes_normalizes_frontend_only_node_types():
     SemanticPlan.model_validate(hydrated)
 
 
+def test_hydrate_plan_nodes_update_step_keeps_proposed_values_over_snapshot():
+    # The confirmation card renders this hydrated node. The snapshot used to
+    # replace the model's proposal, so megapixels 0.3 showed as the stored 0.
+    plan = {
+        "steps": [
+            {
+                "id": "update",
+                "action": "canvas.update_node_params",
+                "target_node_id": "n1",
+                "node": {
+                    "semantic_type": "workflow_generation",
+                    "params": {"runSettings": {"rhParams": {"13::megapixels": {"value": 0.3}}}},
+                },
+            }
+        ]
+    }
+    canvas = {
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "smart-image",
+                "capability": "runninghub.app.image",
+                "runSettings": {
+                    "engine": "runninghub",
+                    "resource_id": "r",
+                    "rhParams": {"13::megapixels": {"value": 0}, "474::batch_size": {"value": 4}},
+                },
+            }
+        ]
+    }
+    hydrated = _hydrate_plan_nodes(plan, canvas)
+    rh = hydrated["steps"][0]["node"]["params"]["runSettings"]["rhParams"]
+    assert rh["13::megapixels"] == {"value": 0.3}
+    # Untouched fields still come from the snapshot.
+    assert rh["474::batch_size"] == {"value": 4}
+    # The stored canvas node must not be mutated by hydration.
+    assert canvas["nodes"][0]["runSettings"]["rhParams"]["13::megapixels"] == {"value": 0}
+
+
+def test_hydrate_plan_nodes_update_step_wraps_bare_scalar_into_value_envelope():
+    plan = {
+        "steps": [
+            {
+                "id": "update",
+                "action": "canvas.update_node_params",
+                "target_node_id": "n1",
+                "node": {
+                    "semantic_type": "workflow_generation",
+                    "params": {"runSettings": {"rhParams": {"13::megapixels": 0.3}}},
+                },
+            }
+        ]
+    }
+    canvas = {
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "smart-image",
+                "capability": "runninghub.app.image",
+                "runSettings": {"engine": "runninghub", "rhParams": {"13::megapixels": {"value": 0}}},
+            }
+        ]
+    }
+    hydrated = _hydrate_plan_nodes(plan, canvas)
+    rh = hydrated["steps"][0]["node"]["params"]["runSettings"]["rhParams"]
+    assert rh["13::megapixels"] == {"value": 0.3}
+
+
 def test_hydrate_plan_nodes_prefers_generation_prompt_over_imported_file_text():
     plan = {"steps": [{"id": "run", "action": "canvas.run_node", "target_node_id": "n1"}]}
     canvas = {

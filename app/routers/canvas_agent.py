@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -169,6 +170,23 @@ def _normalize_semantic_type(raw: str) -> str:
     return "image_generation"
 
 
+def _overlay_params(target: dict, proposed: dict) -> None:
+    """Deep-merge model-proposed params into a node snapshot; proposed values win.
+
+    RunningHub fields persist as ``{"value": ...}``. When the snapshot holds that
+    envelope and the proposal is a bare scalar, update the envelope in place so
+    the stored shape stays consistent.
+    """
+    for key, value in proposed.items():
+        current = target.get(key)
+        if isinstance(value, dict) and isinstance(current, dict):
+            _overlay_params(current, value)
+        elif isinstance(current, dict) and set(current) == {"value"} and not isinstance(value, dict):
+            current["value"] = value
+        else:
+            target[key] = json.loads(json.dumps(value))
+
+
 def _hydrate_plan_nodes(plan_json: dict, canvas: dict | None) -> dict:
     """Attach node snapshots to every configurable step for the UI.
 
@@ -187,6 +205,7 @@ def _hydrate_plan_nodes(plan_json: dict, canvas: dict | None) -> dict:
         if not isinstance(step, dict) or not step.get("target_node_id"):
             continue
         target_id = str(step["target_node_id"])
+        proposed_node = step.get("node")
         source = nodes.get(target_id)
         planned = planned_nodes.get(target_id)
         if not source and not planned:
@@ -238,12 +257,33 @@ def _hydrate_plan_nodes(plan_json: dict, canvas: dict | None) -> dict:
                 capability = "video.text_to_video"
             elif node_type in {"smart-image", "image_generation", "video_generation", "workflow_generation"}:
                 capability = "image.text_to_image"
+        hydrated_params = json.loads(json.dumps(with_semantic_prompt(params, prompt)))
+        # An update step carries the values the model wants to change. The
+        # snapshot only supplies the surrounding settings, so the proposal must
+        # win; otherwise the confirmation card shows (and applies) stale values.
+        proposed = proposed_node.get("params") if isinstance(proposed_node, dict) else None
+        if step.get("action") == "canvas.update_node_params" and isinstance(proposed, dict) and proposed:
+            if "runSettings" not in proposed:
+                # Flat {field_id: value} form: let the backend place and coerce
+                # the values the same way it does for newly created nodes.
+                target = SimpleNamespace(
+                    capability=capability,
+                    connection_id=str(source_run_settings.get("connection_id") or source.get("connection_id") or ""),
+                    resource_id=str(source_run_settings.get("resource_id") or source.get("resource_id") or ""),
+                    model_id=str(source_run_settings.get("model_id") or source.get("model_id") or ""),
+                )
+                schema = capability_schema_resolver(target)
+                if schema:
+                    from app.services.ai_parameters import normalize_capability_params
+
+                    proposed = normalize_capability_params(schema, proposed)
+            _overlay_params(hydrated_params, proposed)
         step["node"] = {
             "schema_version": 1,
             "semantic_type": semantic_type,
             "title": source.get("title") or source.get("name") or "",
             "capability": capability,
-            "params": with_semantic_prompt(params, prompt),
+            "params": hydrated_params,
         }
     return plan_json
 
