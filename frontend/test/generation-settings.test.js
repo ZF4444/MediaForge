@@ -491,6 +491,48 @@ describe('pendingNewNodeForSchema', () => {
     });
 });
 
+describe('new node inherits parameters from the last used model (方案C)', () => {
+    const target = {connection_id:'c1', model_id:'m1', resource_id:''};
+    function make(recent) {
+        return createGenerationSettingsSandbox({settings:{}, extra:{recentSmartSettingsForMode:key => recent[key] || {}}});
+    }
+    it('records the last used model ids of the node kind before the node is created', () => {
+        const ctx = make({'api:image':{connection_id:'c1', model_id:'m1', resource_id:'', ratio:'16:9'}, 'api:video':{videoConnectionId:'v1', videoModelId:'vm1'}});
+        expect(ctx.inheritedModelTargetForNewNode('image')).toEqual({connection_id:'c1', model_id:'m1', resource_id:''});
+        expect(ctx.inheritedModelTargetForNewNode('video')).toEqual({connection_id:'v1', model_id:'vm1', resource_id:''});
+    });
+    it('returns null when nothing was used before, or for the workflow kind', () => {
+        const ctx = make({'api:image':{connection_id:'c1', model_id:'m1'}});
+        expect(ctx.inheritedModelTargetForNewNode('video')).toBeNull();
+        expect(ctx.inheritedModelTargetForNewNode('workflow')).toBeNull();
+        expect(make({}).inheritedModelTargetForNewNode('image')).toBeNull();
+    });
+    it('keeps the inherited parameters only when the node ends up on the same model', () => {
+        const ctx = make({});
+        const node = {schemaInheritedFrom:{...target}};
+        expect(ctx.newNodeKeepsInheritedSettings(node, target)).toBe(true);
+        expect(ctx.newNodeKeepsInheritedSettings(node, {...target, model_id:'m2'})).toBe(false);
+        expect(ctx.newNodeKeepsInheritedSettings(node, {...target, connection_id:'c2'})).toBe(false);
+    });
+    it('uses the schema defaults when there was nothing to inherit from', () => {
+        expect(make({}).newNodeKeepsInheritedSettings({}, target)).toBe(false);
+    });
+    it('refreshCanvasParameterSchema forces defaults only when the inherited settings are not kept, and clears both markers', () => {
+        const src = fs.readFileSync(new URL('../src/canvas/generation-settings.js', import.meta.url), 'utf8');
+        expect(src).toContain('{force:Boolean(newNode) && !newNodeKeepsInheritedSettings(newNode, target)}');
+        expect(src).toContain('delete newNode.schemaInheritedFrom;');
+    });
+    it('createGenerationNodeByKind reads the inherited model before the node is created, and skips workflow nodes', () => {
+        const src = fs.readFileSync(new URL('../src/canvas/main.js', import.meta.url), 'utf8');
+        const start = src.indexOf('function createGenerationNodeByKind(');
+        const body = src.slice(start, src.indexOf('\nfunction isSmartAssetImageNode', start));
+        expect(body.indexOf('inheritedModelTargetForNewNode(kind)')).toBeGreaterThan(-1);
+        expect(body.indexOf('inheritedModelTargetForNewNode(kind)')).toBeLessThan(body.indexOf('createImageNodeAt('));
+        expect(body).toContain("if(kind !== 'workflow'){");
+        expect(body).toContain('node.schemaInheritedFrom = inheritedFrom');
+    });
+});
+
 describe('video aspect option labels', () => {
     it('renders the configured label for the source option instead of the raw value', () => {
         const src = fs.readFileSync(new URL('../src/canvas/generation-settings.js', import.meta.url), 'utf8');

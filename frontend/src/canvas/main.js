@@ -697,9 +697,15 @@ function defaultEngineForGenKind(kind){
 }
 /* 统一创建"图片生成/视频生成/工作流生成"三类生成节点，供左键创建菜单与拉线菜单共用 */
 function createGenerationNodeByKind(kind, point, options={}){
+    // 必须在创建前取：节点创建过程会把自己的设置写回"最近使用设置"。
+    const inheritedFrom = inheritedModelTargetForNewNode(kind);
     const node = createImageNodeAt(point, [], options);
-    // 新建的图片/视频生成节点第一次拿到模型参数 schema 时，采用 API 设置里的默认值（见 pendingNewNodeForSchema）。
-    if(kind !== 'workflow') node.schemaDefaultsPending = true;
+    // 新建的图片/视频生成节点第一次拿到模型参数 schema 时：模型与沿用来的相同则保留沿用的参数，
+    // 否则采用 API 设置里的默认值（见 pendingNewNodeForSchema / newNodeKeepsInheritedSettings）。
+    if(kind !== 'workflow'){
+        node.schemaDefaultsPending = true;
+        if(inheritedFrom) node.schemaInheritedFrom = inheritedFrom;
+    }
     if(kind === 'video'){
         node.genKind = 'video';
         // 视频生成节点创建后默认使用「AI生成」(api)，不继承最近使用的工作流等设置

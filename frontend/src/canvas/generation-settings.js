@@ -513,8 +513,8 @@ function applyCanvasSchemaDefaults(kind, schema, {force=false}={}){
         }
     }
 }
-// 新建的生成节点（createGenerationNodeByKind 会打上 schemaDefaultsPending）只在第一次拿到
-// 它实际所用模型的参数 schema 时采用 API 设置里的默认值；已有节点和用户改过的值不受影响。
+// 新建的生成节点（createGenerationNodeByKind 会打上 schemaDefaultsPending）第一次拿到它实际所用
+// 模型的参数 schema 时处理默认值；已有节点和用户改过的值不受影响。
 function pendingNewNodeForSchema(kind, target){
     const node = activeSettingsSubject();
     if(!node?.schemaDefaultsPending || node.genKind !== kind) return null;
@@ -524,6 +524,22 @@ function pendingNewNodeForSchema(kind, target){
     if(!ids.connection_id && !ids.model_id && !ids.resource_id) return null;
     const same = key => String(ids[key] || '') === String(target[key] || '');
     return same('connection_id') && same('model_id') && same('resource_id') ? node : null;
+}
+// 新节点创建前，上一次使用的模型（最近使用设置里记录的）。新节点会沿用它的模型和参数。
+function inheritedModelTargetForNewNode(kind){
+    if(kind !== 'image' && kind !== 'video') return null;
+    const saved = recentSmartSettingsForMode(`api:${kind}`);
+    const ids = kind === 'video'
+        ? {connection_id:saved.videoConnectionId, model_id:saved.videoModelId, resource_id:saved.videoResourceId}
+        : {connection_id:saved.connection_id, model_id:saved.model_id, resource_id:saved.resource_id};
+    if(!ids.connection_id && !ids.model_id && !ids.resource_id) return null;
+    return {connection_id:String(ids.connection_id || ''), model_id:String(ids.model_id || ''), resource_id:String(ids.resource_id || '')};
+}
+// 方案C：新节点所用模型与它沿用的模型相同 → 保留沿用来的参数；模型不同或没有可沿用的记录 → 采用该模型的 schema 默认值。
+function newNodeKeepsInheritedSettings(node, target){
+    const from = node?.schemaInheritedFrom;
+    if(!from) return false;
+    return ['connection_id', 'model_id', 'resource_id'].every(key => String(from[key] || '') === String(target[key] || ''));
 }
 async function refreshCanvasParameterSchema(kind, providerId, model){
     const canonical = kind === 'video'
@@ -541,9 +557,10 @@ async function refreshCanvasParameterSchema(kind, providerId, model){
         if(canvasParameterSchemaTarget[kind] !== key) return;
         canvasParameterSchemaCache.set(`${kind}:active`, schema);
         const newNode = pendingNewNodeForSchema(kind, target);
-        applyCanvasSchemaDefaults(kind, schema, {force:Boolean(newNode)});
+        applyCanvasSchemaDefaults(kind, schema, {force:Boolean(newNode) && !newNodeKeepsInheritedSettings(newNode, target)});
         if(newNode){
             delete newNode.schemaDefaultsPending;
+            delete newNode.schemaInheritedFrom;
             persistActiveSmartSettings();
             scheduleSave();
         }
