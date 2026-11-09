@@ -187,6 +187,31 @@ def _overlay_params(target: dict, proposed: dict) -> None:
             target[key] = json.loads(json.dumps(value))
 
 
+def _normalize_update_proposal(proposed: dict, schema: dict | None) -> dict:
+    """Place a model's flat ``{field_id: value}`` entries where the canvas stores them.
+
+    The model may send flat field ids alone, or next to a ``runSettings`` object.
+    Both forms must end up at the schema's ``params_path`` (for RunningHub that is
+    ``runSettings.rhParams`` with the ``{"value": ...}`` envelope). Flat ids left at
+    the top level would never reach the confirmation card and would be written onto
+    the node itself when the plan is applied.
+    """
+    if not schema:
+        return proposed
+    from app.services.ai_parameters import normalize_capability_params
+
+    if "runSettings" not in proposed:
+        return normalize_capability_params(schema, proposed)
+    field_ids = {str(field.get("id")) for field in schema.get("fields") or [] if field.get("id")}
+    flat = {key: value for key, value in proposed.items() if key in field_ids}
+    if not flat:
+        return proposed
+    merged = {key: json.loads(json.dumps(value)) for key, value in proposed.items() if key not in field_ids}
+    # A field id is validated against the schema, so it wins over a loose runSettings copy.
+    _overlay_params(merged, normalize_capability_params(schema, flat))
+    return merged
+
+
 def _hydrate_plan_nodes(plan_json: dict, canvas: dict | None) -> dict:
     """Attach node snapshots to every configurable step for the UI.
 
@@ -263,20 +288,13 @@ def _hydrate_plan_nodes(plan_json: dict, canvas: dict | None) -> dict:
         # win; otherwise the confirmation card shows (and applies) stale values.
         proposed = proposed_node.get("params") if isinstance(proposed_node, dict) else None
         if step.get("action") == "canvas.update_node_params" and isinstance(proposed, dict) and proposed:
-            if "runSettings" not in proposed:
-                # Flat {field_id: value} form: let the backend place and coerce
-                # the values the same way it does for newly created nodes.
-                target = SimpleNamespace(
-                    capability=capability,
-                    connection_id=str(source_run_settings.get("connection_id") or source.get("connection_id") or ""),
-                    resource_id=str(source_run_settings.get("resource_id") or source.get("resource_id") or ""),
-                    model_id=str(source_run_settings.get("model_id") or source.get("model_id") or ""),
-                )
-                schema = capability_schema_resolver(target)
-                if schema:
-                    from app.services.ai_parameters import normalize_capability_params
-
-                    proposed = normalize_capability_params(schema, proposed)
+            target = SimpleNamespace(
+                capability=capability,
+                connection_id=str(source_run_settings.get("connection_id") or source.get("connection_id") or ""),
+                resource_id=str(source_run_settings.get("resource_id") or source.get("resource_id") or ""),
+                model_id=str(source_run_settings.get("model_id") or source.get("model_id") or ""),
+            )
+            proposed = _normalize_update_proposal(proposed, capability_schema_resolver(target))
             _overlay_params(hydrated_params, proposed)
         step["node"] = {
             "schema_version": 1,

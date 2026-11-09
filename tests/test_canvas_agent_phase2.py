@@ -534,3 +534,75 @@ def test_dispatch_requests_read_the_prompt_the_canvas_shows():
     rh_node = {"id": "n2", "promptDraftText": "界面上的提示词", "runSettings": {"prompt": "旧 settings"}}
     assert dispatch._runninghub_request(rh_node, target)["nodeInfoList"][0]["fieldValue"] == "界面上的提示词"
 
+
+_RH_SCHEMA = {
+    "params_path": "runSettings.rhParams",
+    "fields": [
+        {"id": "492::text", "role": "prompt", "type": "text"},
+        {"id": "13::aspect_ratio", "role": "dropdown", "type": "dropdown", "options": ["1:1 (Square)", "3:2 (Photo)"]},
+        {"id": "13::megapixels", "role": "number", "type": "number"},
+    ],
+}
+
+
+def _rh_update_plan(params):
+    return {
+        "steps": [
+            {
+                "id": "update",
+                "action": "canvas.update_node_params",
+                "target_node_id": "n1",
+                "node": {"semantic_type": "workflow_generation", "params": params},
+            }
+        ]
+    }
+
+
+def _rh_canvas():
+    return {
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "smart-image",
+                "capability": "runninghub.app.image",
+                "promptDraftText": "旧提示词",
+                "runSettings": {
+                    "engine": "runninghub",
+                    "connection_id": "c",
+                    "resource_id": "r",
+                    "prompt": "旧提示词",
+                    "rhParams": {"492::text": {"value": "旧提示词"}, "13::aspect_ratio": {"value": "1:1 (Square)"}},
+                },
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize("with_run_settings", [False, True])
+def test_hydrate_plan_nodes_places_flat_field_ids_for_confirmation_card(monkeypatch, with_run_settings):
+    # The model may send flat field ids with or without a runSettings object next
+    # to them. Either way the card reads runSettings, so flat ids must land there.
+    from app.routers import canvas_agent as router
+
+    monkeypatch.setattr(router, "capability_schema_resolver", lambda target: _RH_SCHEMA)
+    params = {"492::text": "新提示词", "13::aspect_ratio": "3:2 (Photo)", "13::megapixels": 0.3}
+    if with_run_settings:
+        params["runSettings"] = {"prompt": "旧提示词", "count": 1}
+    hydrated = _hydrate_plan_nodes(_rh_update_plan(params), _rh_canvas())
+    card = hydrated["steps"][0]["node"]["params"]
+    assert [key for key in card if "::" in key] == []
+    assert card["runSettings"]["prompt"] == "新提示词"
+    rh = card["runSettings"]["rhParams"]
+    assert rh["492::text"] == {"value": "新提示词"}
+    assert rh["13::aspect_ratio"] == {"value": "3:2 (Photo)"}
+    assert rh["13::megapixels"] == {"value": 0.3}
+
+
+def test_hydrate_plan_nodes_flat_field_ids_beat_stale_run_settings_copy(monkeypatch):
+    from app.routers import canvas_agent as router
+
+    monkeypatch.setattr(router, "capability_schema_resolver", lambda target: _RH_SCHEMA)
+    params = {"13::aspect_ratio": "3:2 (Photo)", "runSettings": {"rhParams": {"13::aspect_ratio": {"value": "1:1 (Square)"}}}}
+    hydrated = _hydrate_plan_nodes(_rh_update_plan(params), _rh_canvas())
+    assert hydrated["steps"][0]["node"]["params"]["runSettings"]["rhParams"]["13::aspect_ratio"] == {"value": "3:2 (Photo)"}
+
