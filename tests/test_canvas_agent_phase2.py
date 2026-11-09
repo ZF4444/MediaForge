@@ -439,3 +439,98 @@ def test_plain_reply_does_not_reopen_rejected_plan(monkeypatch, command):
     assert 'plan' not in result
     assert append[0][3] == result['reply']
     assert run['status'] == 'completed'
+
+
+def _stale_prompt_node():
+    return {
+        "id": "n1",
+        "type": "smart-image",
+        "text": "旧提示词",
+        "promptDraftText": "旧提示词",
+        "promptDraftHtml": "旧提示词",
+        "runPrompt": "上次生成的提示词",
+        "runModelPrompt": "上次模型提示词",
+        "runPromptRefs": [{"name": "ref"}],
+        "runSettings": {"engine": "runninghub", "prompt": "旧提示词", "count": 1},
+    }
+
+
+def test_update_node_params_syncs_every_prompt_field():
+    from app.services.canvas_agent.canvas_executor import _apply_node_params
+
+    node = _stale_prompt_node()
+    _apply_node_params(node, {"runSettings": {"engine": "runninghub", "prompt": "新 <提示词> & 'x'", "count": 1}})
+    assert node["text"] == node["promptDraftText"] == node["runSettings"]["prompt"] == "新 <提示词> & 'x'"
+    # The composer renders promptDraftHtml as HTML, so the text must be escaped.
+    assert node["promptDraftHtml"] == "新 &lt;提示词&gt; &amp; &#x27;x&#x27;"
+    # The last generation record is not an edit target.
+    assert node["runPrompt"] == "上次生成的提示词"
+    assert node["runModelPrompt"] == "上次模型提示词"
+    assert node["runPromptRefs"] == [{"name": "ref"}]
+
+
+def test_update_node_params_keeps_user_draft_when_prompt_is_unchanged():
+    from app.services.canvas_agent.canvas_executor import _apply_node_params
+
+    node = _stale_prompt_node()
+    node["promptDraftText"] = node["promptDraftHtml"] = "用户刚改的草稿"
+    # A pinned-model update resends the stored runSettings, including the prompt.
+    _apply_node_params(node, {"runSettings": {"engine": "runninghub", "prompt": "旧提示词", "model_id": "m1"}})
+    assert node["promptDraftText"] == "用户刚改的草稿"
+    assert node["promptDraftHtml"] == "用户刚改的草稿"
+    assert node["runSettings"]["model_id"] == "m1"
+
+
+def test_update_node_params_without_prompt_leaves_prompt_fields_alone():
+    from app.services.canvas_agent.canvas_executor import _apply_node_params
+
+    node = _stale_prompt_node()
+    _apply_node_params(node, {"title": "新标题"})
+    assert node["title"] == "新标题"
+    assert node["text"] == node["promptDraftText"] == "旧提示词"
+
+
+def test_replace_node_content_syncs_runsettings_prompt_even_without_runsettings():
+    from app.services.canvas_agent.canvas_executor import _sync_prompt_fields
+
+    node = {"id": "n1", "text": "旧"}
+    _sync_prompt_fields(node, "新")
+    assert node["text"] == node["promptDraftText"] == node["promptDraftHtml"] == node["runSettings"]["prompt"] == "新"
+
+
+def test_node_prompt_priority_and_fallbacks():
+    from app.services.canvas_agent.canvas_task_dispatch import node_prompt
+
+    node = _stale_prompt_node()
+    assert node_prompt(node) == "旧提示词"
+    node["promptDraftText"] = "  "
+    assert node_prompt(node) == "上次生成的提示词"
+    assert node_prompt({"text": "t", "runSettings": {"prompt": "p"}}) == "t"
+    assert node_prompt({"text": "  ", "runSettings": {"prompt": "p"}}) == "p"
+    assert node_prompt({"runSettings": "bad"}) == ""
+    assert node_prompt({}) == ""
+
+
+def test_dispatch_requests_read_the_prompt_the_canvas_shows():
+    from types import SimpleNamespace
+
+    from app.services.canvas_agent import canvas_task_dispatch as dispatch
+
+    node = {
+        "id": "n1",
+        "genKind": "image",
+        "promptDraftText": "界面上的提示词",
+        "text": "旧 text",
+        "runSettings": {"apiKind": "image", "model_id": "m1", "prompt": "旧 settings"},
+    }
+    assert dispatch._image_request_for_node(node, None, "", None)["prompt"] == "界面上的提示词"
+    target = SimpleNamespace(
+        connection=SimpleNamespace(id="rh"),
+        resource=SimpleNamespace(
+            id="x2",
+            settings={"app_id": "a", "fields": [{"id": "492::text", "nodeId": "492", "fieldName": "text", "fieldType": "PROMPT"}]},
+        ),
+    )
+    rh_node = {"id": "n2", "promptDraftText": "界面上的提示词", "runSettings": {"prompt": "旧 settings"}}
+    assert dispatch._runninghub_request(rh_node, target)["nodeInfoList"][0]["fieldValue"] == "界面上的提示词"
+

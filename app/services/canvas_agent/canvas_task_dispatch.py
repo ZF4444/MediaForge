@@ -12,6 +12,21 @@ from app.services.canvas_tasks import create_canvas_task, enqueue_canvas_task
 from .canvas_capabilities import from_repository
 
 
+def node_prompt(node: dict[str, Any]) -> str:
+    """Return the prompt the canvas shows for a node.
+
+    Same priority as the plan hydration: the composer draft first, then the last
+    run prompt, then the flat fields, with ``runSettings.prompt`` as the fallback.
+    """
+    for key in ("promptDraftText", "runPrompt", "prompt", "content", "text"):
+        value = node.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    settings = node.get("runSettings")
+    value = settings.get("prompt") if isinstance(settings, dict) else None
+    return value if isinstance(value, str) and value.strip() else ""
+
+
 def _image_request_for_node(
     node: dict[str, Any], fallback_capability: Any, fallback_prompt: str, prompts_by_node: dict[str, str] | None
 ) -> dict[str, Any]:
@@ -25,7 +40,7 @@ def _image_request_for_node(
     model = str(settings.get("model") or node.get("model") or "")
     if not (connection_id or model_id or resource_id):
         raise ValueError("指定生图节点未配置 connection_id/model_id/resource_id")
-    prompt = str((prompts_by_node or {}).get(node["id"]) or node.get("text") or fallback_prompt or "").strip()
+    prompt = str((prompts_by_node or {}).get(node["id"]) or node_prompt(node) or fallback_prompt or "").strip()
     if not prompt:
         raise ValueError("指定生图节点缺少提示词")
     count = settings.get("count", settings.get("n", 1))
@@ -67,7 +82,7 @@ def _runninghub_request(node: dict[str, Any], target: Any) -> dict[str, Any]:
     settings = node.get("runSettings") or {}
     resource = target.resource.settings
     values = settings.get("rhParams") or {}
-    prompt = settings.get("prompt") or node.get("text") or ""
+    prompt = node_prompt(node)
     fields = []
     for field in resource.get("fields") or []:
         if field.get("enabled") is False:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from copy import deepcopy
 from typing import Any
 
@@ -26,6 +27,40 @@ def _connection_endpoints(connection: dict[str, Any]) -> tuple[str, str]:
     return str(connection.get("from") or connection.get("from_node") or connection.get("source") or ""), str(
         connection.get("to") or connection.get("to_node") or connection.get("target") or ""
     )
+
+
+def _run_settings_prompt(source: dict[str, Any]) -> Any:
+    run_settings = source.get("runSettings")
+    return run_settings.get("prompt") if isinstance(run_settings, dict) else None
+
+
+def _sync_prompt_fields(node: dict[str, Any], prompt: str) -> None:
+    """Write one prompt into every node field that the canvas or dispatcher reads.
+
+    The composer shows ``promptDraftHtml``/``promptDraftText``, API dispatch reads
+    ``text`` and RunningHub reads ``runSettings.prompt``. ``runPrompt``,
+    ``runModelPrompt`` and ``runPromptRefs`` describe the last generation, so they
+    stay untouched.
+    """
+    node["text"] = prompt
+    node["promptDraftText"] = prompt
+    node["promptDraftHtml"] = html.escape(prompt)
+    run_settings = node.get("runSettings")
+    run_settings = dict(run_settings) if isinstance(run_settings, dict) else {}
+    run_settings["prompt"] = prompt
+    node["runSettings"] = run_settings
+
+
+def _apply_node_params(node: dict[str, Any], params: dict[str, Any]) -> None:
+    """Merge ``params`` into ``node`` and keep every prompt field consistent."""
+    previous_prompt = _run_settings_prompt(node)
+    node.update(deepcopy(params))
+    # Only a prompt that differs from the stored one is a real edit. Pinned
+    # model updates resend the stored runSettings and must not overwrite a
+    # draft the user changed.
+    proposed_prompt = _run_settings_prompt(params)
+    if isinstance(proposed_prompt, str) and proposed_prompt != previous_prompt:
+        _sync_prompt_fields(node, proposed_prompt)
 
 
 def _assert_file_access(cur: Any, user_id: str, node: dict[str, Any]) -> None:
@@ -103,10 +138,10 @@ def apply_patch(
                             "agent may only modify nodes created by this run or explicitly authorized nodes"
                         )
                 if op == "update_node_params":
-                    node.update(deepcopy(operation.params))
+                    _apply_node_params(node, operation.params)
                     changed.add(node_id)
                 elif op == "replace_node_content":
-                    node["text"] = operation.content
+                    _sync_prompt_fields(node, operation.content)
                     changed.add(node_id)
                 elif op == "move_node":
                     node["x"] = float(operation.params.get("x", node.get("x", 0)))
