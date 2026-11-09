@@ -151,3 +151,109 @@ describe('mergeSmartConnections', () => {
         expect(sandbox.mergeSmartConnections(null, null, new Set())).toEqual([]);
     });
 });
+
+describe('applyMergedServerCanvas 配置框重绑', () => {
+    const NODE = 'n1';
+    const localNode = () => ({
+        id: NODE,
+        text: '旧提示词',
+        promptDraftText: '旧提示词',
+        runSettings: { prompt: '旧提示词', rhParams: { 'a': { value: 1 }, 'b': { value: 2 } } },
+        images: [],
+    });
+    function build({ remote, bound = `${NODE}:node`, local = localNode() }) {
+        const seen = { composerAtRender: undefined, rendered: 0 };
+        const sandbox = createCanvasSyncSandbox({
+            nodes: [local],
+            canvas: { connections: [], updated_at: 1, title: 't' },
+            canvasId: 'c1',
+            lastComposerNodeId: bound,
+            activeComposerSubject: bound ? local : null,
+            fns: {
+                // render 里的 updateComposer 看到的绑定状态，决定会不会把输入框旧内容写回节点。
+                render: () => { seen.rendered += 1; seen.composerAtRender = sandbox.lastComposerNodeId; },
+            },
+        });
+        const ok = sandbox.applyMergedServerCanvas({ nodes: [remote], connections: [], updated_at: 2, title: 't' });
+        return { sandbox, seen, ok };
+    }
+
+    it('远端改了所绑节点的提示词：在 render 之前解除绑定，让配置框按远端数据重建', () => {
+        const remote = { ...localNode(), text: '新提示词', promptDraftText: '新提示词', runSettings: { prompt: '新提示词', rhParams: {} } };
+        const { sandbox, seen, ok } = build({ remote });
+        expect(ok).toBe(true);
+        expect(seen.rendered).toBe(1);
+        expect(seen.composerAtRender).toBe('');
+        expect(sandbox.lastComposerNodeId).toBe('');
+        expect(sandbox.activeComposerSubject).toBeNull();
+        expect(sandbox.nodes[0].text).toBe('新提示词');
+    });
+
+    it('只有 runSettings 参数被远端改了（提示词没变）也要重绑', () => {
+        const remote = localNode();
+        remote.runSettings.rhParams.a = { value: 99 };
+        const { sandbox } = build({ remote });
+        expect(sandbox.lastComposerNodeId).toBe('');
+    });
+
+    it('远端没改所绑节点：保持绑定，不打断用户正在输入的草稿', () => {
+        const { sandbox, seen } = build({ remote: localNode() });
+        expect(seen.composerAtRender).toBe(`${NODE}:node`);
+        expect(sandbox.lastComposerNodeId).toBe(`${NODE}:node`);
+        expect(sandbox.activeComposerSubject).not.toBeNull();
+    });
+
+    it('只是 JSON 键顺序不同（服务端 JSONB 重排）不算被改，保持绑定', () => {
+        const remote = localNode();
+        remote.runSettings = { rhParams: { 'b': { value: 2 }, 'a': { value: 1 } }, prompt: '旧提示词' };
+        const { sandbox } = build({ remote });
+        expect(sandbox.lastComposerNodeId).toBe(`${NODE}:node`);
+    });
+
+    it('远端只改了 promptDraftHtml 的转义写法，不算被改', () => {
+        const local = { ...localNode(), promptDraftHtml: '旧提示词' };
+        const remote = { ...localNode(), promptDraftHtml: '&#x27;旧提示词' };
+        const { sandbox } = build({ remote, local });
+        expect(sandbox.lastComposerNodeId).toBe(`${NODE}:node`);
+    });
+
+    it('配置框没有绑定任何节点：不动状态', () => {
+        const remote = { ...localNode(), text: '新提示词' };
+        const { sandbox } = build({ remote, bound: '' });
+        expect(sandbox.lastComposerNodeId).toBe('');
+        expect(sandbox.nodes[0].text).toBe('新提示词');
+    });
+
+    it('远端改的是别的节点：所绑节点保持绑定', () => {
+        const other = { id: 'n2', text: 'x', images: [] };
+        const local = localNode();
+        const sandbox = createCanvasSyncSandbox({
+            nodes: [local, other],
+            canvas: { connections: [], updated_at: 1, title: 't' },
+            canvasId: 'c1',
+            lastComposerNodeId: `${NODE}:node`,
+        });
+        sandbox.applyMergedServerCanvas({ nodes: [localNode(), { ...other, text: 'y' }], connections: [], updated_at: 2, title: 't' });
+        expect(sandbox.lastComposerNodeId).toBe(`${NODE}:node`);
+    });
+
+    it('所绑节点正在生成：合并以本地为准，不重绑', () => {
+        const local = { ...localNode(), running: true };
+        const remote = { ...localNode(), text: '新提示词', runSettings: { prompt: '新提示词' } };
+        const { sandbox } = build({ remote, local });
+        expect(sandbox.lastComposerNodeId).toBe(`${NODE}:node`);
+        expect(sandbox.nodes[0].text).toBe('旧提示词');
+    });
+
+    it('所绑节点被远端删除：本地节点保留，保持绑定', () => {
+        const sandbox = createCanvasSyncSandbox({
+            nodes: [localNode()],
+            canvas: { connections: [], updated_at: 1, title: 't' },
+            canvasId: 'c1',
+            lastComposerNodeId: `${NODE}:node`,
+        });
+        sandbox.applyMergedServerCanvas({ nodes: [], connections: [], updated_at: 2, title: 't' });
+        expect(sandbox.lastComposerNodeId).toBe(`${NODE}:node`);
+        expect(sandbox.nodes.length).toBe(1);
+    });
+});

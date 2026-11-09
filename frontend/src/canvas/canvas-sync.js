@@ -103,12 +103,48 @@ function mergeSmartConnections(localConns, remoteConns, nodeIds){
     });
     return out;
 }
+// 配置框（composer）会把自己的提示词输入框和 settings 当作所绑节点的权威状态，
+// 在保存前写回节点（savePromptDraftForCurrent / persistActiveSmartSettings）。
+// 远端（例如 Agent）改了这个节点后，如果配置框仍绑定着它，输入框里的旧内容会在
+// 下一次自动保存时覆盖远端的新值。所以合并后要先判断远端是否改了该节点的这些字段。
+function canvasSyncStableJson(value){
+    // 服务端 JSONB 返回的键顺序和本地对象不同，必须按键排序后再比较。
+    if(Array.isArray(value)) return '[' + value.map(canvasSyncStableJson).join(',') + ']';
+    if(value && typeof value === 'object'){
+        return '{' + Object.keys(value).sort()
+            .filter(key => value[key] !== undefined)
+            .map(key => JSON.stringify(key) + ':' + canvasSyncStableJson(value[key]))
+            .join(',') + '}';
+    }
+    const text = JSON.stringify(value);
+    return text === undefined ? 'null' : text;
+}
+function composerNodeFingerprint(node){
+    // promptDraftHtml 由提示词文本派生，浏览器序列化和后端转义的写法不同，不参与比较。
+    if(!node) return '';
+    return canvasSyncStableJson([node.text, node.promptDraftText, node.runPrompt, node.runSettings]);
+}
+function composerBoundNodeId(){
+    return lastComposerNodeId ? String(lastComposerNodeId).split(':')[0] : '';
+}
 function applyMergedServerCanvas(serverCanvas){
     if(!serverCanvas || !canvas) return false;
     const remoteNodes = (Array.isArray(serverCanvas.nodes) ? serverCanvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
+    const boundNodeId = composerBoundNodeId();
+    const boundFingerprintBefore = composerNodeFingerprint(boundNodeId ? nodes.find(n => n.id === boundNodeId) : null);
     const mergedNodes = mergeSmartNodeLists(nodes, remoteNodes);
     const nodeIds = new Set(mergedNodes.map(n => n.id));
     nodes = mergedNodes;
+    if(boundNodeId){
+        const boundAfter = mergedNodes.find(n => n.id === boundNodeId);
+        // 必须在 render() 之前解除绑定：render 里的 updateComposer 发现节点切换时才会
+        // 用远端数据重建输入框和 settings，并且此时 savePromptDraftForCurrent 找不到
+        // 绑定节点，不会再把输入框里的旧内容写回去。
+        if(boundAfter && composerNodeFingerprint(boundAfter) !== boundFingerprintBefore){
+            activeComposerSubject = null;
+            lastComposerNodeId = '';
+        }
+    }
     canvas.connections = mergeSmartConnections(canvas.connections, serverCanvas.connections, nodeIds);
     canvas.updated_at = Number(serverCanvas.updated_at || canvas.updated_at || 0);
     if(canvas.title !== serverCanvas.title && serverCanvas.title){

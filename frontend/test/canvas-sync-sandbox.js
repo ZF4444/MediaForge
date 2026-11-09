@@ -9,6 +9,8 @@
 // 跟 M5/M7/M8 核心批次同类不适合单元测试，因此本 sandbox 只覆盖可独立
 // 验证的纯函数：mergeSmartImageLists / smartNodeInFlight / mergeSmartNode /
 // mergeSmartNodeLists / mergeSmartConnections。
+// applyMergedServerCanvas 只测配置框重绑这一段：render/nodes/canvas 用桩，
+// 在 render 桩里读取 lastComposerNodeId，断言解绑发生在 render 之前。
 import vm from 'node:vm';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,6 +46,10 @@ export function createCanvasSyncSandbox(overrides = {}) {
         canvasSaveAgain: false,
         canvasSyncTimer: null,
         canvasMetaPollTimer: null,
+
+        // applyMergedServerCanvas 会读写配置框的绑定状态（定义在 main.js）。
+        lastComposerNodeId: overrides.lastComposerNodeId ?? '',
+        activeComposerSubject: overrides.activeComposerSubject ?? null,
 
         smartPendingTasks: overrides.fns?.smartPendingTasks || (() => []),
         normalizeLegacySmartNode: overrides.fns?.normalizeLegacySmartNode || (n => n),
