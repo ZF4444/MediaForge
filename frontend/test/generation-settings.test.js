@@ -157,6 +157,14 @@ describe('canonical workflow selection', () => {
         expect(ctx.selectedRunningHubRef().id).toBe('first-app');
     });
 
+    it('启用开关只管画布：已关闭的 RunningHub 资源不会被画布按 resource_id 选中', () => {
+        const disabled=[{...resources[0],enabled:false}];
+        const ctx=createGenerationSettingsSandbox({settings:{engine:'comfy',resource_id:'d-resource',comfyWorkflow:'Sam3DBody.json'},aiConnections,aiResourceIndex:{resources:disabled}});
+        ctx.normalizeWorkflowSourceForNode({genKind:'workflow'});
+        expect(ctx.__state.settings.engine).toBe('comfy');
+        expect(ctx.runningHubTarget({id:'d-app'},{resource_id:'d-resource'}).resource_id).not.toBe('d-resource');
+    });
+
     it('从托管 ComfyUI 资源恢复原工作流名称', () => {
         const ctx=createGenerationSettingsSandbox({settings:{engine:'api',resource_id:'comfy-resource'},aiResourceIndex:{resources:[{id:'comfy-resource',kind:'comfyui_workflow',name:'D-style.json'}]}});
         ctx.normalizeWorkflowSourceForNode({genKind:'workflow'});

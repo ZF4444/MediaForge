@@ -3542,9 +3542,10 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
                 resource_id=payload.resource_id,
                 connection_id=payload.connection_id,
                 kind="runninghub_app",
+                require_enabled=False,
             )
         except LookupError as exc:
-            raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
+            raise HTTPException(status_code=404, detail="RunningHub 资源不存在或所属连接已禁用") from exc
         settings = dict(selected_resource.resource.settings if selected_resource.resource else {})
         webapp_id = webapp_id or str(settings.get("app_id") or "").strip()
     if not webapp_id:
@@ -3644,10 +3645,11 @@ async def runninghub_query(
                 resource_id=resource_id,
                 connection_id=connection_id,
                 kind="runninghub_app",
+                require_enabled=False,
             )
             provider = canonical_connection_view(target)
         except LookupError as exc:
-            raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
+            raise HTTPException(status_code=404, detail="RunningHub 资源不存在或所属连接已禁用") from exc
     if provider is None:
         raise HTTPException(status_code=404, detail="RunningHub 连接不存在或已禁用")
     api_key = await runninghub_api_key_async(provider)
@@ -3733,10 +3735,11 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
             resource_id=payload.resource_id,
             connection_id=payload.connection_id,
             kind="runninghub_app",
+            require_enabled=False,
         )
         provider = canonical_connection_view(target)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
+        raise HTTPException(status_code=404, detail="RunningHub 资源不存在或所属连接已禁用") from exc
     api_key = await runninghub_api_key_async(provider)
     filename = "asset.bin"
     content_type = "application/octet-stream"
@@ -3804,10 +3807,11 @@ async def runninghub_upload_asset_file(
             resource_id=resource_id,
             connection_id=connection_id,
             kind="runninghub_app",
+            require_enabled=False,
         )
         provider = canonical_connection_view(target)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail="RunningHub 资源不存在或已禁用") from exc
+        raise HTTPException(status_code=404, detail="RunningHub 资源不存在或所属连接已禁用") from exc
     api_key = await runninghub_api_key_async(provider)
     filename = os.path.basename(str(file.filename or "").strip()) or "asset.bin"
     content_type = str(file.content_type or "").strip() or "application/octet-stream"
@@ -3906,12 +3910,17 @@ async def ai_resources():
                     "kind": item.kind,
                     "name": item.name,
                     "title": (dict(item.settings).get("title") or dict(item.settings).get("name") or item.name),
+                    # The resource switch only gates the canvas. Non-canvas pages
+                    # (view adjustment, angle, ...) still need to find disabled
+                    # resources, so return all of them and let canvas consumers
+                    # filter on this flag.
+                    "enabled": bool(item.enabled),
                     # Resource settings contain the workflow-owned RH field
                     # definitions. Connection secrets are stored separately and
                     # are never included here.
                     "settings": dict(item.settings),
                 }
-                for item in repository.executable_resources()
+                for item in repository.executable_resources(include_disabled=True)
             ],
         }
 

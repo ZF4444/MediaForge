@@ -56,6 +56,12 @@ describe('Agent confirmation parameter schema target', () => {
     expect(query.get('connection_id')).toBe('rh-connection');
   });
 
+  it('ignores a RunningHub resource whose canvas switch is off', () => {
+    const { planValues } = planSandbox(undefined,[{id:'rh-resource',kind:'runninghub_app',enabled:false,name:'D风格文生图'}]);
+    const values = planValues({id:'rh',node:{semantic_type:'image_generation',capability:'image.text_to_image',resource_id:'rh-resource',params:{runSettings:{prompt:'test'}}}});
+    expect(values.settings.engine).not.toBe('runninghub');
+  });
+
   it('keeps ordinary image nodes on the image parameter path', () => {
     const { planValues } = planSandbox();
     expect(planValues({node:{semantic_type:'image_generation',capability:'image.text_to_image',params:{runSettings:{engine:'api',model:'gpt-image-2'}}}}).workflow).toBe(false);

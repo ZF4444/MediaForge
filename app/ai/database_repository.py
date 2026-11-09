@@ -195,8 +195,17 @@ class DatabaseAIRepository:
             raise LookupError("AI connection not found")
         return ResolvedTarget(connection=connection, model=found)
 
-    def resolve_executable(self, *, resource_id: str = "", connection_id: str = "", kind: str = "") -> ResolvedTarget:
-        resources = self.executable_resources()
+    def resolve_executable(
+        self, *, resource_id: str = "", connection_id: str = "", kind: str = "", require_enabled: bool = True
+    ) -> ResolvedTarget:
+        """Resolve a workflow/app resource and its connection.
+
+        ``require_enabled`` is the canvas gate. The resource "enabled" switch only
+        controls whether the canvas may offer and run it; non-canvas pages (view
+        adjustment, angle, workflow-settings test runs) pass ``False`` so they keep
+        working. The owning connection must still be enabled in both modes.
+        """
+        resources = self.executable_resources(include_disabled=not require_enabled)
         found = (
             next((item for item in resources if item.id == resource_id), None)
             if resource_id

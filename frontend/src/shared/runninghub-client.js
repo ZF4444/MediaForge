@@ -23,7 +23,8 @@ const RunningHubClient = (function () {
             const configuredAppId = settings.app_id || settings.webappId || settings.appId || settings.id || raw.webappId || raw.appId || raw.id;
             return item.kind === 'runninghub_app' && String(configuredAppId || '').trim() === appId;
         });
-        if (!resource) throw new Error(`未找到已启用的 RunningHub 应用资源：${appId}`);
+        // The resource "enabled" switch only gates the canvas, so a disabled app is still resolvable here.
+        if (!resource) throw new Error(`未找到 RunningHub 应用资源：${appId}`);
         return { connection_id: resource.connection_id || '', resource_id: resource.id || '' };
     }
 

@@ -193,7 +193,7 @@ function restoreCanonicalWorkflowSource(sourceSettings, node=null){
     // Retained workflow IDs must not override an explicit AI engine selection
     // when a parameter edit or reopening the node restores its settings.
     if(node?.genKind !== 'workflow' && ['api', 'volcengine'].includes(sourceSettings?.engine)) return;
-    const resource=(aiResourceIndex?.resources || []).find(item=>item.id===sourceSettings?.resource_id);
+    const resource=(aiResourceIndex?.resources || []).find(item=>item.id===sourceSettings?.resource_id && item.enabled!==false);
     if(resource?.kind==='runninghub_app'){
         const appId=runningHubEntryId(resource.settings || {}, 'app') || resource.id;
         if(!sourceSettings.rhConfigKey || sourceSettings.engine!=='runninghub')sourceSettings.rhConfigKey=runningHubEntryKey('app',appId);
@@ -209,7 +209,7 @@ function selectedRunningHubRef(sourceSettings=settings){
     const parsed = parseRunningHubEntryKey(sourceSettings.rhConfigKey || '');
     let ref = parsed ? all.find(item => item.kind === parsed.kind && item.id === parsed.id) : null;
     if(!ref && sourceSettings.resource_id){
-        const resource=(aiResourceIndex?.resources || []).find(item=>item.kind==='runninghub_app' && item.id===sourceSettings.resource_id);
+        const resource=(aiResourceIndex?.resources || []).find(item=>item.kind==='runninghub_app' && item.enabled!==false && item.id===sourceSettings.resource_id);
         const appId=resource ? runningHubEntryId(resource.settings || {}, 'app') || resource.id : sourceSettings.resource_id;
         ref=all.find(item=>item.id===appId) || null;
     }

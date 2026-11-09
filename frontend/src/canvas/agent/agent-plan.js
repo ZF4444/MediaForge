@@ -56,7 +56,7 @@
     const node=step.node||{},params=clone(node.params);
     const settings=params.runSettings||params;
     for(const key of ['connection_id','model_id','resource_id'])if(node[key]&&!settings[key])settings[key]=String(node[key]);
-    const resource=(resourceIndex().resources||[]).find(item=>item.id===settings.resource_id);
+    const resource=(resourceIndex().resources||[]).find(item=>item.id===settings.resource_id&&item.enabled!==false);
     const capability=String(node.capability||'');
     const workflow=node.semantic_type==='workflow_generation'||params.genKind==='workflow'||node.genKind==='workflow'||capability.startsWith('comfyui.workflow.')||capability.startsWith('runninghub.')||['runninghub_app','comfyui_workflow'].includes(resource?.kind)||['comfy','runninghub'].includes(settings.engine);
     if(workflow){
@@ -205,7 +205,7 @@
     if(String(settings?.engine||'').toLowerCase()==='runninghub')return true;
     const index=resourceIndex();const target=resolveStableTarget(settings);
     if(target.resource_id){
-      const resource=(index.resources||[]).find(item=>item.id===target.resource_id);
+      const resource=(index.resources||[]).find(item=>item.id===target.resource_id&&item.enabled!==false);
       if(resource)return resource.kind==='runninghub_app';
     }
     const connection=(index.connections||[]).find(item=>item.id===(target.connection_id||settings?.connection_id));
