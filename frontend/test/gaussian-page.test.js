@@ -9,7 +9,7 @@ describe('Gaussian page module imports', () => {
   it('uses only its required Lucide icons through ESM', () => {
     const entry = readFileSync(entryPath, 'utf8');
 
-    expect(entry).toContain("import { createIcons, Box, CheckCircle, Zap } from 'lucide'");
+    expect(entry).toMatch(/import \{ createIcons, [^}]+\} from 'lucide'/);
     expect(entry).not.toContain('window.lucide');
     expect(entry).not.toContain('lucide.createIcons');
     expect(entry).toContain("import RunningHubClient from '../shared/runninghub-client.js'");
@@ -17,6 +17,17 @@ describe('Gaussian page module imports', () => {
     expect(entry).toContain("import HistoryBulkManager from '../shared/history-bulk-manager.js'");
     expect(entry).not.toContain('window.StudioImagePreview');
     expect(entry).not.toContain('window.HistoryBulkManager');
+  });
+
+  it('registers every Lucide icon used by the page markup and script', () => {
+    const entry = readFileSync(entryPath, 'utf8');
+    const html = readFileSync(pagePath, 'utf8');
+    const pascal = name => name.split('-').map(part => part[0].toUpperCase() + part.slice(1)).join('');
+    const used = new Set([...`${html}\n${entry}`.matchAll(/data-lucide=\\?"([a-z0-9-]+)\\?"/g)].map(match => match[1]));
+    const registered = entry.match(/const gaussianIcons = \{([^}]*)\}/)[1].split(',').map(name => name.trim());
+
+    expect(used.size).toBeGreaterThan(0);
+    for (const name of used) expect(registered, `icon "${name}" is not registered`).toContain(pascal(name));
   });
 
   it('owns the Gaussian HTML and styles in the frontend source tree', () => {

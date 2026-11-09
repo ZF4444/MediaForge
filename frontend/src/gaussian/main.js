@@ -1,4 +1,4 @@
-import { createIcons, Box, CheckCircle, Zap } from 'lucide';
+import { createIcons, ArrowUp, Box, Camera, CheckCircle, Cloud, Download, Save, Sparkles, X, Zap } from 'lucide';
 import RunningHubClient from '../shared/runninghub-client.js';
 import { listHistory, saveHistory } from '../services/history.js';
 import StudioImagePreview from '../shared/image-preview.js';
@@ -8,7 +8,7 @@ import { applyStoredTheme } from '../shared/theme-bootstrap.js';
 
         applyStoredTheme();
 
-        const gaussianIcons = { Box, CheckCircle, Zap };
+        const gaussianIcons = { ArrowUp, Box, Camera, CheckCircle, Cloud, Download, Save, Sparkles, X, Zap };
         const renderIcons = root => createIcons({ icons: gaussianIcons, root });
         renderIcons();
 
