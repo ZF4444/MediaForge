@@ -33,9 +33,42 @@ class DatabaseAIRepository:
             settings = {**_json(row["settings_json"], {}), **changes.get("settings", {})}
             cur.execute(
                 "UPDATE ai_resources SET name=%s,enabled=%s,settings_json=%s,updated_at=%s WHERE id=%s",
-                (changes.get("name", row["name"]), changes.get("enabled", row["enabled"]),
-                 json.dumps(settings), now_ms(), resource_id),
+                (
+                    changes.get("name", row["name"]),
+                    changes.get("enabled", row["enabled"]),
+                    json.dumps(settings),
+                    now_ms(),
+                    resource_id,
+                ),
             )
+
+    def create_resource(self, resource: dict[str, Any]) -> None:
+        """Insert one new RunningHub workflow without touching other rows."""
+        with database_connection_sync() as conn, conn.transaction(), conn.cursor() as cur:
+            cur.execute("SELECT protocol FROM ai_connections WHERE id=%s", (resource["connection_id"],))
+            connection = cur.fetchone()
+            if connection is None:
+                raise LookupError("AI 连接不存在")
+            if connection["protocol"] != "runninghub":
+                raise ValueError("仅支持在 RunningHub 连接下创建工作流资源")
+            now = now_ms()
+            cur.execute(
+                "INSERT INTO ai_resources(id,connection_id,kind,name,schema_json,settings_json,enabled,created_at,updated_at)"
+                " VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING id",
+                (
+                    resource["id"],
+                    resource["connection_id"],
+                    "runninghub_app",
+                    resource.get("name") or resource["id"],
+                    json.dumps({}),
+                    json.dumps(resource.get("settings") or {}),
+                    bool(resource.get("enabled", True)),
+                    now,
+                    now,
+                ),
+            )
+            if cur.fetchone() is None:
+                raise FileExistsError("工作流资源已存在")
 
     def connections(self, *, include_disabled: bool = False) -> list[Connection]:
         query = (
@@ -250,8 +283,7 @@ class DatabaseAIRepository:
                     # require a valid address.
                     if existing_connections is None:
                         existing_connections = {
-                            connection.id: connection
-                            for connection in self.connections(include_disabled=True)
+                            connection.id: connection for connection in self.connections(include_disabled=True)
                         }
                     existing = existing_connections.get(item.get("id"))
                     if not (

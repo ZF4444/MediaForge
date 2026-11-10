@@ -4032,6 +4032,40 @@ async def save_ai_configuration(payload: Dict[str, Any]):
     return {"ok": True}
 
 
+@app.post("/api/ai/executable-resources")
+async def create_ai_executable_resource(payload: Dict[str, Any]):
+    await asyncio.to_thread(require_api_settings_access)
+    if set(payload) - {"id", "connection_id", "kind", "name", "enabled", "settings"}:
+        raise HTTPException(status_code=400, detail="包含不支持的字段")
+    resource_id = payload.get("id")
+    connection_id = payload.get("connection_id")
+    if not isinstance(resource_id, str) or not resource_id.strip():
+        raise HTTPException(status_code=400, detail="id 必须是非空字符串")
+    if not isinstance(connection_id, str) or not connection_id.strip():
+        raise HTTPException(status_code=400, detail="connection_id 必须是非空字符串")
+    if payload.get("kind") != "runninghub_app":
+        raise HTTPException(status_code=400, detail="仅支持创建 RunningHub 应用资源")
+    settings = payload.get("settings", {})
+    if not isinstance(settings, dict):
+        raise HTTPException(status_code=400, detail="settings 必须是对象")
+    if "enabled" in payload and not isinstance(payload["enabled"], bool):
+        raise HTTPException(status_code=400, detail="enabled 必须是布尔值")
+    if "name" in payload and not isinstance(payload["name"], str):
+        raise HTTPException(status_code=400, detail="name 必须是字符串")
+    resource = {**payload, "settings": _canonical_runninghub_settings(settings)}
+    from app.ai.database_repository import DatabaseAIRepository
+
+    try:
+        await asyncio.to_thread(DatabaseAIRepository().create_resource, resource)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
 @app.patch("/api/ai/executable-resources/{resource_id:path}")
 async def update_ai_executable_resource(resource_id: str, payload: Dict[str, Any]):
     await asyncio.to_thread(require_api_settings_access)

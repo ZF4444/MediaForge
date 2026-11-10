@@ -19,3 +19,11 @@ export function updateWorkflowResource(resourceId, changes) {
     body: JSON.stringify(changes),
   });
 }
+
+export function createWorkflowResource(resource) {
+  return apiJson('/api/ai/executable-resources', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(resource),
+  });
+}

@@ -1,4 +1,4 @@
-let runningHubApps=[]; let runningHubConnection=null; let selectedId='runninghub'; let aiConfiguration={connections:[],models:[],resources:[]};
+let runningHubApps=[]; let runningHubConnection=null; let selectedId='runninghub'; let aiConfiguration={connections:[],models:[],resources:[]}; const persistedRhResourceIds=new Set();
 let rhWorkflowEditorState={open:false,index:-1,entry:null,config:null,expanded:{},activeNodeId:'',graph:{k:1,x:0,y:0,w:0,h:0},pan:null,bound:false,previewParams:{},previewRunning:false,previewStatus:'',previewOutputs:[]};
 const resourceList=document.getElementById('resourceList'), statusEl=document.getElementById('status'), rhPasteInput=document.getElementById('rhPasteInput'), rhAppsList=document.getElementById('rhAppsList'), rhAppsCount=document.getElementById('rhAppsCount');
 const rhWorkflowEditorOverlay=document.getElementById('rhWorkflowEditorOverlay'), rhWorkflowEditorTitle=document.getElementById('rhWorkflowEditorTitle'), rhWorkflowEditorSub=document.getElementById('rhWorkflowEditorSub'), rhWorkflowSaveBtn=document.getElementById('rhWorkflowSaveBtn'), rhWorkflowEditName=document.getElementById('rhWorkflowEditName'), rhWorkflowEditNote=document.getElementById('rhWorkflowEditNote'), rhWorkflowEditorSummary=document.getElementById('rhWorkflowEditorSummary'), rhWorkflowEditorNodeList=document.getElementById('rhWorkflowEditorNodeList'), rhWorkflowEditorGraphWrap=document.getElementById('rhWorkflowEditorGraphWrap');
@@ -6,17 +6,21 @@ const rhWorkflowEmbedded=new URLSearchParams(location.search).get('embedded')===
 const runningHubState=()=>({id:'runninghub',connection_id:runningHubConnection?.id||'',rh_apps:runningHubApps}); const setStatus=text=>{if(statusEl)statusEl.textContent=text||''}; const refreshIcons=()=>lucide.createIcons(); const escapeHtml=str=>String(str??'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); const escapeAttr=escapeHtml; const broadcastStudioApiChange=()=>{};
 function canonicalRhAppId(value){return String(value?.app_id||value?.webappId||value?.appId||value?.id||'').trim()}
 function canonicalRhApp(value){const id=canonicalRhAppId(value);return {...value,app_id:id}}
-async function loadRhProviders(){const data=await getAiConfiguration();aiConfiguration=data;runningHubConnection=(data.connections||[]).find(item=>item.protocol==='runninghub')||null;runningHubApps=(data.resources||[]).filter(item=>item.kind==='runninghub_app').map(item=>({...canonicalRhApp(item.settings||{}),_resource_id:item.id,name:item.name,enabled:item.enabled}));ensureRunningHubLists(runningHubState());renderRunningHubCards();}
+async function loadRhProviders(){const data=await getAiConfiguration();aiConfiguration=data;persistedRhResourceIds.clear();(data.resources||[]).forEach(item=>{if(item.kind==='runninghub_app')persistedRhResourceIds.add(item.id)});runningHubConnection=(data.connections||[]).find(item=>item.protocol==='runninghub')||null;runningHubApps=(data.resources||[]).filter(item=>item.kind==='runninghub_app').map(item=>({...canonicalRhApp(item.settings||{}),_resource_id:item.id,name:item.name,enabled:item.enabled}));ensureRunningHubLists(runningHubState());renderRunningHubCards();}
 async function saveRunningHubResources(resourceId=rhWorkflowEditorState.resourceId){
     const app=runningHubApps.find(item=>item._resource_id===resourceId);
     if(!app) throw new Error('工作流资源已变更，请重新打开');
     const normalized=canonicalRhApp(app);
     const settings=Object.fromEntries(Object.entries(normalized).filter(([key])=>!['_resource_id','name','enabled'].includes(key)));
-    await updateWorkflowResource(resourceId, {
-        name:normalized.title||app.name||normalized.app_id,
-        enabled:app.enabled!==false,
-        settings,
-    });
+    const name=normalized.title||app.name||normalized.app_id;
+    const enabled=app.enabled!==false;
+    if(persistedRhResourceIds.has(resourceId)){
+        await updateWorkflowResource(resourceId, {name, enabled, settings});
+    } else {
+        // A workflow opened from a new App ID has no database row yet; PATCH would 404.
+        if(!runningHubConnection?.id) throw new Error('未找到 RunningHub 连接，请先在 API 设置中配置');
+        await createWorkflowResource({id:resourceId, connection_id:runningHubConnection.id, kind:'runninghub_app', name, enabled, settings});
+    }
     await loadRhProviders();
     return true;
 }
