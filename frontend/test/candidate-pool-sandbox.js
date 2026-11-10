@@ -46,6 +46,7 @@ export function createCandidatePoolSandbox(overrides = {}) {
         cloneSmartSettings: overrides.fns?.cloneSmartSettings || ((s) => ({ ...s })),
         mediaNodeDefaultScale: overrides.fns?.mediaNodeDefaultScale || (() => 1),
         promptDraftHtmlFromRunMeta: overrides.fns?.promptDraftHtmlFromRunMeta || (() => ''),
+        ...(overrides.extra || {}),
     };
 
     vm.createContext(sandbox);

@@ -625,8 +625,20 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
             btn.addEventListener('click', e => {
                 e.preventDefault(); e.stopPropagation();
-                if(expandedCandidateNodeIds.has(id)) expandedCandidateNodeIds.delete(id);
-                else expandedCandidateNodeIds.add(id);
+                if(expandedCandidateNodeIds.has(id)){
+                    expandedCandidateNodeIds.delete(id);
+                    candidateGridPageByNode.delete(id);
+                } else expandedCandidateNodeIds.add(id);
+                render();
+            });
+        });
+        el.querySelectorAll('[data-candidate-page]').forEach(btn => {
+            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            btn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                const page = Number(btn.dataset.candidatePage);
+                if(!Number.isInteger(page) || page < 0) return;
+                candidateGridPageByNode.set(btn.dataset.candidatePageNode || id, page);
                 render();
             });
         });

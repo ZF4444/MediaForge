@@ -183,6 +183,7 @@ function isExpandedCandidateGridInteractionTarget(target){
 function closeExpandedCandidateGrids(){
     if(!expandedCandidateNodeIds.size) return false;
     expandedCandidateNodeIds.clear();
+    candidateGridPageByNode.clear();
     return true;
 }
 function closeCandidatePanel(options={}){
@@ -318,10 +319,41 @@ function candidateOverlayHtml(node, layout){
         <div class="candidate-dots">${dots}</div>
     </div>`;
 }
+// 展开网格分页：每页 CANDIDATE_GRID_PAGE_SIZE 张。requestedPage 为空（用户还没翻过页）时，
+// 落在当前主素材所在页；页码越界（例如删除候选后页数变少）时收敛到有效范围。
+const CANDIDATE_GRID_PAGE_SIZE = 4;
+const CANDIDATE_GRID_NUMBERED_TABS_MAX = 6;
+function candidateGridPageState(total, requestedPage, currentIndex){
+    const count = Math.max(0, Number(total) || 0);
+    const pageCount = Math.max(1, Math.ceil(count / CANDIDATE_GRID_PAGE_SIZE));
+    const hasRequested = requestedPage !== undefined && requestedPage !== null && Number.isFinite(Number(requestedPage));
+    const raw = hasRequested ? Number(requestedPage) : Math.floor((Number(currentIndex) || 0) / CANDIDATE_GRID_PAGE_SIZE);
+    const page = Math.max(0, Math.min(pageCount - 1, Math.trunc(raw)));
+    const start = page * CANDIDATE_GRID_PAGE_SIZE;
+    return {page, pageCount, start, end:Math.min(count, start + CANDIDATE_GRID_PAGE_SIZE)};
+}
+function candidateGridPagerHtml(nodeId, state){
+    if(state.pageCount <= 1) return '';
+    const id = escapeAttr(nodeId);
+    const btn = ({target, label, cls='', title='', disabled=false}) =>
+        `<button class="candidate-page-btn ${cls}" type="button" data-candidate-page="${target}" data-candidate-page-node="${id}"${title ? ` title="${title}" aria-label="${title}"` : ''}${disabled ? ' disabled' : ''}>${label}</button>`;
+    const prev = btn({target:state.page - 1, label:'<i data-lucide="chevron-left"></i>', cls:'candidate-page-arrow', title:'上一页', disabled:state.page <= 0});
+    const next = btn({target:state.page + 1, label:'<i data-lucide="chevron-right"></i>', cls:'candidate-page-arrow', title:'下一页', disabled:state.page >= state.pageCount - 1});
+    // 页数少时直接显示页码页签；页数多时退化为“当前/总数”，避免页签撑出网格宽度。
+    const middle = state.pageCount <= CANDIDATE_GRID_NUMBERED_TABS_MAX
+        ? Array.from({length:state.pageCount}, (_, p) => btn({target:p, label:String(p + 1), cls:p === state.page ? 'is-active' : '', title:`第 ${p + 1} 页`})).join('')
+        : `<span class="candidate-page-text">${state.page + 1} / ${state.pageCount}</span>`;
+    return `<div class="candidate-grid-pager" data-candidate-pager="${id}">${prev}${middle}${next}</div>`;
+}
 function expandedCandidateGridHtml(node){
     if(!expandedCandidateNodeIds.has(node.id)) return '';
     const pool = nodeCandidateImages(node);
     if(pool.length <= 1) return '';
     const current = Math.max(0, Math.min(pool.length - 1, Number(node.candidateIndex) || 0));
-    return `<div class="candidate-grid" data-candidate-grid="${escapeAttr(node.id)}">${pool.map((img, i) => `<div class="candidate-grid-item ${i === current ? 'is-main' : ''}" data-candidate-grid-item="${i}">${thumbMediaHtml(img)}<button class="candidate-grid-remove" type="button" data-candidate-remove="${escapeAttr(node.id)}" data-candidate-remove-index="${i}" title="从候选池移除" aria-label="从候选池移除"><i data-lucide="trash-2"></i></button><span class="candidate-grid-idx">${i + 1}</span></div>`).join('')}</div>`;
+    const state = candidateGridPageState(pool.length, candidateGridPageByNode.get(node.id), current);
+    const items = pool.slice(state.start, state.end).map((img, offset) => {
+        const i = state.start + offset;
+        return `<div class="candidate-grid-item ${i === current ? 'is-main' : ''}" data-candidate-grid-item="${i}">${thumbMediaHtml(img)}<button class="candidate-grid-remove" type="button" data-candidate-remove="${escapeAttr(node.id)}" data-candidate-remove-index="${i}" title="从候选池移除" aria-label="从候选池移除"><i data-lucide="trash-2"></i></button><span class="candidate-grid-idx">${i + 1}</span></div>`;
+    }).join('');
+    return `<div class="candidate-grid" data-candidate-grid="${escapeAttr(node.id)}" data-candidate-page-index="${state.page}"><div class="candidate-grid-items">${items}</div>${candidateGridPagerHtml(node.id, state)}</div>`;
 }

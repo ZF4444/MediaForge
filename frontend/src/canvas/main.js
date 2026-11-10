@@ -287,6 +287,8 @@ let candidatePanelNodeId = '';
 let candidatePanelIndex = 0;
 let candidatePanelAttentionNodeId = '';
 let expandedCandidateNodeIds = new Set();
+// 展开网格当前页（节点 id → 页码）。没有记录时落在主素材所在页，收起时清除。
+const candidateGridPageByNode = new Map();
 let suppressComposerForCandidateNodeId = '';
 let lastMouseWorld = null;
 let lastConfigRefreshAt = 0;

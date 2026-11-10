@@ -236,3 +236,77 @@ describe('removeCandidateFromNode', () => {
         expect(node.candidateIndex).toBe(0);
     });
 });
+
+describe('展开候选网格分页', () => {
+    const makePool = n => Array.from({ length: n }, (_, i) => ({ url: `https://x.com/${i + 1}.png`, generatedResult: true }));
+    const makeGridSandbox = (pages = new Map()) => createCandidatePoolSandbox({
+        extra: {
+            expandedCandidateNodeIds: new Set(['n1']),
+            candidateGridPageByNode: pages,
+            escapeAttr: s => String(s),
+            thumbMediaHtml: img => `<img src="${img.url}">`,
+        },
+    });
+    const gridNode = (n, candidateIndex = 0) => ({ id: 'n1', type: 'smart-image', candidateImages: makePool(n), candidateIndex, images: [] });
+    const itemIndexes = html => [...html.matchAll(/data-candidate-grid-item="(\d+)"/g)].map(m => Number(m[1]));
+
+    it('candidateGridPageState 每页 4 张并把页码收敛到有效范围', () => {
+        const { candidateGridPageState } = createCandidatePoolSandbox();
+        expect(candidateGridPageState(8, 0, 0)).toEqual({ page: 0, pageCount: 2, start: 0, end: 4 });
+        expect(candidateGridPageState(9, 2, 0)).toEqual({ page: 2, pageCount: 3, start: 8, end: 9 });
+        expect(candidateGridPageState(8, 9, 0).page).toBe(1);
+        expect(candidateGridPageState(8, -3, 0).page).toBe(0);
+    });
+
+    it('没有记录页码时落在主素材所在页', () => {
+        const { candidateGridPageState } = createCandidatePoolSandbox();
+        expect(candidateGridPageState(8, undefined, 5).page).toBe(1);
+        expect(candidateGridPageState(8, undefined, 3).page).toBe(0);
+    });
+
+    it('展开网格只渲染当前页的 4 张，序号保持全局编号', () => {
+        const sandbox = makeGridSandbox();
+        const html = sandbox.expandedCandidateGridHtml(gridNode(8, 0));
+        expect(itemIndexes(html)).toEqual([0, 1, 2, 3]);
+        const second = makeGridSandbox(new Map([['n1', 1]])).expandedCandidateGridHtml(gridNode(8, 0));
+        expect(itemIndexes(second)).toEqual([4, 5, 6, 7]);
+        expect(second).toContain('<span class="candidate-grid-idx">5</span>');
+    });
+
+    it('主素材在第二页时默认打开第二页', () => {
+        const html = makeGridSandbox().expandedCandidateGridHtml(gridNode(8, 5));
+        expect(itemIndexes(html)).toEqual([4, 5, 6, 7]);
+    });
+
+    it('超过一页时显示页签，当前页高亮，首页禁用上一页', () => {
+        const html = makeGridSandbox().expandedCandidateGridHtml(gridNode(8, 0));
+        expect(html).toContain('data-candidate-pager="n1"');
+        expect(html).toContain('candidate-page-btn is-active" type="button" data-candidate-page="0"');
+        expect(html).toMatch(/data-candidate-page="-1"[^>]*disabled/);
+        expect(html).not.toMatch(/data-candidate-page="2"[^>]*disabled/);
+    });
+
+    it('只有一页（不超过 4 张）时不显示页签', () => {
+        const html = makeGridSandbox().expandedCandidateGridHtml(gridNode(4, 0));
+        expect(html).not.toContain('candidate-grid-pager');
+        expect(itemIndexes(html)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('页数过多时页签退化为“当前 / 总数”', () => {
+        const html = makeGridSandbox().expandedCandidateGridHtml(gridNode(30, 0));
+        expect(html).toContain('<span class="candidate-page-text">1 / 8</span>');
+    });
+
+    it('删除候选后页码越界会回退到最后一页', () => {
+        const sandbox = makeGridSandbox(new Map([['n1', 1]]));
+        const html = sandbox.expandedCandidateGridHtml(gridNode(4, 0));
+        expect(itemIndexes(html)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('closeExpandedCandidateGrids 同时清除页码记录', () => {
+        const pages = new Map([['n1', 1]]);
+        const sandbox = makeGridSandbox(pages);
+        expect(sandbox.closeExpandedCandidateGrids()).toBe(true);
+        expect(pages.size).toBe(0);
+    });
+});
