@@ -197,6 +197,10 @@ async function loadAll(){
 }
 // [asset-manager 迁移] loadStorageUsage/loadStorageFiles/deleteStorageEntries/
 // deleteAllMatchingStorageEntries 已拆分到 frontend/src/asset-manager/storage-manager.js。
+// 是否存在带输入框、尚未保存的编辑态。loadAll 会整页重绘并清空这些输入，自动刷新前需要判断。
+function hasAssetManagerEditState(){
+    return Boolean(assetEditMode || promptEditMode || promptCreateMode || assetTreeEdit || promptTreeEdit);
+}
 async function switchTab(tab='assets'){
     activeTab = tab || 'assets';
     selectedAssetIds.clear();
@@ -837,6 +841,13 @@ window.addEventListener('message', event => {
     // 为「全部类别」，而非保留上次选择的子类别。
     if(event.data?.type === 'storage-focus') {
         storageCategoryFilter = '';
+        loadAll().catch(err => setStatus(err.message || '加载失败'));
+    }
+    // 宿主每次切换/重新打开素材库页时发来 asset-focus：iframe 不重载，需主动刷新，
+    // 否则会一直显示切走前的旧数据（例如画布里刚加入资产的素材）。行为与顶部「刷新」按钮一致。
+    // 刷新会整页重绘并清空输入框，所以存在未保存的编辑态（新增/编辑提示词、重命名等）时跳过，
+    // 等用户保存或取消后下次再进入时刷新。
+    if(event.data?.type === 'asset-focus' && !hasAssetManagerEditState()) {
         loadAll().catch(err => setStatus(err.message || '加载失败'));
     }
 });

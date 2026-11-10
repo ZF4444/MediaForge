@@ -63,4 +63,23 @@ describe('asset manager page entries', () => {
     expect(entry).toMatch(/async function apiJson\(url, options = \{\}\)/);
     expect(entry).toContain('if (!response.ok) throw new Error');
   });
+
+  it('refreshes the asset library when the host re-shows the page, without clobbering unsaved input', () => {
+    const host = readFileSync(resolve(process.cwd(), 'src/index/main.js'), 'utf8');
+    const entry = readFileSync(resolve(process.cwd(), 'src/asset-manager/main.js'), 'utf8');
+    // 宿主：只在 iframe 由隐藏变为显示时发送 asset-focus（iframe 懒加载后再次激活不会重载）。
+    // targetWasActive 必须在移除所有 iframe 的 active 类之前读取。
+    const wasActiveAt = host.indexOf("const targetWasActive = Boolean(document.getElementById('frame-' + id)?.classList.contains('active'))");
+    const clearActiveAt = host.indexOf("document.querySelectorAll('iframe').forEach(f => f.classList.remove('active'))");
+    expect(wasActiveAt).toBeGreaterThan(-1);
+    expect(wasActiveAt).toBeLessThan(clearActiveAt);
+    expect(host).toMatch(/id === 'asset-manager' && target\.src && !targetWasActive\)\s*\{\s*try \{ target\.contentWindow\?\.postMessage\(\{ type: 'asset-focus' \}, '\*'\)/);
+    // 页面：收到 asset-focus 后走与「刷新」按钮相同的 loadAll，但有未保存的编辑态时跳过。
+    expect(entry).toMatch(/event\.data\?\.type === 'asset-focus' && !hasAssetManagerEditState\(\)\)\s*\{\s*loadAll\(\)/);
+    const guard = entry.slice(entry.indexOf('function hasAssetManagerEditState()'));
+    const guardBody = guard.slice(0, guard.indexOf('\n}\n'));
+    for (const name of ['assetEditMode', 'promptEditMode', 'promptCreateMode', 'assetTreeEdit', 'promptTreeEdit']) {
+      expect(guardBody).toContain(name);
+    }
+  });
 });

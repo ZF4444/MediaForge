@@ -178,6 +178,8 @@ let closeHelpDrawer = () => {};
             } catch(e) {}
             document.querySelectorAll('.nav-item,.side-pill').forEach(n => n.classList.remove('active'));
             if(el) el.classList.add('active');
+            // 记下目标页在本次切换前是否已经显示：已显示时再点一次同一入口不算"重新打开"，不应触发刷新。
+            const targetWasActive = Boolean(document.getElementById('frame-' + id)?.classList.contains('active'));
             document.querySelectorAll('iframe').forEach(f => f.classList.remove('active'));
             const target = document.getElementById('frame-' + id);
             // 子页面中的普通链接可能曾把 iframe 导航到别的页面；恢复入口时
@@ -217,6 +219,11 @@ let closeHelpDrawer = () => {};
             // 再次激活只切 active 类、不会重载，若不通知会一直显示切走前的旧数据。
             if (id === 'storage-manager' && target.src) {
                 try { target.contentWindow?.postMessage({ type: 'storage-focus' }, '*'); } catch(e) {}
+            }
+            // 同理：素材库 iframe 再次激活时不会重载，通知它刷新资产库/提示词库/共享文件夹等数据。
+            // 仅在它由隐藏变为显示时通知；本来就显示着时再点同一入口不刷新，避免打断正在进行的操作。
+            if (id === 'asset-manager' && target.src && !targetWasActive) {
+                try { target.contentWindow?.postMessage({ type: 'asset-focus' }, '*'); } catch(e) {}
             }
             resetStudioRootScroll();
         }
