@@ -56,6 +56,9 @@ export function createNodeContextUiSandbox(overrides = {}) {
         isNodeSelected: overrides.fns?.isNodeSelected || ((id) => state.selectedId === id || state.selectedIds.includes(id)),
         imagesForNode: overrides.fns?.imagesForNode || ((node) => (node?.images || [])),
         mediaKindForItem: overrides.fns?.mediaKindForItem || ((item) => item?.kind || 'image'),
+        nodeContextMenu: overrides.nodeContextMenu ?? null,
+        nodeCandidateImages: overrides.fns?.nodeCandidateImages || ((node) => (node?.candidateImages || [])),
+        imageForDisplay: overrides.fns?.imageForDisplay || ((img) => img),
 
         __state: state,
     };

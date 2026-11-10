@@ -89,6 +89,14 @@ export function createClipboardSandbox(overrides = {}) {
         createPromptNode: fns.createPromptNode || ((x, y, opts) => { state.calls.createPromptNode.push({ x, y, opts }); }),
         handleFiles: fns.handleFiles || ((files, targetId, opts) => { state.calls.handleFiles.push({ files, targetId, opts }); }),
         pushUndo: () => { state.calls.pushUndo++; },
+        nodeCandidateImages: fns.nodeCandidateImages || ((node) => node?.candidateImages || []),
+        setNodeMainCandidate: fns.setNodeMainCandidate || ((node, index = 0) => {
+            const pool = node?.candidateImages || [];
+            if (!pool.length) return false;
+            node.candidateIndex = index;
+            node.images = [{ ...pool[index], generatedResult: true }];
+            return true;
+        }),
         render: () => { state.calls.render++; },
         scheduleSave: () => { state.calls.scheduleSave++; },
         toast: (message) => { state.toasts.push(message); },

@@ -162,11 +162,17 @@ function updateNodeShortcutBar(){
     positionNodeShortcutForNode(node);
     if(window.lucide) lucide.createIcons();
 }
+// 目标是否在右键菜单内部。document 上"点到候选池外面就收起预览/展开网格"的捕获监听先于菜单自己的
+// stopPropagation 执行，不排除菜单的话，点"下载"等菜单项会把正在看的预览浮层/展开网格关掉。
+function isNodeContextMenuTarget(target){
+    return Boolean(target?.closest?.('.node-context-menu'));
+}
 function closeNodeContextMenu(){
     if(!nodeContextMenu) return;
     nodeContextMenu.hidden = true;
     nodeContextMenu.innerHTML = '';
     delete nodeContextMenu.dataset.nodeId;
+    delete nodeContextMenu.dataset.candidateIndex;
     delete nodeContextMenu.dataset.canvasContext;
     delete nodeContextMenu.dataset.worldX;
     delete nodeContextMenu.dataset.worldY;
@@ -177,11 +183,36 @@ function contextMenuWorldPoint(){
     const y = Number(nodeContextMenu?.dataset.worldY);
     return Number.isFinite(x) && Number.isFinite(y) ? {x, y} : null;
 }
+// 从右键的目标元素识别它属于候选池的哪一张，返回候选索引；不在候选池里时返回 -1。
+// 候选池有两种视图：展开的网格（[data-candidate-grid-item]）和单张翻页预览浮层（.candidate-panel）。
+// 二者都不在 [data-image-index] 的语义之外：浮层嵌在主图 .image-wrap（data-image-index=0）里，
+// 若不单独识别，右键会被当成主图。
+function candidateIndexFromContextTarget(target){
+    const closest = selector => target?.closest?.(selector) || null;
+    const gridItem = closest('[data-candidate-grid-item]');
+    const panel = gridItem ? null : closest('.candidate-panel');
+    const raw = gridItem ? gridItem.dataset.candidateGridItem : panel ? panel.dataset.candidateIndex : '';
+    if(raw === undefined || raw === null || raw === '') return -1;
+    const index = Number(raw);
+    return Number.isInteger(index) && index >= 0 ? index : -1;
+}
+// 右键点在候选池的某一张（网格项或预览浮层）上时，返回该候选图（带 nodeId/imageIndex，结构同 imagesForNode 的元素）；
+// 否则返回 null，调用方回退到 nodeShortcutTargetFor 的主图逻辑。
+// 菜单的"下载/加入资产/复制/删除"必须单独取这张图，不能落到主图或整个节点上。
+function contextMenuCandidateImage(node, rawIndex=nodeContextMenu?.dataset.candidateIndex){
+    if(!node || rawIndex === undefined || rawIndex === '') return null;
+    const index = Number(rawIndex);
+    if(!Number.isInteger(index) || index < 0) return null;
+    const img = nodeCandidateImages(node)[index];
+    if(!img?.url) return null;
+    return {...imageForDisplay(img), nodeId:node.id, imageIndex:index};
+}
 function nodeContextMenuHtml(node){
     const target = nodeShortcutTargetFor(node);
+    const image = contextMenuCandidateImage(node) || target?.image;
     const items = [
-        {action:'save', icon:'library', label:'加入资产', disabled:!target?.image?.file_id},
-        {action:'download', icon:'download', label:'下载', disabled:!target?.image?.url},
+        {action:'save', icon:'library', label:'加入资产', disabled:!image?.file_id},
+        {action:'download', icon:'download', label:'下载', disabled:!image?.url},
         {separator:true},
         {action:'copy', icon:'copy', label:'复制'},
         {action:'paste', icon:'clipboard', label:'粘贴'},
@@ -220,6 +251,9 @@ function openNodeContextMenu(nodeId, event){
     }
     requestRenderMinimap();
     nodeContextMenu.dataset.nodeId = node.id;
+    const candidateIndex = candidateIndexFromContextTarget(event.target);
+    if(candidateIndex >= 0) nodeContextMenu.dataset.candidateIndex = String(candidateIndex);
+    else delete nodeContextMenu.dataset.candidateIndex;
     nodeContextMenu.dataset.worldX = String(lastMouseWorld.x);
     nodeContextMenu.dataset.worldY = String(lastMouseWorld.y);
     nodeContextMenu.innerHTML = nodeContextMenuHtml(node);
@@ -293,23 +327,35 @@ function openParentFeedback(){
     } catch {}
     toast('当前页面未提供反馈入口');
 }
+// 右键候选图的"删除"：只把这一张从候选池移除（与候选格自带垃圾桶一致，可撤销），不删整个节点。
+function removeContextMenuCandidate(node, index){
+    if(!node || !Number.isInteger(index)) return false;
+    pushUndo();
+    if(!removeCandidateFromNode(node, index)) return false;
+    render();
+    scheduleSave();
+    return true;
+}
 function triggerNodeContextAction(action, nodeId){
     const node = nodes.find(entry => entry.id === nodeId);
     const point = contextMenuWorldPoint();
+    // closeNodeContextMenu 会清掉 dataset，候选图必须在它之前读取。
+    const candidateImage = contextMenuCandidateImage(node);
     closeNodeContextMenu();
     if(!node && action !== 'paste' && action !== 'feedback') return;
     if(action === 'save'){
-        openNodeAssetSaveModal(node).catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
+        openNodeAssetSaveModal(node, candidateImage).catch(err => showErrorModal(err.message || '保存到资产库失败', '保存到资产库失败'));
     } else if(action === 'download'){
-        const target = nodeShortcutTargetFor(node);
-        if(target?.image) downloadPreviewFile(target.image);
+        const image = candidateImage || nodeShortcutTargetFor(node)?.image;
+        if(image) downloadPreviewFile(image);
     } else if(action === 'copy'){
-        void copySelectedNodes();
+        void copySelectedNodes(candidateImage ? {candidate:{nodeId:node.id, index:candidateImage.imageIndex}} : {});
     } else if(action === 'paste'){
         // 右键在节点上：媒体内容追加进该节点；节点内容则粘贴到右键位置。
         void pasteFromContextMenu(point, {targetId:node?.id || ''});
     } else if(action === 'delete'){
-        deleteNode(node.id);
+        if(candidateImage) removeContextMenuCandidate(node, candidateImage.imageIndex);
+        else deleteNode(node.id);
     } else if(action === 'feedback'){
         openParentFeedback();
     }

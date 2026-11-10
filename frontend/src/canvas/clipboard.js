@@ -103,9 +103,28 @@ function buildCanvasClipboardPayload(sourceNodes, connections){
         connections:JSON.parse(JSON.stringify(copiedConnections))
     };
 }
-function prepareCanvasCopy(){
+// 右键点中展开候选池里的某一张时，只复制这一张：以该候选图为主图生成节点副本，其余候选不进剪贴板。
+// 复用 setNodeMainCandidate 保证主图、运行元信息、遮罩图的处理与"设为主素材"一致。
+function candidateCopySource(nodeId, index){
+    const node = nodes.find(n => n.id === nodeId);
+    const pool = node ? nodeCandidateImages(node) : [];
+    if(!Number.isInteger(index) || !pool[index]?.url) return null;
+    const source = JSON.parse(JSON.stringify(node));
+    if(!setNodeMainCandidate(source, index)) return null;
+    source.candidateImages = [{...source.images[0]}];
+    source.candidateIndex = 0;
+    return source;
+}
+// options.candidate = {nodeId, index} 时只复制该候选图，否则复制当前选中的节点。
+function prepareCanvasCopy(options={}){
     if(!canvas || isEditableTarget(document.activeElement)) return null;
-    const sources = selectedNodeIds().map(id => nodes.find(n => n.id === id)).filter(Boolean);
+    let sources;
+    if(options.candidate){
+        const source = candidateCopySource(options.candidate.nodeId, Number(options.candidate.index));
+        sources = source ? [source] : [];
+    } else {
+        sources = selectedNodeIds().map(id => nodes.find(n => n.id === id)).filter(Boolean);
+    }
     if(!sources.length) return null;
     const token = newCanvasClipboardToken();
     const payload = buildCanvasClipboardPayload(sources, canvas.connections);
@@ -140,8 +159,8 @@ async function writeSystemClipboardText(text){
     }
 }
 // Ctrl+C 与右键菜单"复制"共用入口。
-async function copySelectedNodes(){
-    const prepared = prepareCanvasCopy();
+async function copySelectedNodes(options={}){
+    const prepared = prepareCanvasCopy(options);
     if(!prepared) return false;
     const {token, payload, marker} = prepared;
     // 先落盘再写系统剪贴板：写入完成的瞬间用户就可能按下 Ctrl+V。

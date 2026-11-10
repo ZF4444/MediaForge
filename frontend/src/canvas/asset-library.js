@@ -117,15 +117,18 @@ function closeNodeAssetSaveModal(){
     nodeAssetSaveModal.classList.remove('open');
     nodeAssetSaveModal.hidden = true;
 }
-async function openNodeAssetSaveModal(node=selectedNode()){
+// imageOverride：显式指定要保存的那张图（例如右键点中的候选池图）；缺省时保存节点当前目标图。
+async function openNodeAssetSaveModal(node=selectedNode(), imageOverride=null){
     const target = nodeShortcutTargetFor(node);
-    if(!target?.image?.file_id) throw new Error('当前节点没有 file_id，无法保存到资产库');
+    const image = imageOverride || target?.image;
+    if(!image?.file_id) throw new Error('当前节点没有 file_id，无法保存到资产库');
     await loadAssetLibrary();
+    const assetName = String(image.name || target?.ownerNode?.title || node?.title || 'asset').trim();
     nodeAssetSaveState = {
         open:true,
-        fileId:target.image.file_id,
-        name:String(target.image.name || target.ownerNode?.title || 'asset').trim(),
-        items:[{fileId:target.image.file_id, name:String(target.image.name || target.ownerNode?.title || 'asset').trim()}],
+        fileId:image.file_id,
+        name:assetName,
+        items:[{fileId:image.file_id, name:assetName}],
         useOriginalNames:false,
         libraryId:activeAssetLibraryId || assetLibraries()[0]?.id || '',
         categoryId:activeAssetCategoryId || activeAssetCategory()?.id || ''

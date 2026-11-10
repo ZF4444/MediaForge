@@ -4182,6 +4182,8 @@ function createNodeFromMenu(type){
 function documentMousedownHandler(event){
     if(event.button !== 0 || !candidatePanelNodeId) return;
     if(isCandidatePanelInteractionTarget(event.target)) return;
+    // 点右键菜单项（下载/复制等）不算点到预览浮层外面，浮层保持打开。
+    if(isNodeContextMenuTarget(event.target)) return;
     if(closeCandidatePanel()){
         setTimeout(() => {
             updateComposer();
@@ -4193,6 +4195,10 @@ document.addEventListener('mousedown', documentMousedownHandler, true);
 function documentClickHandler(event){
     if(event.button !== 0 || !expandedCandidateNodeIds.size || didPan) return;
     if(isExpandedCandidateGridInteractionTarget(event.target)) return;
+    // 同上：点右键菜单项不收起展开的候选网格。
+    if(isNodeContextMenuTarget(event.target)) return;
+    // 下载是程序合成的 <a download>.click()，目标是锚点本身，不是用户点了网格外面。
+    if(event.target?.closest?.('a[download]')) return;
     if(closeExpandedCandidateGrids()) setTimeout(() => render(), 0);
 }
 document.addEventListener('click', documentClickHandler, true);

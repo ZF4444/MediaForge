@@ -434,3 +434,51 @@ describe('handleCanvasPasteEvent', () => {
         expect(state.calls.createPromptNode.length).toBe(0);
     });
 });
+
+describe('复制候选池中指定的某一张', () => {
+    function candidateNodes() {
+        return [{
+            id: 'c1', type: 'smart-image', x: 10, y: 20,
+            candidateIndex: 0,
+            candidateImages: [
+                { url: 'main.png', file_id: 'f0' },
+                { url: 'two.png', file_id: 'f1' },
+                { url: 'three.png', file_id: 'f2' },
+            ],
+            images: [{ url: 'main.png', file_id: 'f0', generatedResult: true }],
+        }];
+    }
+
+    it('剪贴板里只有被点中的那一张，其余候选不带入', async () => {
+        const { sandbox, clip, state } = makeSandbox({ nodes: candidateNodes() });
+        expect(await sandbox.copySelectedNodes({ candidate: { nodeId: 'c1', index: 2 } })).toBe(true);
+        sandbox.pasteCanvasSnapshot({ files: [], text: clip.store.text });
+        const pasted = state.nodes[state.nodes.length - 1];
+        expect(pasted.id).not.toBe('c1');
+        expect(pasted.images.map(i => i.url)).toEqual(['three.png']);
+        expect(pasted.candidateImages.map(i => i.url)).toEqual(['three.png']);
+        expect(pasted.candidateIndex).toBe(0);
+    });
+
+    it('不改动原节点的主图与候选池', async () => {
+        const { sandbox, state } = makeSandbox({ nodes: candidateNodes() });
+        await sandbox.copySelectedNodes({ candidate: { nodeId: 'c1', index: 1 } });
+        const original = state.nodes[0];
+        expect(original.candidateIndex).toBe(0);
+        expect(original.images.map(i => i.url)).toEqual(['main.png']);
+        expect(original.candidateImages.length).toBe(3);
+    });
+
+    it('候选索引无效时不复制', async () => {
+        const { sandbox } = makeSandbox({ nodes: candidateNodes() });
+        expect(await sandbox.copySelectedNodes({ candidate: { nodeId: 'c1', index: 9 } })).toBe(false);
+        expect(await sandbox.copySelectedNodes({ candidate: { nodeId: 'nope', index: 0 } })).toBe(false);
+    });
+
+    it('不带 candidate 时仍复制选中的节点', async () => {
+        const { sandbox, clip, state } = makeSandbox({ nodes: candidateNodes(), selectedId: 'c1' });
+        expect(await sandbox.copySelectedNodes()).toBe(true);
+        sandbox.pasteCanvasSnapshot({ files: [], text: clip.store.text });
+        expect(state.nodes.length).toBe(2);
+    });
+});

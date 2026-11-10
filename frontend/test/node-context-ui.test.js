@@ -10,6 +10,8 @@
 // nodeShortcutBarHtml/nodeContextMenuHtml/openNodeContextMenu/
 // openCanvasContextMenu 等 HTML 渲染/DOM 操作函数强依赖真实 DOM 元素，
 // 跟 M5/M7/M8 核心批次一样不适合单元测试，不在本文件覆盖范围内。
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { createNodeContextUiSandbox } from './node-context-ui-sandbox.js';
 
@@ -65,6 +67,119 @@ describe('nodeShortcutTargetFor', () => {
             index: 0,
             kind: 'video',
         });
+    });
+});
+
+describe('contextMenuCandidateImage', () => {
+    const node = {
+        id: 'n1',
+        images: [{ url: 'main.png', file_id: 'f0' }],
+        candidateImages: [
+            { url: 'main.png', file_id: 'f0' },
+            { url: 'c1.png', file_id: 'f1' },
+            { url: 'c2.png', file_id: 'f2' },
+        ],
+    };
+
+    it('返回右键点中的候选图而不是主图，并带上 nodeId/imageIndex', () => {
+        const { contextMenuCandidateImage } = createNodeContextUiSandbox({ nodes: [node] });
+        const img = contextMenuCandidateImage(node, '2');
+        expect(img).toMatchObject({ url: 'c2.png', file_id: 'f2', nodeId: 'n1', imageIndex: 2 });
+    });
+
+    it('没有候选索引（右键在主图上）时返回 null，调用方回退到主图', () => {
+        const { contextMenuCandidateImage } = createNodeContextUiSandbox({ nodes: [node] });
+        expect(contextMenuCandidateImage(node, undefined)).toBe(null);
+        expect(contextMenuCandidateImage(node, '')).toBe(null);
+    });
+
+    it('索引非法或越界时返回 null', () => {
+        const { contextMenuCandidateImage } = createNodeContextUiSandbox({ nodes: [node] });
+        expect(contextMenuCandidateImage(node, '-1')).toBe(null);
+        expect(contextMenuCandidateImage(node, 'abc')).toBe(null);
+        expect(contextMenuCandidateImage(node, '9')).toBe(null);
+    });
+});
+
+describe('candidateIndexFromContextTarget', () => {
+    // 最小假元素：closest(selector) 只按下面登记的选择器返回对应祖先。
+    const el = (ancestors = {}) => ({ closest: (selector) => ancestors[selector] || null });
+    const gridItem = (n) => ({ dataset: { candidateGridItem: String(n) } });
+    const panel = (n) => ({ dataset: { candidateIndex: String(n) } });
+
+    it('右键在展开网格项上：返回该项的候选索引', () => {
+        const { candidateIndexFromContextTarget } = createNodeContextUiSandbox();
+        expect(candidateIndexFromContextTarget(el({ '[data-candidate-grid-item]': gridItem(3) }))).toBe(3);
+    });
+
+    it('右键在单张翻页预览浮层上：返回浮层当前显示的候选索引（浮层嵌在主图里，不能当成主图）', () => {
+        const { candidateIndexFromContextTarget } = createNodeContextUiSandbox();
+        expect(candidateIndexFromContextTarget(el({ '.candidate-panel': panel(1) }))).toBe(1);
+    });
+
+    it('索引为 0 的候选也要识别（不能被当成"没有"）', () => {
+        const { candidateIndexFromContextTarget } = createNodeContextUiSandbox();
+        expect(candidateIndexFromContextTarget(el({ '[data-candidate-grid-item]': gridItem(0) }))).toBe(0);
+        expect(candidateIndexFromContextTarget(el({ '.candidate-panel': panel(0) }))).toBe(0);
+    });
+
+    it('同时命中网格项与浮层时以网格项为准', () => {
+        const { candidateIndexFromContextTarget } = createNodeContextUiSandbox();
+        expect(candidateIndexFromContextTarget(el({
+            '[data-candidate-grid-item]': gridItem(2),
+            '.candidate-panel': panel(5),
+        }))).toBe(2);
+    });
+
+    it('不在候选池内（主图、节点空白处）返回 -1', () => {
+        const { candidateIndexFromContextTarget } = createNodeContextUiSandbox();
+        expect(candidateIndexFromContextTarget(el())).toBe(-1);
+        expect(candidateIndexFromContextTarget(null)).toBe(-1);
+        expect(candidateIndexFromContextTarget({})).toBe(-1);
+    });
+
+    it('索引缺失或非法时返回 -1', () => {
+        const { candidateIndexFromContextTarget } = createNodeContextUiSandbox();
+        expect(candidateIndexFromContextTarget(el({ '.candidate-panel': { dataset: {} } }))).toBe(-1);
+        expect(candidateIndexFromContextTarget(el({ '.candidate-panel': panel('abc') }))).toBe(-1);
+        expect(candidateIndexFromContextTarget(el({ '.candidate-panel': panel(-2) }))).toBe(-1);
+        expect(candidateIndexFromContextTarget(el({ '.candidate-panel': panel('1.5') }))).toBe(-1);
+    });
+});
+
+describe('isNodeContextMenuTarget 与候选池收起逻辑', () => {
+    it('菜单内的元素返回 true，其它与空值返回 false', () => {
+        const { isNodeContextMenuTarget } = createNodeContextUiSandbox();
+        const inMenu = { closest: (sel) => (sel === '.node-context-menu' ? {} : null) };
+        const outside = { closest: () => null };
+        expect(isNodeContextMenuTarget(inMenu)).toBe(true);
+        expect(isNodeContextMenuTarget(outside)).toBe(false);
+        expect(isNodeContextMenuTarget(null)).toBe(false);
+        expect(isNodeContextMenuTarget({})).toBe(false);
+    });
+
+    // 这两个监听器写在 main.js 顶层并直接绑定 document，无法在 vm 里单独加载，按项目约定读源码文本断言。
+    // 回归点：点右键菜单项（下载/复制…）以及下载产生的合成 <a download> 点击，都不能收起预览浮层/展开网格。
+    const main = readFileSync(resolve(process.cwd(), 'src/canvas/main.js'), 'utf8');
+    const body = (name) => {
+        const start = main.indexOf(`function ${name}(`);
+        const next = main.indexOf('\nfunction ', start + 1);
+        const nextStmt = main.indexOf('\ndocument.addEventListener', start + 1);
+        const end = Math.min(...[next, nextStmt].filter(i => i > -1));
+        return main.slice(start, end);
+    };
+
+    it('documentMousedownHandler 忽略右键菜单内的点击', () => {
+        expect(body('documentMousedownHandler')).toContain('isNodeContextMenuTarget(event.target)');
+    });
+
+    it('documentClickHandler 忽略右键菜单内的点击与下载锚点的合成点击', () => {
+        const fn = body('documentClickHandler');
+        expect(fn).toContain('isNodeContextMenuTarget(event.target)');
+        expect(fn).toContain("a[download]");
+        // 忽略判断必须在真正收起（closeExpandedCandidateGrids）之前
+        expect(fn.indexOf("a[download]")).toBeLessThan(fn.indexOf('closeExpandedCandidateGrids()'));
+        expect(fn.indexOf('isNodeContextMenuTarget')).toBeLessThan(fn.indexOf('closeExpandedCandidateGrids()'));
     });
 });
 
