@@ -248,8 +248,16 @@ def save_asset_library(lib):
     from app.core.auth import current_user_id
 
     uid = current_user_id()
-    envelope_id = "default_" + uid
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
+        # 表上有 UNIQUE(user_id, name)，而历史迁移/账号迁移产生的行 id 不一定是 default_<uid>。
+        # 只按 id 做 ON CONFLICT 会在这种用户身上撞唯一约束。这里沿用 load_asset_library 读取的那一行
+        # （同样的排序），没有旧行时才使用 default_<uid>。
+        cur.execute(
+            "SELECT id FROM asset_libraries WHERE user_id=%s ORDER BY is_default DESC, created_at LIMIT 1 FOR UPDATE",
+            (uid,),
+        )
+        existing = cur.fetchone()
+        envelope_id = (existing or {}).get("id") or "default_" + uid
         cur.execute(
             "INSERT INTO asset_libraries(id,user_id,name,type,is_default,created_at,updated_at,payload_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET updated_at=EXCLUDED.updated_at,payload_json=EXCLUDED.payload_json",
             (
