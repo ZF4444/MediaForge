@@ -12,9 +12,15 @@
     const button=$('canvasAgentSend');if(!button)return;
     const caption=mode==='cancel'?'取消运行':'发送';
     button.title=caption;button.setAttribute('aria-label',caption);
-    button.innerHTML=`<i data-lucide="${mode==='cancel'?'square':'send'}"></i>`;
+    // renderRun() polls about once a second. Replacing the icon on every call
+    // swaps the button's child between mousedown and mouseup, so the browser
+    // drops the click. Rebuild the icon only when the mode actually changes.
+    if(button.dataset.mode!==mode){
+      button.dataset.mode=mode;
+      button.innerHTML=`<i data-lucide="${mode==='cancel'?'square':'send'}"></i>`;
+      window.lucide?.createIcons({root:button});
+    }
     button.disabled=cancelling || state.busy;
-    window.lucide?.createIcons({root:button});
   }
   let confirmationPending = false;
   let confirmationAccepted = false;
