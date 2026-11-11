@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI 图片生成"
+  short_description: "通过 MediaForge 的 AI生成 引擎执行文生图、基于画布图片修改及多图参考生成"
+  default_prompt: "使用 $mediaforge-image-generator，通过图片生成节点的“AI生成”引擎，根据我的描述和指定参考图片准备文生图或图生图提案。"

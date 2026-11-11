@@ -1,15 +1,19 @@
 """Submit approved generation intents through the existing Canvas Task queue."""
 
 from __future__ import annotations
-import uuid
+
 import asyncio
 import time
-from app.config import CANVAS_TASK_TIMEOUT_SECONDS
-from app.ai.runtime import check_target_task_budget, normalize_canvas_image_payload
+import uuid
 from typing import Any
+
+from app.ai.runtime import check_target_task_budget, normalize_canvas_image_payload
+from app.config import CANVAS_TASK_TIMEOUT_SECONDS
 from app.services.business_metadata import load_canvas_payload
 from app.services.canvas_tasks import create_canvas_task, enqueue_canvas_task
+
 from .canvas_capabilities import from_repository
+from .image_inputs import canvas_image_inputs, image_input_contract
 
 
 def node_prompt(node: dict[str, Any]) -> str:
@@ -32,7 +36,11 @@ def _image_request_for_node(
 ) -> dict[str, Any]:
     """Use the same persisted runSettings contract as manually-run image nodes."""
     settings = node.get("runSettings") if isinstance(node.get("runSettings"), dict) else {}
-    if str(node.get("genKind") or "image") != "image" or str(settings.get("apiKind") or "image") != "image":
+    if (
+        str(settings.get("engine") or "api") != "api"
+        or str(node.get("genKind") or "image") != "image"
+        or str(settings.get("apiKind") or "image") != "image"
+    ):
         raise ValueError("指定节点不是 API 生图节点")
     connection_id = str(settings.get("connection_id") or node.get("connection_id") or "")
     model_id = str(settings.get("model_id") or node.get("model_id") or "")
@@ -62,16 +70,6 @@ def _image_request_for_node(
         "reference_images": [],
         "run_settings": settings,
     }
-    # Persist authoritative resource identifiers when the node still carries
-    # only its legacy target snapshot.
-    try:
-        from app.ai.database_repository import DatabaseAIRepository
-
-        repo = DatabaseAIRepository()
-        # Resolution is performed by the async submitter; keep this helper
-        # synchronous because it is also used by unit tests and tooling.
-    except LookupError:
-        pass
     # Agent tasks enter the Redis queue directly, whereas manual canvas runs
     # pass through this normalizer in the HTTP endpoint. Reuse it here so
     # both paths use identical ratio/size and target-field conversion.
@@ -102,6 +100,7 @@ def _runninghub_request(node: dict[str, Any], target: Any) -> dict[str, Any]:
 
 async def _submit_runninghub_node(user_id: str, run_id: str, node: dict[str, Any]) -> dict[str, Any]:
     from app.ai.database_repository import DatabaseAIRepository
+
     from .event_factory import task_lifecycle
     from .events import emit_agent_event
 
@@ -160,6 +159,7 @@ async def submit_run_requests(
             raise ValueError("当前没有可用的生图模型")
         task_id = f"canvas_agent_img_{uuid.uuid4().hex}"
         request = _image_request_for_node(node, capability, prompt, prompts_by_node)
+        request["reference_images"] = await asyncio.to_thread(canvas_image_inputs, canvas, node, user_id)
         from app.models import OnlineImageRequest
 
         request = (
@@ -194,6 +194,12 @@ async def submit_run_requests(
                 )
         except (LookupError, RuntimeError):
             raise ValueError("生图节点的稳定资源标识无效或已禁用")
+        if request["reference_images"]:
+            contract = image_input_contract(target)
+            if not contract["supported"]:
+                raise ValueError("所选模型的执行链路不支持参考图片")
+            if len(request["reference_images"]) > contract["max_images"]:
+                raise ValueError(f"所选模型的执行链路最多接受 {contract['max_images']} 张参考图片")
         # User permissions were checked when the confirmation was accepted.
         await check_target_task_budget(target, user_id)
         persisted_request = dict(request)

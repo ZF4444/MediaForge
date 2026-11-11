@@ -201,7 +201,12 @@ def _normalize_update_proposal(proposed: dict, schema: dict | None) -> dict:
     from app.services.ai_parameters import normalize_capability_params
 
     if "runSettings" not in proposed:
-        return normalize_capability_params(schema, proposed)
+        normalized = normalize_capability_params(schema, proposed)
+        # Image selection is canvas state, not a provider parameter. Retain
+        # explicit exclusions while normalizing the model's flat field ids.
+        if "blockedInputRefs" in proposed:
+            normalized["blockedInputRefs"] = proposed["blockedInputRefs"]
+        return normalized
     field_ids = {str(field.get("id")) for field in schema.get("fields") or [] if field.get("id")}
     flat = {key: value for key, value in proposed.items() if key in field_ids}
     if not flat:

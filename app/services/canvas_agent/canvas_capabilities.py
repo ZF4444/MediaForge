@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.ai.database_repository import DatabaseAIRepository
+from app.ai.domain import ResolvedTarget
 from app.services.business_metadata import list_comfy_workflows
+from app.services.canvas_agent.image_inputs import image_input_contract
 
 
 @dataclass(frozen=True)
@@ -20,6 +22,7 @@ class Capability:
     resource_id: str = ""
     connection_name: str = ""
     model_name: str = ""
+    image_input: dict[str, Any] = field(default_factory=dict)
 
 
 class CapabilityRegistry:
@@ -78,6 +81,7 @@ class CapabilityRegistry:
                     "resource_id": item.resource_id,
                     "display_name": f"{item.connection_name} / {item.model_name or item.resource_id}",
                     "enabled": item.enabled,
+                    **({"image_input": dict(item.image_input)} if item.image_input else {}),
                 }
             )
         return list(grouped.values())
@@ -105,6 +109,7 @@ def from_repository(repository: DatabaseAIRepository | None = None) -> Capabilit
                     "",
                     connection.name,
                     model.alias or model.upstream_model,
+                    image_input=image_input_contract(ResolvedTarget(connection, model=model)) if model.kind == "image" else {},
                 )
             )
     for resource in repository.executable_resources():
