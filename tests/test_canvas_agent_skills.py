@@ -392,3 +392,65 @@ def test_skill_file_tool_rejects_a_skill_that_was_not_loaded():
     spec = skill_event_from_artifact("call-unloaded-resource", message.artifact)
     assert spec is not None
     assert spec.event_type == "skill.resource_rejected"
+
+
+def _tool_call_model(tool_names):
+    class Model:
+        calls = 0
+
+        def bind_tools(self, _tools):
+            return self
+
+        async def ainvoke(self, _messages):
+            self.calls += 1
+            if self.calls <= len(tool_names):
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": tool_names[self.calls - 1],
+                            "args": {},
+                            "id": f"call-{self.calls}",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            return AIMessage(content="done")
+
+    return Model()
+
+
+def _fake_tool(name, content):
+    from langchain_core.tools import StructuredTool
+
+    async def run() -> str:
+        return content
+
+    return StructuredTool.from_function(coroutine=run, name=name, description=name)
+
+
+def test_skill_text_mentioning_confirmation_does_not_open_the_confirmation_step():
+    # A Skill body documents the "awaiting_confirmation" status in prose. Only
+    # propose_canvas_patch may enter confirmation, otherwise the run stops after
+    # reading the Skill and the Skill body is shown as the reply.
+    model = _tool_call_model(["read_canvas_skill"])
+    tools = [_fake_tool("read_canvas_skill", "提案返回 awaiting_confirmation 只表示等待确认")]
+    result = asyncio.run(
+        create_canvas_agent(model=model, user_id="u", run_id="r", canvas_id="c", tools=tools).ainvoke({"messages": []})
+    )
+    assert model.calls == 2
+    assert result["messages"][-1].content == "done"
+
+
+def test_propose_canvas_patch_result_still_opens_the_confirmation_step():
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    model = _tool_call_model(["propose_canvas_patch"])
+    tools = [_fake_tool("propose_canvas_patch", '{"status": "awaiting_confirmation"}')]
+    agent = create_canvas_agent(
+        model=model, user_id="u", run_id="r", canvas_id="c", tools=tools, checkpointer=InMemorySaver()
+    )
+    config = {"configurable": {"thread_id": "t"}}
+    asyncio.run(agent.ainvoke({"messages": []}, config))
+    assert model.calls == 1
+    assert agent.get_state(config).next == ("confirmation",)

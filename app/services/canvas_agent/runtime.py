@@ -256,10 +256,19 @@ def create_canvas_agent(
 
     def route_tools(state: CanvasAgentState) -> str:
         """Route after tools_node: enter confirmation when propose_canvas_patch signals it, else loop back to agent."""
-        last = (state.get("messages") or [])[-1] if state.get("messages") else None
-        text = str(getattr(last, "content", ""))
-        # propose_canvas_patch embeds a sentinel string in its ToolMessage content.
-        return "confirmation" if "awaiting_confirmation" in text or "requires_confirmation" in text else "agent"
+        # Only a propose_canvas_patch result may open the confirmation step.
+        # Other tools (notably read_canvas_skill*) return free text that can
+        # legitimately mention "awaiting_confirmation", which must not be
+        # mistaken for a generated plan.
+        for message in reversed(state.get("messages") or []):
+            if isinstance(message, AIMessage):
+                break
+            if getattr(message, "name", "") != "propose_canvas_patch":
+                continue
+            text = str(getattr(message, "content", ""))
+            if "awaiting_confirmation" in text or "requires_confirmation" in text:
+                return "confirmation"
+        return "agent"
 
     def route_confirmation(state: CanvasAgentState) -> str:
         """Route after confirmation_node: proceed to execution on approval, finish on rejection."""
