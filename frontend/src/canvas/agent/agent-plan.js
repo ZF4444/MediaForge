@@ -110,7 +110,7 @@
   function control(field,value,onChange,interactive){
     const id=String(field.id||'');let type=String(field.type||'text');
     if(id==='count'&&type==='number') field={...field,type:'dropdown',options:Array.from({length:Math.max(1,Number(field.max??4)-Number(field.min??1)+1)},(_,index)=>Number(field.min??1)+index)};
-    type=String(field.type||type);const configurable=interactive&&(field.ui?.configurable!==false||['model','videoModel'].includes(id));
+    type=String(field.type||type);const configurable=interactive&&field.ui?.configurable!==false;
     if(type==='dropdown'){
       const values=options(field),current=String(value??'');const wrapper=document.createElement('div');wrapper.className=`canvas-agent-smart-control smart-control ${String(field.id||'')}-control`;
       const pill=document.createElement('button');pill.type='button';pill.className='smart-pill';pill.title=label(field);pill.disabled=!configurable;pill.setAttribute('aria-expanded','false');appendIcon(pill,fieldIcon(field));const summary=document.createElement('span');if(['model','videoModel'].includes(id))summary.className='sub';summary.textContent=String(values.find(option=>String(option.value)===current)?.label??current??'');pill.appendChild(summary);pill.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const open=!wrapper.classList.contains('pinned');closePopovers();if(open)openPopover(wrapper);});wrapper.appendChild(pill);
@@ -294,7 +294,7 @@
               const entries=field.id==='videoModel'?(typeof apiVideoModelEntries==='function'?apiVideoModelEntries():[]):(typeof apiImageModelEntries==='function'?apiImageModelEntries():[]);
               field={...field,option_labels:(field.options||[]).map((model,index)=>entries.find(entry=>entry.model===model&&entry.providerId===(field.id==='videoModel'?settings.videoProvider:settings.provider_id))?.label||field.option_labels?.[index]||model)};
             }
-            controls.appendChild(schemaField(field,values,paramsPath,interactive,fieldId=>{if(['model','videoModel'].includes(fieldId))void populateSchema(card,step,values,interactive,request,history,promptEl);else if(['resolution','ratio','msResolution','msRatio'].includes(fieldId))renderFields();}));
+            controls.appendChild(schemaField(field,values,paramsPath,interactive,fieldId=>{if(['resolution','ratio','msResolution','msRatio'].includes(fieldId))renderFields();}));
           });
         window.lucide?.createIcons();};renderFields();
       if(!controls.childElementCount){fallbackFields(values,interactive).forEach(item=>controls.appendChild(item));window.lucide?.createIcons();}

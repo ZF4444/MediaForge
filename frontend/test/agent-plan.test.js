@@ -102,3 +102,20 @@ it('merges the actual X2 create/run plan using from_step', () => {
   ];
   expect(configurationSteps(steps).map(step=>step.id)).toEqual(['step_create_volcano_node']);
 });
+
+describe('Agent confirmation model selection', () => {
+  // The model is fixed before the plan is proposed (the Skill asks the user
+  // first). Switching it in the confirmation card would need the stable IDs
+  // written back and every other field re-validated, so it stays read-only.
+  it('keeps the model field read-only and never refetches the schema on a model change', () => {
+    const controlStart = source.indexOf('function control(');
+    const controlBody = source.slice(controlStart, source.indexOf('function ', controlStart + 10));
+    const configurable = controlBody.match(/const configurable=[^;]*;/)[0];
+    expect(configurable).toContain('field.ui?.configurable!==false');
+    expect(configurable).not.toContain('videoModel');
+
+    const layoutStart = source.indexOf('controls.appendChild(schemaField(');
+    const layoutCall = source.slice(layoutStart, source.indexOf('}));', layoutStart));
+    expect(layoutCall).not.toContain('populateSchema');
+  });
+});
