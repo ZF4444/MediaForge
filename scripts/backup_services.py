@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -84,7 +83,10 @@ def backup_minio(run_dir: Path, manifest: list[str]) -> None:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 client.fget_object(bucket, obj.object_name, str(target))
                 manifest.append(f"minio_object={bucket}/{obj.object_name}")
+                stat = client.stat_object(bucket, obj.object_name)
                 metadata = {
+                    "content_type": stat.content_type,
+                    "metadata": dict(stat.metadata or {}),
                     "bucket": bucket,
                     "object": obj.object_name,
                     "size": stat_size(target),
@@ -169,7 +171,9 @@ def main() -> int:
         run_dir.rename(final_dir)
         for old in output.glob("20*"):
             if (
-                old.is_dir()
+                args.retention_days > 0
+                and old != final_dir
+                and old.is_dir()
                 and (datetime.now(timezone.utc).timestamp() - old.stat().st_mtime) > args.retention_days * 86400
             ):
                 log(f"Removing expired backup {old}")
