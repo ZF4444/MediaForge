@@ -58,4 +58,33 @@ describe('Agent send button', () => {
     expect(button.disabled).toBe(true);
     expect(button.innerHTMLWrites).toBe(writes);
   });
+
+  it('becomes clickable again once busy is cleared and the mode is refreshed', () => {
+    const { context, button } = actionModeSandbox();
+    context.state.busy = true;
+    context.setActionMode('send');
+    expect(button.disabled).toBe(true);
+    context.state.busy = false;
+    context.setActionMode('send');
+    expect(button.disabled).toBe(false);
+  });
+});
+
+// Clearing state.busy alone does not touch the button, so every code path that
+// sets busy=true must refresh the button in its finally block.
+function functionSource(name) {
+  const start = source.indexOf(`async function ${name}(`);
+  expect(start, `${name} not found`).toBeGreaterThanOrEqual(0);
+  const next = source.indexOf('\n  async function ', start + 1);
+  const nextSync = source.indexOf('\n  function ', start + 1);
+  const ends = [next, nextSync].filter(index => index > start);
+  return source.slice(start, Math.min(...ends));
+}
+
+describe('Agent busy state refreshes the send button', () => {
+  it.each(['newRun', 'send'])('%s refreshes the button after clearing busy', name => {
+    const body = functionSource(name);
+    const finallyBlock = body.slice(body.lastIndexOf('finally'));
+    expect(finallyBlock).toMatch(/state\.busy=false;\s*setActionMode\(/);
+  });
 });
