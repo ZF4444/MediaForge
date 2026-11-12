@@ -8,6 +8,7 @@
 //   5. promptNodeLayoutSize：Prompt 节点尺寸计算（含历史遗留高度兼容）。
 //   6. imageLayout / nodeRect：统一入口，按节点类型分派到不同布局分支。
 import { describe, it, expect } from 'vitest';
+import vm from 'node:vm';
 import { createNodeLayoutSandbox } from './node-layout-sandbox.js';
 
 describe('safeScale', () => {
@@ -18,6 +19,47 @@ describe('safeScale', () => {
         expect(safeScale(-1)).toBe(1);
         expect(safeScale(NaN)).toBe(1);
         expect(safeScale(undefined)).toBe(1);
+    });
+
+    it('极小/极大值夹到 [CANVAS_MIN_SCALE, CANVAS_MAX_SCALE]', () => {
+        const { safeScale } = createNodeLayoutSandbox();
+        expect(safeScale(0.00005)).toBe(0.06);
+        expect(safeScale(1e-300)).toBe(0.06);
+        expect(safeScale(0.06)).toBe(0.06);
+        expect(safeScale(4)).toBe(4);
+        expect(safeScale(1000)).toBe(4);
+        expect(safeScale(Infinity)).toBe(1);
+        expect(safeScale('0.5')).toBe(0.5);
+    });
+});
+
+describe('isViewportUsable', () => {
+    it('x/y/scale 都有限且 scale 在范围内时可用', () => {
+        const { isViewportUsable } = createNodeLayoutSandbox();
+        expect(isViewportUsable({ x: 0, y: 0, scale: 1 })).toBe(true);
+        expect(isViewportUsable({ x: -500.5, y: 300, scale: 0.06 })).toBe(true);
+        expect(isViewportUsable({ x: 0, y: 0, scale: 4 })).toBe(true);
+    });
+
+    it('scale 过小/过大/无效，或 x/y 无效时不可用', () => {
+        const { isViewportUsable } = createNodeLayoutSandbox();
+        expect(isViewportUsable({ x: 0, y: 0, scale: 0.00005 })).toBe(false);
+        expect(isViewportUsable({ x: 0, y: 0, scale: 100 })).toBe(false);
+        expect(isViewportUsable({ x: 0, y: 0, scale: 0 })).toBe(false);
+        expect(isViewportUsable({ x: 0, y: 0, scale: NaN })).toBe(false);
+        expect(isViewportUsable({ x: 0, y: 0 })).toBe(false);
+        expect(isViewportUsable({ x: NaN, y: 0, scale: 1 })).toBe(false);
+        expect(isViewportUsable({ x: 0, y: Infinity, scale: 1 })).toBe(false);
+        expect(isViewportUsable(null)).toBe(false);
+        expect(isViewportUsable(undefined)).toBe(false);
+    });
+});
+
+describe('画布缩放常量', () => {
+    it('CANVAS_MIN_SCALE / CANVAS_MAX_SCALE 在沙箱中可读', () => {
+        const sandbox = createNodeLayoutSandbox();
+        expect(vm.runInContext('CANVAS_MIN_SCALE', sandbox)).toBe(0.06);
+        expect(vm.runInContext('CANVAS_MAX_SCALE', sandbox)).toBe(4);
     });
 });
 

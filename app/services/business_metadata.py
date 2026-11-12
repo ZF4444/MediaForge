@@ -8,6 +8,7 @@ explicit file references. PostgreSQL is required; there is no JSON fallback.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import uuid
@@ -371,6 +372,47 @@ def new_id() -> str:
 
 def json_value(value: Any) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False)
+
+
+# 画布视口缩放范围，需与前端 frontend/src/canvas/node-layout.js 的
+# CANVAS_MIN_SCALE / CANVAS_MAX_SCALE 保持一致。
+CANVAS_VIEWPORT_MIN_SCALE = 0.06
+CANVAS_VIEWPORT_MAX_SCALE = 4.0
+
+
+def _finite_number(value: Any) -> Optional[float]:
+    """Return ``value`` as a finite float, or None for bools, NaN/Infinity and non-numbers."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def normalize_canvas_viewport(viewport: Any) -> Dict[str, Any]:
+    """Return a safe copy of a canvas viewport before it is persisted.
+
+    - Non-dict input becomes ``{}``.
+    - ``scale`` is clamped to the allowed range; a non-finite or non-positive value becomes 1.
+    - ``x`` / ``y`` that are not finite numbers become 0.
+    - Keys that are absent stay absent, and unknown keys are kept unchanged.
+    """
+    if not isinstance(viewport, dict):
+        return {}
+    result = dict(viewport)
+    if "scale" in result:
+        scale = _finite_number(result["scale"])
+        if scale is None or scale <= 0:
+            result["scale"] = 1
+        else:
+            result["scale"] = min(CANVAS_VIEWPORT_MAX_SCALE, max(CANVAS_VIEWPORT_MIN_SCALE, scale))
+    for axis in ("x", "y"):
+        if axis in result:
+            value = _finite_number(result[axis])
+            result[axis] = 0 if value is None else value
+    return result
 
 
 def sync_ai_legacy_projection(providers: Iterable[dict[str, Any]], workflows: Iterable[dict[str, Any]] = ()) -> int:
@@ -999,7 +1041,7 @@ def save_canvas_payload(user_id: str, canvas: Dict[str, Any]) -> None:
                 deleted_at,
                 json_value(
                     {
-                        "viewport": payload.get("viewport", {}),
+                        "viewport": normalize_canvas_viewport(payload.get("viewport", {})),
                         "payload": {
                             k: v
                             for k, v in payload.items()

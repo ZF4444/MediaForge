@@ -1376,7 +1376,7 @@ function fitAllNodesViewport(){
     const pad = 160;
     const width = Math.max(1, maxX - minX + pad * 2);
     const height = Math.max(1, maxY - minY + pad * 2);
-    const nextScale = Math.max(0.06, Math.min(0.82, (shell.clientWidth - 80) / width, (shell.clientHeight - 80) / height));
+    const nextScale = Math.max(CANVAS_MIN_SCALE, Math.min(0.82, (shell.clientWidth - 80) / width, (shell.clientHeight - 80) / height));
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
     updateCanvasViewport({
@@ -1569,7 +1569,12 @@ async function loadCanvas({renderCanvas=true}={}){
         canvas.nodes = nodes;
         canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
         viewport = {...viewport, ...(canvas.viewport || {})};
+        // 已保存的视口可能是旧版本滚轮缩放留下的极小/极大值，x/y 也可能无效。
+        // 这类坏视口先用安全值渲染，节点测量完成后再"适应全部"并写回。
+        const viewportNeedsRepair = !isViewportUsable(viewport);
         viewport.scale = safeScale(viewport.scale);
+        if(!Number.isFinite(Number(viewport.x))) viewport.x = 0;
+        if(!Number.isFinite(Number(viewport.y))) viewport.y = 0;
         if(canvas.settings) settings = normalizeStoredImageRatios({...settings, ...canvas.settings});
         canvasDefaultSmartSettings = cloneSmartSettings(settings);
         loadRecentSmartSettings();
@@ -1589,6 +1594,7 @@ async function loadCanvas({renderCanvas=true}={}){
             resumeSmartPendingTasks();
             startCanvasMetaPoll();
         }
+        if(viewportNeedsRepair) fitAllNodesViewport();
         suppressAutoSaveReleaseTimer = setTimeout(() => {
             suppressAutoSave = false;
             suppressAutoSaveReleaseTimer = null;
@@ -4375,7 +4381,13 @@ function shellWheelHandler(e){
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
     const before = {x:(sx - viewport.x) / viewport.scale, y:(sy - viewport.y) / viewport.scale};
-    const factor = Math.exp(-e.deltaY * 0.001);
+    // deltaMode 1=行、2=页，换算成像素；单次事件限幅，避免触控板惯性滚动一次缩到极小。
+    let wheelDelta = Number(e.deltaY);
+    if(!Number.isFinite(wheelDelta)) return;
+    if(e.deltaMode === 1) wheelDelta *= 16;
+    else if(e.deltaMode === 2) wheelDelta *= shell.clientHeight || 800;
+    wheelDelta = Math.max(-100, Math.min(100, wheelDelta));
+    const factor = Math.exp(-wheelDelta * 0.001);
     const nextScale = safeScale(viewport.scale * factor);
     updateCanvasViewport({
         scale:nextScale,

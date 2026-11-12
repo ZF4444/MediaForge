@@ -37,9 +37,21 @@
 //   节点 x/y/w/h 的"排列命令"，不是纯布局计算，且依赖分组成员查询
 //   （smartGroupMembers 等），更接近未来 connections.js/分组操作 的范畴。
 
+// 画布视口缩放范围。safeScale 只用于视口 scale（滚轮、加载、退出预览），
+// 不会影响节点自身的 nodeScale。
+const CANVAS_MIN_SCALE = 0.06;
+const CANVAS_MAX_SCALE = 4;
 function safeScale(value){
     const n = Number(value);
-    return Number.isFinite(n) && n > 0 ? n : 1;
+    if(!Number.isFinite(n) || n <= 0) return 1;
+    return Math.min(CANVAS_MAX_SCALE, Math.max(CANVAS_MIN_SCALE, n));
+}
+// 已保存的视口是否可用：x/y/scale 都是有限数，且 scale 在允许范围内。
+function isViewportUsable(vp){
+    if(!vp || typeof vp !== 'object') return false;
+    const scale = Number(vp.scale);
+    return Number.isFinite(Number(vp.x)) && Number.isFinite(Number(vp.y))
+        && Number.isFinite(scale) && scale >= CANVAS_MIN_SCALE && scale <= CANVAS_MAX_SCALE;
 }
 function nodeScale(node){
     if(isSmartImageNode(node) || !node?.type) return mediaNodeDefaultScale(node);
