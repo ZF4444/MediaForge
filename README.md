@@ -25,13 +25,57 @@
 
 ### 开发环境配置
 
-开发环境自动配置流程待后续补充，当前按下文手动准备依赖和基础设施。
-`config/dev/.env.example` 是应用运行配置模板，需要时手动复制为 `config/.env`，
-并根据已安装的 PostgreSQL、Redis、MinIO 修改连接参数；已有配置应保留。
+完整的安装、配置、启动、日常开发和备份恢复步骤见
+[开发环境完整部署流程](docs/开发环境完整部署流程.md)。
 
-生产 Docker 部署使用 `config/deploy/`，详见
-[生产环境完整部署方案](docs/生产环境完整部署方案.md)。应用启动时读取 `config/.env`，
-运行时不写入该文件；AI 连接、模型和供应商密钥保存在数据库。
+开发和生产均使用 Docker Compose，开发配置复用生产的 API、Worker、PostgreSQL、Redis、MinIO 服务定义。
+需要 Ubuntu 原生 Docker Engine 和 Docker Compose **2.24.4 或更新版本**。
+按 [Docker 官方 Ubuntu 安装流程](https://docs.docker.com/engine/install/ubuntu/)
+安装 Engine、CLI、Buildx 和 Compose 插件，然后执行 `sudo systemctl enable --now docker`。
+WSL 中需启用 systemd，并关闭 Docker Desktop 对当前 Ubuntu 的集成，避免覆盖原生 CLI 和 socket。
+使用 `docker info` 确认服务端为当前 Ubuntu，数据目录为 `/var/lib/docker`。
+
+在项目根目录执行：
+
+```bash
+cp config/dev/.env.example config/dev/.env
+# 将以下命令生成的值填入 config/dev/.env 的 APP_SECRET_KEY
+openssl rand -hex 32
+docker compose -f config/dev/compose.yml up -d --build
+```
+
+也可用 `./scripts/dev.sh up` 启动，`down` 停止，`logs` 查看日志，
+`frontend` 重新构建前端，`worker` 重启任务进程，`test` 运行后端测试。
+
+访问 http://localhost:3000（端口可通过 `DEV_HTTP_PORT` 修改）；MinIO API / 控制台分别位于本机 19000 / 19001 端口。
+首次启动会构建应用和 MinIO 镜像，并在 Node 容器中安装依赖、构建前端。
+无需在宿主机安装 Python、Node、PostgreSQL、Redis 或 MinIO。
+PostgreSQL 和 Redis 的本机调试端口分别为 15432、16379，仅绑定回环地址。
+开发数据存放在 `mediaforge-dev` 项目的独立 Docker 卷中，停止容器后仍会保留。
+已有 `config/dev/.env` 请先备份并补齐模板中的基础设施变量；不要覆盖现有密钥。
+原生服务中的数据库、对象存储数据不会自动迁移，应通过备份恢复迁移，并保留原 APP_SECRET_KEY。
+
+```bash
+# 查看服务状态和日志
+docker compose -f config/dev/compose.yml ps
+docker compose -f config/dev/compose.yml logs -f api worker
+# 后端源码挂载到容器，API 自动重载；Worker 改动后需重启
+docker compose -f config/dev/compose.yml restart worker
+# 修改前端后重新构建，然后刷新浏览器
+docker compose -f config/dev/compose.yml run --rm frontend
+# 修改 Python 依赖后重新构建
+docker compose -f config/dev/compose.yml up -d --build api worker
+# 在容器中运行后端测试
+docker compose -f config/dev/compose.yml exec api python -m pytest
+# 停止（保留数据；不要添加 -v，除非要清空开发数据）
+docker compose -f config/dev/compose.yml down
+```
+
+应用与基础设施的连接地址由 Compose 注入，`config/.env` 中同名旧配置不会覆盖这些地址。
+应用容器使用 UID 10001；自定义挂载目录需要允许该用户访问。
+生产部署继续使用 `config/deploy/`，详见
+[生产环境完整部署方案](docs/生产环境完整部署方案.md)。
+下文宿主机安装步骤仅用于需要直接运行工具的排障场景。
 
 ### 安装 uv
 
@@ -248,14 +292,10 @@ python scripts/backup_services.py --only redis \
 ### 开发模式
 
 ```bash
-uv run python main.py
+docker compose -f config/dev/compose.yml up -d --build
 ```
 
-默认监听 `127.0.0.1:3000`。也可以指定地址和端口：
-
-```bash
-uv run python main.py --host 0.0.0.0 --port 3000
-```
+开发操作和数据迁移注意事项见上文“开发环境配置”。
 
 ### 生产模式
 
