@@ -1805,3 +1805,42 @@ body.theme-dark #promptComposer.composer {
     border-color: transparent !important;
     box-shadow: none !important;
 }
+
+/* 选中节点高亮与多选序号徽标：每个选中的节点自带轮廓，不依赖整体选框区分选了哪些。 */
+:root { --mf-select-ring:#5b9dff; --mf-select-ring-text:#07111f; }
+html:not(.theme-dark):not(.studio-theme-dark) { --mf-select-ring:#0a84ff; --mf-select-ring-text:#fff; }
+.image-node.selected::after {
+    content:'';
+    position:absolute;
+    inset:-4px;
+    border:2px solid var(--mf-select-ring);
+    border-radius:inherit;
+    box-shadow:0 0 0 4px color-mix(in srgb, var(--mf-select-ring) 20%, transparent), 0 0 20px color-mix(in srgb, var(--mf-select-ring) 32%, transparent);
+    pointer-events:none;
+    z-index:3;
+}
+.image-node.selected[data-select-order]::before {
+    content:attr(data-select-order);
+    position:absolute;
+    top:-14px;
+    right:-14px;
+    min-width:26px;
+    height:26px;
+    padding:0 7px;
+    box-sizing:border-box;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border-radius:13px;
+    background:var(--mf-select-ring);
+    color:var(--mf-select-ring-text);
+    font-size:13px;
+    font-weight:800;
+    line-height:1;
+    box-shadow:0 4px 12px rgba(0,0,0,.28);
+    pointer-events:none;
+    z-index:4;
+}
+/* 多选完成后，整体外框弱化为虚线，仅用于托住工具条。 */
+.selection-box.is-resting { background:transparent; border:1px dashed color-mix(in srgb, var(--mf-select-ring) 45%, transparent); }
+.theme-dark .selection-box.is-resting { background:transparent; }

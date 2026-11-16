@@ -257,6 +257,8 @@
         "smart.shortcutSectionNodes": { zh: "节点操作", en: "Node Actions" },
         "smart.shortcutSectionPreview": { zh: "预览与面板", en: "Preview and Panels" },
         "smart.shortcutBoxSelect": { zh: "空白处拖拽框选节点", en: "Left-drag blank canvas to box-select nodes" },
+        "smart.shortcutClickSelect": { zh: "点选或取消点选节点，可选择多个节点", en: "Click to add or remove a node from the selection" },
+        "smart.shortcutAddBoxSelect": { zh: "在已选节点的基础上继续框选，保留之前的选择", en: "Box-select more nodes while keeping the current selection" },
         "smart.shortcutDuplicate": { zh: "拖拽时复制节点", en: "Duplicate node while dragging" },
         "smart.shortcutPreview": { zh: "打开图片或视频预览", en: "Open image or video preview" },
         "smart.shortcutPreviewNav": { zh: "切换图片或视频帧", en: "Switch images or video frames" },

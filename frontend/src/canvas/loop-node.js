@@ -348,18 +348,6 @@ function bindLoopNodeControls(el, node){
         });
     });
 }
-function insertLoopNodeIntoConnection(loopNode, hit){
-    if(!loopNode || loopNode.type !== 'smart-loop' || !hit?.conn) return false;
-    const conn = hit.conn;
-    const kind = conn.kind || 'flow';
-    canvas.connections = (canvas.connections || []).filter((c, index) => index !== hit.index);
-    nodes.forEach(n => {
-        if(Array.isArray(n.inputNodeIds)) n.inputNodeIds = n.inputNodeIds.filter(id => !(n.id === conn.to && id === conn.from));
-    });
-    addConnection(conn.from, loopNode.id, kind === 'flow' ? 'flow' : 'input');
-    connectInputNode(loopNode.id, conn.to);
-    return true;
-}
 function smartLoopPromptFieldValues(node){
     const fields = Array.isArray(node?.variablePrompts)
         ? node.variablePrompts.map(text => String(text || '').trim())

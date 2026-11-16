@@ -54,6 +54,29 @@ function updateCanvasViewport(nextViewport = {}) {
     viewport = {...viewport, ...nextViewport};
     return viewport;
 }
+// Ctrl/Cmd+点击：在当前选择里切换某个节点，效果等同于框选。
+// 当前若只有单选（selectedId），先并入集合，避免"先点 A 再 Ctrl 点 B"时丢掉 A。
+function toggleNodeInSelection(currentIds, currentId, clickedId) {
+    const clicked = String(clickedId || '');
+    if (!clicked) return [];
+    const base = Array.isArray(currentIds) && currentIds.length
+        ? currentIds.map(value => String(value))
+        : (currentId ? [String(currentId)] : []);
+    return base.includes(clicked) ? base.filter(value => value !== clicked) : [...base, clicked];
+}
+// Ctrl/Cmd+框选：把框选前已选中的节点（baseIds）与本次框内节点合并。
+// 只追加不取消；顺序为"原有在前、新增在后"，并去重。
+function mergeBoxSelection(baseIds, boxIds) {
+    const merged = [];
+    [...(Array.isArray(baseIds) ? baseIds : []), ...(Array.isArray(boxIds) ? boxIds : [])].forEach(value => {
+        const id = String(value || '');
+        if (id && !merged.includes(id)) merged.push(id);
+    });
+    return merged;
+}
+function isMultiSelectModifier(event) {
+    return Boolean(event && (event.ctrlKey || event.metaKey));
+}
 function setCanvasSelection({id, ids, image} = {}) {
     if (id !== undefined) selectedId = String(id || '');
     if (ids !== undefined) selectedIds = Array.isArray(ids) ? ids.map(value => String(value)) : [];

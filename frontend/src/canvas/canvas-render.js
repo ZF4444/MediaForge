@@ -503,6 +503,8 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             if(Date.now() < suppressNodeClickUntil) return;
             if(e.button !== 0) return;
             if(!e.target.closest('video')) return;
+            // Ctrl/Cmd+点击是切换多选，交给 click 处理，这里不能先把选择折叠成单选。
+            if(isMultiSelectModifier(e)) return;
             const node = nodes.find(n => n.id === id);
             if(!node) return;
             const timerHidden = hideRunTimerForNode(node);
@@ -522,6 +524,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
             // 名称栏：单击不重渲染，避免打断双击进入编辑态；编辑态更不处理。
             if(e.target.closest('.node-title')) return;
             if(Date.now() < suppressNodeClickUntil) return;
+            if(applyNodeModifierSelection(e, id)) return;
             const node = nodes.find(n => n.id === id);
             hideRunTimerForNode(node);
             setCanvasSelection({id, ids:[], image:{nodeId:'', index:-1}});
@@ -545,6 +548,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
         }, true);
         uploadTrigger?.addEventListener('click', e => {
             e.preventDefault(); e.stopPropagation();
+            if(applyNodeModifierSelection(e, id)) return;
             hideRunTimerForNode(nodes.find(n => n.id === id));
             setCanvasSelection({id, ids:[]});
             selectedImage = {nodeId:'', index:-1};
@@ -723,6 +727,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 e.stopPropagation();
                 e.stopImmediatePropagation();
                 if(Date.now() < suppressImageClickUntil) return;
+                if(applyNodeModifierSelection(e, id)){ clearImageClickTimer(); return; }
                 const imageIndex = Number(item.dataset.imageIndex || 0);
                 const refNodeId = item.dataset.refNodeId || id;
                 const refIndex = Number(item.dataset.refImageIndex ?? item.dataset.imageIndex ?? 0);
@@ -803,7 +808,7 @@ function bindNodeEvents(nodeElements=world.querySelectorAll('.image-node')){
                 const n = nodes.find(x => x.id === dragId);
                 return n ? {id:n.id, ox:Number(n.x) || 0, oy:Number(n.y) || 0} : null;
             }).filter(Boolean);
-            dragState = {id:node.id, startX:e.clientX, startY:e.clientY, ox:node.x || 0, oy:node.y || 0, group, groupIds:group.map(item => item.id), ctrlGroup:Boolean(e.ctrlKey)};
+            dragState = {id:node.id, startX:e.clientX, startY:e.clientY, ox:node.x || 0, oy:node.y || 0, group, groupIds:group.map(item => item.id)};
             document.body.classList.add('smart-node-drag');
             capturePendingUndo();
         };
@@ -905,7 +910,7 @@ function rectOverlapNode(draggedId, x, y, w, h, excludeIds=[]){
 // 大量代码——尤其是各种 mousedown/pointerdown/dragstart 事件绑定——
 // 同样读写，属于跨文件共享的可变交互状态，风险量级和 state.js 一致，
 // 本次只搬移读写它们的函数本体，状态本身不搬）：
-//   交互状态变量：dragState, loopInsertPreview, selectionState,
+//   交互状态变量：dragState, selectionState,
 //     thumbDragState, panState, didPan, portDragState, smartMinimapDrag,
 //     rightMouseDownPoint, rightMouseDownViewport, cropState, cropDrag,
 //     previewPanDrag, previewCompareDrag, imageEditPanDrag,
@@ -925,18 +930,17 @@ function rectOverlapNode(draggedId, x, y, w, h, excludeIds=[]){
 //     minimapEventToWorld, updateSelectionBox, persistActiveSmartSettings,
 //     applyViewport, flushDeferredViewportRendering, applyNodeMetaToImage,
 //     inheritNodeMetaFromImage, commitPendingUndo, discardPendingUndo,
-//     moveNodeElementsDuringDrag, updateLoopInsertPreview, setAssetDragOver,
+//     moveNodeElementsDuringDrag, setAssetDragOver,
 //     finishSelection,
 //     mergeImageNodesIntoGroup, smartGroupTargetForDraggedNode,
 //     addDraggedNodesToSmartGroup, scheduleSave, render, screenToWorld,
 //     openCanvasContextMenu
 //   connections.js（M4）：updatePortDragVisual, handlePortDrop,
-//     insertionConnectionForNode, connectInputNode, refreshConnectionLayer
+//     connectInputNode, refreshConnectionLayer
 //   image-editor.js（M8）：setPreviewComparePos, applyPreviewTransform,
 //     resizeOutpaintFromDrag, clampCrop, renderCropBox
 //   node-model.js（M3）：createImageNodeAt
 //   asset-library.js（M9）：addFileToAssetLibrary
-//   loop-node.js（M2）：insertLoopNodeIntoConnection
 //   node-layout.js（M3）：nodeRect
 //   本文件（canvas-render.js，M7）：rectOverlapNode
 //
@@ -1136,7 +1140,6 @@ function handleWindowMouseMove(e){
         setAssetDragOver(false);
     }
     moveNodeElementsDuringDrag();
-    updateLoopInsertPreview();
 }
 window.addEventListener('mousemove', handleWindowMouseMove);
 function finishCanvasRightClick(e){
@@ -1230,27 +1233,18 @@ function handleWindowMouseUp(e){
             scheduleSave();
             return;
         }
-        const insertHit = draggedNode?.type === 'smart-loop' && dragState.ctrlGroup && (dragState.group || []).length <= 1
-            ? insertionConnectionForNode(draggedNode)
-            : null;
         const draggedNodes = (dragState.group || []).map(item => nodes.find(n => n.id === item.id)).filter(Boolean);
         const smartGroupTarget = draggedNode ? smartGroupTargetForDraggedNode(draggedNode) : null;
         if(
-            insertHit &&
-            insertLoopNodeIntoConnection(draggedNode, insertHit)
-        ){
-            stateChanged = true;
-            render();
-        } else if(
             smartGroupTarget &&
             addDraggedNodesToSmartGroup(draggedNodes.length ? draggedNodes : [draggedNode], smartGroupTarget)
         ){
             stateChanged = true;
             render();
-        } else if(draggedNode && (draggedNode.images || []).length && (dragState.ctrlGroup || (dragState.group || []).length <= 1)){
+        } else if(draggedNode && (draggedNode.images || []).length && (dragState.group || []).length <= 1){
             const r = nodeRect(draggedNode);
             const target = rectOverlapNode(draggedNode.id, r.x, r.y, r.width, r.height, dragState.groupIds);
-            if(target && (target.images || []).length && (dragState.ctrlGroup || (target.images || []).length > 1)){
+            if(target && (target.images || []).length > 1){
                 stateChanged = true;
                 mergeImageNodesIntoGroup(draggedNode.id, target.id);
                 render();
@@ -1271,7 +1265,6 @@ function handleWindowMouseUp(e){
         if(stateChanged) commitPendingUndo();
         else discardPendingUndo();
         if(stateChanged || thumbDetached) suppressNodeClickUntil = Date.now() + 180;
-        loopInsertPreview = null;
         dragState = null;
         if(stateChanged || thumbDetached) scheduleSave();
         refreshConnectionLayer();

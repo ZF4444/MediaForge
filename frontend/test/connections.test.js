@@ -5,9 +5,7 @@
 //   2. connectInputNode：普通节点直连、对 smart-loop 目标节点的
 //      imageInput/showPrompt 自动识别与开关、不满足条件时返回 false。
 //   3. outgoingConnectionsFor / outgoingInputConnectionsFor：按 kind 过滤。
-//   4. connectionMidpoint：普通连线与 history 连线的中点计算方式不同。
-//   5. insertionConnectionForNode：只对 smart-loop 节点生效，按距离找最近连线。
-//   6. connectionGeometry：flow 连线（右→左）与 history 连线（下→上）
+//   4. connectionGeometry：flow 连线（右→左）与 history 连线（下→上）
 //      的贝塞尔曲线端点方向不同。
 import { describe, it, expect } from 'vitest';
 import { createConnectionsSandbox } from './connections-sandbox.js';
@@ -120,76 +118,6 @@ describe('outgoingConnectionsFor / outgoingInputConnectionsFor', () => {
     it('节点为空时返回空数组', () => {
         const sandbox = createConnectionsSandbox();
         expect(sandbox.outgoingConnectionsFor(null)).toEqual([]);
-    });
-});
-
-describe('connectionMidpoint', () => {
-    it('flow 连线：中点取起点右侧中点与终点左侧中点的均值', () => {
-        const fromNode = { id: 'a', x: 0, y: 0, type: 'smart-image', images: [] };
-        const toNode = { id: 'b', x: 500, y: 0, type: 'smart-image', images: [] };
-        const sandbox = createConnectionsSandbox({ nodes: [fromNode, toNode] });
-        const mid = sandbox.connectionMidpoint({ from: 'a', to: 'b', kind: 'flow' });
-        // nodeRect 对空 smart-image 节点返回 316x194（EMPTY_GENERATION_NODE 尺寸）
-        expect(mid).not.toBeNull();
-        expect(mid.x).toBeGreaterThan(0);
-    });
-
-    it('连线的起止节点不存在时返回 null', () => {
-        const sandbox = createConnectionsSandbox({ nodes: [] });
-        expect(sandbox.connectionMidpoint({ from: 'missing1', to: 'missing2' })).toBeNull();
-    });
-
-    it('history 连线与 flow 连线的中点计算方式不同', () => {
-        // from/to 节点尺寸不同（to 是 4 图分组，比空的 from 节点更高更宽），
-        // 这样才能让 flow 用"边缘对边缘"、history 用"中心对中心"这两种
-        // 不同取法的计算结果产生可观察的差异（当两节点尺寸相同时，这两条
-        // 公式代数上恰好等价，不适合用来区分）。
-        const fromNode = { id: 'a', x: 0, y: 0, type: 'smart-image', images: [] };
-        const toNode = {
-            id: 'b', x: 500, y: 1000, type: 'smart-image',
-            images: [{ url: '1.png' }, { url: '2.png' }, { url: '3.png' }, { url: '4.png' }],
-        };
-        const sandbox = createConnectionsSandbox({ nodes: [fromNode, toNode] });
-        const flowMid = sandbox.connectionMidpoint({ from: 'a', to: 'b', kind: 'flow' });
-        const historyMid = sandbox.connectionMidpoint({ from: 'a', to: 'b', kind: 'history' });
-        expect(flowMid).not.toEqual(historyMid);
-    });
-});
-
-describe('insertionConnectionForNode', () => {
-    it('非 smart-loop 节点直接返回 null', () => {
-        const sandbox = createConnectionsSandbox();
-        expect(sandbox.insertionConnectionForNode({ id: 'a', type: 'smart-image' })).toBeNull();
-    });
-
-    it('没有任何连线时返回 null', () => {
-        const sandbox = createConnectionsSandbox({ canvas: { connections: [] } });
-        expect(sandbox.insertionConnectionForNode({ id: 'loop', type: 'smart-loop', x: 0, y: 0 })).toBeNull();
-    });
-
-    it('找到距离循环节点中心最近的一条连线', () => {
-        const nodeA = { id: 'a', x: 0, y: 0, type: 'smart-image', images: [] };
-        const nodeB = { id: 'b', x: 400, y: 0, type: 'smart-image', images: [] };
-        const nodeC = { id: 'c', x: 400, y: 2000, type: 'smart-image', images: [] }; // 远处的连线
-        const nodeD = { id: 'd', x: 800, y: 2000, type: 'smart-image', images: [] };
-        const loop = { id: 'loop', type: 'smart-loop', x: 150, y: 20 }; // 靠近 a->b 这条连线
-        const canvas = { connections: [
-            { from: 'a', to: 'b', kind: 'flow' },
-            { from: 'c', to: 'd', kind: 'flow' },
-        ] };
-        const sandbox = createConnectionsSandbox({ nodes: [nodeA, nodeB, nodeC, nodeD, loop], canvas });
-        const result = sandbox.insertionConnectionForNode(loop);
-        expect(result).not.toBeNull();
-        expect(result.conn.from).toBe('a');
-        expect(result.conn.to).toBe('b');
-    });
-
-    it('不会匹配循环节点自身参与的连线', () => {
-        const loop = { id: 'loop', type: 'smart-loop', x: 0, y: 0 };
-        const other = { id: 'x', x: 10, y: 10, type: 'smart-image', images: [] };
-        const canvas = { connections: [{ from: 'loop', to: 'x', kind: 'flow' }] };
-        const sandbox = createConnectionsSandbox({ nodes: [loop, other], canvas });
-        expect(sandbox.insertionConnectionForNode(loop)).toBeNull();
     });
 });
 

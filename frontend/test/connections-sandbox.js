@@ -39,7 +39,6 @@ export function createConnectionsSandbox(overrides = {}) {
         smartLoopContext: null,
         dragState: null,
         portDragState: overrides.portDragState || null,
-        loopInsertPreview: null,
         connectionLayerRefreshQueued: false,
         lastConnectionLayerRefreshAt: 0,
     };
@@ -77,8 +76,6 @@ export function createConnectionsSandbox(overrides = {}) {
         set dragState(v){ state.dragState = v; },
         get portDragState(){ return state.portDragState; },
         set portDragState(v){ state.portDragState = v; },
-        get loopInsertPreview(){ return state.loopInsertPreview; },
-        set loopInsertPreview(v){ state.loopInsertPreview = v; },
         get connectionLayerRefreshQueued(){ return state.connectionLayerRefreshQueued; },
         set connectionLayerRefreshQueued(v){ state.connectionLayerRefreshQueued = v; },
         get lastConnectionLayerRefreshAt(){ return state.lastConnectionLayerRefreshAt; },

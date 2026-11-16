@@ -10,8 +10,7 @@
 //
 // 本文件包含两类东西：
 //   1. 连线数据操作：addConnection / connectInputNode / disconnectConnection /
-//      outgoingConnectionsFor / outgoingInputConnectionsFor /
-//      connectionMidpoint / insertionConnectionForNode
+//      outgoingConnectionsFor / outgoingInputConnectionsFor
 //   2. 连线渲染与端口拖拽交互：connectionGeometry / renderConnections /
 //      updateConnectionGeometryInPlace / refreshConnectionLayer /
 //      requestRefreshConnectionLayer / bindConnectionEvents /
@@ -26,7 +25,7 @@
 // 依赖的外部全局（都还留在 frontend/src/canvas/main.js / main.js 里，
 // 通过共享全局作用域访问，未随本文件迁移）：
 //   DOM 元素：shell, world, portDropMenu
-//   状态变量：nodes, canvas, dragState, portDragState, loopInsertPreview,
+//   状态变量：nodes, canvas, dragState, portDragState,
 //     connectionLayerRefreshQueued, lastConnectionLayerRefreshAt
 //     （这几个是跨多个功能域共享的全局状态，比如 portDragState 还被
 //     bindNodeEvents/鼠标移动处理等 canvas-render.js 范畴的代码读写，
@@ -67,10 +66,9 @@ function renderConnections(){
         const toNode = nodes.find(n => n.id === conn.to);
         const kind = conn.kind || 'flow';
         const isHistory = kind === 'history';
-        const isInsertPreview = loopInsertPreview?.index === conn.index;
         const edgeKey = `${conn.from}->${conn.to}`;
         const cascadeState = smartCascadeEdgeState(edgeKey);
-        const isCascade = !isHistory && (cascadeKeys.has(edgeKey) || Boolean(cascadeState) || isInsertPreview);
+        const isCascade = !isHistory && (cascadeKeys.has(edgeKey) || Boolean(cascadeState));
         // 目标节点正在生成（图像节点用 pending，提示词节点用 running）时，入边显示流动动画。
         const isPendingLine = Boolean((toNode.pending || toNode.running) && !isCascade);
         const {fx, fy, tx, ty, curve, mx, my} = connectionGeometry(fromNode, toNode, isHistory);
@@ -358,37 +356,6 @@ function disconnectConnection(index){
     }
     render();
     scheduleSave();
-}
-function connectionMidpoint(conn){
-    const fromNode = nodes.find(n => n.id === conn?.from);
-    const toNode = nodes.find(n => n.id === conn?.to);
-    if(!fromNode || !toNode) return null;
-    const fr = nodeRect(fromNode), tr = nodeRect(toNode);
-    if((conn.kind || 'flow') === 'history'){
-        return {x:(fr.x + fr.width / 2 + tr.x + tr.width / 2) / 2, y:(fr.y + fr.height + tr.y) / 2};
-    }
-    return {x:(fr.x + fr.width + tr.x) / 2, y:(fr.y + fr.height / 2 + tr.y + tr.height / 2) / 2};
-}
-function insertionConnectionForNode(node){
-    if(!node || node.type !== 'smart-loop' || !canvas?.connections?.length) return null;
-    const r = nodeRect(node);
-    const cx = (Number(r.x) || 0) + (Number(r.width) || 0) / 2;
-    const cy = (Number(r.y) || 0) + (Number(r.height) || 0) / 2;
-    let best = null;
-    (canvas.connections || []).forEach((conn, index) => {
-        const kind = conn.kind || 'flow';
-        if(!['input','flow'].includes(kind)) return;
-        if(conn.from === node.id || conn.to === node.id) return;
-        const fromNode = nodes.find(n => n.id === conn.from);
-        const toNode = nodes.find(n => n.id === conn.to);
-        if(!fromNode || !toNode || isHistoryGroupNode(fromNode) || isHistoryGroupNode(toNode)) return;
-        const mid = connectionMidpoint(conn);
-        if(!mid) return;
-        const score = Math.hypot(cx - mid.x, cy - mid.y);
-        if(score > 96) return;
-        if(!best || score < best.score) best = {conn, index, score};
-    });
-    return best;
 }
 function addConnection(fromId, toId, kind='flow'){
     if(!fromId || !toId || fromId === toId) return;

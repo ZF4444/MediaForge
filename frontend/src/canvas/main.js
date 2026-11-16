@@ -229,7 +229,6 @@ let minimapViewport = document.getElementById('minimapViewport');
 // 核心状态变量已迁移到 frontend/src/canvas/state.js（经典 <script>，
 // 排在最前面加载，非 ES module，原因同 M1-M21）。
 let dragState = null;
-let loopInsertPreview = null;
 let selectionState = null;
 let selectionJustFinished = false;
 let thumbDragState = null;
@@ -1025,6 +1024,17 @@ function clearImageClickTimer(){
         imageClickTimer = null;
     }
 }
+// 多选（≥2 个）时给每个选中节点标注选择序号，用于画布上的序号徽标；
+// 单选或无选择时清除。序号只计数画布上实际存在的节点。
+function syncSelectionOrderBadges(){
+    world.querySelectorAll('[data-select-order]').forEach(el => el.removeAttribute('data-select-order'));
+    if(selectedIds.length < 2) return;
+    let order = 0;
+    selectedIds.forEach(id => {
+        const el = world.querySelector(`.image-node[data-id="${CSS.escape(id)}"]`);
+        if(el) el.dataset.selectOrder = String(++order);
+    });
+}
 function syncSelectionUi(){
     world.querySelectorAll('.image-node').forEach(el => {
         const id = el.dataset.id || '';
@@ -1034,6 +1044,23 @@ function syncSelectionUi(){
             item.classList.toggle('image-selected', selectedImage.nodeId === id && selectedImage.index === index);
         });
     });
+    syncSelectionOrderBadges();
+}
+// Ctrl/Cmd+点击节点：切换多选。返回 true 表示已处理（调用方应直接 return）。
+// 结果 ≥2 个与框选一致（selectedId 置空、selectedIds 保存集合）；剩 1 个退回单选；0 个清空选择。
+function applyNodeModifierSelection(event, id){
+    if(!isMultiSelectModifier(event) || !id) return false;
+    savePromptDraftForCurrent();
+    const next = toggleNodeInSelection(selectedIds, selectedId, id);
+    if(next.length >= 2) setCanvasSelection({id:'', ids:next, image:{nodeId:'', index:-1}});
+    else if(next.length === 1) setCanvasSelection({id:next[0], ids:[], image:{nodeId:'', index:-1}});
+    else setCanvasSelection({id:'', ids:[], image:{nodeId:'', index:-1}});
+    candidatePanelNodeId = '';
+    candidatePanelIndex = 0;
+    suppressComposerForCandidateNodeId = '';
+    if(smartCascadeAnyRunning()) smartCascadeSilentSelection = false;
+    render();
+    return true;
 }
 function isNodeSelected(id){
     return selectedId === id || selectedIds.includes(id);
@@ -2115,6 +2142,7 @@ function bindPromptNodeControls(el, node){
         textEl.addEventListener('click', e => {
             e.stopPropagation();
             if(!textEl.readOnly) return;
+            if(applyNodeModifierSelection(e, node.id)) return;
             if(selectedId !== node.id){
                 selectedId = node.id;
                 selectedIds = [];
@@ -2267,21 +2295,8 @@ function deleteNodeFromButton(id){
     if(clearNodeMediaBeforeDelete(id)) return;
     deleteNode(id);
 }
-// M4 拆分：disconnectConnection / connectionMidpoint /
-// insertionConnectionForNode 已迁移到
+// M4 拆分：disconnectConnection 已迁移到
 // frontend/src/canvas/connections.js（经典 <script>，同上）。
-// M2 拆分：insertLoopNodeIntoConnection 已迁移到 frontend/src/canvas/loop-node.js。
-function updateLoopInsertPreview(){
-    const node = dragState ? nodes.find(n => n.id === dragState.id) : null;
-    const next = node?.type === 'smart-loop' && dragState.ctrlGroup && (dragState.group || []).length <= 1
-        ? insertionConnectionForNode(node)
-        : null;
-    const nextPreview = next ? {index:next.index} : null;
-    const changed = (loopInsertPreview?.index ?? -1) !== (nextPreview?.index ?? -1);
-    loopInsertPreview = nextPreview;
-    if(changed) refreshConnectionLayer();
-    return next;
-}
 // M8 拆分：图片编辑器全部功能（currentEditImage 到 applyImageEdit，
 // 共约90个函数：裁剪/智能扩图/蒙版画笔/网格拼接拆分/文字工具/全景图预览/
 // 视频帧导出/预览对比面板/弹窗生命周期）已迁移到
@@ -3855,12 +3870,13 @@ function updateSelectionBox(event){
     const x = Math.min(sx, event.clientX), y = Math.min(sy, event.clientY);
     const currentWorld = screenToWorld(event);
     selectionState.currentWorld = currentWorld;
+    selectionBox.classList.remove('is-resting');
     selectionBox.style.display = 'block';
     selectionBox.style.left = `${x - shellRect.left}px`;
     selectionBox.style.top = `${y - shellRect.top}px`;
     selectionBox.style.width = `${Math.abs(event.clientX - sx)}px`;
     selectionBox.style.height = `${Math.abs(event.clientY - sy)}px`;
-    selectedIds = nodesInSelectionBounds(selectionState.startWorld, currentWorld);
+    selectedIds = boxSelectionIds(selectionState, currentWorld);
     selectedId = '';
     selectedImage = {nodeId:'', index:-1};
     syncSelectionUi();
@@ -3868,6 +3884,9 @@ function updateSelectionBox(event){
     const boxRight = Math.max(sx, event.clientX) - shellRect.left;
     const boxTop = y - shellRect.top;
     positionSelectionActions(boxLeft, boxTop, boxRight, selectedIds.length);
+}
+function boxSelectionIds(state, currentWorld){
+    return mergeBoxSelection(state?.baseIds, nodesInSelectionBounds(state.startWorld, currentWorld));
 }
 function nodesInSelectionBounds(a, b){
     const minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
@@ -3904,6 +3923,7 @@ function positionSelectionActions(left, top, right, selectedCount){
 }
 function updateSelectionActions(){
     if(!selectionBox || !selectionActions || selectionState) return;
+    syncSelectionOrderBadges();
     const selectedEls = selectedIds.map(id => world.querySelector(`.image-node[data-id="${CSS.escape(id)}"]`)).filter(Boolean);
     if(!selectedEls.length){
         selectionBox.style.display = 'none';
@@ -3916,6 +3936,8 @@ function updateSelectionActions(){
     const top = Math.min(...rects.map(rect => rect.top)) - shellRect.top;
     const right = Math.max(...rects.map(rect => rect.right)) - shellRect.left;
     const bottom = Math.max(...rects.map(rect => rect.bottom)) - shellRect.top;
+    // 多选完成后整体外框只用于托住工具条，弱化为虚线；每个节点由自身高亮和序号徽标标识。
+    selectionBox.classList.toggle('is-resting', selectedEls.length >= 2);
     selectionBox.style.display = 'block';
     selectionBox.style.left = `${Math.round(left)}px`;
     selectionBox.style.top = `${Math.round(top)}px`;
@@ -3926,7 +3948,7 @@ function updateSelectionActions(){
 }
 function finishSelection(event){
     if(!selectionState) return;
-    selectedIds = nodesInSelectionBounds(selectionState.startWorld, selectionState.currentWorld || screenToWorld(event));
+    selectedIds = boxSelectionIds(selectionState, selectionState.currentWorld || screenToWorld(event));
     selectedId = '';
     selectedImage = {nodeId:'', index:-1};
     selectionState = null;
@@ -4285,7 +4307,9 @@ function shellMousedownHandler3(e){
     if(e.button === 0){
         e.preventDefault();
         didPan = false;
-        selectionState = {startScreen:{x:e.clientX, y:e.clientY}, startWorld:screenToWorld(e)};
+        // 按住 Ctrl/Cmd 框选时保留已有选择，新框选结果与之合并；否则按原行为替换。
+        const baseIds = isMultiSelectModifier(e) ? selectedNodeIds().filter(id => nodes.some(n => n.id === id)) : [];
+        selectionState = {startScreen:{x:e.clientX, y:e.clientY}, startWorld:screenToWorld(e), baseIds};
         updateSelectionBox(e);
         return;
     }
