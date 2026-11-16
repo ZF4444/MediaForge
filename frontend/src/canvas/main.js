@@ -2769,7 +2769,9 @@ function createLoopOutputSlot(rootNode, roundIndex, roundOffset=0, options={}){
     delete output.runElapsedMs;
     tagLoopOutputSlot(output, rootNode, options.loopNode || null, roundIndex, options.slotIndex ?? roundOffset);
     const slots = loopOutputSlotsForRoot(rootNode).map(nodeRect);
-    let y = (Number(rootNode.y) || 0) + roundOffset * ((Number(rootRect.height) || 180) + 28);
+    // 按"最大可能结果高度"等距排布，而不是根节点当前高度：并行时占位槽很矮，
+    // 结果回填后不同比例的图片会撑高并压到下一个槽。
+    let y = (Number(rootNode.y) || 0) + roundOffset * loopOutputSlotRowStep(rootNode);
     slots.forEach(rect => {
         if((Number(rect.x) || 0) >= (Number(output.x) || 0) - 24){
             y = Math.max(y, (Number(rect.y) || 0) + (Number(rect.height) || 0) + 28);

@@ -839,10 +839,14 @@ async function runSmartCascade(targetNode=null, {selectedNodeIds=null}={}){
         selectedImage = {nodeId:'', index:-1};
         try {
             const columnsPerRow = loopMode === 'parallel' ? Math.max(1, parallelLimit) : 1;
+            // 首轮克隆前按全部轮次的素材与链路节点尺寸一次性算出统一网格，所有轮次复用，
+            // 避免各轮按自己的素材比例独立定位导致行列错位。
+            const layoutRoundIndexes = Array.from({length:totalRounds}, (_, round) => startIndex + round * batchSize);
+            const layoutPlan = buildLoopCloneLayoutPlan(subgraph, graph.root, loop.node, layoutRoundIndexes, endIndex, columnsPerRow);
             const runOneRound = async (loopIndex, roundOffset) => {
                 throwIfSmartCascadeStopRequested(runState);
                 const ctx = {index:loopIndex, total:endIndex, nodeId:loop.node.id, forceWorkflow:subgraph.nodes.length > 1, runState};
-                const {idMap, clonedRoot} = cloneLoopChainForRound(subgraph, graph.root, loop.node, loopIndex, endIndex, roundOffset, columnsPerRow);
+                const {idMap, clonedRoot} = cloneLoopChainForRound(subgraph, graph.root, loop.node, loopIndex, endIndex, roundOffset, columnsPerRow, layoutPlan);
                 render();
                 refreshConnectionLayer();
                 await runClonedLoopChain(clonedRoot, subgraph.edges, idMap, ctx, runState);

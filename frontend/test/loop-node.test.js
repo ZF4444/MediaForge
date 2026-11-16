@@ -249,3 +249,101 @@ describe('createLoopNode', () => {
         expect(sandbox.selectedId).toBe('keep-me');
     });
 });
+
+describe('buildLoopCloneLayoutPlan / 不同比例素材的统一网格', () => {
+    // 与 node-layout.js singleImageLayout 同公式：scale=2 时最大框 520x440。
+    const fit = (w, h) => {
+        const f = Math.min(520 / w, 440 / h);
+        return { width: Math.max(72, Math.round(w * f)), height: Math.max(72, Math.round(h * f)) };
+    };
+    // 1:1、2:1、1:2、16:9、9:16、3:1
+    const SIZES = [[1000, 1000], [2000, 1000], [1000, 2000], [1600, 900], [900, 1600], [3000, 1000]];
+
+    function setup(sizes = SIZES) {
+        const rootNode = { id: 'root', x: 0, y: 0, w: 316, h: 194 };
+        const childNode = { id: 'child', x: 700, y: 0, w: 316, h: 194 };
+        const loopNode = { id: 'loop', imageInput: true };
+        const sandbox = createLoopNodeSandbox({
+            nodes: [rootNode, childNode, loopNode],
+            fns: {
+                imageLayout: images => (images.length === 1 && images[0].natural_w > 0
+                    ? fit(images[0].natural_w, images[0].natural_h)
+                    : { width: 300, height: 300 }),
+                refsForDirectLoopRound: (_loop, index) => {
+                    const [w, h] = sizes[index - 1] || [0, 0];
+                    return [{ url: `u${index}.png`, natural_w: w, natural_h: h }];
+                },
+            },
+        });
+        const subgraph = { nodes: [rootNode, childNode], edges: [{ from: 'root', to: 'child' }] };
+        const indexes = sizes.map((_, i) => i + 1);
+        return { sandbox, rootNode, loopNode, subgraph, indexes };
+    }
+    function runAll(columnsPerRow, sizes = SIZES) {
+        const { sandbox, rootNode, loopNode, subgraph, indexes } = setup(sizes);
+        const plan = sandbox.buildLoopCloneLayoutPlan(subgraph, rootNode, loopNode, indexes, indexes.length, columnsPerRow);
+        const results = indexes.map((loopIndex, offset) =>
+            sandbox.cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, indexes.length, offset, columnsPerRow, plan)
+        );
+        return { plan, results };
+    }
+
+    it('同一行 Y 一致、同一列 X 一致（素材比例各不相同）', () => {
+        const { results } = runAll(3);
+        const roots = results.map(r => r.clonedRoot);
+        expect(new Set([roots[0].y, roots[1].y, roots[2].y]).size).toBe(1);
+        expect(new Set([roots[3].y, roots[4].y, roots[5].y]).size).toBe(1);
+        expect(roots[3].y).toBeGreaterThan(roots[0].y);
+        [0, 1, 2].forEach(col => expect(roots[col].x).toBe(roots[col + 3].x));
+        expect(roots[1].x).toBeGreaterThan(roots[0].x);
+        expect(roots[2].x).toBeGreaterThan(roots[1].x);
+    });
+
+    it('素材节点不压到相邻链路，也不压到自己的根节点', () => {
+        const { results } = runAll(3);
+        const mats = results.map(r => r.materialNode);
+        const roots = results.map(r => r.clonedRoot);
+        for (let i = 0; i < 2; i++) {
+            // 下一列素材的左边缘在上一列链路最右节点（根 x + 700 + 316）之后。
+            expect(mats[i + 1].x).toBeGreaterThanOrEqual(roots[i].x + 700 + 316);
+            // 素材右边缘不超过自己的根节点。
+            const matSize = fit(...SIZES[i + 1]);
+            expect(mats[i + 1].x + matSize.width).toBeLessThanOrEqual(roots[i + 1].x);
+        }
+    });
+
+    it('行距按所有轮次中最高素材预留', () => {
+        const { plan, results } = runAll(3);
+        const tallest = Math.max(...SIZES.map(s => fit(...s).height));
+        expect(plan.rowGap).toBeGreaterThanOrEqual(tallest + 140);
+        expect(results[3].clonedRoot.y - results[0].clonedRoot.y).toBe(plan.rowGap);
+    });
+
+    it('串行（columnsPerRow=1）每轮纵向等距，间距与素材比例无关', () => {
+        const { results } = runAll(1);
+        const ys = results.map(r => r.clonedRoot.y);
+        for (let i = 1; i < ys.length; i++) expect(ys[i] - ys[i - 1]).toBe(ys[1] - ys[0]);
+        expect(new Set(results.map(r => r.clonedRoot.x)).size).toBe(1);
+    });
+
+    it('素材缺少尺寸元数据时按最大单图框 520x440 预留', () => {
+        const { sandbox, rootNode, loopNode, subgraph } = setup([[0, 0]]);
+        const plan = sandbox.buildLoopCloneLayoutPlan(subgraph, rootNode, loopNode, [1], 1, 1);
+        expect(plan.materialWidth).toBeGreaterThanOrEqual(520);
+        expect(plan.materialHeight).toBeGreaterThanOrEqual(440);
+        expect(plan.rowGap).toBeGreaterThanOrEqual(440 + 140);
+    });
+
+    it('不传 layoutPlan 时仍可工作（兼容旧调用）', () => {
+        const { sandbox, rootNode, loopNode, subgraph } = setup();
+        const result = sandbox.cloneLoopChainForRound(subgraph, rootNode, loopNode, 1, 6, 0, 3);
+        expect(result.clonedRoot).toBeTruthy();
+        expect(result.materialNode).toBeTruthy();
+    });
+
+    it('loopOutputSlotRowStep 至少容纳最大单图框，且只取决于根节点', () => {
+        const { sandbox } = setup();
+        expect(sandbox.loopOutputSlotRowStep({ id: 'a', w: 316, h: 194 })).toBe(440 + 28);
+        expect(sandbox.loopOutputSlotRowStep({ id: 'b', w: 316, h: 700 })).toBe(700 + 28);
+    });
+});

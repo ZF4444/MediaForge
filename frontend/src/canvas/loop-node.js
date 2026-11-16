@@ -490,17 +490,23 @@ function collectLoopChainSubgraph(rootNode, graph){
     const chainNodes = [...nodeIds].map(id => nodes.find(n => n.id === id)).filter(Boolean);
     return {nodes:chainNodes, edges};
 }
-// 为某一轮克隆一条完整链路：深拷贝链路节点(新id)，重映射内部连线，按轮次偏移位置，
-// 再创建一个装当前轮素材的图片节点，连到克隆链路的根节点。
-// columnsPerRow：并行模式下每行最多放几条链路（即 parallelLimit），达到上限后换行向下；
-// 串行模式固定传 1，效果与之前一致（每一轮都单独另起一行）。
-function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endIndex, roundOffset, columnsPerRow=1){
-    // 素材节点（装当前轮输入图，可能是多图分组）在克隆链路之前算好，因为它的高度
-    // 会随批次大小(imageBatchSize)变化，且可能比链路里任何节点都高。
+// ── 循环克隆链路统一布局 ──
+// 单图节点在素材比例未知（尚未加载 natural_w/h）或生成结果回填后，最大会占到
+// 260×220（再乘节点缩放）的框；空节点/占位节点则更小。布局按"可能出现的最大尺寸"预留，
+// 这样不同比例素材、结果回填后的尺寸变化都不会让行列错位或重叠。
+const LOOP_LAYOUT_SINGLE_MAX_W = 260;
+const LOOP_LAYOUT_SINGLE_MAX_H = 220;
+const LOOP_LAYOUT_ROW_PADDING = 140;
+const LOOP_LAYOUT_COL_PADDING = 80;
+function loopLayoutIsImageNode(node){
+    if(typeof isSmartImageNode === 'function') return Boolean(isSmartImageNode(node));
+    return Boolean(node && (node.type === 'smart-image' || !node.type));
+}
+// 某一轮装载的素材（带尺寸元数据），供布局预算与素材节点创建共用，保证两者一致。
+function loopMaterialImagesForRound(loopNode, loopIndex, endIndex){
     const roundRefs = refsForDirectLoopRound(loopNode, loopIndex, endIndex).filter(ref => ref?.url);
     // 保留尺寸元数据，避免新建的循环素材节点在图片加载前退回 260x180。
-    // 这也使预布局与最终节点使用同一批实际素材，避免非 4:3 输入图导致链路错位。
-    const materialImages = roundRefs.map((ref, i) => stripImageGenerationMeta({
+    return roundRefs.map((ref, i) => stripImageGenerationMeta({
         file_id:ref.file_id || '',
         url:ref.url,
         name:ref.name || trf('canvas.loopImageLabel', {n:loopIndex + i}),
@@ -508,30 +514,89 @@ function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endInde
         natural_w:Number(ref.natural_w || ref.width || ref.w || 0),
         natural_h:Number(ref.natural_h || ref.height || ref.h || 0)
     })).filter(img => img.url);
-    const materialImageCount = materialImages.length;
-    const materialLayout = materialImageCount
-        ? imageLayout(materialImages, materialImageCount > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE, {type:'smart-image', images:materialImages})
-        : null;
-    const materialWidth = Math.round(materialLayout?.width || 0);
-    const materialHeight = Math.round(materialLayout?.height || 0);
-    // 行高取整条链路中最高的节点、以及本轮素材节点两者的最大值（而不是只看根节点），
-    // 避免链路内存在比根节点更高的节点（如多图组、循环节点等），或素材节点因批次
-    // 图片数量变化而变高时，各轮克隆在 Y 轴上互相重叠。
-    const chainMaxHeight = subgraph.nodes.reduce((max, node) => Math.max(max, Number(nodeRect(node).height) || 0), Number(nodeRect(rootNode).height) || 180);
-    const rowGap = Math.max(chainMaxHeight, materialHeight) + 140;
-    // 列宽：素材节点宽度 + 素材到根节点的固定间距 + 链路本身从根节点到最右侧节点的跨度。
-    const materialGap = Math.max(300, materialWidth + 80);
-    const chainRightEdge = subgraph.nodes.reduce((max, node) => {
-        const rect = nodeRect(node);
-        return Math.max(max, (Number(rect.x) || 0) + (Number(rect.width) || 0));
-    }, (Number(rootNode.x) || 0) + (Number(nodeRect(rootNode).width) || 0));
-    const chainSpan = chainRightEdge - ((Number(rootNode.x) || 0) - materialGap);
-    const colGap = chainSpan + 80;
-    const cols = Math.max(1, Number(columnsPerRow) || 1);
+}
+function loopMaterialScale(images){
+    return images.length > 1 ? MEDIA_GROUP_DEFAULT_SCALE : MEDIA_NODE_DEFAULT_SCALE;
+}
+// 素材节点布局尺寸；单图缺少比例信息时按最大框预留。
+function loopMaterialLayoutSize(images){
+    if(!images.length) return {width:0, height:0};
+    const scale = loopMaterialScale(images);
+    const layout = imageLayout(images, scale, {type:'smart-image', images}) || {};
+    let width = Math.round(Number(layout.width) || 0);
+    let height = Math.round(Number(layout.height) || 0);
+    if(images.length === 1 && !(images[0].natural_w > 0 && images[0].natural_h > 0)){
+        width = Math.max(width, Math.round(LOOP_LAYOUT_SINGLE_MAX_W * scale));
+        height = Math.max(height, Math.round(LOOP_LAYOUT_SINGLE_MAX_H * scale));
+    }
+    return {width, height};
+}
+// 链路节点预留尺寸：生成类节点的结果回填后尺寸取决于输出比例，按最大单图框预留。
+function loopChainNodeReserve(node){
+    const rect = nodeRect(node);
+    let width = Number(rect.width) || 0;
+    let height = Number(rect.height) || 0;
+    if(loopLayoutIsImageNode(node)){
+        const scale = MEDIA_NODE_DEFAULT_SCALE;
+        width = Math.max(width, Math.round(LOOP_LAYOUT_SINGLE_MAX_W * scale));
+        height = Math.max(height, Math.round(LOOP_LAYOUT_SINGLE_MAX_H * scale));
+    }
+    return {x:Number(rect.x) || 0, y:Number(rect.y) || 0, width, height};
+}
+// 单节点循环的输出槽纵向步长：结果回填后输出节点可能是任意比例的单图，
+// 按"最大单图框"与根节点高度取大，再加固定间距。步长只取决于根节点，
+// 并行预创建的占位槽与串行后建的槽因此落在同一套等距网格上；
+// 多图组等更高的输出由 createLoopOutputSlot 里的"避让已有槽"逻辑兜底。
+const LOOP_OUTPUT_SLOT_GAP = 28;
+function loopOutputSlotRowStep(rootNode){
+    const rootHeight = Number(nodeRect(rootNode).height) || 0;
+    const singleMax = Math.round(LOOP_LAYOUT_SINGLE_MAX_H * MEDIA_NODE_DEFAULT_SCALE);
+    return Math.max(rootHeight, singleMax) + LOOP_OUTPUT_SLOT_GAP;
+}
+// 在克隆任何节点之前，一次性算出所有轮次共用的网格：
+//   rowGap 取"所有轮素材与链路节点中最高者 + 间距"，colGap 取"素材最宽者 + 链路跨度 + 间距"，
+//   因此同一行 Y 一致、同一列 X 一致，且任意比例素材都不会互相覆盖。
+// roundIndexes：本次运行所有轮次的 loopIndex；columnsPerRow：并行列数，串行传 1。
+function buildLoopCloneLayoutPlan(subgraph, rootNode, loopNode, roundIndexes, endIndex, columnsPerRow=1){
+    const indexes = (Array.isArray(roundIndexes) && roundIndexes.length ? roundIndexes : [1]);
+    let materialWidth = 0;
+    let materialHeight = 0;
+    indexes.forEach(loopIndex => {
+        const size = loopMaterialLayoutSize(loopMaterialImagesForRound(loopNode, loopIndex, endIndex));
+        materialWidth = Math.max(materialWidth, size.width);
+        materialHeight = Math.max(materialHeight, size.height);
+    });
+    const chainNodes = (subgraph?.nodes?.length ? subgraph.nodes : [rootNode]).filter(Boolean);
+    const reserves = chainNodes.map(loopChainNodeReserve);
+    const rootReserve = loopChainNodeReserve(rootNode);
+    const chainMaxHeight = reserves.reduce((max, rect) => Math.max(max, rect.height), rootReserve.height || 180);
+    const materialGap = Math.max(300, materialWidth + LOOP_LAYOUT_COL_PADDING);
+    const chainRightEdge = reserves.reduce((max, rect) => Math.max(max, rect.x + rect.width), rootReserve.x + rootReserve.width);
+    const chainSpan = chainRightEdge - (rootReserve.x - materialGap);
+    return {
+        cols:Math.max(1, Number(columnsPerRow) || 1),
+        rowGap:Math.max(chainMaxHeight, materialHeight) + LOOP_LAYOUT_ROW_PADDING,
+        colGap:chainSpan + LOOP_LAYOUT_COL_PADDING,
+        materialGap,
+        materialWidth,
+        materialHeight
+    };
+}
+// 为某一轮克隆一条完整链路：深拷贝链路节点(新id)，重映射内部连线，按统一网格偏移位置，
+// 再创建一个装当前轮素材的图片节点，连到克隆链路的根节点。
+// columnsPerRow：并行模式下每行最多放几条链路（即 parallelLimit），达到上限后换行向下；
+// 串行模式固定传 1，效果与之前一致（每一轮都单独另起一行）。
+// layoutPlan：buildLoopCloneLayoutPlan 的结果。调用方应在首轮克隆前对全部轮次生成一次并复用；
+// 未传时退化为只按本轮尺寸生成（兼容旧调用，但不同比例素材下无法保证整体对齐）。
+function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endIndex, roundOffset, columnsPerRow=1, layoutPlan=null){
+    const materialImages = loopMaterialImagesForRound(loopNode, loopIndex, endIndex);
+    const roundRefs = materialImages;
+    const plan = layoutPlan || buildLoopCloneLayoutPlan(subgraph, rootNode, loopNode, [loopIndex], endIndex, columnsPerRow);
+    const cols = Math.max(1, Number(plan.cols) || Math.max(1, Number(columnsPerRow) || 1));
     const col = roundOffset % cols;
     const row = Math.floor(roundOffset / cols);
-    const dx = col * colGap;
-    const dy = (row + 1) * rowGap; // 原链路在上，克隆链路依次向下排列；同一行内向右并排
+    const dx = col * plan.colGap;
+    const dy = (row + 1) * plan.rowGap; // 原链路在上，克隆链路依次向下排列；同一行内向右并排
     const idMap = new Map();
     const clones = subgraph.nodes.map(node => {
         const clone = cloneSmartNode(node, dx, dy);
@@ -573,11 +638,10 @@ function cloneLoopChainForRound(subgraph, rootNode, loopNode, loopIndex, endInde
     // 素材节点：装当前轮的输入图，直接连到克隆根节点。
     let materialNode = null;
     if(roundRefs.length && clonedRoot){
-        const matRect = nodeRect(rootNode);
         materialNode = {
             id:uid('smart'),
             type:'smart-image',
-            x:(Number(clonedRoot.x) || 0) - Math.max(300, (Number(matRect.width) || 260) + 80),
+            x:(Number(clonedRoot.x) || 0) - plan.materialGap,
             y:(Number(clonedRoot.y) || 0),
             title:materialImages.length > 1 ? 'Group' : 'Image',
             images:materialImages,
