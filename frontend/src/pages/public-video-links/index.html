@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>外发链接 · MediaForge</title>
+  <script type="module" src="../../public-video-links/main.js"></script>
+</head>
+<body>
+  <main class="media-links">
+    <header class="page-head"><div><p class="eyebrow">MEDIAFORGE / 视频外发</p><h1>外发链接</h1><p class="muted">为供应商提供短期视频下载地址，随时查看用量与撤销授权。</p></div><button id="refresh" type="button">刷新列表</button></header>
+    <p id="status" role="status" aria-live="polite">正在加载…</p>
+    <section class="panel" aria-labelledby="create-title">
+      <h2 id="create-title">签发视频链接</h2><p class="muted">仅支持本人已获外发许可的视频，且须绑定包含该视频的有效任务及供应商。</p>
+      <form id="create-form" class="fields">
+        <label>文件 ID<input name="file_id" required maxlength="128" autocomplete="off"></label>
+        <label>任务 ID<input name="task_id" required maxlength="128" autocomplete="off"></label>
+        <label>供应商连接 ID<input name="provider_id" required maxlength="128" autocomplete="off"></label>
+        <label>有效期（秒）<input name="ttl" type="number" min="1" max="7200" value="1800" required></label>
+        <button class="primary" type="submit">签发链接</button>
+      </form>
+    </section>
+    <section class="panel" aria-labelledby="list-title">
+      <div class="toolbar"><h2 id="list-title">授权记录 <span id="total" class="muted"></span></h2><label>状态 <select id="state"><option value="">全部</option><option value="active">有效</option><option value="expired">已过期</option><option value="revoked">已撤销</option></select></label></div>
+      <div class="table-scroll"><table><thead><tr><th>文件 / 任务</th><th>拥有者 / 供应商</th><th>状态 / 到期时间</th><th>用量</th><th>操作</th></tr></thead><tbody id="records"></tbody></table></div>
+      <div class="pager"><button id="previous" type="button">上一页</button><span id="page-info"></span><button id="next" type="button">下一页</button></div>
+      <p class="muted">每次 GET 按完整文件大小预扣额度。撤销阻止后续请求；已经开始的下载可能继续，供应商已保存的副本不会随之删除。</p>
+    </section>
+    <section id="admin-panel" class="panel" hidden aria-labelledby="policy-title">
+      <h2 id="policy-title">管理员策略</h2><p class="muted">只需启用全局外发策略。任务和文件范围用于单独撤销或恢复后续签发；重新启用不会恢复旧链接。</p>
+      <form id="policy-form" class="fields">
+        <label>范围<select name="scope"><option value="global">全局</option><option value="task">任务</option><option value="file">文件</option></select></label>
+        <label>范围 ID（全局填 *）<input name="key" required maxlength="128" value="*"></label>
+        <label>每日额度（MiB）<input name="daily" type="number" min="1" max="1048576" value="32768" required></label>
+        <label>活动授权额度（MiB）<input name="active" type="number" min="1" max="1048576" value="2048" required></label>
+        <label class="checkbox"><input name="enabled" type="checkbox">启用此范围</label>
+        <button type="submit">保存策略</button><button id="batch-revoke" class="danger" type="button">撤销此范围</button>
+      </form>
+      <div class="table-scroll"><table><thead><tr><th>范围</th><th>ID</th><th>许可</th><th>日预算 / 已预扣</th><th>活动预算</th></tr></thead><tbody id="policies"></tbody></table></div>
+    </section>
+  </main>
+  <dialog id="link-dialog" aria-labelledby="link-title"><h2 id="link-title">链接仅展示这一次</h2><p class="muted">关闭后无法找回。轮换会立即作废旧链接，并可能中断已提交任务的后续读取。</p><label>视频下载地址<input id="one-time-url" readonly autocomplete="off" spellcheck="false"></label><div class="dialog-actions"><button id="copy-link" class="primary" type="button">复制链接</button><button id="close-dialog" type="button">关闭并清除</button></div><p id="copy-status" role="status"></p></dialog>
+</body>
+</html>

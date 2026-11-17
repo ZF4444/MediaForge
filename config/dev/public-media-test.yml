@@ -1,0 +1,21 @@
+# Standalone test project: no application volumes, published ports or Docker socket.
+name: mediaforge-public-media-tests
+services:
+  integration:
+    image: mediaforge-public-media-tests:dev
+    build:
+      context: ../..
+      dockerfile: config/dev/public-media/test.Dockerfile
+      args:
+        APP_IMAGE: ${APP_IMAGE:-mediaforge:dev}
+        MINIO_IMAGE: ${MINIO_IMAGE:-mediaforge-minio:2025-10-15}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-deb.debian.org}
+    network_mode: none
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    shm_size: 128m
+    environment:
+      PUBLIC_VIDEO_INTEGRATION: '1'
+    restart: 'no'

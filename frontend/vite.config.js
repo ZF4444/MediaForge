@@ -392,7 +392,7 @@ export const pages = [
   { page: 'index', mainSrc: 'frontend/src/index/main.js', handwrittenFiles: [], htmlSrc: 'frontend/src/pages/index/index.html', isPage: true },
   { page: 'vnccs', mainSrc: 'frontend/src/vnccs/standalone-module.js', handwrittenFiles: ['standalone-shim.js'] },
   { page: 'vnccs-pose-studio-embed', htmlSrc: 'frontend/src/pages/vnccs-pose-studio-embed/index.html', isPage: true },
-  ...['login', 'broadcast-admin', 'access-control', 'canvas-manager', 'storage-quota', 'workflow-config', 'ai-connections', 'my-account', 'user-data-migration', 'user-management', 'workflow-settings', 'fbx-node-picker', 'angle'].map(page => ({
+  ...['login', 'public-video-links', 'broadcast-admin', 'access-control', 'canvas-manager', 'storage-quota', 'workflow-config', 'ai-connections', 'my-account', 'user-data-migration', 'user-management', 'workflow-settings', 'fbx-node-picker', 'angle'].map(page => ({
     page,
     mainSrc: `frontend/src/${page}/main.js`,
     handwrittenFiles: [],
@@ -402,7 +402,7 @@ export const pages = [
 ];
 
 export const modulePages = new Set([
-  'login', 'storage-quota', 'workflow-config', 'ai-connections', 'canvas-manager',
+  'login', 'public-video-links', 'storage-quota', 'workflow-config', 'ai-connections', 'canvas-manager',
   'access-control', 'feedback-admin', 'user-management', 'my-account',
   'user-data-migration', 'gpt-chat', 'broadcast-admin', 'gaussian-viewer',
   'fbx-node-picker', 'angle', 'gaussian', 'pose-studio', 'vnccs', 'workflow-settings', 'index',

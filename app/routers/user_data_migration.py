@@ -57,6 +57,10 @@ def migration_execute(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail="源账号无效。")
     if payload.get("confirmed") is not True:
         raise HTTPException(status_code=400, detail="请先确认画布列表后再迁移。")
+    from app.public_media.lifecycle import barrier
+
+    barrier("user", source_id)
+    barrier("user", target_id)
     moved_tables = []
     with metadata_connection() as conn, conn.transaction(), conn.cursor() as cur:
         cur.execute("SELECT id,username FROM users WHERE id=%s", (source_id,))

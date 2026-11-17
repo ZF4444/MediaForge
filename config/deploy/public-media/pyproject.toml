@@ -1,0 +1,11 @@
+[project]
+name = "mediaforge-media-gateway"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.136.1",
+  "uvicorn==0.46.0",
+  "minio==7.2.20",
+  "psycopg[binary]==3.3.4",
+  "psycopg-pool==3.3.1",
+]

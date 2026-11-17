@@ -31,6 +31,8 @@ from threading import Lock, Thread
 
 def _load_bootstrap_env() -> None:
     """Load config/.env before importing modules that read configuration values."""
+    if os.getenv("LOAD_BOOTSTRAP_ENV", "true").strip().lower() == "false":
+        return
     env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", ".env")
     if not os.path.exists(env_file):
         return
@@ -112,16 +114,17 @@ AUTH_PUBLIC_PREFIXES = (
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+    media_management_page = os.path.normpath(path) == "/static/public-video-links.html"
     # The legacy login UI is no longer an entry point. Keep both the route and
     # its directly served HTML from exposing the old login screen.
     if path in {"/login", "/login/", "/static/login.html"}:
         return RedirectResponse(url=PUBLIC_LANDING_URL, status_code=302)
     if path in HEALTH_PATHS:
         return await call_next(request)
-    if path == "/favicon.ico" or path.startswith("/static/"):
+    if path == "/favicon.ico" or (path.startswith("/static/") and not media_management_page):
         return await call_next(request)
     # 放行静态资源与登录相关路径
-    is_public = path in AUTH_PUBLIC_PATHS or any(path.startswith(p) for p in AUTH_PUBLIC_PREFIXES)
+    is_public = (path in AUTH_PUBLIC_PATHS or any(path.startswith(p) for p in AUTH_PUBLIC_PREFIXES)) and not media_management_page
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
     try:
         sess = await get_session(token) if token else None
@@ -142,6 +145,8 @@ async def auth_middleware(request: Request, call_next):
             username=request.state.username,
         )
         try:
+            if media_management_page and not await asyncio.to_thread(access_control.has_page_access, request.state.user_id, "public-video-links"):
+                return JSONResponse({"detail": "没有外发链接管理权限"}, status_code=403)
             return await call_next(request)
         finally:
             current_user_var.reset(ctx_token)
@@ -177,6 +182,7 @@ app.add_middleware(RequestLoggingMiddleware)
 from app.core.ws import ConnectionManager, manager
 
 GLOBAL_LOOP = None
+PUBLIC_VIDEO_MAINTENANCE_TASK = None
 STORAGE_CLEANUP_TASK = None
 STORAGE_CACHE_CLEANUP_TASK = None
 SESSION_LAST_SEEN_TASK = None
@@ -285,6 +291,7 @@ from app.services.canvas_tasks import (
 
 @app.on_event("startup")
 async def startup_event():
+    global PUBLIC_VIDEO_MAINTENANCE_TASK
     global \
         GLOBAL_LOOP, \
         SESSION_LAST_SEEN_TASK, \
@@ -319,6 +326,12 @@ async def startup_event():
         await asyncio.to_thread(load_storage_quota_config)
         GLOBAL_LOOP = asyncio.get_running_loop()
         shared_state.set_global_loop(GLOBAL_LOOP)
+        from app.public_media.lifecycle import check_ready, enabled, maintenance_loop
+
+        await asyncio.to_thread(check_ready)
+
+        if RUN_BACKGROUND_MAINTENANCE and enabled() and PUBLIC_VIDEO_MAINTENANCE_TASK is None:
+            PUBLIC_VIDEO_MAINTENANCE_TASK = asyncio.create_task(maintenance_loop())
         if RUN_BACKGROUND_MAINTENANCE and STORAGE_CLEANUP_ENABLED and STORAGE_CLEANUP_TASK is None:
             STORAGE_CLEANUP_TASK = asyncio.create_task(storage_cleanup_loop())
         if RUN_BACKGROUND_MAINTENANCE and STORAGE_CACHE_CLEANUP_ENABLED and STORAGE_CACHE_CLEANUP_TASK is None:
@@ -352,6 +365,16 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    global PUBLIC_VIDEO_MAINTENANCE_TASK
+    if PUBLIC_VIDEO_MAINTENANCE_TASK is not None:
+        PUBLIC_VIDEO_MAINTENANCE_TASK.cancel()
+        await asyncio.gather(PUBLIC_VIDEO_MAINTENANCE_TASK, return_exceptions=True)
+        PUBLIC_VIDEO_MAINTENANCE_TASK = None
+    from app.public_media.business import close_service
+    from app.public_media.lifecycle import close as close_media_repository
+
+    await asyncio.to_thread(close_service)
+    await asyncio.to_thread(close_media_repository)
     global \
         SESSION_LAST_SEEN_TASK, \
         STORAGE_CACHE_CLEANUP_TASK, \
@@ -416,6 +439,15 @@ async def health_ready():
     components = dict(storage_report["components"])
     components["redis"] = redis_report["component"]
     report = {"ready": storage_report["ready"] and redis_report["ready"], "components": components}
+    from app.public_media.lifecycle import check_ready, enabled
+
+    if enabled():
+        try:
+            await asyncio.to_thread(check_ready)
+            components["media_authorization"] = "ok"
+        except Exception:
+            components["media_authorization"] = "unavailable"
+            report["ready"] = False
     status_code = 200 if report["ready"] else 503
     headers = {"Cache-Control": "no-store"}
     if not report["ready"]:
@@ -866,6 +898,8 @@ async def favicon():
 
 @app.get("/static/{page}.html")
 async def static_html_page(page: str):
+    if page == "public-video-links":
+        await asyncio.to_thread(require_page_access, page, "外发链接")
     # 仅拦截顶层 HTML 页面（如 /static/angle.html），运行时动态注入版本号。
     if "/" in page:
         raise HTTPException(status_code=404)
@@ -1707,13 +1741,7 @@ def volcengine_seedance2_video_reference_url(value):
     if value.startswith(("http://", "https://", "asset://")):
         return value
     if value.startswith("/api/files/"):
-        public_url = local_asset_public_url(value)
-        if not public_url:
-            raise HTTPException(
-                status_code=400,
-                detail="Seedance 2 的参考视频必须是公网可访问的视频 URL；本地画布文件需配置 PUBLIC_BASE_URL/PUBLIC_MEDIA_BASE_URL 后重试。",
-            )
-        return public_url
+        raise HTTPException(status_code=400, detail="本地参考视频必须通过视频外发授权服务异步签发。")
     raise HTTPException(status_code=400, detail="Seedance 2 的参考视频必须是公网视频 URL 或 asset:// 素材地址，不支持 data URL 或本地路径。")
 
 
@@ -6109,7 +6137,9 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
                 or raw.get("message")
                 or str(raw)
             )
-            raise HTTPException(status_code=502, detail=humanize_video_task_failure(reason))
+            failure = HTTPException(status_code=502, detail=humanize_video_task_failure(reason))
+            failure.upstream_terminal = True
+            raise failure
         delay = min(delay * 1.6, 12)
     raise HTTPException(status_code=504, detail=f"视频生成任务超时：{last_payload or task_id}")
 
@@ -6130,6 +6160,26 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
     cloudwise_seedance = is_cloudwise_seedance(provider)
     submit_urls = video_submit_url_candidates(provider, base_url)
     submit_url = submit_urls[0]
+    private_video_delivery = False
+    delivery_secrets = set()
+
+    async def outgoing_video_url(value):
+        nonlocal private_video_delivery
+        from app.public_media.business import reference_url
+        from app.public_media.config import Conflict, Denied, Disabled, Unavailable
+
+        try:
+            result = await reference_url(value, provider.get("billing_user_id") or current_user_id(),
+                                         provider.get("billing_task_id") or "", provider.get("connection_id") or provider["id"])
+        except (Denied, Conflict) as exc:
+            raise HTTPException(403, str(exc)) from None
+        except (Disabled, Unavailable):
+            raise HTTPException(503, "视频外发未启用或授权服务不可用") from None
+        private_video_delivery = private_video_delivery or result != value
+        if result != value:
+            delivery_secrets.add(result.rsplit("token=", 1)[-1])
+        return result
+
     try:
         async with shared_http_client(timeout=VIDEO_POLL_TIMEOUT) as client:
             # OpenAI-compatible data URL request
@@ -6165,8 +6215,8 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                     text_url = str(url or "").strip()
                     if not text_url:
                         continue
-                    if seedance2_video and not looks_like_image_media_url(text_url):
-                        media_url = volcengine_seedance2_video_reference_url(text_url)
+                    if (seedance2_video or cloudwise_seedance) and not looks_like_image_media_url(text_url):
+                        media_url = volcengine_seedance2_video_reference_url(await outgoing_video_url(text_url))
                     else:
                         media_url = await run_storage_io(
                             volcengine_media_reference_url, text_url, 1536 if looks_like_image_media_url(text_url) else None
@@ -6234,7 +6284,7 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                 if image_payload:
                     body["images"] = image_payload
                 if payload.videos:
-                    body["videos"] = [v for v in payload.videos if v]
+                    body["videos"] = [await outgoing_video_url(v) for v in payload.videos if v]
                 if payload.seed is not None:
                     body["seed"] = payload.seed
                 if payload.return_last_frame:
@@ -6247,6 +6297,11 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
             async def on_submitted(upstream_id):
                 local_task_id = provider.get("billing_task_id")
                 if local_task_id:
+                    if private_video_delivery:
+                        from app.public_media.lifecycle import repository
+
+                        await asyncio.to_thread(repository().submission, local_task_id,
+                                                provider.get("connection_id") or provider["id"], "submitted", upstream_id)
                     await update_canvas_task(local_task_id, upstream_task_id=upstream_id)
 
             transport = VideoTransport(
@@ -6262,7 +6317,29 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                 timeout=VIDEO_POLL_TIMEOUT,
                 on_submitted=on_submitted,
             )
-            result, task_id = await transport.generate_with_client(client, provider, body)
+            if private_video_delivery:
+                from app.public_media.lifecycle import repository
+
+                try:
+                    await asyncio.to_thread(repository().submission, provider["billing_task_id"],
+                                            provider.get("connection_id") or provider["id"], "submitting")
+                except Exception:
+                    raise HTTPException(409, "视频提交已开始或状态不可确认，请查询原任务") from None
+                provider = {**provider, "private_video_delivery": True}
+            try:
+                result, task_id = await transport.generate_with_client(client, provider, body)
+            except HTTPException as exc:
+                from app.public_media.contracts import scrub
+
+                exc.detail = scrub(exc.detail, delivery_secrets)
+                if private_video_delivery and getattr(exc, "upstream_terminal", False):
+                    await asyncio.to_thread(repository().settle_task, provider["billing_task_id"], True)
+                raise
+            from app.public_media.contracts import scrub
+
+            result = scrub(result, delivery_secrets)
+            if private_video_delivery:
+                await asyncio.to_thread(repository().settle_task, provider["billing_task_id"], True)
             billing = provider.get("billing_context")
             if billing is not None:
                 from app.services.video_billing import record_video_response_usage
@@ -6310,7 +6387,9 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
                 {"videos": local_urls, "video_items": video_items, "task_id": task_id, "raw": result}
             )
     except httpx.HTTPStatusError as exc:
-        text = exc.response.text
+        from app.public_media.contracts import scrub
+
+        text = scrub(exc.response.text, delivery_secrets)
         try:
             requested_model = body.get("model", "") or runtime_model or ""
         except NameError:
@@ -6364,7 +6443,9 @@ async def _canvas_video_impl(payload: CanvasVideoRequest, provider):
             raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
         raise HTTPException(status_code=exc.response.status_code, detail=f"上游视频接口错误：{text}") from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
+        from app.public_media.contracts import scrub
+
+        raise HTTPException(status_code=502, detail=scrub(f"请求上游视频接口失败：{exc}", delivery_secrets)) from None
 
 
 AI_CAPABILITY_RUNTIME = CapabilityRuntime()
@@ -7318,16 +7399,67 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
             str(provider.get("volcengine_project_name") or VOLCENGINE_DEFAULT_PROJECT_NAME).strip()
             or VOLCENGINE_DEFAULT_PROJECT_NAME
         )
-        public_url = volcengine_public_asset_url(target_item.get("url") or "")
+        source_url = target_item.get("url") or ""
+        from app.public_media.business import origins
+        from app.public_media.contracts import internal_file_id
+
+        local_file_id = internal_file_id(source_url, origins())
+        if local_file_id:
+            from app.services.storage import get_file_by_id
+
+            source_entry = await run_storage_io(get_file_by_id, local_file_id)
+            if source_entry and str(source_entry.get("content_type") or "").startswith("video/"):
+                kind = "video"
+        local_delivery_task = ""
+        if kind == "video":
+            from app.public_media.business import reference_url
+
+            if local_file_id:
+                from app.public_media.lifecycle import repository
+                from app.services.canvas_tasks import create_canvas_task
+
+                previous = (target_item.get("registrations") or {}).get(platform) or {}
+                if previous.get("local_delivery_task") and previous.get("status") in ("Submitting", "Processing"):
+                    raise HTTPException(409, "此素材已提交或提交结果未知，请先查询原认证任务")
+                local_delivery_task = "asset:" + uuid.uuid4().hex
+                await create_canvas_task({"id": local_delivery_task, "owner_id": current_user_id(),
+                                          "kind": "media_asset_registration", "status": "running",
+                                          "connection_id": payload.connection_id,
+                                          "request": {"videos": [source_url], "connection_id": payload.connection_id}})
+                try:
+                    public_url = await reference_url(source_url, current_user_id(), local_delivery_task, payload.connection_id)
+                    pending = dict(previous, local_delivery_task=local_delivery_task, status="Submitting", task_id="")
+                    target_item.setdefault("registrations", {})[platform] = pending
+                    await asyncio.to_thread(save_asset_library, lib)
+                    await asyncio.to_thread(repository().submission, local_delivery_task, payload.connection_id, "submitting")
+                except HTTPException:
+                    raise
+                except Exception:
+                    raise HTTPException(503, "视频外发授权失败；如已提交，请查询原认证任务") from None
+            else:
+                try:
+                    public_url = volcengine_public_asset_url(await reference_url(source_url, current_user_id(), "", payload.connection_id))
+                except Exception:
+                    raise HTTPException(403, "视频引用不可用，不能回退到业务文件公开地址") from None
+        else:
+            public_url = volcengine_public_asset_url(source_url)
         if public_url.startswith("ERR:"):
             raise HTTPException(status_code=400, detail=public_url[4:])
-        task_id = await submit_volcengine_avatar_asset(
-            public_url,
-            target_item.get("name") or "asset",
-            kind,
-            project_name=project_name,
-            group_name=payload.group_name or "",
-        )
+        try:
+            task_id = await submit_volcengine_avatar_asset(
+                public_url,
+                target_item.get("name") or "asset",
+                kind,
+                project_name=project_name,
+                group_name=payload.group_name or "",
+            )
+        except HTTPException as exc:
+            from app.public_media.contracts import scrub
+
+            exc.detail = scrub(exc.detail, (public_url.rsplit("token=", 1)[-1],) if local_delivery_task else ())
+            raise
+        if local_delivery_task:
+            await asyncio.to_thread(repository().submission, local_delivery_task, payload.connection_id, "submitted", task_id)
     else:
         raise HTTPException(status_code=400, detail="该平台的认证后端尚未接入。")
     regs = target_item.get("registrations")
@@ -7342,6 +7474,7 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
         "asset_uri": "",
         "asset_id": "",
         "registered_at": now_ms(),
+        "local_delivery_task": local_delivery_task,
     }
     target_item["registrations"] = regs
     await asyncio.to_thread(save_asset_library, lib)
@@ -7394,6 +7527,14 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
     else:
         raise HTTPException(status_code=400, detail="该平台的认证后端尚未接入。")
     reg["status"] = result["status"]
+    if result["status"] in ("Active", "Failed") and reg.get("local_delivery_task"):
+        from app.public_media.lifecycle import repository
+
+        await asyncio.to_thread(repository().settle_task, reg["local_delivery_task"], True)
+    if reg.get("local_delivery_task"):
+        from app.public_media.contracts import scrub
+
+        result = scrub(result)
     reg["detail"] = result.get("detail") or ""
     if result["status"] == "Active" and result.get("asset_uri"):
         reg["asset_uri"] = result["asset_uri"]
@@ -8291,6 +8432,9 @@ app.include_router(storage_management_router.router)
 app.include_router(usage_router.router)
 app.include_router(canvas_agent_router.router)
 app.include_router(user_data_migration_router.router)
+from app.routers import public_video_links
+
+app.include_router(public_video_links.router)
 
 if __name__ == "__main__":
     import argparse, uvicorn

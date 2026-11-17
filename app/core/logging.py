@@ -66,6 +66,9 @@ def redact(value: Any, key: str = "") -> Any:
     if isinstance(value, BaseException):
         return f"{type(value).__name__}: {redact(str(value))}"
     if isinstance(value, str):
+        from app.public_media.contracts import scrub
+
+        value = scrub(value)
         text = _safe_path(value) if _PATH_KEY.search(str(key)) and os.path.isabs(value) else value
         text = _ABSOLUTE_PRIVATE_PATH.sub(lambda match: _safe_path(match.group(0)), text)
         text = _BEARER.sub(lambda match: match.group(1) + _masked(match.group(2)), text)

@@ -7,6 +7,8 @@ import pytest
 import main
 from app.ai.adapters.video_protocol import CLOUDWISE_SEEDANCE_MODELS
 
+pytestmark = pytest.mark.usefixtures("mock_video_provider_dns")
+
 
 @pytest.mark.parametrize("suffix", ["", "/api/v1", "/v1"])
 def test_seedance_endpoints(suffix):

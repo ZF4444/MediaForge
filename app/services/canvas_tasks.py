@@ -185,6 +185,9 @@ async def get_canvas_task(task_id: str) -> dict[str, Any] | None:
 
 async def update_canvas_task(task_id: str, *, expected_status: str = "", **changes: Any) -> dict[str, Any] | None:
     """Atomically update a task, optionally only from an expected state."""
+    from app.public_media.lifecycle import before_task_update
+
+    await before_task_update(task_id, changes)
     now = time.time()
     client = get_redis_client()
     try:
@@ -224,6 +227,9 @@ async def update_claimed_canvas_task(
     wakes after its lease expired cannot overwrite output written by the worker
     that subsequently acquired the task.
     """
+    from app.public_media.lifecycle import before_task_update
+
+    await before_task_update(task_id, changes)
     now = time.time()
     client = get_redis_client()
     try:
@@ -255,6 +261,9 @@ async def update_claimed_canvas_task(
 
 async def _emit_agent_task_event(task: dict[str, Any]) -> None:
     """Project task lifecycle changes into the owning Agent Run event stream."""
+    from app.public_media.lifecycle import task_changed
+
+    await task_changed(task)
     run_id = str(task.get("agent_run_id") or "")
     user_id = str(task.get("owner_id") or "")
     if not run_id or not user_id:

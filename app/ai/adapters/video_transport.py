@@ -95,6 +95,8 @@ class VideoTransport:
             except Exception as exc:
                 last_error = exc
                 if self._looks_like_html(response.text):
+                    if connection.get("private_video_delivery"):
+                        raise HTTPException(502, "上游提交结果未知，请查询原任务；禁止自动换地址重发") from None
                     html_response = response
                     continue
                 raise HTTPException(

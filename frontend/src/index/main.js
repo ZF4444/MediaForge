@@ -25,7 +25,7 @@ let closeHelpDrawer = () => {};
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_PINNED_KEY = 'studio_sidebar_pinned';
         const DEFAULT_PAGE_ID = 'canvas';
-        const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','storage-manager','my-account','api-settings','comfyui-settings','user-management','user-data-migration','feedback-admin','broadcast-admin'];
+        const PAGE_IDS = ['angle','gaussian','pose-studio','gpt-chat','canvas','asset-manager','storage-manager','public-video-links','my-account','api-settings','comfyui-settings','user-management','user-data-migration','feedback-admin','broadcast-admin'];
         const LEGACY_USER_MANAGEMENT_TABS = {'access-control':'access','storage-quota':'quota'};
         const LOCAL_PAGE_IDS = ['angle','gaussian','pose-studio'];
         const PAGE_META = {
@@ -33,6 +33,7 @@ let closeHelpDrawer = () => {};
             'gpt-chat': ['GPT 对话', '准备开始对话'],
             'asset-manager': ['素材库', '浏览与整理素材'],
             'storage-manager': ['空间管理', '管理文件与存储空间'],
+            'public-video-links': ['外发链接', '管理供应商视频下载授权'],
             'api-settings': ['API 设置', '管理 Connections 与 Models'],
             'comfyui-settings': ['工作流设置', '配置工作流节点'],
             'my-account': ['我的账户', '账户设置'],

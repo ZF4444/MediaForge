@@ -1,0 +1,11 @@
+**
+!app/
+!app/public_media/
+!app/public_media/*.py
+!app/public_media/schema.sql
+!config/
+!config/deploy/
+!config/deploy/public-media/
+!config/deploy/public-media/pyproject.toml
+!config/deploy/public-media/uv.lock
+!config/deploy/public-media/Dockerfile

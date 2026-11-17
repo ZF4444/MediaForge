@@ -1,0 +1,71 @@
+# Included inside the EXISTING Nginx http {}. Replace @...@ placeholders.
+# No query strings, request lines, upstream URLs or referers in any log.
+log_format media_download '$remote_addr $request_method $status $body_bytes_sent $request_time $upstream_http_x_request_id';
+limit_req_zone $binary_remote_addr zone=media_req:1m rate=8r/s;
+limit_conn_zone $binary_remote_addr zone=media_conn:1m;
+map $status $media_allow { default ""; 405 "GET, HEAD"; }
+
+server {
+    listen @LISTEN@ ssl default_server;
+    server_name _;
+    ssl_certificate @CERT@;
+    ssl_certificate_key @KEY@;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log off;
+    error_log /dev/null crit;
+    return 444;
+}
+
+server {
+    listen @LISTEN@ ssl;
+    server_name @HOST@;
+    ssl_certificate @CERT@;
+    ssl_certificate_key @KEY@;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    if ($ssl_server_name != "@HOST@") { return 444; }
+    server_tokens off;
+    access_log @ACCESS_LOG@ media_download;
+    # Nginx error messages can include the unredacted original request line.
+    # Gateway audit records contain structured, credential-free failure reasons.
+    error_log /dev/null crit;
+    add_header Cache-Control "no-store" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Allow $media_allow always;
+    client_header_timeout 10s;
+    client_body_timeout 5s;
+    client_max_body_size 1k;
+    keepalive_timeout 5s;
+    send_timeout 15s;
+    gzip off;
+    location ~ "^/fetch/v1/[0-9a-f]{32}/video\.(mp4|mov)$" {
+        if ($request_method !~ "^(GET|HEAD)$") { return 405; }
+        limit_req zone=media_req burst=16 nodelay;
+        limit_req_status 429;
+        limit_conn media_conn 4;
+        limit_conn_status 429;
+        proxy_pass http://@UPSTREAM@;
+        proxy_http_version 1.1;
+        proxy_set_header Host "media-gateway";
+        proxy_set_header Connection "";
+        proxy_set_header Authorization "";
+        proxy_set_header Cookie "";
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-Proto "";
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_max_temp_file_size 0;
+        proxy_cache off;
+        proxy_hide_header Set-Cookie;
+        proxy_hide_header Cache-Control;
+        proxy_hide_header Referrer-Policy;
+        proxy_hide_header X-Content-Type-Options;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 20s;
+        proxy_send_timeout 15s;
+        proxy_ignore_client_abort off;
+    }
+    location / { return 404; }
+}

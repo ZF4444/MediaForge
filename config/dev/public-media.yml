@@ -1,0 +1,111 @@
+# Merge after config/dev/compose.yml. Paths are relative to config/dev/.
+x-media-reader: &media-reader
+  PUBLIC_VIDEO_MINIO_ENDPOINT:
+  PUBLIC_VIDEO_MINIO_ACCESS_KEY:
+  PUBLIC_VIDEO_MINIO_SECRET_KEY:
+  PUBLIC_VIDEO_MINIO_SECURE:
+  PUBLIC_VIDEO_PREFIXES:
+  PUBLIC_VIDEO_IMMUTABLE_OBJECTS:
+
+services:
+  postgres:
+    command: [postgres, -c, hba_file=/etc/postgresql/media-pg_hba.conf]
+    volumes:
+      - ./public-media/pg_hba.conf:/etc/postgresql/media-pg_hba.conf:ro
+    networks: [default, media_auth]
+  minio:
+    networks: [default, media_storage]
+  media-gateway:
+    profiles: [public-media]
+    image: ${MEDIA_GATEWAY_IMAGE:-mediaforge-media-gateway:dev}
+    build:
+      context: ../..
+      dockerfile: config/deploy/public-media/Dockerfile
+    # Host .env is an interpolation source, never a gateway env_file or volume.
+    environment:
+      <<: *media-reader
+      PUBLIC_VIDEO_ENABLED:
+      PUBLIC_VIDEO_VALIDATOR_DSN:
+      PUBLIC_VIDEO_DEFAULT_TTL_SECONDS:
+      PUBLIC_VIDEO_MAX_TTL_SECONDS:
+      PUBLIC_VIDEO_MAX_FILE_BYTES:
+      PUBLIC_VIDEO_DOWNLOAD_CONCURRENCY:
+      PUBLIC_VIDEO_STREAM_CHUNK_BYTES:
+      PUBLIC_VIDEO_DOWNLOAD_TIMEOUT_SECONDS:
+      PUBLIC_VIDEO_IO_TIMEOUT_SECONDS:
+      PUBLIC_VIDEO_DATABASE_POOL_SIZE:
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 96
+    cpus: 2.0
+    ports: ['127.0.0.1:13001:8000']
+    networks: [media_auth, media_storage, media_download, media_ingress]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  media-init:
+    extends: {file: compose.yml, service: project-init}
+    profiles: [media-tools]
+    environment:
+      <<: *media-reader
+      PUBLIC_VIDEO_WRITER_DSN:
+      PUBLIC_VIDEO_VALIDATOR_DSN:
+      PUBLIC_VIDEO_ADMIN_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command: [python, -m, app.initialize, --public-media]
+  media-recover:
+    image: ${APP_IMAGE:?set APP_IMAGE}
+    profiles: [media-tools]
+    working_dir: /app
+    # Only the writer credential; no business/admin/storage credentials.
+    environment:
+      PUBLIC_VIDEO_WRITER_DSN: ${PUBLIC_VIDEO_WRITER_DSN:-}
+    volumes: [../../app:/app/app:ro, ../../scripts:/app/scripts:ro]
+    networks: [default]
+    command: [python, -m, scripts.public_media.recover]
+    restart: 'no'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  media-edge:
+    profiles: [media-https]
+    image: mediaforge-media-edge:dev
+    build:
+      context: ../..
+      dockerfile: config/dev/public-media/edge.Dockerfile
+      args:
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-deb.debian.org}
+    ports: ['127.0.0.1:18443:18443']
+    networks: [media_download, media_ingress]
+    depends_on:
+      media-gateway: {condition: service_healthy}
+    read_only: true
+    tmpfs: ['/tmp:uid=10001,gid=10001,mode=0700']
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 48
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+networks:
+  # Docker needs a non-internal bridge for host-published ports. Disable outbound
+  # masquerading; published listeners remain bound to host loopback only.
+  media_ingress:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: 'false'
+  media_auth: {internal: true}
+  media_storage: {internal: true}
+  media_download: {internal: true}

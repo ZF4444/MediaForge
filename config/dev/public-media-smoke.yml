@@ -1,0 +1,96 @@
+# Isolated acceptance fixture only: no dev .env, host ports, business volumes or real videos.
+# Fixed credentials below are disposable test data on private networks.
+name: mediaforge-public-media-smoke
+x-writer: &writer
+  PUBLIC_VIDEO_WRITER_DSN: postgresql://media_writer:test_only_writer_password_123456@postgres:5432/media_auth
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: media_test_admin
+      POSTGRES_PASSWORD: test_only_admin_password_123456
+      POSTGRES_DB: postgres
+    command: [postgres, -c, hba_file=/etc/postgresql/media-pg_hba.conf]
+    volumes:
+      - ./public-media/pg_hba.conf:/etc/postgresql/media-pg_hba.conf:ro
+    tmpfs: [/var/lib/postgresql/data]
+    networks: [auth]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U media_test_admin -d postgres]
+      interval: 1s
+      retries: 30
+  minio:
+    image: ${MINIO_IMAGE:-mediaforge-minio:2025-10-15}
+    environment:
+      MINIO_ROOT_USER: media_test_root
+      MINIO_ROOT_PASSWORD: test_only_storage_root_123456
+    tmpfs: ['/data:uid=10001,gid=10001']
+    networks: [storage]
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:9000/minio/health/ready]
+      interval: 1s
+      retries: 30
+  seed:
+    image: mediaforge-public-media-tests:dev
+    entrypoint: [python, -m, scripts.public_media.container_smoke, seed]
+    environment:
+      <<: *writer
+    volumes: [smoke-data:/smoke]
+    user: '0:0'
+    networks: [auth, storage]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    restart: 'no'
+  media-gateway:
+    image: ${MEDIA_GATEWAY_IMAGE:-mediaforge-media-gateway:dev}
+    environment:
+      PUBLIC_VIDEO_ENABLED: 'true'
+      PUBLIC_VIDEO_VALIDATOR_DSN: postgresql://media_validator:test_only_validator_password_123456@postgres:5432/media_auth
+      PUBLIC_VIDEO_MINIO_ENDPOINT: minio:9000
+      PUBLIC_VIDEO_MINIO_ACCESS_KEY: media_smoke_reader
+      PUBLIC_VIDEO_MINIO_SECRET_KEY: test_only_reader_secret_123456
+      PUBLIC_VIDEO_MINIO_SECURE: 'false'
+      PUBLIC_VIDEO_PREFIXES: media-smoke/users/
+    networks: [auth, storage, download]
+    depends_on:
+      seed: {condition: service_completed_successfully}
+    init: true
+    read_only: true
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 96
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=5)"]
+      interval: 1s
+      timeout: 8s
+      retries: 30
+  media-edge:
+    image: mediaforge-media-edge:dev
+    networks: [download]
+    depends_on:
+      media-gateway: {condition: service_healthy}
+    read_only: true
+    tmpfs: ['/tmp:uid=10001,gid=10001,mode=0700']
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 48
+  verify:
+    image: mediaforge-public-media-tests:dev
+    entrypoint: [python, -m, scripts.public_media.container_smoke, verify]
+    environment:
+      <<: *writer
+    volumes: [smoke-data:/smoke:ro]
+    networks: [auth, download]
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: 'no'
+networks:
+  auth: {internal: true}
+  storage: {internal: true}
+  download: {internal: true}
+volumes:
+  smoke-data:

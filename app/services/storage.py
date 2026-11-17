@@ -513,6 +513,8 @@ def _cleanup_candidates(limit: int, now_ms_value: int) -> List[Dict[str, Any]]:
 
 
 def _delete_unreferenced_file_for_cleanup(entry: Dict[str, Any], deleted_at_ms: int) -> bool:
+    from app.public_media.lifecycle import allow_cleanup
+
     file_id = str(entry.get("file_id") or "").strip()
     if not file_id or not metadata_db_enabled():
         return False
@@ -524,6 +526,8 @@ def _delete_unreferenced_file_for_cleanup(entry: Dict[str, Any], deleted_at_ms: 
             (file_id,),
         )
         if not cur.fetchone():
+            return False
+        if not allow_cleanup(file_id):
             return False
         delete_media_objects(entry)
         cur.execute(
@@ -1579,6 +1583,9 @@ def remove_media_url(url: str, *, delete_remote: bool = False) -> Optional[Dict[
         removed = lookup_media_url(url)
     if not removed:
         return None
+    from app.public_media.lifecycle import barrier
+
+    barrier("file", removed["file_id"])
     if delete_remote:
         delete_media_objects(removed)
     deleted_at = now_ms()
@@ -2340,6 +2347,10 @@ def media_derived_object_keys(entry_or_file_id: Any, *, user_id: str = "") -> Li
 def delete_media_objects(entry: Dict[str, Any]) -> None:
     if not isinstance(entry, dict):
         return
+    from app.public_media.lifecycle import barrier
+
+    if entry.get("file_id"):
+        barrier("file", entry["file_id"])
     bucket = str(entry.get("bucket") or "").strip()
     object_key = str(entry.get("object_key") or "").strip()
     if not bucket:

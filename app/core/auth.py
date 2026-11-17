@@ -129,6 +129,9 @@ async def delete_user(user_id: str) -> dict:
         if user_id not in USERS:
             return False
 
+    from app.public_media.lifecycle import barrier
+
+    await asyncio.to_thread(barrier, "user", user_id)
     token_hashes = []
     deleted_files = []
     async with database_connection() as conn, conn.transaction(), conn.cursor() as cur:

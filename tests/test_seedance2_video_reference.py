@@ -8,6 +8,8 @@ import pytest
 
 import main
 
+pytestmark = pytest.mark.usefixtures("mock_video_provider_dns")
+
 
 def _provider(model):
     return {
@@ -69,33 +71,34 @@ def test_seedance2_passes_video_input_as_web_url(video_upstream, model):
     assert len(video_upstream) == 1
 
 
-def test_seedance2_local_video_requires_public_base_url(video_upstream):
+def test_seedance2_local_video_requires_authorized_delivery(monkeypatch, video_upstream):
+    monkeypatch.setenv("PUBLIC_VIDEO_ENABLED", "false")
     payload = main.CanvasVideoRequest(
         prompt="test",
         model="doubao-seedance-2-0-260128",
         duration=5,
-        videos=["/api/files/uploads/ref.mp4"],
+        videos=["/api/files/file-video/preview"],
     )
     with pytest.raises(main.HTTPException) as exc_info:
         asyncio.run(main._canvas_video_impl(payload, _provider(payload.model)))
-    assert exc_info.value.status_code == 400
-    assert "公网" in exc_info.value.detail
+    assert exc_info.value.status_code == 503
+    assert "外发" in exc_info.value.detail
     assert not video_upstream
 
 
-def test_seedance2_local_video_uses_public_base_url(monkeypatch, video_upstream):
+def test_seedance2_never_falls_back_to_public_base_url(monkeypatch, video_upstream):
+    monkeypatch.setenv("PUBLIC_VIDEO_ENABLED", "false")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://media.example.com")
     payload = main.CanvasVideoRequest(
         prompt="test",
         model="doubao-seedance-2-0-260128",
         duration=5,
-        videos=["/api/files/uploads/ref.mp4"],
+        videos=["/api/files/file-video/preview"],
     )
-    asyncio.run(main._canvas_video_impl(payload, _provider(payload.model)))
-
-    body = json.loads(video_upstream[0].content)
-    video_items = [item for item in body["content"] if item["type"] == "video_url"]
-    assert video_items[0]["video_url"]["url"] == "https://media.example.com/api/files/uploads/ref.mp4"
+    with pytest.raises(main.HTTPException) as exc_info:
+        asyncio.run(main._canvas_video_impl(payload, _provider(payload.model)))
+    assert exc_info.value.status_code == 503
+    assert not video_upstream
 
 
 @pytest.mark.parametrize("value", ["data:video/mp4;base64,AAAA", "blob:https://example.com/ref", "/tmp/ref.mp4"])

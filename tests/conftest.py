@@ -5,6 +5,7 @@
 """
 
 import os
+import socket
 import sys
 
 import pytest
@@ -32,3 +33,17 @@ def routes_snapshot(app):
         snap.append((path, tuple(methods), type(r).__name__))
     snap.sort()
     return snap
+
+
+@pytest.fixture
+def mock_video_provider_dns(monkeypatch):
+    """Protocol tests mock HTTP, so resolve their fixed hosts without public DNS."""
+    original = socket.getaddrinfo
+    hosts = {"api.cloudwise.ai", "ark.cn-beijing.volces.com", "example.com", "download.cloudwise.ai"}
+
+    def resolve(host, port, *args, **kwargs):
+        if host in hosts:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))]
+        return original(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)

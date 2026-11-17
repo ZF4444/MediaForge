@@ -263,5 +263,9 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
 @router.delete("/api/canvases/{canvas_id}")
 def delete_canvas(canvas_id: str):
     load_canvas_raw(canvas_id)
+    from app.public_media.lifecycle import barrier
+
+    # Conservative owner barrier also covers tasks whose Redis record expired.
+    barrier("user", current_user_id())
     delete_canvas_payload(current_user_id(), canvas_id)
     return {"ok": True}

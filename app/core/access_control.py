@@ -59,6 +59,7 @@ _FALLBACK_ALL_PAGES: List[Dict[str, str]] = [
     {"id": "canvas-agent", "label": "画布 Agent"},
     {"id": "asset-manager", "label": "素材库"},
     {"id": "storage-manager", "label": "空间管理"},
+    {"id": "public-video-links", "label": "外发链接"},
     {"id": "my-account", "label": "我的账户"},
     {"id": "api-settings", "label": "API 设置"},
     {"id": "comfyui-settings", "label": "工作流设置"},
@@ -76,9 +77,9 @@ def _extract_nav_items(html: str) -> List[Dict[str, str]]:
     """
     items: List[Dict[str, str]] = []
     seen = set()
-    matches = list(re.finditer(r'<[^>]*onclick="switchUI\(this,\s*\'([a-zA-Z0-9-]+)\'\)"[^>]*>', html))
+    matches = list(re.finditer(r'<[^>]*(?:data-page-id="([a-zA-Z0-9-]+)"|onclick="switchUI\(this,\s*\'([a-zA-Z0-9-]+)\'\)")[^>]*>', html))
     for idx, m in enumerate(matches):
-        page_id = m.group(1)
+        page_id = m.group(1) or m.group(2)
         if page_id in seen:
             continue
         # 在该导航项标签之后、下一个导航项标签开始之前的区间内查找可见文案 span，
@@ -294,6 +295,9 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
             sanitized["user_types"][uid] = type_id
     global _ACCESS_CONTROL_CACHE
     with ACCESS_CONTROL_LOCK:
+        from app.public_media.lifecycle import barrier
+
+        barrier("global", "*")
         set_app_setting("access_control", sanitized)
         # Invalidate rather than guessing the revision: another process may write
         # immediately after this commit. Reload value and revision together.

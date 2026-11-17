@@ -1,0 +1,8 @@
+**
+!config/
+!config/deploy/
+!config/deploy/public-media/
+!config/deploy/public-media/nginx.conf.template
+!scripts/
+!scripts/public_media/
+!scripts/public_media/dev_edge.py

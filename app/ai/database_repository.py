@@ -268,6 +268,13 @@ class DatabaseAIRepository:
         now = now_ms()
         connection_rows = list(connections)
         model_rows = list(models)
+        from app.public_media.lifecycle import barrier, enabled
+
+        # Reconfiguration may remove a model, credential or allowed endpoint.
+        # Revoke existing task grants before applying the new configuration.
+        if enabled():
+            for connection in self.connections(include_disabled=True):
+                barrier("provider", connection.id)
         from app.core.comfyui import normalize_comfyui_endpoint
 
         connection_rows = [dict(item) for item in connection_rows]

@@ -1,0 +1,90 @@
+# Optional repository template. Render with the existing compose.yml;
+# it adds one gateway container and dedicated internal networks and a loopback ingress bridge.
+# Single config/deploy/.env is parsed by Compose; only named values enter containers.
+x-media-reader: &media-reader
+  PUBLIC_VIDEO_MINIO_ENDPOINT:
+  PUBLIC_VIDEO_MINIO_ACCESS_KEY:
+  PUBLIC_VIDEO_MINIO_SECRET_KEY:
+  PUBLIC_VIDEO_MINIO_SECURE:
+  PUBLIC_VIDEO_PREFIXES:
+  PUBLIC_VIDEO_IMMUTABLE_OBJECTS:
+
+services:
+  postgres:
+    command: [postgres, -c, hba_file=/etc/postgresql/media-pg_hba.conf]
+    volumes:
+      - type: bind
+        source: ./public-media/pg_hba.conf
+        target: /etc/postgresql/media-pg_hba.conf
+        read_only: true
+        bind: {create_host_path: false}
+    networks: [default, media_auth]
+  minio:
+    networks: [default, media_storage]
+  media-init:
+    extends: {file: compose.yml, service: project-init}
+    profiles: [media-tools]
+    environment:
+      <<: *media-reader
+      PUBLIC_VIDEO_WRITER_DSN:
+      PUBLIC_VIDEO_VALIDATOR_DSN:
+      PUBLIC_VIDEO_ADMIN_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command: [python, -m, app.initialize, --public-media]
+  media-recover:
+    profiles: [media-tools]
+    image: ${APP_IMAGE:?set APP_IMAGE}
+    init: true
+    user: '10001:10001'
+    environment:
+      PUBLIC_VIDEO_WRITER_DSN:
+    command: [python, -m, scripts.public_media.recover]
+    read_only: true
+    restart: 'no'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  media-gateway:
+    profiles: [public-media]
+    image: ${MEDIA_GATEWAY_IMAGE:-mediaforge-media-gateway:local}
+    build:
+      context: ../..
+      dockerfile: config/deploy/public-media/Dockerfile
+    environment:
+      <<: *media-reader
+      PUBLIC_VIDEO_ENABLED:
+      PUBLIC_VIDEO_VALIDATOR_DSN:
+      PUBLIC_VIDEO_DEFAULT_TTL_SECONDS:
+      PUBLIC_VIDEO_MAX_TTL_SECONDS:
+      PUBLIC_VIDEO_MAX_FILE_BYTES:
+      PUBLIC_VIDEO_DOWNLOAD_CONCURRENCY:
+      PUBLIC_VIDEO_STREAM_CHUNK_BYTES:
+      PUBLIC_VIDEO_DOWNLOAD_TIMEOUT_SECONDS:
+      PUBLIC_VIDEO_IO_TIMEOUT_SECONDS:
+      PUBLIC_VIDEO_DATABASE_POOL_SIZE:
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 96
+    cpus: 2.0
+    ports: ["127.0.0.1:13001:8000"]
+    networks: [media_auth, media_storage, media_ingress]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=5)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+networks:
+  media_ingress:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: 'false'
+  media_auth: {internal: true}
+  media_storage: {internal: true}
