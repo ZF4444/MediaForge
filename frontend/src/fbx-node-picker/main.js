@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { uploadFbx } from '../services/files.js';
 import './page.css';
+import { applyStoredTheme } from '../shared/theme-bootstrap.js';
+
+applyStoredTheme();
 
         const viewport = document.getElementById('viewport');
         const fileInput = document.getElementById('fileInput');

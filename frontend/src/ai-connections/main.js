@@ -1,10 +1,13 @@
 import { apiJson } from '../services/http.js';
+import { applyStoredTheme } from '../shared/theme-bootstrap.js';
 import { createIcons } from 'lucide/dist/esm/lucide.mjs';
 import Check from 'lucide/dist/esm/icons/check.mjs';
 import PlugZap from 'lucide/dist/esm/icons/plug-zap.mjs';
 import Box from 'lucide/dist/esm/icons/box.mjs';
 import Plus from 'lucide/dist/esm/icons/plus.mjs';
 import RefreshCw from 'lucide/dist/esm/icons/refresh-cw.mjs';
+
+applyStoredTheme();
 
 (() => {
   const $ = id => document.getElementById(id);
