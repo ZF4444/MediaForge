@@ -357,6 +357,21 @@ function renderStorageManager(){
             ${renderStorageDetail(detail)}
         </aside>
     `;
+    keepStorageFilterPopoverInPanel();
+}
+// 工具栏会折行，"条件筛选"按钮可能落在面板左侧；浮层默认右对齐按钮（向左展开），
+// 此时会超出面板被 overflow:hidden 裁掉。渲染后量一次，越界就改为左对齐（向右展开）。
+function keepStorageFilterPopoverInPanel(){
+    const popover = root.querySelector('.storage-filter-popover');
+    const panel = popover?.closest('.asset-panel');
+    if(!popover || !panel) return;
+    popover.style.left = '';
+    popover.style.right = '';
+    const panelRect = panel.getBoundingClientRect();
+    if(popover.getBoundingClientRect().left < panelRect.left + 8){
+        popover.style.left = '0';
+        popover.style.right = 'auto';
+    }
 }
 function renderStorageDetail(item){
     if(!item){
