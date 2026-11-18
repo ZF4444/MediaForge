@@ -37,3 +37,37 @@ input[type="number"],input[type="search"]{width:100%;padding:10px 12px;border:1p
 .quick-title { margin-bottom: 10px; }
 .spaced-actions { margin-top: 16px; }
 .toolbar-note { margin-top: 6px; }
+
+/* 深色模式：本页原样式全部是浅色硬编码，这里按 theme.css 的 graphite 色阶补齐。 */
+html.theme-dark .sub,
+html.studio-theme-dark .sub,
+html.theme-dark .muted,
+html.studio-theme-dark .muted { color: #a1a1a6; }
+html.theme-dark .status,
+html.studio-theme-dark .status,
+html.theme-dark .section-title,
+html.studio-theme-dark .section-title,
+html.theme-dark .summary-label,
+html.studio-theme-dark .summary-label { color: #a1a1a6; }
+html.theme-dark .card,
+html.studio-theme-dark .card,
+html.theme-dark .summary-card,
+html.studio-theme-dark .summary-card { background: rgba(255,255,255,.05) !important; border-color: rgba(255,255,255,.1) !important; }
+html.theme-dark .summary-value,
+html.studio-theme-dark .summary-value,
+html.theme-dark .user-name,
+html.studio-theme-dark .user-name { color: #f5f5f7; }
+html.theme-dark .row,
+html.studio-theme-dark .row { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.1); color: #f5f5f7; }
+html.theme-dark .row.header,
+html.studio-theme-dark .row.header { background: rgba(255,255,255,.07); color: #a1a1a6; }
+html.theme-dark .used-bar,
+html.studio-theme-dark .used-bar { background: rgba(255,255,255,.12); }
+html.theme-dark .btn,
+html.studio-theme-dark .btn { background: rgba(255,255,255,.1); color: #f5f5f7; }
+html.theme-dark .btn:disabled,
+html.studio-theme-dark .btn:disabled { color: #a1a1a6; }
+html.theme-dark .btn.primary,
+html.studio-theme-dark .btn.primary { background: #0a84ff; color: #fff; }
+html.theme-dark .quick,
+html.studio-theme-dark .quick { background: rgba(10,132,255,.2); color: #8ec5ff; }

@@ -834,6 +834,12 @@ html.studio-route-booting body {
             color: var(--bg);
         }
         .help-save:disabled { opacity: .55; cursor: not-allowed; }
+        /* theme.css 的 `html.theme-dark button { color: inherit }` 优先级高于单类选择器，
+           会把这两个按钮的文字色压成与背景相同的 var(--text)，这里提高优先级还原。 */
+        html.theme-dark .feedback-submit,
+        html.studio-theme-dark .feedback-submit,
+        html.theme-dark .help-save,
+        html.studio-theme-dark .help-save { color: var(--bg); }
         .help-body {
             flex: 1;
             min-height: 0;

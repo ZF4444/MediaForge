@@ -119,3 +119,21 @@
             .fb-toolbar { grid-template-columns: 1fr; }
             .fb-wrap { padding: 20px 14px 50px; }
         }
+
+        /* 深色模式配色：浅色下的饱和红/绿落在深色面板上对比度不足。 */
+        html.theme-dark .fb-btn.danger,
+        html.studio-theme-dark .fb-btn.danger { color: #f87171; border-color: rgba(248,113,113,.45); }
+        html.theme-dark .fb-status.ok,
+        html.studio-theme-dark .fb-status.ok { color: #4ade80; }
+        html.theme-dark .fb-status.err,
+        html.studio-theme-dark .fb-status.err { color: #f87171; }
+        html.theme-dark .fb-badge,
+        html.studio-theme-dark .fb-badge { background: rgba(255,255,255,.12); color: #d1d1d6; }
+        html.theme-dark .fb-badge.open,
+        html.studio-theme-dark .fb-badge.open { background: rgba(248,113,113,.2); color: #fca5a5; }
+        html.theme-dark .fb-badge.reviewing,
+        html.studio-theme-dark .fb-badge.reviewing { background: rgba(96,165,250,.2); color: #93c5fd; }
+        html.theme-dark .fb-badge.resolved,
+        html.studio-theme-dark .fb-badge.resolved { background: rgba(74,222,128,.18); color: #86efac; }
+        html.theme-dark .fb-badge.ignored,
+        html.studio-theme-dark .fb-badge.ignored { background: rgba(255,255,255,.12); color: #d1d1d6; }

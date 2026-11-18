@@ -120,8 +120,8 @@ body { background-image: radial-gradient(circle at 60% -20%, rgba(74,74,80,.26),
 .create-form input { border-color: rgba(255,255,255,.12); background: rgba(28,28,30,.78); color: #f5f5f7; }
 .create-form input::placeholder { color: #8e8e93; }
 .create-form input:focus { border-color: rgba(10,132,255,.8); background: #1c1c1e; box-shadow: 0 0 0 4px rgba(10,132,255,.18); }
-.create-button { background: #0a84ff; }
-.create-button:hover { background: #409cff; }
+.create-button { background: #0a6ee0; }
+.create-button:hover { background: #2f86ec; }
 .canvas-count { color: #64b5ff; background: rgba(10,132,255,.18); }
 .search-field, .sort-field { border-color: rgba(255,255,255,.12); background: rgba(44,44,46,.72); color: #a1a1a6; }
 .search-field input, .sort-field select { color: #f5f5f7; }

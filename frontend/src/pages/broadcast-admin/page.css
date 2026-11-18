@@ -67,3 +67,10 @@
             .ba-compose { grid-template-columns:1fr; }
             .ba-textarea,.ba-preview { min-height:240px; }
         }
+
+        html.theme-dark .ba-btn.danger,
+        html.studio-theme-dark .ba-btn.danger { color: #f87171; border-color: rgba(248,113,113,.45); }
+        html.theme-dark .ba-status.ok,
+        html.studio-theme-dark .ba-status.ok { color: #4ade80; }
+        html.theme-dark .ba-status.err,
+        html.studio-theme-dark .ba-status.err { color: #f87171; }
