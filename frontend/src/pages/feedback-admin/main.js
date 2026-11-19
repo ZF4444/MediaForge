@@ -176,6 +176,14 @@ async function load() {
   }
 }
 
+function notifyFeedbackChanged() {
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'feedback-changed' }, location.origin);
+    }
+  } catch (e) {}
+}
+
 async function updateSelected(payload) {
   const item = selectedItem();
   if (!item) return;
@@ -187,6 +195,7 @@ async function updateSelected(payload) {
     renderList();
     renderDetail();
     setStatus('已保存。', 'ok');
+    notifyFeedbackChanged();
   } catch (e) {
     setStatus('保存失败：' + e.message, 'err');
   }
@@ -205,6 +214,7 @@ async function deleteSelected() {
     renderList();
     renderDetail();
     setStatus('已删除。', 'ok');
+    notifyFeedbackChanged();
   } catch (e) {
     setStatus('删除失败：' + e.message, 'err');
   }

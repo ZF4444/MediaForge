@@ -7,6 +7,8 @@ from app.services.business_metadata import metadata_connection
 
 VALID_FEEDBACK_STATUSES = {"open", "reviewing", "resolved", "ignored"}
 VALID_FEEDBACK_TYPES = {"issue", "idea", "question", "other"}
+# 需要管理员跟进的状态：未处理、处理中
+PENDING_FEEDBACK_STATUSES = ("open", "reviewing")
 
 
 def normalize_feedback_type(raw: str) -> str:
@@ -95,6 +97,16 @@ def list_feedback(
         )
         items = cur.fetchall()
     return {"items": items, "total": total}
+
+
+def count_pending_feedback() -> int:
+    """未处理和处理中的反馈总数，用于侧边栏角标。"""
+    with metadata_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS count FROM feedback_entries WHERE status = ANY(%s)",
+            (list(PENDING_FEEDBACK_STATUSES),),
+        )
+        return int(cur.fetchone()["count"])
 
 
 def update_feedback(feedback_id: str, *, status: Optional[str], admin_note: Optional[str]) -> Optional[Dict[str, Any]]:

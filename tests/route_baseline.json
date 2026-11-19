@@ -462,6 +462,13 @@
     "APIRoute"
   ],
   [
+    "/api/feedback/admin/pending-count",
+    [
+      "GET"
+    ],
+    "APIRoute"
+  ],
+  [
     "/api/feedback/admin/{feedback_id}",
     [
       "DELETE"

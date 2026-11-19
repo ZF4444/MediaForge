@@ -1012,6 +1012,29 @@ html.studio-route-booting body {
         .sidebar.is-touch-expanded .sidebar-toggle-hitbox,
         .sidebar.is-collapsing.is-touch-expanded .sidebar-toggle-hitbox { width:170px; }
 .is-hidden { display:none !important; }
+
+/* 反馈管理待处理数量角标：红色圆角矩形 + 白色数字 */
+.side-pill-badge {
+    position:absolute;
+    top:-7px;
+    right:-9px;
+    min-width:18px;
+    height:16px;
+    padding:0 5px;
+    border-radius:6px;
+    background:#ef4444;
+    color:#fff;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:10px;
+    font-weight:800;
+    line-height:1;
+    font-variant-numeric:tabular-nums;
+    box-shadow:0 0 0 2px var(--bg);
+    pointer-events:none;
+}
+#nav-feedback-admin { overflow:visible; }
 .nav-divider { width:32px; height:1px; background:var(--border); margin:8px auto; transition:background .3s; }
 .version-toast { display:none; position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:99999; background:var(--bg); color:var(--text); padding:12px 24px; border-radius:12px; font-size:13px; font-weight:500; box-shadow:0 8px 24px rgba(0,0,0,.12); border:1px solid var(--border); align-items:center; gap:12px; }
 .version-toast.is-visible { display:flex; }

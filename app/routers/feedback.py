@@ -6,6 +6,7 @@ from app.core.access_control import has_page_access
 from app.core.auth import current_user_id
 from app.models import FeedbackCreatePayload, FeedbackUpdatePayload
 from app.services.feedback import (
+    count_pending_feedback,
     create_feedback,
     delete_feedback,
     list_feedback,
@@ -64,6 +65,12 @@ def feedback_admin_list(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/api/feedback/admin/pending-count")
+def feedback_admin_pending_count():
+    _require_feedback_access()
+    return {"count": count_pending_feedback()}
 
 
 @router.patch("/api/feedback/admin/{feedback_id}")

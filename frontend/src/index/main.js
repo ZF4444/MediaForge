@@ -6,6 +6,40 @@ import 'virtual:mediaforge-i18n';
 import '@tailwindcss/browser';
 import './version-check.js';
 import { apiJson } from '../services/http.js';
+import { getPendingFeedbackCount } from '../services/feedback-admin.js';
+
+const FEEDBACK_BADGE_REFRESH_MS = 60 * 1000;
+let feedbackBadgeTimer = null;
+
+function renderFeedbackBadge(count) {
+    const badge = document.getElementById('feedbackPendingBadge');
+    if (!badge) return;
+    const n = Number(count) || 0;
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.classList.toggle('is-hidden', n <= 0);
+    const label = n > 0 ? `反馈管理，${n} 条待处理` : '反馈管理';
+    const pill = document.getElementById('nav-feedback-admin');
+    if (pill) pill.title = label;
+}
+
+async function refreshFeedbackBadge() {
+    try {
+        renderFeedbackBadge(await getPendingFeedbackCount());
+    } catch (e) {
+        // 请求失败时保留上一次的数字，避免角标闪烁；无权限时在 startFeedbackBadge 之前已过滤。
+    }
+}
+
+function startFeedbackBadge() {
+    refreshFeedbackBadge();
+    if (feedbackBadgeTimer) return;
+    feedbackBadgeTimer = window.setInterval(() => {
+        if (!document.hidden) refreshFeedbackBadge();
+    }, FEEDBACK_BADGE_REFRESH_MS);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshFeedbackBadge();
+    });
+}
 
 const pageLeaveGuards = {};
 let closeHelpDrawer = () => {};
@@ -249,6 +283,11 @@ let closeHelpDrawer = () => {};
                 switchUI(pageTrigger('my-account'), 'my-account');
                 return;
             }
+            // 反馈管理页修改状态或删除后，立即刷新侧边栏角标
+            if (d.type === 'feedback-changed') {
+                if (feedbackBadgeTimer) refreshFeedbackBadge();
+                return;
+            }
             // 子页面声明/取消"离开需确认"守卫
             if (d.type === 'page-guard' && d.page) {
                 pageLeaveGuards[d.page] = !!d.active;
@@ -322,6 +361,8 @@ let closeHelpDrawer = () => {};
                 const trigger = pageTrigger(fallback);
                 switchUI(trigger, fallback);
             }
+            // 仅拥有反馈管理权限的用户才请求待处理数量，其余用户不产生请求
+            if (allowed.has('feedback-admin')) startFeedbackBadge();
         }
         const host = window.location.host;
         if (host) {

@@ -29,6 +29,12 @@ export async function listFeedback({ status, type, query } = {}) {
   return requestFeedbackJson(`/api/feedback/admin?${params.toString()}`);
 }
 
+export async function getPendingFeedbackCount() {
+  const data = await requestFeedbackJson('/api/feedback/admin/pending-count');
+  const count = Number(data && data.count);
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+}
+
 export async function updateFeedback(id, payload) {
   return requestFeedbackJson(`/api/feedback/admin/${encodeURIComponent(id)}`, {
     method: 'PATCH',
