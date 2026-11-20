@@ -6,6 +6,8 @@ import '../pages/public-video-links/page.css';
 applyStoredTheme();
 const $ = id => document.getElementById(id);
 let offset = 0;
+let policyOffset = 0;
+const POLICY_PAGE = 30;
 let loading = false;
 const bytes = value => `${(Number(value || 0) / 1048576).toFixed(1)} MiB`;
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
@@ -51,11 +53,22 @@ async function refresh() {
     $('records').append(row);
   }
   $('admin-panel').hidden = !data.is_admin;
-  if (data.is_admin) {
-    const policies = await listPolicies(); $('policies').replaceChildren();
-    for (const policy of policies.items) { const row = document.createElement('tr'); cell(row, policy.scope); cell(row, policy.key); cell(row, policy.enabled ? '启用' : '禁用'); cell(row, `${bytes(policy.daily_bytes)} / ${bytes(policy.used_bytes)}`, `UTC ${policy.window_date}`); cell(row, bytes(policy.active_bytes)); $('policies').append(row); }
-  }
+  if (data.is_admin) await refreshPolicies();
   status('列表已更新');
+}
+async function refreshPolicies() {
+  const filter = $('policy-filter').elements;
+  let data = await listPolicies({ offset: policyOffset, limit: POLICY_PAGE, scope: filter.scope.value, enabled: filter.enabled.value, q: filter.q.value.trim() });
+  // The last row of the page may have just been removed or filtered out: step back instead of showing an empty page.
+  if (!data.items.length && data.total > 0 && policyOffset > 0) {
+    policyOffset = Math.floor((data.total - 1) / POLICY_PAGE) * POLICY_PAGE;
+    data = await listPolicies({ offset: policyOffset, limit: POLICY_PAGE, scope: filter.scope.value, enabled: filter.enabled.value, q: filter.q.value.trim() });
+  }
+  $('policies').replaceChildren(); $('policy-total').textContent = `共 ${data.total} 条`;
+  $('policy-page-info').textContent = `${policyOffset + (data.total ? 1 : 0)}–${Math.min(policyOffset + data.items.length, data.total)} / ${data.total}`;
+  $('policy-previous').hidden = policyOffset === 0; $('policy-next').hidden = policyOffset + POLICY_PAGE >= data.total;
+  if (!data.items.length) { const row = document.createElement('tr'); const td = cell(row, '没有符合条件的策略'); td.colSpan = 5; $('policies').append(row); }
+  for (const policy of data.items) { const row = document.createElement('tr'); cell(row, policy.scope); cell(row, policy.key); cell(row, policy.enabled ? '启用' : '禁用'); cell(row, `${bytes(policy.daily_bytes)} / ${bytes(policy.used_bytes)}`, `UTC ${policy.window_date}`); cell(row, bytes(policy.active_bytes)); $('policies').append(row); }
 }
 $('create-form').onsubmit = event => { event.preventDefault(); perform(async () => {
   const values = new FormData(event.target);
@@ -83,6 +96,13 @@ $('batch-revoke').onclick = () => perform(async () => {
 });
 $('refresh').onclick = () => perform(refresh);
 $('state').onchange = () => { offset = 0; perform(refresh); };
+const reloadPolicies = () => perform(async () => { await refreshPolicies(); status('策略列表已更新'); });
+$('policy-filter').onsubmit = event => { event.preventDefault(); policyOffset = 0; reloadPolicies(); };
+$('policy-filter').elements.scope.onchange = () => { policyOffset = 0; reloadPolicies(); };
+$('policy-filter').elements.enabled.onchange = () => { policyOffset = 0; reloadPolicies(); };
+$('policy-filter-reset').onclick = () => { $('policy-filter').reset(); policyOffset = 0; reloadPolicies(); };
+$('policy-previous').onclick = () => { policyOffset = Math.max(0, policyOffset - POLICY_PAGE); reloadPolicies(); };
+$('policy-next').onclick = () => { policyOffset += POLICY_PAGE; reloadPolicies(); };
 $('previous').onclick = () => { offset = Math.max(0, offset - 30); perform(refresh); };
 $('next').onclick = () => { offset += 30; perform(refresh); };
 $('close-dialog').onclick = clearLink;

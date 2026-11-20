@@ -275,6 +275,26 @@ class Repository:
                 "SELECT * FROM media.media_policy_state WHERE scope IN ('global','task','file') ORDER BY scope,key"
             ).fetchall()
 
+    def list_policies(self, offset=0, limit=30, scope="", enabled=None, keyword=""):
+        """Paged, filtered view of the policy table for the management page.
+
+        ``policies()`` stays unbounded for internal callers. Task and file rows are
+        written for every finished task and deleted file, so the table only grows.
+        """
+        pattern = "%" + keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where = (
+            "WHERE scope IN ('global','task','file') AND (%s='' OR scope=%s) "
+            "AND (%s::boolean IS NULL OR enabled=%s) AND (%s='' OR key ILIKE %s ESCAPE '\\')"
+        )
+        params = (scope, scope, enabled, enabled, keyword, pattern)
+        with self.connection() as conn:
+            total = conn.execute("SELECT count(*) AS n FROM media.media_policy_state " + where, params).fetchone()["n"]
+            rows = conn.execute(
+                "SELECT * FROM media.media_policy_state " + where + " ORDER BY scope,key LIMIT %s OFFSET %s",
+                (*params, limit, offset),
+            ).fetchall()
+            return {"items": rows, "total": total, "offset": offset, "limit": limit}
+
     def invalidate_restored_authorizations(self):
         """Explicit recovery barrier, run with the download entrance stopped.
 

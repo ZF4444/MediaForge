@@ -17,6 +17,12 @@ export const issueLink = (source, rotate = false, ttl = 1800) => send(`/api/publ
   idempotency_key: requestKey(), rotate, ttl_seconds: ttl,
 });
 export const revokeLink = id => send(`/api/public-video-grants/${encodeURIComponent(id)}/revoke`, 'POST');
-export const listPolicies = () => apiJson('/api/admin/public-video-policy', { cache: 'no-store' });
+export const listPolicies = ({ offset = 0, limit = 30, scope = '', enabled = '', q = '' } = {}) => {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  if (scope) params.set('scope', scope);
+  if (enabled === 'true' || enabled === 'false') params.set('enabled', enabled);
+  if (q) params.set('q', q);
+  return apiJson(`/api/admin/public-video-policy?${params}`, { cache: 'no-store' });
+};
 export const savePolicy = payload => send('/api/admin/public-video-policy', 'PUT', payload);
 export const revokeScope = payload => send('/api/admin/public-video-grants/revoke-batch', 'POST', payload);

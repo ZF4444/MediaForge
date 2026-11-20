@@ -62,9 +62,10 @@ def test_management_permissions_run_outside_event_loop(monkeypatch):
     monkeypatch.setattr(routes, "current_user_id", lambda: "alice")
     monkeypatch.setattr(routes, "has_page_access", permission("page"))
     monkeypatch.setattr(routes, "is_admin", permission("admin"))
+    seen = []
     repository = SimpleNamespace(
         list_grants=lambda owner, *args: {"items": [], "owner": owner},
-        policies=lambda: [],
+        list_policies=lambda *args: seen.append(args) or {"items": [], "total": 0, "offset": args[0], "limit": args[1]},
         revoke=lambda grant, owner: None,
     )
     monkeypatch.setattr(routes, "get_service", lambda: SimpleNamespace(repo=repository))
@@ -78,6 +79,14 @@ def test_management_permissions_run_outside_event_loop(monkeypatch):
         identity["admin"] = True
         assert client.get("/api/public-video-grants").json()["owner"] is None
         assert client.get("/api/admin/public-video-policy").status_code == 200
+        assert seen[-1] == (0, 30, "", None, "")
+        listed = client.get("/api/admin/public-video-policy?offset=60&limit=10&scope=task&enabled=false&q=%20abc%20")
+        assert listed.status_code == 200
+        assert listed.json() == {"items": [], "total": 0, "offset": 60, "limit": 10}
+        assert seen[-1] == (60, 10, "task", False, "abc")
+        for bad in ("offset=-1", "limit=0", "limit=101", "scope=user", "enabled=maybe", "q=" + "x" * 129):
+            assert client.get("/api/admin/public-video-policy?" + bad).status_code == 422
+        assert len(seen) == 2
         headers = {"Origin": "http://testserver", "X-MediaForge-Request": "1"}
         for scope in ("user", "provider"):
             assert (

@@ -37,7 +37,16 @@
         <label class="checkbox"><input name="enabled" type="checkbox">启用此范围</label>
         <button type="submit">保存策略</button><button id="batch-revoke" class="danger" type="button">撤销此范围</button>
       </form>
+      <div class="toolbar policy-filters"><h3 id="policy-list-title">策略列表 <span id="policy-total" class="muted"></span></h3>
+        <form id="policy-filter" class="fields" role="search">
+          <label>范围<select name="scope"><option value="">全部</option><option value="global">全局</option><option value="task">任务</option><option value="file">文件</option></select></label>
+          <label>许可<select name="enabled"><option value="">全部</option><option value="true">启用</option><option value="false">禁用</option></select></label>
+          <label>搜索 ID<input name="q" maxlength="128" autocomplete="off" placeholder="任务 ID 或文件 ID"></label>
+          <button type="submit">查询</button><button id="policy-filter-reset" type="button">重置</button>
+        </form>
+      </div>
       <div class="table-scroll"><table><thead><tr><th>范围</th><th>ID</th><th>许可</th><th>日预算 / 已预扣</th><th>活动预算</th></tr></thead><tbody id="policies"></tbody></table></div>
+      <div class="pager"><button id="policy-previous" type="button">上一页</button><span id="policy-page-info"></span><button id="policy-next" type="button">下一页</button></div>
     </section>
   </main>
   <dialog id="link-dialog" aria-labelledby="link-title"><h2 id="link-title">链接仅展示这一次</h2><p class="muted">关闭后无法找回。轮换会立即作废旧链接，并可能中断已提交任务的后续读取。</p><label>视频下载地址<input id="one-time-url" readonly autocomplete="off" spellcheck="false"></label><div class="dialog-actions"><button id="copy-link" class="primary" type="button">复制链接</button><button id="close-dialog" type="button">关闭并清除</button></div><p id="copy-status" role="status"></p></dialog>

@@ -102,10 +102,16 @@ async def revoke_batch(payload: BatchRequest):
 
 
 @router.get("/api/admin/public-video-policy")
-async def policies():
+async def policies(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=100),
+    scope: str = Query("", pattern="^(|global|task|file)$"),
+    enabled: bool | None = Query(None),
+    q: str = Query("", max_length=128),
+):
     await asyncio.to_thread(user, admin=True)
     async with errors():
-        return {"items": await asyncio.to_thread(get_service().repo.policies)}
+        return await asyncio.to_thread(get_service().repo.list_policies, offset, limit, scope, enabled, q.strip())
 
 
 @router.put("/api/admin/public-video-policy")
