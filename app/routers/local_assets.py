@@ -73,6 +73,40 @@ async def _spool_upload(file: UploadFile) -> Optional[Tuple[tempfile.SpooledTemp
     return tmp, size, digest.hexdigest()
 
 
+def _sniff_video_container(fileobj) -> str:
+    """Return ``"mov"`` / ``"mp4"`` from the ISO-BMFF ``ftyp`` header, or ``""`` if unknown.
+
+    Apple frameworks (iOS/macOS exports, some editors) write QuickTime files with a
+    ``qt  `` major brand even when the user-visible name ends in ``.mp4``. Reads at most
+    16 bytes and restores the stream position.
+    """
+    try:
+        position = fileobj.tell()
+        fileobj.seek(0)
+        header = fileobj.read(16)
+        fileobj.seek(position)
+    except (AttributeError, OSError, ValueError):
+        return ""
+    if len(header) < 12 or header[4:8] != b"ftyp":
+        return ""
+    return "mov" if header[8:12] == b"qt  " else "mp4"
+
+
+def _align_video_container(filename: str, content_type: str, kind: str, fileobj) -> Tuple[str, str]:
+    """Make the stored suffix and MIME match the real container of an uploaded video.
+
+    Only QuickTime files declared as MP4 are rewritten. Everything else keeps what the
+    client declared, so unrecognised or non-ISO-BMFF files are never mislabelled.
+    """
+    if kind != "video":
+        return filename, content_type
+    stem, ext = os.path.splitext(filename)
+    declared_mp4 = ext.lower() in {".mp4", ".m4v"} or (content_type or "").lower() == "video/mp4"
+    if not declared_mp4 or _sniff_video_container(fileobj) != "mov":
+        return filename, content_type
+    return stem + ".mov", "video/quicktime"
+
+
 def _save_uploaded_media(
     category: str,
     filename: str,
@@ -85,6 +119,7 @@ def _save_uploaded_media(
     kind: str = "",
 ) -> dict:
     try:
+        filename, content_type = _align_video_container(filename, content_type, kind, fileobj)
         stored = save_media_fileobj(
             category,
             filename,
