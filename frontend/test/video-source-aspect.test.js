@@ -6,25 +6,54 @@ const settingsSource = readFileSync(new URL('../src/canvas/generation-settings.j
 const cascadeSource = readFileSync(new URL('../src/canvas/cascade-run.js', import.meta.url), 'utf8');
 function setup(options) {
   const api = vi.fn().mockResolvedValue({fields:[{id:'videoAspect', options: options || ['16:9','1:1','9:16']}]});
-  const context = vm.createContext({URLSearchParams, canvasParameterSchemaCache:new Map(), canvasApiJson:api,
-    imageRefsOnly:refs => (refs || []).filter(ref => ref.url && ref.kind !== 'video')});
+  const context = vm.createContext({URLSearchParams, setTimeout, clearTimeout, queueMicrotask, canvasParameterSchemaCache:new Map(), canvasApiJson:api,
+    imageRefsOnly:refs => (refs || []).filter(ref => ref.url && ref.kind !== 'video' && ref.kind !== 'audio'),
+    videoRefsOnly:refs => (refs || []).filter(ref => ref.url && ref.kind === 'video')});
   for (const name of ['imageSizeForRatio', 'parseRatioValue']) {
     const start = settingsSource.indexOf(`function ${name}(`);
     const end = settingsSource.indexOf('\n}', start) + 2;
     vm.runInContext(settingsSource.slice(start, end), context);
   }
-  const start = cascadeSource.indexOf('async function resolveVideoSourceAspect(');
+  const start = cascadeSource.indexOf('function readVideoRefSize(');
   const end = cascadeSource.indexOf('async function runApiVideoGeneration(', start);
   vm.runInContext(cascadeSource.slice(start, end), context);
   return {resolve:context.resolveVideoSourceAspect, api, context};
 }
 const settings = {videoAspect:'source', videoConnectionId:'conn-a', videoModelId:'model-a'};
 describe('video source aspect', () => {
-  it('uses 9:16 without input images, including video-only input', async () => {
+  it('uses 9:16 without any image or video input', async () => {
     const {resolve, api} = setup();
     expect(await resolve(settings, [])).toBe('9:16');
-    expect(await resolve(settings, [{url:'video.mp4',kind:'video'}])).toBe('9:16');
+    expect(await resolve(settings, [{url:'voice.mp3',kind:'audio'}])).toBe('9:16');
     expect(api).not.toHaveBeenCalled();
+  });
+  it('matches a video-only input by its own dimensions', async () => {
+    const {resolve} = setup();
+    expect(await resolve(settings, [{url:'video.mp4',kind:'video',natural_w:1920,natural_h:1080}])).toBe('16:9');
+  });
+  it('follows whichever of image or video comes first', async () => {
+    const {resolve} = setup();
+    const video = {url:'video.mp4',kind:'video',natural_w:1920,natural_h:1080};
+    const image = {url:'image.png',w:900,h:1600};
+    expect(await resolve(settings, [video, image])).toBe('16:9');
+    expect(await resolve(settings, [image, video])).toBe('9:16');
+    expect(await resolve(settings, [{url:'voice.mp3',kind:'audio'}, video])).toBe('16:9');
+  });
+  it('reads video metadata when the reference has no dimensions', async () => {
+    const {resolve, context} = setup();
+    context.document = {createElement:() => ({
+      removeAttribute(){}, load(){}, videoWidth:1920, videoHeight:1080,
+      set src(value) { queueMicrotask(() => this.onloadedmetadata()); }
+    })};
+    expect(await resolve(settings, [{url:'video.mp4',kind:'video'}])).toBe('16:9');
+  });
+  it('falls back to 9:16 when video metadata cannot be read', async () => {
+    const {resolve, context} = setup();
+    context.document = {createElement:() => ({
+      removeAttribute(){}, load(){},
+      set src(value) { queueMicrotask(() => this.onerror()); }
+    })};
+    expect(await resolve(settings, [{url:'video.mp4',kind:'video'}])).toBe('9:16');
   });
   it('matches only the first image against this model’s supported ratios', async () => {
     const {resolve, api} = setup(['1:1','4:3','9:16']);

@@ -277,18 +277,44 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
     const submit = await submitRunningHubGeneration(prompt, refs, runSettings);
     return pollRunningHubTask(submit.taskId, submit);
 }
+function readVideoRefSize(url){
+    return new Promise(resolve => {
+        const video = document.createElement('video');
+        let timer = 0;
+        const finish = value => {
+            clearTimeout(timer);
+            video.onloadedmetadata = null;
+            video.onerror = null;
+            video.removeAttribute?.('src');
+            video.load?.();
+            resolve(value);
+        };
+        timer = setTimeout(() => finish(null), 10000);
+        video.preload = 'metadata';
+        video.muted = true;
+        // videoWidth/videoHeight are already rotation-corrected by the browser.
+        video.onloadedmetadata = () => finish(video.videoWidth > 0 && video.videoHeight > 0 ? {w:video.videoWidth, h:video.videoHeight} : null);
+        video.onerror = () => finish(null);
+        video.src = url;
+    });
+}
 async function resolveVideoSourceAspect(runSettings, refs){
     if(runSettings.videoAspect !== 'source') return runSettings.videoAspect;
-    const first = imageRefsOnly(refs)[0];
+    // The first image or video input decides the ratio; audio/file/text refs are skipped.
+    const videos = new Set(videoRefsOnly(refs));
+    const visual = new Set([...imageRefsOnly(refs), ...videos]);
+    const first = (refs || []).find(ref => visual.has(ref));
     if(!first) return '9:16';
     let size = imageSizeForRatio(first);
     if(!size && first.url){
-        size = await new Promise(resolve => {
-            const image = new Image();
-            image.onload = () => resolve({w:image.naturalWidth, h:image.naturalHeight});
-            image.onerror = () => resolve(null);
-            image.src = first.url;
-        });
+        size = videos.has(first)
+            ? await readVideoRefSize(first.url)
+            : await new Promise(resolve => {
+                const image = new Image();
+                image.onload = () => resolve({w:image.naturalWidth, h:image.naturalHeight});
+                image.onerror = () => resolve(null);
+                image.src = first.url;
+            });
     }
     if(!size) return '9:16';
     // Resolve against this task's model, not the model currently open in the composer.
