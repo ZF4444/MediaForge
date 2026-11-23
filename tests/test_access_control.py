@@ -175,3 +175,21 @@ def test_database_failure_does_not_use_cached_permissions(monkeypatch):
     monkeypatch.setattr(access_control, "get_app_setting_version", unavailable)
     with pytest.raises(RuntimeError, match="database unavailable"):
         access_control.is_model_allowed("alice", "connection", "model", model_id="model-id")
+
+
+def test_saving_permissions_never_touches_public_video_policy(monkeypatch):
+    from app.core import auth
+    from app.public_media import lifecycle
+
+    calls = []
+    monkeypatch.setattr(access_control, "all_page_ids", lambda: ["canvas", "public-video-links"])
+    monkeypatch.setattr(lifecycle, "enabled", lambda: True)
+    monkeypatch.setattr(lifecycle, "barrier", lambda *args: calls.append(args))
+    monkeypatch.setattr(auth, "USERS", {"alice": {}, "bob": {}})
+    open_type = {"pages": ["canvas", "public-video-links"], "models": None}
+    access_control.save_config({"types": {"open": open_type}, "user_types": {"alice": "open", "bob": "open"}})
+    # Assignment, page removal and model narrowing are all ordinary permission edits.
+    access_control.save_config(
+        {"types": {"open": open_type, "limited": {"pages": ["canvas"], "models": []}}, "user_types": {"alice": "limited"}}
+    )
+    assert calls == []

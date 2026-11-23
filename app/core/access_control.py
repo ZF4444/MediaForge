@@ -295,9 +295,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
             sanitized["user_types"][uid] = type_id
     global _ACCESS_CONTROL_CACHE
     with ACCESS_CONTROL_LOCK:
-        from app.public_media.lifecycle import barrier
-
-        barrier("global", "*")
+        # 视频外发策略由“外发链接”页面的管理员独立管理，保存权限配置不得改动它。
         set_app_setting("access_control", sanitized)
         # Invalidate rather than guessing the revision: another process may write
         # immediately after this commit. Reload value and revision together.
