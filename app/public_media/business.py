@@ -26,7 +26,6 @@ def origins():
 
 
 async def authorize(owner, file_id, task_id, provider_id):
-    from app.ai.authorization import require_model_access
     from app.ai.database_repository import DatabaseAIRepository
     from app.core.auth import user_exists
     from app.services.canvas_tasks import get_canvas_task
@@ -60,7 +59,6 @@ async def authorize(owner, file_id, task_id, provider_id):
             )
             if not target.connection.enabled or not target.model.enabled or target.connection.id != provider_id:
                 raise Denied("模型不可用")
-            require_model_access(target, owner)
             for settings in (target.connection.settings, target.model.settings):
                 limit = settings.get("max_reference_video_bytes")
                 if limit is not None and (int(limit) < 1 or int(entry.get("size") or 0) > int(limit)):
