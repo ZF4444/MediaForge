@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta
 from io import BytesIO
 from threading import Lock
-from typing import Any, BinaryIO, Dict, List, Optional
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 from PIL import Image
 
 from app.config import (
@@ -2493,6 +2493,42 @@ def ensure_media_derivatives(entry: Dict[str, Any], *, payload: bytes = b"") -> 
         save_bytes(poster, object_key, content_type="image/jpeg", bucket=bucket)
 
 
+def _video_container_from_header(header: bytes) -> str:
+    """Return ``"mov"`` / ``"mp4"`` from the ISO-BMFF ``ftyp`` header, or ``""`` if unknown."""
+    if len(header) < 12 or header[4:8] != b"ftyp":
+        return ""
+    return "mov" if header[8:12] == b"qt  " else "mp4"
+
+
+def _align_video_container(filename: str, content_type: str, kind: str, header: bytes) -> Tuple[str, str]:
+    """Make the stored suffix and MIME match the real container of a video.
+
+    iOS/macOS exports and some workflow nodes write QuickTime files (``ftyp`` brand
+    ``qt  ``) under an ``.mp4`` name. Public-video delivery rejects that mismatch, so it
+    is corrected once here, for every ingestion path. Only QuickTime declared as MP4 is
+    rewritten; genuine MP4/MOV and unrecognised content keep what the caller declared.
+    """
+    if kind != "video" and not (content_type or "").lower().startswith("video/"):
+        return filename, content_type
+    stem, ext = os.path.splitext(filename)
+    declared_mp4 = ext.lower() in {".mp4", ".m4v"} or (content_type or "").lower() == "video/mp4"
+    if not declared_mp4 or _video_container_from_header(header) != "mov":
+        return filename, content_type
+    return stem + ".mov", "video/quicktime"
+
+
+def _read_fileobj_header(fileobj: BinaryIO, size: int = 16) -> bytes:
+    """Read the first bytes of a seekable stream and restore its position."""
+    try:
+        position = fileobj.tell()
+        fileobj.seek(0)
+        header = fileobj.read(size)
+        fileobj.seek(position)
+    except (AttributeError, OSError, ValueError):
+        return b""
+    return header
+
+
 def save_media_fileobj(
     category: str,
     filename: str,
@@ -2515,6 +2551,8 @@ def save_media_fileobj(
     the purpose of streaming.
     """
     size = int(length or 0)
+    original_name = original_name or filename
+    filename, content_type = _align_video_container(filename, content_type, kind, _read_fileobj_header(fileobj))
     # For AI-generated content, save first then warn; for uploads, block before saving.
     if source == "generated":
         quota_warning = check_storage_quota(size, category=category)
@@ -2603,6 +2641,8 @@ def save_media_bytes(
     source: str = "upload",
 ) -> Dict[str, Any]:
     payload = data if isinstance(data, bytes) else bytes(data or b"")
+    original_name = original_name or filename
+    filename, content_type = _align_video_container(filename, content_type, kind, payload[:16])
     # For AI-generated content, save first then warn; for uploads, block before saving.
     if source == "generated":
         quota_warning = check_storage_quota(len(payload), category=category)
